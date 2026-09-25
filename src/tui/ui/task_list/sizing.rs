@@ -1,35 +1,36 @@
 use super::cells::{EpicSelectionContext, is_deferred, metadata_cell};
+use super::source::TaskListSource;
 use super::view_model::TaskListRow;
 use crate::config::TableColumn;
 use crate::query::TaskListItem;
 use crate::queue::now_seconds;
-use crate::tui::store::{TaskListRenderMode, TuiStore};
+use crate::tui::store::TaskListRenderMode;
 use ratatui::layout::Constraint;
 use unicode_width::UnicodeWidthStr;
 
 /// Compact due labels are at most five columns wide; the sixth is the cell gutter.
 pub(super) const DUE_COLUMN_WIDTH: u16 = 6;
 
-pub(super) fn task_list_columns(store: &TuiStore, narrow: bool) -> [Constraint; 9] {
+pub(super) fn task_list_columns(source: &TaskListSource<'_>, narrow: bool) -> [Constraint; 9] {
     task_list_columns_for_tasks(
-        store,
+        source,
         narrow,
-        &store.tasks.iter().collect::<Vec<_>>(),
+        &source.tasks.iter().collect::<Vec<_>>(),
         EpicSelectionContext::default(),
     )
 }
 
 pub(super) fn task_list_columns_for_tasks(
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     narrow: bool,
     label_tasks: &[&TaskListItem],
     epic_selection: EpicSelectionContext<'_>,
 ) -> [Constraint; 9] {
-    let epics = store.view_state.render_mode() == TaskListRenderMode::Epics;
+    let epics = source.view_state.render_mode() == TaskListRenderMode::Epics;
     let project_width = if epics && narrow {
         0
     } else {
-        project_column_width(store, narrow)
+        project_column_width(source.tasks, narrow)
     };
     let label_width = if epics {
         if narrow { 18 } else { 24 }
@@ -39,9 +40,9 @@ pub(super) fn task_list_columns_for_tasks(
     let metadata_width = metadata_column_width_from_task_refs(
         label_tasks,
         epic_selection,
-        store.view_state.render_mode() == TaskListRenderMode::Flat,
+        source.view_state.render_mode() == TaskListRenderMode::Flat,
     );
-    let priority_width = priority_column_width(store);
+    let priority_width = priority_column_width_from_tasks(source.tasks);
     let ref_width = if epics { 14 } else { 12 };
     TableColumn::ALL.map(|column| match column {
         TableColumn::Ref => Constraint::Length(ref_width),
@@ -49,7 +50,7 @@ pub(super) fn task_list_columns_for_tasks(
         TableColumn::Labels => Constraint::Length(label_width),
         TableColumn::Metadata => Constraint::Length(metadata_width),
         TableColumn::Project => Constraint::Length(project_width),
-        TableColumn::Status => Constraint::Length(status_column_width(store)),
+        TableColumn::Status => Constraint::Length(status_column_width(source)),
         TableColumn::Priority => Constraint::Length(priority_width),
         TableColumn::Time => Constraint::Length(5),
         TableColumn::Due => Constraint::Length(DUE_COLUMN_WIDTH),
@@ -57,18 +58,13 @@ pub(super) fn task_list_columns_for_tasks(
 }
 
 /// Width of the status column, including the gutter that follows it.
-pub(super) fn status_column_width(store: &TuiStore) -> u16 {
-    if store.config().tui.table.compact_status {
-        2
-    } else {
-        10
-    }
+pub(super) fn status_column_width(source: &TaskListSource<'_>) -> u16 {
+    if source.table.compact_status { 2 } else { 10 }
 }
 
-pub(super) fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
+pub(super) fn project_column_width(tasks: &[TaskListItem], narrow: bool) -> u16 {
     let max_width = if narrow { 14 } else { 18 };
-    store
-        .tasks
+    tasks
         .iter()
         .map(|item| item.task.project_key.width() as u16 + 2)
         .max()
@@ -78,7 +74,7 @@ pub(super) fn project_column_width(store: &TuiStore, narrow: bool) -> u16 {
 }
 
 pub(super) fn visible_task_items<'a>(
-    store: &'a TuiStore,
+    source: &TaskListSource<'a>,
     visible_rows: &[(usize, &TaskListRow)],
 ) -> Vec<&'a TaskListItem> {
     visible_rows
@@ -86,7 +82,7 @@ pub(super) fn visible_task_items<'a>(
         .filter_map(|(_, row)| match row {
             TaskListRow::Group(_) => None,
             TaskListRow::Task { task_index } | TaskListRow::EpicChild { task_index, .. } => {
-                store.tasks.get(*task_index)
+                source.tasks.get(*task_index)
             }
         })
         .collect()
@@ -149,10 +145,6 @@ pub(super) fn metadata_column_width_from_task_refs(
     if width == 0 { 0 } else { width + 2 }
 }
 
-pub(super) fn priority_column_width(store: &TuiStore) -> u16 {
-    priority_column_width_from_tasks(&store.tasks)
-}
-
 pub(super) fn priority_column_width_from_tasks(tasks: &[TaskListItem]) -> u16 {
     if tasks
         .iter()
@@ -169,25 +161,21 @@ mod tests {
     use super::super::tests::*;
     use super::*;
 
-    #[tokio::test]
-    async fn label_column_width_uses_visible_task_labels() {
-        let mut hidden_wide = task_list_item("zz hidden wide label");
+    #[test]
+    fn label_column_width_uses_visible_task_labels() {
+        let mut hidden_wide = task_list_item_with_id("zz hidden wide label", "task-4");
         hidden_wide.labels = vec!["very-wide-label".to_string()];
-        let mut store = test_store_with_tasks(vec![
-            task_list_item("aa visible plain one"),
-            task_list_item("bb visible plain two"),
-            task_list_item("cc visible plain three"),
+        let list = TaskListFixture::new(vec![
+            task_list_item_with_id("aa visible plain one", "task-1"),
+            task_list_item_with_id("bb visible plain two", "task-2"),
+            task_list_item_with_id("cc visible plain three", "task-3"),
             hidden_wide,
-        ])
-        .await;
-        store
-            .tasks
-            .sort_by(|left, right| left.task.title.cmp(&right.task.title));
+        ]);
         let area = Rect::new(0, 0, 100, 4);
         let mut table_state = TableState::default();
 
         let top_model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut table_state,
             Focus::Tasks,
             area,
@@ -199,7 +187,7 @@ mod tests {
 
         table_state.select(Some(3));
         let scrolled_model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut table_state,
             Focus::Tasks,
             area,
@@ -236,12 +224,12 @@ mod tests {
         assert_eq!(label_column_width_from_tasks(&[task], false), 6);
     }
 
-    #[tokio::test]
-    async fn project_column_width_counts_wide_key_cells() {
-        let mut store = test_store_with_tasks(vec![task_list_item("task")]).await;
-        store.tasks[0].task.project_key = "프로젝트".to_string();
+    #[test]
+    fn project_column_width_counts_wide_key_cells() {
+        let mut task = task_list_item("task");
+        task.task.project_key = "프로젝트".to_string();
 
-        assert_eq!(project_column_width(&store, false), 10);
+        assert_eq!(project_column_width(&[task], false), 10);
     }
 
     #[test]

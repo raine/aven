@@ -5,11 +5,10 @@ use super::*;
 use crate::tui::theme::{FG, FG_MUTED, RED, YELLOW};
 use chrono::TimeZone;
 
-#[tokio::test]
-async fn hidden_ref_and_status_keep_epic_rollups_and_child_rows() {
-    let mut store = epic_test_store(true).await;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![
+#[test]
+fn hidden_ref_and_status_keep_epic_rollups_and_child_rows() {
+    let mut list = epic_fixture(true);
+    list.table.columns = vec![
         TableColumn::Title,
         TableColumn::Labels,
         TableColumn::Metadata,
@@ -17,9 +16,8 @@ async fn hidden_ref_and_status_keep_epic_rollups_and_child_rows() {
         TableColumn::Priority,
         TableColumn::Time,
     ];
-    store.set_config(config);
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 120, 5));
     assert!(rendered.contains("SUMMARY"));
     assert!(rendered.contains("1/5"));
     assert!(rendered.contains("Verify recovery email"));
@@ -28,13 +26,12 @@ async fn hidden_ref_and_status_keep_epic_rollups_and_child_rows() {
     assert!(!rendered.contains("APP-CHLD"));
 }
 
-#[tokio::test]
-async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
+#[test]
+fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
     for width in [64, 120] {
         for selected in [0, 1] {
-            let mut store = epic_test_store(true).await;
-            let mut config = store.config().clone();
-            config.tui.table.columns = vec![
+            let mut list = epic_fixture(true);
+            list.table.columns = vec![
                 TableColumn::Status,
                 TableColumn::Time,
                 TableColumn::Labels,
@@ -44,7 +41,6 @@ async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
                 TableColumn::Ref,
                 TableColumn::Title,
             ];
-            store.set_config(config);
             let editor = TextInputView {
                 kind: TextInputKind::EditTitle,
                 title: "Edit title".to_string(),
@@ -56,7 +52,7 @@ async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
             state.select(Some(selected));
             let area = Rect::new(0, 0, width, 5);
             let model = build_task_list_render_model(
-                &store,
+                &list.source(),
                 &mut state,
                 Focus::Tasks,
                 area,
@@ -68,7 +64,7 @@ async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
                 .draw(|frame| {
                     render_task_list(
                         frame,
-                        &store,
+                        &list.source(),
                         &mut state,
                         Focus::Tasks,
                         area,
@@ -95,8 +91,9 @@ async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
                     .layout
                     .cell(TableColumn::Status, Rect::new(0, index + 1, width, 1));
                 let hit =
-                    task_status_at_position(&store, &state, area, status.x, status.y).unwrap();
-                assert_eq!(hit.task_id, store.tasks[index as usize].task.id);
+                    task_row_status_at_position(&list.source(), &state, area, status.x, status.y)
+                        .unwrap();
+                assert_eq!(hit.task_id, list.tasks[index as usize].task.id);
             }
             if width < 90 {
                 assert_eq!(model.layout.cell(TableColumn::Project, area).width, 0);
@@ -105,11 +102,11 @@ async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
     }
 }
 
-#[tokio::test]
-async fn collapsed_epic_rows_show_outcomes_signals_and_subtree_activity() {
-    let store = epic_test_store(false).await;
+#[test]
+fn collapsed_epic_rows_show_outcomes_signals_and_subtree_activity() {
+    let list = epic_fixture(false);
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 120, 5));
 
     assert!(rendered.contains("SUMMARY"));
     assert!(!rendered.contains("CHILDREN"));
@@ -119,7 +116,7 @@ async fn collapsed_epic_rows_show_outcomes_signals_and_subtree_activity() {
     assert!(rendered.contains("!1 ←1 · 1/5 done ×1"));
     assert!(!rendered.contains("Verify recovery email"));
 
-    let preview = task_preview_lines(&store.tasks[0], 120, 12)
+    let preview = task_preview_lines(&list.tasks[0], 120, 12)
         .into_iter()
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
@@ -128,11 +125,11 @@ async fn collapsed_epic_rows_show_outcomes_signals_and_subtree_activity() {
     assert!(preview.contains("signals 1 overdue · 1 blocked · 1 ready"));
 }
 
-#[tokio::test]
-async fn expanded_epic_rows_keep_child_title_and_status_legible() {
-    let store = epic_test_store(true).await;
+#[test]
+fn expanded_epic_rows_keep_child_title_and_status_legible() {
+    let list = epic_fixture(true);
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 120, 5));
 
     assert!(rendered.contains("Ship account recovery"));
     assert!(rendered.contains("Verify recovery email"));
@@ -140,22 +137,22 @@ async fn expanded_epic_rows_keep_child_title_and_status_legible() {
     assert!(rendered.contains("!1 ←1 · 1/5 done ×1"));
 }
 
-#[tokio::test]
-async fn epic_summary_keeps_parent_task_metadata_in_its_own_lane() {
-    let mut store = epic_test_store(false).await;
-    store.tasks[0].unresolved_blocker_count = 2;
+#[test]
+fn epic_summary_keeps_parent_task_metadata_in_its_own_lane() {
+    let mut list = epic_fixture(false);
+    list.tasks[0].unresolved_blocker_count = 2;
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 120, 5));
 
     assert!(rendered.contains("!1 ←1 · 1/5 done ×1"));
     assert!(rendered.contains("←2"));
 }
 
-#[tokio::test]
-async fn narrow_epic_rows_preserve_rollup_and_core_task_fields() {
-    let store = epic_test_store(false).await;
+#[test]
+fn narrow_epic_rows_preserve_rollup_and_core_task_fields() {
+    let list = epic_fixture(false);
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 64, 4));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 64, 4));
 
     assert!(rendered.contains("SUMMARY"));
     assert!(!rendered.contains("CHILDREN"));
@@ -165,15 +162,15 @@ async fn narrow_epic_rows_preserve_rollup_and_core_task_fields() {
     assert!(rendered.contains("APP-"));
 }
 
-#[tokio::test]
-async fn epic_columns_keep_a_blank_gutter_at_normal_and_narrow_widths() {
+#[test]
+fn epic_columns_keep_a_blank_gutter_at_normal_and_narrow_widths() {
     for width in [64, 120] {
-        let store = epic_test_store(false).await;
-        let buffer = render_task_list_buffer(&store, width, 4);
+        let list = epic_fixture(false);
+        let buffer = render_task_list_buffer(&list.source(), width, 4);
         let columns = task_list_columns_for_tasks(
-            &store,
+            &list.source(),
             width < 90,
-            &[&store.tasks[0]],
+            &[&list.tasks[0]],
             EpicSelectionContext::default(),
         );
         let columns = TableColumn::DEFAULT.map(|column| columns[column as usize]);
@@ -194,17 +191,17 @@ async fn epic_columns_keep_a_blank_gutter_at_normal_and_narrow_widths() {
     }
 }
 
-#[tokio::test]
-async fn empty_epic_row_uses_standard_placeholders() {
-    let mut store = epic_test_store(false).await;
-    store.tasks[0].epic_children.clear();
+#[test]
+fn empty_epic_row_uses_standard_placeholders() {
+    let mut list = epic_fixture(false);
+    list.tasks[0].epic_children.clear();
     let rollup = crate::query::EpicRollup {
-        latest_activity_at: store.tasks[0].task.updated_at.clone(),
+        latest_activity_at: list.tasks[0].task.updated_at.clone(),
         ..crate::query::EpicRollup::default()
     };
-    store.tasks[0].epic_rollup = Some(rollup.clone());
+    list.tasks[0].epic_rollup = Some(rollup.clone());
 
-    let preview = task_preview_lines(&store.tasks[0], 100, 12)
+    let preview = task_preview_lines(&list.tasks[0], 100, 12)
         .into_iter()
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
@@ -365,5 +362,73 @@ fn epic_header_switches_between_activity_and_due_semantics() {
         let rendered = buffer_text(terminal.backend().buffer());
         assert!(rendered.contains(expected));
         assert!(!rendered.contains(absent));
+    }
+}
+
+#[tokio::test]
+async fn loaded_epic_expands_into_rendered_and_hit_tested_child_row() {
+    let mut store = test_store_with_tasks(vec![
+        task_list_item("Ship account recovery"),
+        task_list_item("Verify recovery email"),
+    ])
+    .await;
+    let task_id = |store: &TuiStore, title: &str| {
+        store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == title)
+            .unwrap()
+            .task
+            .id
+            .clone()
+    };
+    let parent_id = task_id(&store, "Ship account recovery");
+    let child_id = task_id(&store, "Verify recovery email");
+    let mut conn = aven_core::test_support::acquire(&store.database())
+        .await
+        .unwrap();
+    crate::operations::add_task_to_epic(
+        &mut conn,
+        &crate::workspaces::Workspace::default(),
+        &child_id,
+        &parent_id,
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    store.show_view(TaskQuery::Epics).await.unwrap();
+    let parent_index = store
+        .tasks
+        .iter()
+        .position(|item| item.task.id == parent_id)
+        .unwrap();
+    store
+        .toggle_selected_epic(Some(parent_index))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let area = Rect::new(0, 0, 120, 6);
+    let rendered = buffer_text(&render_task_list_buffer(
+        &TaskListSource::from_store(&store),
+        area.width,
+        area.height,
+    ));
+    assert!(rendered.contains("Ship account recovery"));
+    assert!(rendered.contains("Verify recovery email"));
+    assert!(rendered.contains("▾"));
+
+    let table_state = TableState::default();
+    for id in [&parent_id, &child_id] {
+        let index = store
+            .tasks
+            .iter()
+            .position(|item| &item.task.id == id)
+            .unwrap();
+        let row = area.y + 1 + task_visual_row(&store, index).unwrap() as u16;
+        let hit = (area.x..area.right())
+            .find_map(|x| task_status_at_position(&store, &table_state, area, x, row))
+            .unwrap();
+        assert_eq!(&hit.task_id, id);
     }
 }

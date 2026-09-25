@@ -103,7 +103,7 @@ struct DerivedTaskProjections {
 #[derive(Debug)]
 pub(crate) enum TaskListViewRef<'a> {
     Stable(&'a TaskListView),
-    Upcoming(TaskListView),
+    Owned(TaskListView),
 }
 
 impl Deref for TaskListViewRef<'_> {
@@ -112,7 +112,7 @@ impl Deref for TaskListViewRef<'_> {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Stable(view) => view,
-            Self::Upcoming(view) => view,
+            Self::Owned(view) => view,
         }
     }
 }
@@ -365,7 +365,7 @@ impl TuiStore {
             }));
         }
 
-        TaskListViewRef::Upcoming(TaskListView::from_tasks_at(
+        TaskListViewRef::Owned(TaskListView::from_tasks_at(
             render_mode,
             &self.tasks,
             &self.view_state.expanded_epic_ids,

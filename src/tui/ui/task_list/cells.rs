@@ -4,7 +4,7 @@ use crate::config::TableColumn;
 use crate::query::TaskListItem;
 use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::{TaskListRenderMode, TuiStore};
+use crate::tui::store::TaskListRenderMode;
 use crate::tui::text::truncate_width;
 use crate::tui::theme::{self, ACCENT, FG, FG_DIM, FG_MUTED, RED, SELECTED_INACTIVE, YELLOW};
 use crate::tui::widgets::{
@@ -356,7 +356,7 @@ pub(super) fn epic_activity_cell(
 pub(super) fn build_epic_parent_row_cells_for_columns(
     item: &TaskListItem,
     time: TaskTimeContext,
-    store: &TuiStore,
+    expanded_epic_ids: &std::collections::BTreeSet<crate::ids::TaskId>,
     inline_title_editor: Option<&TextInputView>,
     cell_layout: TaskListCellLayout<'_>,
     state: TaskRowState,
@@ -377,7 +377,7 @@ pub(super) fn build_epic_parent_row_cells_for_columns(
     let title = inline_title_editor
         .map(|editor| inline_title_edit_cell(editor, title_width))
         .unwrap_or_else(|| title_cell(item, title_width));
-    let expanded = store.view_state.expanded_epic_ids.contains(&item.task.id);
+    let expanded = expanded_epic_ids.contains(&item.task.id);
     let mut ref_spans = if state_column == Some(TableColumn::Ref) {
         task_state_prefix(state.selected, state.focused, state.marked)
     } else {

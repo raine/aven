@@ -7,13 +7,14 @@ use super::cells::{
 };
 use super::layout::TableLayout;
 use super::sizing::{task_list_columns, task_list_columns_for_tasks, visible_task_items};
+use super::source::TaskListSource;
 use super::view_model::{TaskGroupRow, TaskListProjection, TaskListRow, scrollbar_position};
 use crate::config::TableColumn;
 use crate::query::TaskSort;
 use crate::queue::now_seconds;
 use crate::tui::app::Focus;
 use crate::tui::overlay::TextInputView;
-use crate::tui::store::{TaskListRenderMode, TuiStore};
+use crate::tui::store::TaskListRenderMode;
 use crate::tui::theme::{
     ACCENT, BG, BG_ALT, BORDER, INVERSE_FG, RELATED, SELECTED, SELECTED_INACTIVE,
 };
@@ -55,7 +56,7 @@ pub(super) struct TaskListTaskRow {
 
 pub(super) fn render_task_list(
     frame: &mut Frame,
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     table_state: &mut TableState,
     focus: Focus,
     area: Rect,
@@ -64,7 +65,7 @@ pub(super) fn render_task_list(
 ) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let model = build_task_list_render_model(
-        store,
+        source,
         table_state,
         focus,
         area,
@@ -82,10 +83,10 @@ pub(super) fn render_task_list(
         model.render_mode,
         model.has_deferred_rows,
         model.due_order,
-        store.config().tui.table.compact_status,
+        source.table.compact_status,
     );
 
-    if store.tasks.is_empty() {
+    if source.tasks.is_empty() {
         let body = Rect::new(
             area.x,
             area.y.saturating_add(1),
@@ -95,7 +96,7 @@ pub(super) fn render_task_list(
         super::super::empty_state::render_empty_state(
             frame,
             body,
-            crate::tui::ui::empty_state::task_empty_state(store),
+            crate::tui::ui::empty_state::task_empty_state_for(&source.empty_state),
         );
         return;
     }
@@ -125,7 +126,7 @@ pub(super) fn render_task_list(
 }
 
 pub(super) fn build_task_list_render_model(
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     table_state: &mut TableState,
     focus: Focus,
     area: Rect,
@@ -136,8 +137,8 @@ pub(super) fn build_task_list_render_model(
     if row_areas.is_empty() {
         return TaskListRenderModel {
             layout: TableLayout::resolve(
-                &task_list_columns(store, area.width < 90),
-                &store.config().tui.table.columns,
+                &task_list_columns(source, area.width < 90),
+                &source.table.columns,
                 area.width,
             ),
             row_areas: row_areas.to_vec(),
@@ -146,31 +147,32 @@ pub(super) fn build_task_list_render_model(
             row_count: 0,
             viewport_rows: 0,
             top_scroll: 0,
-            render_mode: store.view_state.render_mode(),
+            render_mode: source.view_state.render_mode(),
             has_deferred_rows: false,
-            due_order: store.view_state.sort() == TaskSort::DueOn
-                && !store.config().tui.table.columns.contains(&TableColumn::Due),
+            due_order: source.view_state.sort() == TaskSort::DueOn
+                && !source.table.columns.contains(&TableColumn::Due),
         };
     }
 
     let viewport_rows = row_areas.len().saturating_sub(1);
-    let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
+    let projection = TaskListProjection::from_table_state(&source.view, table_state, viewport_rows);
     projection.commit_scroll(table_state);
     let selected_task = projection.selected_task;
-    let epic_selection =
-        EpicSelectionContext::from_selected(selected_task.and_then(|index| store.tasks.get(index)));
+    let epic_selection = EpicSelectionContext::from_selected(
+        selected_task.and_then(|index| source.tasks.get(index)),
+    );
     let visible_rows = projection.visible_rows();
-    let visible_tasks = visible_task_items(store, &visible_rows);
+    let visible_tasks = visible_task_items(source, &visible_rows);
     let columns =
-        task_list_columns_for_tasks(store, area.width < 90, &visible_tasks, epic_selection);
+        task_list_columns_for_tasks(source, area.width < 90, &visible_tasks, epic_selection);
 
     let now = now_seconds();
-    let due_order = store.view_state.sort() == TaskSort::DueOn;
+    let due_order = source.view_state.sort() == TaskSort::DueOn;
     let has_deferred_rows = projection.view.render_mode == TaskListRenderMode::Flat
         && visible_tasks.iter().any(|item| is_deferred(item, now));
-    let configured_columns = &store.config().tui.table.columns;
+    let configured_columns = &source.table.columns;
     let show_due_in_time = !configured_columns.contains(&TableColumn::Due);
-    let compact_status = store.config().tui.table.compact_status;
+    let compact_status = source.table.compact_status;
     let layout = TableLayout::resolve(&columns, configured_columns, area.width);
     let state_column = layout.state_column();
     let column_widths = layout.widths();
@@ -179,7 +181,7 @@ pub(super) fn build_task_list_render_model(
         match row {
             TaskListRow::Group(group) => rows.push(TaskListRenderRow::Group(group.clone())),
             TaskListRow::Task { task_index } => {
-                let Some(item) = store.tasks.get(*task_index) else {
+                let Some(item) = source.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
                         style: row_style(false, focus == Focus::Tasks, false, false, false),
                         cells: blank_task_row_cells(),
@@ -208,7 +210,7 @@ pub(super) fn build_task_list_render_model(
                             due_order,
                             show_due: show_due_in_time,
                         },
-                        store,
+                        &source.view_state.expanded_epic_ids,
                         inline_title_editor.filter(|_| selected),
                         TaskListCellLayout {
                             widths: &column_widths,
@@ -260,7 +262,7 @@ pub(super) fn build_task_list_render_model(
                 task_index,
                 last,
             } => {
-                let Some(item) = store.tasks.get(*task_index) else {
+                let Some(item) = source.tasks.get(*task_index) else {
                     rows.push(TaskListRenderRow::Task(TaskListTaskRow {
                         style: row_style(false, focus == Focus::Tasks, false, false, false),
                         cells: blank_task_row_cells(),
@@ -612,10 +614,10 @@ mod tests {
         assert_eq!(cell.spans[0].style.fg, Some(ACCENT));
     }
 
-    #[tokio::test]
-    async fn default_status_column_shows_text_header_and_status() {
-        let store = test_store_with_tasks(vec![task_list_item("task")]).await;
-        let buffer = render_task_list_buffer(&store, 140, 8);
+    #[test]
+    fn default_status_column_shows_text_header_and_status() {
+        let list = TaskListFixture::new(vec![task_list_item("task")]);
+        let buffer = render_task_list_buffer(&list.source(), 140, 8);
         let rendered = buffer_text(&buffer);
 
         assert!(rendered.contains("STATUS"), "{rendered}");

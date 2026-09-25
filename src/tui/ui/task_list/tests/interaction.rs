@@ -4,27 +4,30 @@ use super::super::view_model::TaskListProjection;
 use super::*;
 use crate::tui::widgets::title_cell;
 
-#[tokio::test]
-async fn task_status_at_position_only_hits_status_column() {
-    let store = test_store_with_tasks(vec![task_list_item("task")]).await;
+#[test]
+fn task_status_at_position_only_hits_status_column() {
+    let list = TaskListFixture::new(vec![task_list_item("task")]);
+    let source = list.source();
     let table_state = TableState::default();
     let area = Rect::new(0, 0, 140, 10);
-    let task_id = store.tasks[0].task.id.clone();
+    let task_id = list.tasks[0].task.id.clone();
 
     let projection = TaskListProjection::from_table_state(
-        &store,
+        &source.view,
         &table_state,
         area.height.saturating_sub(1) as usize,
     );
-    let status_area = task_list_status_area(&store, &projection, area, 1);
-    let hit = task_status_at_position(&store, &table_state, area, status_area.x, 2).unwrap();
+    let status_area = task_list_status_area(&source, &projection, area, 1);
+    let hit = task_row_status_at_position(&source, &table_state, area, status_area.x, 2).unwrap();
     assert_eq!(hit.task_index, 0);
     assert_eq!(hit.task_id, task_id);
 
-    assert!(task_status_at_position(&store, &table_state, area, status_area.x - 1, 2).is_none());
     assert!(
-        task_status_at_position(
-            &store,
+        task_row_status_at_position(&source, &table_state, area, status_area.x - 1, 2).is_none()
+    );
+    assert!(
+        task_row_status_at_position(
+            &source,
             &table_state,
             area,
             status_area.x.saturating_add(status_area.width),
@@ -34,73 +37,85 @@ async fn task_status_at_position_only_hits_status_column() {
     );
 }
 
-#[tokio::test]
-async fn epic_status_hit_testing_tracks_parent_and_expanded_child_rows() {
+#[test]
+fn epic_status_hit_testing_tracks_parent_and_expanded_child_rows() {
     for width in [64, 120] {
-        let collapsed = epic_test_store(false).await;
+        let collapsed = epic_fixture(false);
+        let collapsed_source = collapsed.source();
         let table_state = TableState::default();
         let area = Rect::new(0, 0, width, 5);
         let projection = TaskListProjection::from_table_state(
-            &collapsed,
+            &collapsed_source.view,
             &table_state,
             area.height.saturating_sub(1) as usize,
         );
-        let status_area = task_list_status_area(&collapsed, &projection, area, 0);
-        let parent_hit =
-            task_status_at_position(&collapsed, &table_state, area, status_area.x, area.y + 1)
-                .unwrap();
+        let status_area = task_list_status_area(&collapsed_source, &projection, area, 0);
+        let parent_hit = task_row_status_at_position(
+            &collapsed_source,
+            &table_state,
+            area,
+            status_area.x,
+            area.y + 1,
+        )
+        .unwrap();
         assert_eq!(parent_hit.task_id, collapsed.tasks[0].task.id);
 
-        let expanded = epic_test_store(true).await;
+        let expanded = epic_fixture(true);
+        let expanded_source = expanded.source();
         let projection = TaskListProjection::from_table_state(
-            &expanded,
+            &expanded_source.view,
             &table_state,
             area.height.saturating_sub(1) as usize,
         );
-        let status_area = task_list_status_area(&expanded, &projection, area, 1);
-        let child_hit =
-            task_status_at_position(&expanded, &table_state, area, status_area.x, area.y + 2)
-                .unwrap();
+        let status_area = task_list_status_area(&expanded_source, &projection, area, 1);
+        let child_hit = task_row_status_at_position(
+            &expanded_source,
+            &table_state,
+            area,
+            status_area.x,
+            area.y + 2,
+        )
+        .unwrap();
         assert_eq!(child_hit.task_id, expanded.tasks[1].task.id);
     }
 }
 
-#[tokio::test]
-async fn task_status_at_position_respects_wide_sidebar_offset() {
-    let store = test_store_with_tasks(vec![task_list_item("task")]).await;
+#[test]
+fn task_status_at_position_respects_wide_sidebar_offset() {
+    let list = TaskListFixture::new(vec![task_list_item("task")]);
+    let source = list.source();
     let table_state = TableState::default();
     let area = Rect::new(26, 2, 114, 18);
-    let task_id = store.tasks[0].task.id.clone();
+    let task_id = list.tasks[0].task.id.clone();
 
     let projection = TaskListProjection::from_table_state(
-        &store,
+        &source.view,
         &table_state,
         area.height.saturating_sub(1) as usize,
     );
-    let status_area = task_list_status_area(&store, &projection, area, 1);
-    let hit = task_status_at_position(&store, &table_state, area, status_area.x, 4).unwrap();
+    let status_area = task_list_status_area(&source, &projection, area, 1);
+    let hit = task_row_status_at_position(&source, &table_state, area, status_area.x, 4).unwrap();
 
     assert_eq!(hit.task_index, 0);
     assert_eq!(hit.task_id, task_id);
 }
 
-#[tokio::test]
-async fn compact_status_column_shows_single_letter_header_and_icon() {
-    let mut store = test_store_with_tasks(vec![task_list_item("task")]).await;
-    let mut config = crate::config::AppConfig::default();
-    config.tui.table.compact_status = true;
-    store.set_config(config);
+#[test]
+fn compact_status_column_shows_single_letter_header_and_icon() {
+    let mut list = TaskListFixture::new(vec![task_list_item("task")]);
+    list.table.compact_status = true;
 
+    let source = list.source();
     let area = Rect::new(0, 0, 140, 8);
-    let buffer = render_task_list_buffer(&store, area.width, area.height);
+    let buffer = render_task_list_buffer(&source, area.width, area.height);
     let table_state = TableState::default();
     let projection = TaskListProjection::from_table_state(
-        &store,
+        &source.view,
         &table_state,
         area.height.saturating_sub(1) as usize,
     );
-    let visual_row = task_visual_row(&store, 0).unwrap();
-    let status_area = task_list_status_area(&store, &projection, area, visual_row as u16);
+    let visual_row = source.view.visual_row_for(0).unwrap();
+    let status_area = task_list_status_area(&source, &projection, area, visual_row as u16);
 
     assert_eq!(status_area.width, 1);
     assert_eq!(buffer[(status_area.x, area.y)].symbol(), "S");
@@ -110,11 +125,12 @@ async fn compact_status_column_shows_single_letter_header_and_icon() {
     assert!(!rendered.contains("□ todo"), "{rendered}");
 
     let hit =
-        task_status_at_position(&store, &table_state, area, status_area.x, status_area.y).unwrap();
+        task_row_status_at_position(&source, &table_state, area, status_area.x, status_area.y)
+            .unwrap();
     assert_eq!(hit.task_index, 0);
     assert!(
-        task_status_at_position(
-            &store,
+        task_row_status_at_position(
+            &source,
             &table_state,
             area,
             status_area.x.saturating_add(1),

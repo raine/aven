@@ -6,6 +6,7 @@ use crate::tui::store::TuiStore;
 use super::cells::EpicSelectionContext;
 use super::layout::{TableLayout, task_list_areas};
 use super::sizing::{task_list_columns_for_tasks, visible_task_items};
+use super::source::TaskListSource;
 #[cfg(test)]
 use super::view_model::TaskListView;
 use super::view_model::{TaskListProjection, TaskListRow};
@@ -87,10 +88,10 @@ pub(super) fn task_list_hit_in_view(
 }
 
 pub(super) fn task_list_hit(
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     candidate: TaskListHitCandidate,
 ) -> Option<TaskListHit> {
-    let task_id = store
+    let task_id = source
         .tasks
         .get(candidate.task_index)
         .map(|item| item.task.id.clone())?;
@@ -117,11 +118,27 @@ pub(crate) fn task_at_position(
             row,
         );
     }
+    task_row_at_position(
+        &TaskListSource::from_store(store),
+        table_state,
+        area,
+        column,
+        row,
+    )
+}
+
+pub(super) fn task_row_at_position(
+    source: &TaskListSource<'_>,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<TaskListHit> {
     let table_area = task_list_areas(area).table_area;
     let viewport_rows = table_area.height.saturating_sub(1) as usize;
-    let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
+    let projection = TaskListProjection::from_table_state(&source.view, table_state, viewport_rows);
     let candidate = task_list_hit_in_projection(&projection, table_area, column, row)?;
-    task_list_hit(store, candidate)
+    task_list_hit(source, candidate)
 }
 
 pub(crate) fn task_status_at_position(
@@ -134,44 +151,61 @@ pub(crate) fn task_status_at_position(
     if store.view_state.is_columns() {
         return None;
     }
+    task_row_status_at_position(
+        &TaskListSource::from_store(store),
+        table_state,
+        area,
+        column,
+        row,
+    )
+}
+
+pub(super) fn task_row_status_at_position(
+    source: &TaskListSource<'_>,
+    table_state: &TableState,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<TaskListHit> {
     let table_area = task_list_areas(area).table_area;
     let viewport_rows = table_area.height.saturating_sub(1) as usize;
-    let projection = TaskListProjection::from_table_state(store, table_state, viewport_rows);
+    let projection = TaskListProjection::from_table_state(&source.view, table_state, viewport_rows);
     let candidate = task_list_hit_in_projection(&projection, table_area, column, row)?;
-    let status_area = task_list_status_area(store, &projection, table_area, candidate.viewport_row);
+    let status_area =
+        task_list_status_area(source, &projection, table_area, candidate.viewport_row);
     if column < status_area.x || column >= status_area.x.saturating_add(status_area.width) {
         return None;
     }
-    task_list_hit(store, candidate)
+    task_list_hit(source, candidate)
 }
 
 pub(super) fn task_list_status_area(
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     projection: &TaskListProjection,
     table_area: Rect,
     visual_row: u16,
 ) -> Rect {
     let visible_rows = projection.visible_rows();
-    let visible_tasks = visible_task_items(store, &visible_rows);
+    let visible_tasks = visible_task_items(source, &visible_rows);
     let epic_selection = EpicSelectionContext::from_selected(
         projection
             .selected_task
-            .and_then(|index| store.tasks.get(index)),
+            .and_then(|index| source.tasks.get(index)),
     );
-    let columns =
-        task_list_columns_for_tasks(store, table_area.width < 90, &visible_tasks, epic_selection);
+    let columns = task_list_columns_for_tasks(
+        source,
+        table_area.width < 90,
+        &visible_tasks,
+        epic_selection,
+    );
     let row_area = Rect::new(
         table_area.x,
         table_area.y.saturating_add(1).saturating_add(visual_row),
         table_area.width,
         1,
     );
-    TableLayout::resolve(
-        &columns,
-        &store.config().tui.table.columns,
-        table_area.width,
-    )
-    .cell(crate::config::TableColumn::Status, row_area)
+    TableLayout::resolve(&columns, &source.table.columns, table_area.width)
+        .cell(crate::config::TableColumn::Status, row_area)
 }
 
 #[cfg(test)]

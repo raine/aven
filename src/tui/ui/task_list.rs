@@ -3,11 +3,13 @@ mod hit_test;
 mod layout;
 mod preview;
 mod sizing;
+mod source;
 mod table;
 mod view_model;
 
 pub(crate) use self::hit_test::{TaskListHit, task_at_position, task_status_at_position};
 use self::layout::{TaskListAreas, task_list_areas};
+use self::source::TaskListSource;
 use self::table::render_task_list;
 pub(crate) use self::view_model::TaskListView;
 
@@ -54,7 +56,7 @@ pub(super) fn render_tasks(
     let marked_task_ids = list.marked_task_ids().clone();
     render_task_list(
         frame,
-        store,
+        &TaskListSource::from_store(store),
         list.table_state_mut(),
         focus,
         table_area,

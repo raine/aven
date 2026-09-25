@@ -5,7 +5,11 @@ use crate::tui::store::TaskViewState;
 async fn empty_task_list_keeps_header_and_invites_first_task() {
     let store = test_store_with_tasks(Vec::new()).await;
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 80, 10));
+    let rendered = buffer_text(&render_task_list_buffer(
+        &TaskListSource::from_store(&store),
+        80,
+        10,
+    ));
 
     assert!(rendered.contains("TITLE"));
     assert!(rendered.contains("No tasks in this workspace"));
@@ -13,12 +17,12 @@ async fn empty_task_list_keeps_header_and_invites_first_task() {
     assert!(rendered.contains("Add a task"));
 }
 
-#[tokio::test]
-async fn empty_filtered_task_list_offers_to_clear_filters() {
-    let mut store = test_store_with_tasks(Vec::new()).await;
-    store.view_state.filter_modifiers.label = Some("blocked".to_string());
+#[test]
+fn empty_filtered_task_list_offers_to_clear_filters() {
+    let mut list = TaskListFixture::new(Vec::new());
+    list.view_state.filter_modifiers.label = Some("blocked".to_string());
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 64, 7));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 64, 7));
 
     assert!(rendered.contains("No tasks match these filters"));
     assert!(rendered.contains("f c"));
@@ -172,12 +176,12 @@ async fn empty_state_reports_failed_store_refresh() {
     );
 }
 
-#[tokio::test]
-async fn empty_task_list_adapts_to_short_and_narrow_bodies() {
-    let store = test_store_with_tasks(Vec::new()).await;
+#[test]
+fn empty_task_list_adapts_to_short_and_narrow_bodies() {
+    let list = TaskListFixture::new(Vec::new());
 
-    let one_body_row = buffer_text(&render_task_list_buffer(&store, 20, 2));
-    let header_only = buffer_text(&render_task_list_buffer(&store, 20, 1));
+    let one_body_row = buffer_text(&render_task_list_buffer(&list.source(), 20, 2));
+    let header_only = buffer_text(&render_task_list_buffer(&list.source(), 20, 1));
 
     assert!(one_body_row.contains("add task"));
     assert!(!one_body_row.contains("No tasks in this workspace"));
@@ -185,12 +189,34 @@ async fn empty_task_list_adapts_to_short_and_narrow_bodies() {
 }
 
 #[tokio::test]
-async fn populated_task_list_preserves_rows_without_empty_prompt() {
-    let store = test_store_with_tasks(vec![task_list_item("Ship the release")]).await;
+async fn loaded_tasks_reach_rendering_and_hit_testing_with_their_identity() {
+    let store = test_store_with_tasks(vec![
+        task_list_item("Ship the release"),
+        task_list_item("Write the notes"),
+    ])
+    .await;
+    assert_eq!(store.tasks.len(), 2);
+    let area = Rect::new(0, 0, 140, 10);
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 80, 7));
+    let rendered = buffer_text(&render_task_list_buffer(
+        &TaskListSource::from_store(&store),
+        area.width,
+        area.height,
+    ));
 
     assert!(rendered.contains("Ship the release"));
+    assert!(rendered.contains("Write the notes"));
     assert!(!rendered.contains("No tasks in this workspace"));
-    assert!(!rendered.contains("Add the first task to start building your queue."));
+    let table_state = TableState::default();
+    for (index, item) in store.tasks.iter().enumerate() {
+        let visual_row = task_visual_row(&store, index).unwrap() as u16;
+        let row = area.y + 1 + visual_row;
+        let hit = task_at_position(&store, &table_state, area, area.x + 1, row).unwrap();
+        assert_eq!(hit.task_index, index);
+        assert_eq!(hit.task_id, item.task.id);
+        let status = (area.x..area.right())
+            .find_map(|x| task_status_at_position(&store, &table_state, area, x, row))
+            .unwrap();
+        assert_eq!(status.task_id, item.task.id);
+    }
 }

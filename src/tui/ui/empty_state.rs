@@ -80,7 +80,7 @@ pub(crate) struct EmptyStateContext<'a> {
 }
 
 impl EmptyStateContext<'_> {
-    fn from_store(store: &TuiStore) -> EmptyStateContext<'_> {
+    pub(crate) fn from_store(store: &TuiStore) -> EmptyStateContext<'_> {
         EmptyStateContext {
             view_state: &store.view_state,
             open_count: store.counts.open,

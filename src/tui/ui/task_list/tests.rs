@@ -1,5 +1,7 @@
 pub(super) use super::cells::*;
+pub(super) use super::hit_test::{task_row_at_position, task_row_status_at_position};
 pub(super) use super::layout::TableLayout;
+pub(super) use super::source::TaskListSource;
 pub(super) use super::table::*;
 pub(super) use super::*;
 pub(super) use crate::choices::TaskPriority;
@@ -8,9 +10,10 @@ pub(super) use crate::operations::TaskDraft;
 pub(super) use crate::query::TaskListItem;
 pub(super) use crate::tui::overlay::TextInputKind;
 pub(super) use crate::tui::store::{
-    ClosedTaskVisibility, TaskListRenderMode, TaskOrder, TaskProjectionOrigin, TaskQuery, TaskScope,
+    ClosedTaskVisibility, TaskListRenderMode, TaskListViewRef, TaskOrder, TaskProjectionOrigin,
+    TaskQuery, TaskScope, TaskViewState,
 };
-pub(super) use crate::tui::test_support::task_list_item;
+pub(super) use crate::tui::test_support::{task_list_item, task_list_item_with_id};
 pub(super) use ratatui::Terminal;
 pub(super) use ratatui::backend::TestBackend;
 pub(super) use ratatui::layout::{Constraint, Layout, Rect};
@@ -92,15 +95,15 @@ pub(super) fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
 }
 
 pub(super) fn render_task_list_buffer(
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     width: u16,
     height: u16,
 ) -> ratatui::buffer::Buffer {
-    render_task_list_buffer_with_selection(store, width, height, false)
+    render_task_list_buffer_with_selection(source, width, height, false)
 }
 
 pub(super) fn render_task_list_buffer_with_selection(
-    store: &TuiStore,
+    source: &TaskListSource<'_>,
     width: u16,
     height: u16,
     marked: bool,
@@ -110,7 +113,7 @@ pub(super) fn render_task_list_buffer_with_selection(
     let mut table_state = TableState::default();
     table_state.select(Some(0));
     let marked_task_ids = if marked {
-        BTreeSet::from([store.tasks[0].task.id.clone()])
+        BTreeSet::from([source.tasks[0].task.id.clone()])
     } else {
         BTreeSet::new()
     };
@@ -118,7 +121,7 @@ pub(super) fn render_task_list_buffer_with_selection(
         .draw(|frame| {
             render_task_list(
                 frame,
-                store,
+                source,
                 &mut table_state,
                 Focus::Tasks,
                 frame.area(),
@@ -128,6 +131,51 @@ pub(super) fn render_task_list_buffer_with_selection(
         })
         .unwrap();
     terminal.backend().buffer().clone()
+}
+
+/// Already-loaded task list values rendered through the production table.
+pub(super) struct TaskListFixture {
+    pub(super) tasks: Vec<TaskListItem>,
+    pub(super) view_state: TaskViewState,
+    pub(super) table: crate::config::TaskTableConfig,
+    pub(super) counts: crate::query::SidebarCounts,
+}
+
+impl TaskListFixture {
+    pub(super) fn new(tasks: Vec<TaskListItem>) -> Self {
+        let ids = tasks
+            .iter()
+            .map(|item| &item.task.id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), tasks.len(), "fixture task IDs must be unique");
+        Self {
+            tasks,
+            view_state: TaskViewState::default(),
+            table: Default::default(),
+            counts: Default::default(),
+        }
+    }
+
+    pub(super) fn source(&self) -> TaskListSource<'_> {
+        TaskListSource {
+            tasks: &self.tasks,
+            view: TaskListViewRef::Owned(TaskListView::from_tasks(
+                self.view_state.render_mode(),
+                &self.tasks,
+                &self.view_state.expanded_epic_ids,
+            )),
+            view_state: &self.view_state,
+            table: &self.table,
+            empty_state: crate::tui::ui::empty_state::EmptyStateContext {
+                view_state: &self.view_state,
+                open_count: self.counts.open,
+                done_count: self.counts.done,
+                upcoming_count: self.counts.upcoming,
+                has_tasks: !self.tasks.is_empty(),
+                load_failed: false,
+            },
+        }
+    }
 }
 
 pub(super) async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore {
@@ -145,7 +193,7 @@ pub(super) async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore 
     let labels = tasks
         .iter()
         .flat_map(|item| item.labels.iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect::<BTreeSet<_>>();
     for label in labels {
         store.create_label(label).await.unwrap();
     }
@@ -212,18 +260,16 @@ pub(super) fn epic_parent_and_child() -> (TaskListItem, TaskListItem) {
     (parent, child)
 }
 
-pub(super) async fn epic_test_store(expanded: bool) -> TuiStore {
-    let mut store = test_store_with_tasks(Vec::new()).await;
+pub(super) fn epic_fixture(expanded: bool) -> TaskListFixture {
     let (parent, child) = epic_parent_and_child();
+    let mut list = TaskListFixture::new(vec![parent, child]);
     if expanded {
-        store
-            .view_state
+        list.view_state
             .expanded_epic_ids
-            .insert(parent.task.id.clone());
+            .insert(list.tasks[0].task.id.clone());
     }
-    store.tasks = vec![parent, child].into();
-    store.view_state.query = TaskQuery::Epics;
-    store
+    list.view_state.query = TaskQuery::Epics;
+    list
 }
 
 pub(super) fn text_in_cell(buffer: &ratatui::buffer::Buffer, area: Rect) -> String {

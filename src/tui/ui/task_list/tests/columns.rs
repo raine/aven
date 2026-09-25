@@ -4,11 +4,11 @@ use super::*;
 use crate::tui::widgets::priority_icon;
 use unicode_width::UnicodeWidthStr;
 
-#[tokio::test]
-async fn ref_header_aligns_with_task_refs() {
-    let mut store = test_store_with_tasks(vec![task_list_item("Aligned ref")]).await;
-    store.view_state.query = TaskQuery::All;
-    let buffer = render_task_list_buffer(&store, 80, 4);
+#[test]
+fn ref_header_aligns_with_task_refs() {
+    let mut list = TaskListFixture::new(vec![task_list_item("Aligned ref")]);
+    list.view_state.query = TaskQuery::All;
+    let buffer = render_task_list_buffer(&list.source(), 80, 4);
     let header = text_in_cell(&buffer, Rect::new(0, 0, 80, 1));
     let task = text_in_cell(&buffer, Rect::new(0, 1, 80, 1));
     let header_prefix = header.split_once("REF").unwrap().0;
@@ -17,27 +17,24 @@ async fn ref_header_aligns_with_task_refs() {
     assert_eq!(header_prefix.width(), task_prefix.width());
 }
 
-#[tokio::test]
-async fn reordered_columns_align_headers_content_and_status_hits() {
+#[test]
+fn reordered_columns_align_headers_content_and_status_hits() {
     for width in [64, 120] {
         let mut item = task_list_item("Short title");
         item.labels = vec!["ios".to_string()];
         item.has_notes = true;
         item.task.priority = TaskPriority::High;
         item.task.due_on = Some("2999-01-01".to_string());
-        let mut store = test_store_with_tasks(vec![item.clone()]).await;
-        store.tasks = vec![item].into();
-        store.view_state.query = TaskQuery::All;
+        let mut list = TaskListFixture::new(vec![item]);
+        list.view_state.query = TaskQuery::All;
         for rotation in 0..9 {
-            let mut config = store.config().clone();
-            config.tui.table.columns = TableColumn::ALL.to_vec();
-            config.tui.table.columns.rotate_left(rotation);
-            let order = config.tui.table.columns.clone();
-            store.set_config(config);
+            list.table.columns = TableColumn::ALL.to_vec();
+            list.table.columns.rotate_left(rotation);
+            let order = list.table.columns.clone();
             let area = Rect::new(5, 2, width, 5);
             let mut state = TableState::default();
             let model = build_task_list_render_model(
-                &store,
+                &list.source(),
                 &mut state,
                 Focus::Tasks,
                 area,
@@ -56,7 +53,7 @@ async fn reordered_columns_align_headers_content_and_status_hits() {
                 );
                 previous_right = cell.right();
             }
-            let buffer = render_task_list_buffer(&store, width, 5);
+            let buffer = render_task_list_buffer(&list.source(), width, 5);
             for (column, header, content) in [
                 (TableColumn::Ref, "REF", "APP-"),
                 (TableColumn::Title, "TITLE", "Short title"),
@@ -84,32 +81,29 @@ async fn reordered_columns_align_headers_content_and_status_hits() {
             let row = Rect::new(area.x, area.y + 1, width, 1);
             let status = model.layout.cell(TableColumn::Status, row);
             for x in area.x..area.right() {
-                let hit = task_status_at_position(&store, &state, area, x, row.y);
+                let hit = task_row_status_at_position(&list.source(), &state, area, x, row.y);
                 assert_eq!(hit.is_some(), x >= status.x && x < status.right());
                 if let Some(hit) = hit {
-                    assert_eq!(hit.task_id, store.tasks[0].task.id);
+                    assert_eq!(hit.task_id, list.tasks[0].task.id);
                 }
             }
         }
     }
 }
 
-#[tokio::test]
-async fn configured_subset_hides_columns_and_keeps_status_geometry() {
+#[test]
+fn configured_subset_hides_columns_and_keeps_status_geometry() {
     let mut item = task_list_item("Visible title");
     item.labels = vec!["ios".to_string()];
     item.has_notes = true;
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Title, TableColumn::Status, TableColumn::Time];
-    store.set_config(config);
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
+    list.table.columns = vec![TableColumn::Title, TableColumn::Status, TableColumn::Time];
 
     let area = Rect::new(0, 0, 120, 5);
     let mut state = TableState::default();
     let model = build_task_list_render_model(
-        &store,
+        &list.source(),
         &mut state,
         Focus::Tasks,
         area,
@@ -131,7 +125,7 @@ async fn configured_subset_hides_columns_and_keeps_status_geometry() {
         assert_eq!(model.layout.cell(column, area).width, 0);
     }
 
-    let rendered = buffer_text(&render_task_list_buffer(&store, 120, 5));
+    let rendered = buffer_text(&render_task_list_buffer(&list.source(), 120, 5));
     assert!(rendered.contains("TITLE"));
     assert!(rendered.contains("STATUS"));
     assert!(rendered.contains("Visible title"));
@@ -141,15 +135,14 @@ async fn configured_subset_hides_columns_and_keeps_status_geometry() {
     assert!(!rendered.contains("P"));
 }
 
-#[tokio::test]
-async fn fallback_state_gutter_preserves_single_column_content() {
+#[test]
+fn fallback_state_gutter_preserves_single_column_content() {
     let mut item = task_list_item("Fallback title");
     item.labels = vec!["ios".to_string(), "ux".to_string()];
     item.has_notes = true;
     item.task.priority = TaskPriority::High;
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
 
     for (column, expected) in [
         (TableColumn::Status, "todo"),
@@ -158,23 +151,21 @@ async fn fallback_state_gutter_preserves_single_column_content() {
         (TableColumn::Metadata, "✎"),
         (TableColumn::Project, "app"),
     ] {
-        let mut config = store.config().clone();
-        config.tui.table.columns = vec![column];
-        store.set_config(config);
+        list.table.columns = vec![column];
         let area = Rect::new(0, 0, 120, 4);
         let mut state = TableState::default();
         state.select(Some(0));
         let model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut state,
             Focus::Tasks,
             area,
             None,
-            &BTreeSet::from([store.tasks[0].task.id.clone()]),
+            &BTreeSet::from([list.tasks[0].task.id.clone()]),
         );
         assert_eq!(model.layout.state_column(), None);
         assert_eq!(model.layout.state_gutter(area).width, 3);
-        let buffer = render_task_list_buffer_with_selection(&store, 120, 4, true);
+        let buffer = render_task_list_buffer_with_selection(&list.source(), 120, 4, true);
         let state_area = model.layout.state_gutter(Rect::new(0, 1, 120, 1));
         assert_eq!(text_in_cell(&buffer, state_area), "›● ");
         let content_area = model.layout.cell(column, Rect::new(0, 1, 120, 1));
@@ -183,7 +174,7 @@ async fn fallback_state_gutter_preserves_single_column_content() {
         assert!(content.contains(expected), "{column:?}: {content:?}");
         if column == TableColumn::Status {
             for x in 0..120 {
-                let hit = task_status_at_position(&store, &state, area, x, 1);
+                let hit = task_row_status_at_position(&list.source(), &state, area, x, 1);
                 assert_eq!(
                     hit.is_some(),
                     x >= content_area.x && x < content_area.right(),
@@ -192,20 +183,17 @@ async fn fallback_state_gutter_preserves_single_column_content() {
             }
         }
     }
-
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Time];
-    store.set_config(config);
-    let buffer = render_task_list_buffer_with_selection(&store, 120, 4, true);
+    list.table.columns = vec![TableColumn::Time];
+    let buffer = render_task_list_buffer_with_selection(&list.source(), 120, 4, true);
     let mut state = TableState::default();
     state.select(Some(0));
     let model = build_task_list_render_model(
-        &store,
+        &list.source(),
         &mut state,
         Focus::Tasks,
         Rect::new(0, 0, 120, 4),
         None,
-        &BTreeSet::from([store.tasks[0].task.id.clone()]),
+        &BTreeSet::from([list.tasks[0].task.id.clone()]),
     );
     let time = text_in_cell(
         &buffer,
@@ -216,36 +204,33 @@ async fn fallback_state_gutter_preserves_single_column_content() {
     assert!(!time.trim().is_empty(), "time content was clipped");
 }
 
-#[tokio::test]
-async fn fallback_state_gutter_keeps_singletons_usable_at_narrow_widths() {
+#[test]
+fn fallback_state_gutter_keeps_singletons_usable_at_narrow_widths() {
     let mut item = task_list_item("Narrow fallback");
     item.task.priority = TaskPriority::High;
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
 
     for column in [
         TableColumn::Status,
         TableColumn::Priority,
         TableColumn::Time,
     ] {
-        let mut config = store.config().clone();
-        config.tui.table.columns = vec![column];
-        store.set_config(config);
+        list.table.columns = vec![column];
         let area = Rect::new(0, 0, 16, 4);
         let mut state = TableState::default();
         state.select(Some(0));
         let model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut state,
             Focus::Tasks,
             area,
             None,
-            &BTreeSet::from([store.tasks[0].task.id.clone()]),
+            &BTreeSet::from([list.tasks[0].task.id.clone()]),
         );
         let content_area = model.layout.cell(column, Rect::new(0, 1, 16, 1));
         assert!(content_area.width > 0, "{column:?}");
-        let buffer = render_task_list_buffer_with_selection(&store, 16, 4, true);
+        let buffer = render_task_list_buffer_with_selection(&list.source(), 16, 4, true);
         let content = text_in_cell(&buffer, content_area);
         assert!(!content.trim().is_empty(), "{column:?}: {content:?}");
         assert_eq!(
@@ -256,21 +241,18 @@ async fn fallback_state_gutter_keeps_singletons_usable_at_narrow_widths() {
     }
 }
 
-#[tokio::test]
-async fn empty_content_singletons_keep_a_visible_state_target() {
+#[test]
+fn empty_content_singletons_keep_a_visible_state_target() {
     let mut item = task_list_item("Fallback target");
     item.labels = vec!["ios".to_string()];
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
     for column in [
         TableColumn::Metadata,
         TableColumn::Priority,
         TableColumn::Labels,
     ] {
-        let mut config = store.config().clone();
-        config.tui.table.columns = vec![column];
-        store.set_config(config);
+        list.table.columns = vec![column];
         let width = if column == TableColumn::Labels {
             24
         } else {
@@ -280,19 +262,19 @@ async fn empty_content_singletons_keep_a_visible_state_target() {
         let mut state = TableState::default();
         state.select(Some(0));
         let model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut state,
             Focus::Tasks,
             area,
             None,
-            &BTreeSet::from([store.tasks[0].task.id.clone()]),
+            &BTreeSet::from([list.tasks[0].task.id.clone()]),
         );
         assert_eq!(model.layout.state_column(), None);
         assert!(model.layout.state_gutter(area).width > 0, "{column:?}");
         if column != TableColumn::Labels || width < 90 {
             assert_eq!(model.layout.cell(column, area).width, 0, "{column:?}");
         }
-        let buffer = render_task_list_buffer_with_selection(&store, width, 4, true);
+        let buffer = render_task_list_buffer_with_selection(&list.source(), width, 4, true);
         assert_eq!(
             text_in_cell(
                 &buffer,
@@ -304,20 +286,17 @@ async fn empty_content_singletons_keep_a_visible_state_target() {
     }
 }
 
-#[tokio::test]
-async fn hidden_ref_keeps_selection_and_marks_on_title() {
+#[test]
+fn hidden_ref_keeps_selection_and_marks_on_title() {
     let item = task_list_item("Visible title");
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Title, TableColumn::Status];
-    store.set_config(config);
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
+    list.table.columns = vec![TableColumn::Title, TableColumn::Status];
     let area = Rect::new(0, 0, 80, 5);
-    let columns = task_list_columns(&store, false);
-    let layout = TableLayout::resolve(&columns, &store.config().tui.table.columns, area.width);
+    let columns = task_list_columns(&list.source(), false);
+    let layout = TableLayout::resolve(&columns, &list.table.columns, area.width);
     let cells = build_task_row_cells_for_columns(
-        &store.tasks[0],
+        &list.tasks[0],
         TaskTimeContext {
             now_seconds: 0,
             render_mode: TaskListRenderMode::Flat,
@@ -351,22 +330,19 @@ async fn hidden_ref_keeps_selection_and_marks_on_title() {
 
     let mut state = TableState::default();
     state.select(Some(0));
-    assert!(task_at_position(&store, &state, area, area.x + 1, area.y + 1).is_some());
+    assert!(task_row_at_position(&list.source(), &state, area, area.x + 1, area.y + 1).is_some());
 }
 
-#[tokio::test]
-async fn hidden_status_has_no_mouse_target_but_rows_remain_selectable() {
+#[test]
+fn hidden_status_has_no_mouse_target_but_rows_remain_selectable() {
     let item = task_list_item("No status target");
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Ref, TableColumn::Title, TableColumn::Time];
-    store.set_config(config);
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
+    list.table.columns = vec![TableColumn::Ref, TableColumn::Title, TableColumn::Time];
     let area = Rect::new(3, 2, 80, 5);
     let mut state = TableState::default();
     let model = build_task_list_render_model(
-        &store,
+        &list.source(),
         &mut state,
         Focus::Tasks,
         area,
@@ -376,25 +352,24 @@ async fn hidden_status_has_no_mouse_target_but_rows_remain_selectable() {
     assert_eq!(model.layout.cell(TableColumn::Status, area).width, 0);
     for row in area.y..area.bottom() {
         for column in area.x..area.right() {
-            assert!(task_status_at_position(&store, &state, area, column, row).is_none());
+            assert!(
+                task_row_status_at_position(&list.source(), &state, area, column, row).is_none()
+            );
         }
     }
-    assert!(task_at_position(&store, &state, area, area.x + 1, area.y + 1).is_some());
+    assert!(task_row_at_position(&list.source(), &state, area, area.x + 1, area.y + 1).is_some());
 }
 
-#[tokio::test]
-async fn hidden_columns_fit_a_narrow_table_without_phantom_gaps() {
+#[test]
+fn hidden_columns_fit_a_narrow_table_without_phantom_gaps() {
     let item = task_list_item("A narrow title");
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Title, TableColumn::Status, TableColumn::Time];
-    store.set_config(config);
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
+    list.table.columns = vec![TableColumn::Title, TableColumn::Status, TableColumn::Time];
     let area = Rect::new(0, 0, 24, 4);
     let mut state = TableState::default();
     let model = build_task_list_render_model(
-        &store,
+        &list.source(),
         &mut state,
         Focus::Tasks,
         area,
@@ -409,11 +384,11 @@ async fn hidden_columns_fit_a_narrow_table_without_phantom_gaps() {
     assert!(time.width > 0);
     assert_eq!(status.x, title.right() + 1);
     assert_eq!(time.x, status.right() + 1);
-    assert!(buffer_text(&render_task_list_buffer(&store, 24, 4)).contains("STATUS"));
+    assert!(buffer_text(&render_task_list_buffer(&list.source(), 24, 4)).contains("STATUS"));
 }
 
-#[tokio::test]
-async fn reordered_time_column_keeps_contextual_headings_and_values() {
+#[test]
+fn reordered_time_column_keeps_contextual_headings_and_values() {
     for (query, due_order, deferred, heading) in [
         (TaskQuery::Queue, false, false, "IDLE"),
         (TaskQuery::Upcoming, false, true, "WHEN"),
@@ -425,20 +400,17 @@ async fn reordered_time_column_keeps_contextual_headings_and_values() {
         if deferred {
             item.task.available_at = Some("2999-01-01T00:00:00Z".to_string());
         }
-        let mut store = test_store_with_tasks(vec![item.clone()]).await;
-        store.tasks = vec![item].into();
-        store.view_state.query = query;
+        let mut list = TaskListFixture::new(vec![item]);
+        list.view_state.query = query;
         if due_order {
-            store.view_state.order = crate::tui::store::TaskOrder::DueOn;
+            list.view_state.order = crate::tui::store::TaskOrder::DueOn;
         }
-        let mut config = store.config().clone();
-        config.tui.table.columns.rotate_right(1);
-        store.set_config(config);
-        let buffer = render_task_list_buffer(&store, 120, 8);
+        list.table.columns.rotate_right(1);
+        let buffer = render_task_list_buffer(&list.source(), 120, 8);
         assert!(text_in_cell(&buffer, Rect::new(0, 0, 4, 1)).contains(heading));
         let mut state = TableState::default();
         let model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut state,
             Focus::Tasks,
             Rect::new(0, 0, 120, 8),
@@ -457,26 +429,22 @@ async fn reordered_time_column_keeps_contextual_headings_and_values() {
     }
 }
 
-#[tokio::test]
-async fn explicit_default_order_preserves_rendering() {
-    let mut store = epic_test_store(true).await;
+#[test]
+fn explicit_default_order_preserves_rendering() {
+    let mut list = epic_fixture(true);
     for width in [40, 64, 120] {
-        let default = render_task_list_buffer(&store, width, 5);
-        let mut config = store.config().clone();
-        config.tui.table.columns = TableColumn::DEFAULT.to_vec();
-        store.set_config(config);
-        assert_eq!(default, render_task_list_buffer(&store, width, 5));
+        let default = render_task_list_buffer(&list.source(), width, 5);
+        list.table.columns = TableColumn::DEFAULT.to_vec();
+        assert_eq!(default, render_task_list_buffer(&list.source(), width, 5));
     }
 }
 
-#[tokio::test]
-async fn due_column_shows_every_row_deadline_across_views_and_ordering() {
-    let mut store = epic_test_store(true).await;
-    store.tasks[0].task.due_on = Some("2999-01-01".to_string());
-    store.tasks[1].task.due_on = Some("2999-02-02".to_string());
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Ref, TableColumn::Title, TableColumn::Due];
-    store.set_config(config);
+#[test]
+fn due_column_shows_every_row_deadline_across_views_and_ordering() {
+    let mut list = epic_fixture(true);
+    list.tasks[0].task.due_on = Some("2999-01-01".to_string());
+    list.tasks[1].task.due_on = Some("2999-02-02".to_string());
+    list.table.columns = vec![TableColumn::Ref, TableColumn::Title, TableColumn::Due];
 
     for (query, order) in [
         (TaskQuery::Epics, TaskOrder::Updated),
@@ -484,19 +452,19 @@ async fn due_column_shows_every_row_deadline_across_views_and_ordering() {
         (TaskQuery::All, TaskOrder::Created),
         (TaskQuery::All, TaskOrder::DueOn),
     ] {
-        store.view_state.query = query;
-        store.view_state.order = order;
+        list.view_state.query = query;
+        list.view_state.order = order;
         let mut state = TableState::default();
         let area = Rect::new(0, 0, 80, 5);
         let model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut state,
             Focus::Tasks,
             area,
             None,
             &BTreeSet::new(),
         );
-        let buffer = render_task_list_buffer(&store, area.width, area.height);
+        let buffer = render_task_list_buffer(&list.source(), area.width, area.height);
         let due = model.layout.cell(TableColumn::Due, area);
         assert_eq!(
             text_in_cell(&buffer, due).trim(),
@@ -523,27 +491,24 @@ async fn due_column_shows_every_row_deadline_across_views_and_ordering() {
     }
 }
 
-#[tokio::test]
-async fn due_column_leaves_undated_tasks_blank() {
+#[test]
+fn due_column_leaves_undated_tasks_blank() {
     let item = task_list_item("no deadline");
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Title, TableColumn::Due];
-    store.set_config(config);
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
+    list.table.columns = vec![TableColumn::Title, TableColumn::Due];
 
     let area = Rect::new(0, 0, 80, 4);
     let mut state = TableState::default();
     let model = build_task_list_render_model(
-        &store,
+        &list.source(),
         &mut state,
         Focus::Tasks,
         area,
         None,
         &BTreeSet::new(),
     );
-    let buffer = render_task_list_buffer(&store, area.width, area.height);
+    let buffer = render_task_list_buffer(&list.source(), area.width, area.height);
     let due = model.layout.cell(TableColumn::Due, area);
     assert_eq!(text_in_cell(&buffer, due).trim(), "DUE");
     assert!(
@@ -553,30 +518,27 @@ async fn due_column_leaves_undated_tasks_blank() {
     );
 }
 
-#[tokio::test]
-async fn dedicated_due_column_keeps_time_contextual() {
+#[test]
+fn dedicated_due_column_keeps_time_contextual() {
     let mut item = task_list_item("overdue deadline");
     item.task.due_on = Some("2000-01-01".to_string());
-    let mut store = test_store_with_tasks(vec![item.clone()]).await;
-    store.tasks = vec![item].into();
-    store.view_state.query = TaskQuery::All;
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Title, TableColumn::Due, TableColumn::Time];
-    store.set_config(config);
+    let mut list = TaskListFixture::new(vec![item]);
+    list.view_state.query = TaskQuery::All;
+    list.table.columns = vec![TableColumn::Title, TableColumn::Due, TableColumn::Time];
 
     let area = Rect::new(0, 0, 80, 4);
     for order in [TaskOrder::Created, TaskOrder::DueOn] {
-        store.view_state.order = order;
+        list.view_state.order = order;
         let mut state = TableState::default();
         let model = build_task_list_render_model(
-            &store,
+            &list.source(),
             &mut state,
             Focus::Tasks,
             area,
             None,
             &BTreeSet::new(),
         );
-        let buffer = render_task_list_buffer(&store, area.width, area.height);
+        let buffer = render_task_list_buffer(&list.source(), area.width, area.height);
         let due = model.layout.cell(TableColumn::Due, area);
         let time = model.layout.cell(TableColumn::Time, area);
         assert_eq!(text_in_cell(&buffer, due).trim(), "DUE", "{order:?}");
@@ -587,21 +549,18 @@ async fn dedicated_due_column_keeps_time_contextual() {
         assert_eq!(row.cells[TableColumn::Due as usize].to_string(), "late!");
         assert_ne!(row.cells[TableColumn::Time as usize].to_string(), "late!");
     }
-
-    let mut config = store.config().clone();
-    config.tui.table.columns = vec![TableColumn::Title, TableColumn::Time];
-    store.set_config(config);
-    store.view_state.order = TaskOrder::DueOn;
+    list.table.columns = vec![TableColumn::Title, TableColumn::Time];
+    list.view_state.order = TaskOrder::DueOn;
     let mut state = TableState::default();
     let model = build_task_list_render_model(
-        &store,
+        &list.source(),
         &mut state,
         Focus::Tasks,
         area,
         None,
         &BTreeSet::new(),
     );
-    let buffer = render_task_list_buffer(&store, area.width, area.height);
+    let buffer = render_task_list_buffer(&list.source(), area.width, area.height);
     let time = model.layout.cell(TableColumn::Time, area);
     assert_eq!(text_in_cell(&buffer, time).trim(), "DUE");
     let TaskListRenderRow::Task(row) = &model.rows[0] else {

@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::query::TaskListItem;
-use crate::tui::store::{TaskListRenderMode, TuiStore};
+use crate::tui::store::TaskListRenderMode;
 use ratatui::widgets::TableState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,34 +30,14 @@ pub(crate) struct TaskListView {
     visual_rows: Vec<Option<usize>>,
 }
 
-#[derive(Debug)]
-pub(super) enum TaskListProjectionView<'a> {
-    #[cfg(test)]
-    Borrowed(&'a TaskListView),
-    Cached(crate::tui::store::TaskListViewRef<'a>),
-}
-
-impl std::ops::Deref for TaskListProjectionView<'_> {
-    type Target = TaskListView;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            #[cfg(test)]
-            Self::Borrowed(view) => view,
-            Self::Cached(view) => view,
-        }
-    }
-}
-
 pub(super) struct TaskListProjection<'a> {
-    pub(super) view: TaskListProjectionView<'a>,
+    pub(super) view: &'a TaskListView,
     pub(super) selected_task: Option<usize>,
     pub(super) scroll: usize,
     pub(super) viewport_rows: usize,
 }
 
 impl<'a> TaskListProjection<'a> {
-    #[cfg(test)]
     pub(super) fn from_view(
         view: &'a TaskListView,
         offset: usize,
@@ -69,7 +49,7 @@ impl<'a> TaskListProjection<'a> {
             .unwrap_or(0);
         let scroll = task_list_scroll(offset, selected_row, view, viewport_rows);
         Self {
-            view: TaskListProjectionView::Borrowed(view),
+            view,
             selected_task,
             scroll,
             viewport_rows,
@@ -77,26 +57,20 @@ impl<'a> TaskListProjection<'a> {
     }
 
     pub(super) fn from_table_state(
-        store: &'a TuiStore,
+        view: &'a TaskListView,
         table_state: &TableState,
         viewport_rows: usize,
     ) -> Self {
-        let view = store.task_list_view();
-        let selected_task = table_state.selected();
-        let selected_row = selected_task
-            .map(|selected| view.visual_row(selected))
-            .unwrap_or(0);
-        let scroll = task_list_scroll(table_state.offset(), selected_row, &view, viewport_rows);
-        Self {
-            view: TaskListProjectionView::Cached(view),
-            selected_task,
-            scroll,
+        Self::from_view(
+            view,
+            table_state.offset(),
+            table_state.selected(),
             viewport_rows,
-        }
+        )
     }
 
     pub(super) fn visible_rows(&self) -> Vec<(usize, &TaskListRow)> {
-        task_list_visible_rows(&self.view, self.scroll, self.viewport_rows)
+        task_list_visible_rows(self.view, self.scroll, self.viewport_rows)
     }
 
     pub(super) fn row_count(&self) -> usize {
@@ -104,7 +78,7 @@ impl<'a> TaskListProjection<'a> {
     }
 
     pub(super) fn top_scroll(&self) -> usize {
-        task_list_top_scroll(&self.view)
+        task_list_top_scroll(self.view)
     }
 
     pub(super) fn commit_scroll(&self, table_state: &mut TableState) {
