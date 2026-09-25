@@ -182,14 +182,17 @@ impl SyncOperations {
         )));
     }
 
-    /// Drops a recorded failure of `kind` once a later attempt succeeds.
-    pub(super) fn clear_failure(&mut self, kind: OperationKind) {
-        if matches!(
+    /// Drops a recorded failure of `kind`, such as once a later attempt
+    /// succeeds, and reports whether there was one.
+    pub(super) fn clear_failure(&mut self, kind: OperationKind) -> bool {
+        let failed = matches!(
             &self.activity.last,
             Some(OperationResult::Failed(failure)) if failure.kind == kind
-        ) {
+        );
+        if failed {
             self.activity.last = None;
         }
+        failed
     }
 
     pub(super) fn has_setup_invitation(&self) -> bool {

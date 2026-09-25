@@ -80,8 +80,9 @@ asks for the same invitation again.
 
 Setup claims the server before the database is marked as syncing. If the server
 already belongs to another sync, or definitely rejects the invitation, the
-database remains local-only and no setup snapshot is frozen. To use an existing
-sync, join it from an empty database instead. A database fenced by an older
+database remains local-only and no setup snapshot is frozen. After a rejected
+invitation, the Sync dialog offers **Set up sync** to paste a new one. To use an
+existing sync, join it from an empty database instead. A database fenced by an older
 setup attempt can report that recovery is required after the server confirms it
 belongs to another sync. Local editing and export still work; back it up and
 restore it to a new path to recover a local-only copy.

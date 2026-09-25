@@ -118,6 +118,15 @@ impl App {
                 self.cancel_pairing_invitation().await?;
                 home
             }
+            // On the top-level page, Back dismisses a setup refusal to
+            // return to the usual choices, or closes the dialog when there
+            // is nothing to dismiss.
+            SyncAction::Back if state.page == SyncPage::Home => {
+                if !self.sync_ops.clear_failure(OperationKind::Setup) {
+                    return Ok(());
+                }
+                home
+            }
             SyncAction::Back => home,
             SyncAction::SetUp => invitation_page(InvitationKind::Setup),
             SyncAction::ResumeSetup if matches!(state.page, SyncPage::Invitation { .. }) => {

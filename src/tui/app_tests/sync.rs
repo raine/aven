@@ -422,3 +422,65 @@ async fn removing_requires_confirmation_targets_the_full_id_and_survives_closing
     );
     settle_operation(&mut app).await;
 }
+
+fn record_setup_refusal(app: &mut App, code: &str) {
+    app.sync_ops.activity.last = Some(crate::tui::sync_operations::OperationResult::Failed(
+        crate::tui::sync_operations::OperationFailure {
+            kind: crate::tui::sync_operations::OperationKind::Setup,
+            message: "Setup was refused.".to_string(),
+            details: format!("error {code}"),
+        },
+    ));
+}
+
+#[tokio::test]
+async fn enter_on_back_after_a_setup_refusal_returns_to_the_usual_choices() {
+    let mut app = test_app().await;
+    record_setup_refusal(&mut app, "sync-setup-storage-already-claimed");
+    app.show_sync_dialog();
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(app.sync_ops.activity.last.is_none());
+    let Some(OverlayState::Sync(state)) = &app.overlay else {
+        panic!("expected the Sync dialog");
+    };
+    let actions =
+        crate::tui::overlay::sync_actions(state, &app.store.sync_status, &app.sync_ops.activity);
+    assert_eq!(
+        actions,
+        [
+            crate::tui::overlay::SyncAction::SetUp,
+            crate::tui::overlay::SyncAction::Join
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_setup_invitation_offers_pasting_a_new_one() {
+    let mut app = test_app().await;
+    record_setup_refusal(&mut app, "sync-setup-invitation-rejected");
+    app.show_sync_dialog();
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        sync_page(&app),
+        crate::tui::overlay::SyncPage::Invitation {
+            kind: crate::tui::overlay::InvitationKind::Setup,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn enter_on_back_closes_the_dialog_when_recovery_is_required() {
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetupRecoveryRequired;
+    app.show_sync_dialog();
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(app.overlay.is_none());
+}

@@ -212,18 +212,12 @@ pub(crate) fn sync_actions(
                 }
                 actions
             }
-            LocalPhase::NotSetUp
-                if matches!(
-                    activity.last,
-                    Some(OperationResult::Failed(ref failure))
-                        if failure.kind == OperationKind::Setup
-                            && (failure.details.contains("sync-setup-storage-already-claimed")
-                                || failure.details.contains("sync-setup-invitation-rejected"))
-                ) =>
-            {
-                vec![SyncAction::Back]
-            }
-            LocalPhase::NotSetUp => vec![SyncAction::SetUp, SyncAction::Join],
+            LocalPhase::NotSetUp => match setup_refusal(activity) {
+                // A fresh invitation for unclaimed storage can succeed.
+                Some(SetupRefusal::Invitation) => vec![SyncAction::SetUp, SyncAction::Back],
+                Some(SetupRefusal::StorageClaimed) => vec![SyncAction::Back],
+                None => vec![SyncAction::SetUp, SyncAction::Join],
+            },
             LocalPhase::SetupIncomplete => vec![SyncAction::ResumeSetup],
             LocalPhase::SetupRecoveryRequired => vec![SyncAction::Back],
             LocalPhase::JoinIncomplete => {
@@ -243,6 +237,32 @@ pub(crate) fn sync_actions(
         SyncPage::ConfirmJoin { .. } => vec![SyncAction::Back, SyncAction::ConfirmJoin],
         SyncPage::Devices => device_actions(activity),
         SyncPage::ConfirmRemove { .. } => vec![SyncAction::Cancel, SyncAction::ConfirmRemove],
+    }
+}
+
+enum SetupRefusal {
+    Invitation,
+    StorageClaimed,
+}
+
+/// A definite server refusal of the last setup attempt, which left this
+/// database local-only.
+fn setup_refusal(activity: &SyncActivity) -> Option<SetupRefusal> {
+    let Some(OperationResult::Failed(failure)) = &activity.last else {
+        return None;
+    };
+    if failure.kind != OperationKind::Setup {
+        return None;
+    }
+    if failure
+        .details
+        .contains("sync-setup-storage-already-claimed")
+    {
+        Some(SetupRefusal::StorageClaimed)
+    } else if failure.details.contains("sync-setup-invitation-rejected") {
+        Some(SetupRefusal::Invitation)
+    } else {
+        None
     }
 }
 
