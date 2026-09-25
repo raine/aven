@@ -435,6 +435,9 @@ pub enum ClaimRefusal {
     /// The credential does not authorize this claim; `claimed` records
     /// whether storage already held a claim.
     Unauthorized { claimed: bool },
+    /// Unclaimed storage whose setup verifier expired, refusing the exact
+    /// secret that verifier was issued for.
+    Expired,
     /// Storage holds a different claim.
     Conflict,
     /// The stored claim was retired by publication.
@@ -445,6 +448,7 @@ impl fmt::Display for ClaimRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Unauthorized { .. } => "error seed-claim-unauthorized",
+            Self::Expired => "error seed-claim-setup-expired",
             Self::Conflict => "error seed-claim-conflict",
             Self::Retired => "error seed-claim-retired",
         })

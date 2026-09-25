@@ -932,13 +932,15 @@ pub(crate) async fn await_join(
 fn definite_setup_refusal(error: &anyhow::Error) -> bool {
     matches!(
         error.to_string().as_str(),
-        "error bootstrap-storage-already-claimed" | "error bootstrap-setup-invitation-rejected"
+        "error bootstrap-storage-already-claimed"
+            | "error bootstrap-setup-invitation-rejected"
+            | "error bootstrap-setup-invitation-expired"
     )
 }
 
 fn explain_fenced_setup_refusal(error: anyhow::Error) -> anyhow::Error {
     match error.to_string().as_str() {
-        "error bootstrap-setup-invitation-rejected" => error.context(
+        "error bootstrap-setup-invitation-rejected" | "error bootstrap-setup-invitation-expired" => error.context(
             "error sync-setup-fenced-invitation-rejected hint=\"this setup is already frozen; resume with the invitation that started setup or the newest invitation for that same server storage; if neither is available, back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
         ),
         _ => error,
@@ -952,6 +954,9 @@ fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
         ),
         "error bootstrap-setup-invitation-rejected" => error.context(
             "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; run `aven server setup` for this unclaimed storage and try its current invitation\"",
+        ),
+        "error bootstrap-setup-invitation-expired" => error.context(
+            "error sync-setup-invitation-expired hint=\"this setup invitation expired; nothing here was changed; run `aven server setup` on the server again for a new invitation\"",
         ),
         _ => error,
     }

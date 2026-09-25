@@ -458,19 +458,27 @@ async fn enter_on_back_after_a_setup_refusal_returns_to_the_usual_choices() {
 
 #[tokio::test]
 async fn a_refused_setup_invitation_offers_pasting_a_new_one() {
-    let mut app = test_app().await;
-    record_setup_refusal(&mut app, "sync-setup-invitation-rejected");
-    app.show_sync_dialog();
+    for code in [
+        "sync-setup-invitation-rejected",
+        "sync-setup-invitation-expired",
+    ] {
+        let mut app = test_app().await;
+        record_setup_refusal(&mut app, code);
+        app.show_sync_dialog();
 
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    assert!(matches!(
-        sync_page(&app),
-        crate::tui::overlay::SyncPage::Invitation {
-            kind: crate::tui::overlay::InvitationKind::Setup,
-            ..
-        }
-    ));
+        assert!(
+            matches!(
+                sync_page(&app),
+                crate::tui::overlay::SyncPage::Invitation {
+                    kind: crate::tui::overlay::InvitationKind::Setup,
+                    ..
+                }
+            ),
+            "{code}"
+        );
+    }
 }
 
 #[tokio::test]

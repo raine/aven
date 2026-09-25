@@ -39,14 +39,18 @@ impl Database {
         let incoming = codec::claim_record(request)?;
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let persisted = match configured_setup {
-            Some(_) => None,
+        let (persisted, expired) = match configured_setup {
+            Some(_) => (None, None),
             None => match db::get_meta(&mut tx, SERVER_SETUP_KEY).await? {
                 Some(value) => {
                     let (setup, expires_at) = parse_server_setup(&value)?;
-                    (now < expires_at).then_some(setup)
+                    if now < expires_at {
+                        (Some(setup), None)
+                    } else {
+                        (None, Some(setup))
+                    }
                 }
-                None => None,
+                None => (None, None),
             },
         };
         let configured_setup = configured_setup.or(persisted.as_ref());
@@ -60,8 +64,14 @@ impl Database {
                 .fetch_optional(&mut *tx)
                 .await?;
         let genesis = Genesis::from_record(stored.as_deref().unwrap_or(incoming))?;
+        // Only the exact secret of the expired verifier learns that it
+        // expired, which tells a guesser nothing a live verifier wouldn't.
+        let mut expired_secret = false;
         let authorized = match authentication {
             ClaimAuthentication::SetupSecret(secret) => {
+                expired_secret = expired
+                    .as_ref()
+                    .is_some_and(|setup| setup.authorizes(genesis.setup, secret));
                 configured_setup.is_some_and(|setup| setup.authorizes(genesis.setup, secret))
             }
             ClaimAuthentication::SeedBearer(token) => {
@@ -72,6 +82,10 @@ impl Database {
                     )
             }
         };
+        ensure!(
+            authorized || !expired_secret || stored.is_some(),
+            ClaimRefusal::Expired
+        );
         ensure!(
             authorized,
             ClaimRefusal::Unauthorized {

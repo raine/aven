@@ -223,11 +223,32 @@ pub(crate) fn explain(
             next_step: "Resume with the invitation that started setup, or the newest invitation for the same server storage. If neither is available, back up and restore to a new path.",
         });
     }
+    if has("sync-setup-invitation-expired") {
+        return Some(Explanation {
+            code: "sync-setup-invitation-expired",
+            message: "This setup invitation expired.",
+            next_step: match surface {
+                ErrorSurface::Cli => {
+                    "Run `aven server setup` on the server again for a new invitation, then rerun `aven sync setup` with it. Nothing here was changed."
+                }
+                ErrorSurface::Tui => {
+                    "Run `aven server setup` on the server again for a new invitation, then choose Set up sync and paste it. Nothing here was changed."
+                }
+            },
+        });
+    }
     if has("sync-setup-invitation-rejected") {
         return Some(Explanation {
             code: "sync-setup-invitation-rejected",
             message: "This setup invitation expired, was replaced, or belongs to different storage.",
-            next_step: "Create a current invitation for this unclaimed server and try again. Nothing here was changed.",
+            next_step: match surface {
+                ErrorSurface::Cli => {
+                    "Run `aven server setup` on the server for a current invitation, then rerun `aven sync setup` with it. Nothing here was changed."
+                }
+                ErrorSurface::Tui => {
+                    "Run `aven server setup` on the server for a current invitation, then choose Set up sync and paste it. Nothing here was changed."
+                }
+            },
         });
     }
     if has("sync-setup-outcome-unknown") {
@@ -659,5 +680,24 @@ mod tests {
         let error = anyhow!("error sync-device-invitation-invalid");
         let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
         assert!(explanation.next_step.contains("`aven sync invite`"));
+    }
+
+    #[test]
+    fn expired_setup_invitation_is_named_and_points_to_server_setup() {
+        let error = anyhow!("error bootstrap-setup-invitation-expired")
+            .context("error sync-setup-invitation-expired hint=\"expired\"");
+        let cli = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(cli.code, "sync-setup-invitation-expired");
+        assert_eq!(cli.message, "This setup invitation expired.");
+        assert!(cli.next_step.contains("`aven server setup`"));
+        assert!(cli.next_step.contains("`aven sync setup`"));
+        let tui = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
+        assert!(tui.next_step.contains("`aven server setup`"));
+        assert!(tui.next_step.contains("choose Set up sync"));
+
+        let error = anyhow!("error sync-setup-invitation-rejected");
+        let rejected = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
+        assert!(rejected.message.contains("expired, was replaced"));
+        assert!(rejected.next_step.contains("`aven server setup`"));
     }
 }

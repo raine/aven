@@ -259,7 +259,9 @@ fn setup_refusal(activity: &SyncActivity) -> Option<SetupRefusal> {
         .contains("sync-setup-storage-already-claimed")
     {
         Some(SetupRefusal::StorageClaimed)
-    } else if failure.details.contains("sync-setup-invitation-rejected") {
+    } else if failure.details.contains("sync-setup-invitation-rejected")
+        || failure.details.contains("sync-setup-invitation-expired")
+    {
         Some(SetupRefusal::Invitation)
     } else {
         None

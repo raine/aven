@@ -210,6 +210,7 @@ async fn handle_bounded(server: &Server, request: Request) -> Response {
                 Some(ClaimRefusal::Unauthorized { claimed: false }) => {
                     "bootstrap-setup-invitation-rejected"
                 }
+                Some(ClaimRefusal::Expired) => "bootstrap-setup-invitation-expired",
                 Some(_) => "bootstrap-storage-already-claimed",
                 None => return refusal(StatusCode::CONFLICT),
             };
@@ -466,6 +467,9 @@ impl Client {
                 }
                 Some("bootstrap-setup-invitation-rejected") if claim => {
                     anyhow::bail!("error bootstrap-setup-invitation-rejected")
+                }
+                Some("bootstrap-setup-invitation-expired") if claim => {
+                    anyhow::bail!("error bootstrap-setup-invitation-expired")
                 }
                 _ => {}
             }

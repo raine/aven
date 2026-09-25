@@ -656,3 +656,51 @@ async fn persisted_setup_is_read_in_the_claim_transaction() {
         .unwrap_err();
     assert_eq!(error.to_string(), "error e2ee-server-already-claimed");
 }
+
+#[tokio::test]
+async fn expired_setup_is_named_only_for_its_own_secret() {
+    let root = tempfile::tempdir().unwrap();
+    let seed = authority();
+    let request = seed.genesis.claim_bytes();
+    let (secret, _) = operator();
+    let guess = Secret::new([0x93; 32]);
+    let db = Database::open(&root.path().join("expired.sqlite"))
+        .await
+        .unwrap();
+    db.issue_e2ee_server_setup(&secret, array("setup"), 200)
+        .await
+        .unwrap();
+
+    let refusal = |error: anyhow::Error| *error.downcast_ref::<ClaimRefusal>().unwrap();
+    let expired = db
+        .admit_seed_claim_at(
+            &request,
+            None,
+            ClaimAuthentication::SetupSecret(&secret),
+            200,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refusal(expired), ClaimRefusal::Expired);
+    let wrong = db
+        .admit_seed_claim_at(
+            &request,
+            None,
+            ClaimAuthentication::SetupSecret(&guess),
+            200,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refusal(wrong),
+        ClaimRefusal::Unauthorized { claimed: false }
+    );
+    db.admit_seed_claim_at(
+        &request,
+        None,
+        ClaimAuthentication::SetupSecret(&secret),
+        100,
+    )
+    .await
+    .unwrap();
+}
