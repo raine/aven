@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::future::Future;
-use std::io::Read;
+use std::io::{Read, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -12,6 +12,7 @@ use sqlx::{Connection as _, SqliteConnection};
 use crate::attachments::storage::{object_path, sha256_hex};
 use crate::db;
 use crate::ids::now;
+use crate::private_fs;
 
 const BACKUP_FORMAT: &str = "aven-backup";
 const BACKUP_VERSION: i64 = 1;
@@ -80,11 +81,11 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        private_fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
-    let staging = tempfile::tempdir().context("could not create backup staging directory")?;
+    let staging = private_fs::tempdir().context("could not create backup staging directory")?;
     let database_path = staging.path().join(DATABASE_ENTRY);
     db::backup_database_with_connection(conn, &database_path).await?;
     after_snapshot().await?;
@@ -102,7 +103,7 @@ where
     .fetch_all(&mut snapshot)
     .await?;
     let objects_dir = staging.path().join("objects").join("sha256");
-    fs::create_dir_all(&objects_dir)
+    private_fs::create_dir_all(&objects_dir)
         .with_context(|| format!("could not create {}", objects_dir.display()))?;
     let mut objects = Vec::new();
     for row in rows {
@@ -112,7 +113,8 @@ where
         }
         let bytes = fs::read(&source).context("error backup-blob-read")?;
         validate_object_bytes(&row.sha256, row.byte_size, &row.media_type, &bytes).await?;
-        fs::write(objects_dir.join(&row.sha256), &bytes).context("error backup-blob-stage")?;
+        private_fs::write_new_file(&objects_dir.join(&row.sha256), &bytes)
+            .context("error backup-blob-stage")?;
         objects.push(BackupObjectManifest {
             sha256: row.sha256,
             byte_size: row.byte_size,
@@ -127,16 +129,15 @@ where
         database: DATABASE_ENTRY.to_string(),
         objects,
     };
-    fs::write(
-        staging.path().join(MANIFEST_ENTRY),
-        serde_json::to_vec(&manifest).context("could not serialize backup manifest")?,
+    private_fs::write_new_file(
+        &staging.path().join(MANIFEST_ENTRY),
+        &serde_json::to_vec(&manifest).context("could not serialize backup manifest")?,
     )?;
 
-    let tmp = output.with_extension("tmp");
-    let file =
-        fs::File::create(&tmp).with_context(|| format!("could not create {}", tmp.display()))?;
-    let encoder =
-        zstd::stream::write::Encoder::new(file, 0).context("could not create zstd encoder")?;
+    let tmp = private_fs::sibling_tempfile(output)
+        .with_context(|| format!("could not create temporary file for {}", output.display()))?;
+    let encoder = zstd::stream::write::Encoder::new(tmp.as_file(), 0)
+        .context("could not create zstd encoder")?;
     let mut tar = tar::Builder::new(encoder);
     tar.append_path_with_name(staging.path().join(MANIFEST_ENTRY), MANIFEST_ENTRY)?;
     tar.append_path_with_name(&database_path, DATABASE_ENTRY)?;
@@ -148,7 +149,11 @@ where
     encoder
         .finish()
         .context("could not finish backup compression")?;
-    fs::rename(&tmp, output).with_context(|| format!("could not replace {}", output.display()))?;
+    tmp.as_file()
+        .sync_all()
+        .context("could not flush backup archive")?;
+    tmp.persist(output)
+        .with_context(|| format!("could not replace {}", output.display()))?;
     Ok(())
 }
 
@@ -159,7 +164,7 @@ pub(super) async fn restore_backup_archive(
 ) -> Result<PathBuf> {
     let _installation = db::installation::InstallationGuard::acquire(db_path)?;
     _installation.ensure_restore_target_unbound()?;
-    let staging = tempfile::tempdir().context("could not create restore staging directory")?;
+    let staging = private_fs::tempdir().context("could not create restore staging directory")?;
     let entries = extract_archive(archive, staging.path())?;
     let manifest_path = staging.path().join(MANIFEST_ENTRY);
     let manifest: BackupManifest = serde_json::from_slice(
@@ -197,13 +202,12 @@ pub(super) async fn restore_backup_archive(
     let blob_parent = blob_dir
         .parent()
         .context("error backup-blob-directory-invalid")?;
-    fs::create_dir_all(blob_parent).context("could not create attachment restore directory")?;
-    let replacement = tempfile::Builder::new()
-        .prefix(".aven-restore-blobs-")
-        .tempdir_in(blob_parent)
+    private_fs::create_dir_all(blob_parent)
+        .context("could not create attachment restore directory")?;
+    let replacement = private_fs::tempdir_in(blob_parent, ".aven-restore-blobs-")
         .context("could not create restore blob directory")?;
     let replacement_objects = replacement.path().join("objects").join("sha256");
-    fs::create_dir_all(&replacement_objects)
+    private_fs::create_dir_all(&replacement_objects)
         .context("could not create restore object directory")?;
     for object in &manifest.objects {
         let source = staging
@@ -211,18 +215,16 @@ pub(super) async fn restore_backup_archive(
             .join("objects")
             .join("sha256")
             .join(&object.sha256);
-        fs::copy(&source, replacement_objects.join(&object.sha256))
+        private_fs::copy_to_new_file(&source, &replacement_objects.join(&object.sha256))
             .context("could not stage restored attachment object")?;
     }
 
-    let db_tmp = db_path.with_extension("restore-staging");
-    fs::copy(&database_path, &db_tmp).with_context(|| {
-        format!(
-            "could not copy {} -> {}",
-            database_path.display(),
-            db_tmp.display()
-        )
-    })?;
+    let mut db_tmp = private_fs::sibling_tempfile(db_path)
+        .with_context(|| format!("could not stage {}", db_path.display()))?;
+    std::io::copy(&mut fs::File::open(&database_path)?, db_tmp.as_file_mut())
+        .with_context(|| format!("could not copy {}", database_path.display()))?;
+    db_tmp.as_file_mut().flush()?;
+    db_tmp.as_file().sync_all()?;
     if blob_dir.exists() {
         fs::remove_dir_all(blob_dir).context("could not replace attachment object directory")?;
     }
@@ -234,7 +236,8 @@ pub(super) async fn restore_backup_archive(
                 .with_context(|| format!("could not remove {}", sidecar.display()))?;
         }
     }
-    fs::rename(&db_tmp, db_path)
+    db_tmp
+        .persist(db_path)
         .with_context(|| format!("could not replace {}", db_path.display()))?;
     Ok(safety)
 }
@@ -455,12 +458,12 @@ fn extract_archive(archive: &Path, target: &Path) -> Result<HashSet<PathBuf>> {
         }
         let target_path = target.join(path);
         if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent)
+            private_fs::create_dir_all(parent)
                 .with_context(|| format!("could not create {}", parent.display()))?;
         }
-        entry
-            .unpack(target_path)
-            .context("could not unpack backup entry")?;
+        let mut file =
+            private_fs::create_new_file(&target_path).context("could not unpack backup entry")?;
+        std::io::copy(&mut entry, &mut file).context("could not unpack backup entry")?;
     }
     if !seen.contains(Path::new(MANIFEST_ENTRY)) || !seen.contains(Path::new(DATABASE_ENTRY)) {
         bail!("error backup-entry-missing");
@@ -498,7 +501,10 @@ fn validate_relative_entry(path: &Path) -> Result<()> {
 }
 
 fn copy_dir(source: &Path, target: &Path) -> Result<()> {
-    fs::create_dir_all(target).with_context(|| format!("could not create {}", target.display()))?;
+    if !fs::symlink_metadata(target).is_ok_and(|metadata| metadata.is_dir()) {
+        private_fs::create_dir(target)
+            .with_context(|| format!("could not create {}", target.display()))?;
+    }
     for entry in
         fs::read_dir(source).with_context(|| format!("could not read {}", source.display()))?
     {
@@ -508,7 +514,11 @@ fn copy_dir(source: &Path, target: &Path) -> Result<()> {
         if entry.file_type()?.is_dir() {
             copy_dir(&source_path, &target_path)?;
         } else {
-            fs::copy(&source_path, &target_path).with_context(|| {
+            if fs::symlink_metadata(&target_path).is_ok() {
+                fs::remove_file(&target_path)
+                    .with_context(|| format!("could not replace {}", target_path.display()))?;
+            }
+            private_fs::copy_to_new_file(&source_path, &target_path).with_context(|| {
                 format!(
                     "could not copy {} -> {}",
                     source_path.display(),
@@ -655,5 +665,153 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(live_available, 1);
+    }
+
+    async fn source_with_image(root: &Path) -> (db::Database, PathBuf) {
+        let db_path = root.join("source.sqlite");
+        let source = db::Database::open(&db_path).await.unwrap();
+        let blob_dir = root.join("source-blobs");
+        let bytes = png_bytes();
+        let hash = sha256_hex(&bytes);
+        let object = object_path(&blob_dir, &hash).unwrap();
+        fs::create_dir_all(object.parent().unwrap()).unwrap();
+        fs::write(object, &bytes).unwrap();
+        let mut conn = source.acquire_writer().await.unwrap();
+        upsert_inventory_available(
+            &mut conn,
+            &hash,
+            i64::try_from(bytes.len()).unwrap(),
+            "image/png",
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        (source, blob_dir)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn archive_and_restore_create_owner_only_files_under_permissive_umask() {
+        use crate::private_fs::test_umask::{Umask, mode};
+
+        let _umask = Umask::set(0o022);
+        let temp = tempfile::tempdir().unwrap();
+        let (source, blob_dir) = source_with_image(temp.path()).await;
+        for path in [
+            temp.path().join("source.sqlite"),
+            db::wal_path(&temp.path().join("source.sqlite")),
+            db::shm_path(&temp.path().join("source.sqlite")),
+            temp.path().join("source.sqlite.aven-installation.lock"),
+        ] {
+            if path.exists() {
+                assert_eq!(mode(&path), 0o600, "{}", path.display());
+            }
+        }
+        let archive_path = temp.path().join("out").join("backup.aven-backup.tar.zst");
+        let mut conn = source.acquire_writer().await.unwrap();
+        let staged_modes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = staged_modes.clone();
+        create_backup_archive_with_snapshot_hook(
+            &mut conn,
+            &blob_dir,
+            &archive_path,
+            || async move {
+                for entry in fs::read_dir(std::env::temp_dir()).unwrap().flatten() {
+                    let name = entry.file_name();
+                    if name.to_string_lossy().starts_with(".aven-") {
+                        observed.lock().unwrap().push(mode(&entry.path()));
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        let staged_modes = staged_modes.lock().unwrap();
+        assert!(!staged_modes.is_empty());
+        assert!(staged_modes.iter().all(|mode| *mode == 0o700));
+        assert_eq!(mode(&archive_path), 0o600);
+        assert_eq!(mode(archive_path.parent().unwrap()), 0o700);
+        let archive = fs::File::open(&archive_path).unwrap();
+        let mut entries = tar::Archive::new(zstd::stream::read::Decoder::new(archive).unwrap());
+        for entry in entries.entries().unwrap() {
+            assert_eq!(entry.unwrap().header().mode().unwrap() & 0o777, 0o600);
+        }
+
+        let target = temp.path().join("restored.sqlite");
+        let restored_blobs = temp.path().join("restored-blobs");
+        restore_backup_archive(&target, &restored_blobs, &archive_path)
+            .await
+            .unwrap();
+        assert_eq!(mode(&target), 0o600);
+        assert_eq!(mode(&restored_blobs), 0o700);
+        assert_eq!(mode(&temp.path().join("backups")), 0o700);
+        for entry in fs::read_dir(temp.path().join("backups")).unwrap().flatten() {
+            let expected = if entry.file_type().unwrap().is_dir() {
+                0o700
+            } else {
+                0o600
+            };
+            assert_eq!(mode(&entry.path()), expected, "{}", entry.path().display());
+        }
+        let restored = db::Database::open(&target).await.unwrap();
+        drop(restored);
+        for path in [db::wal_path(&target), db::shm_path(&target)] {
+            if path.exists() {
+                assert_eq!(mode(&path), 0o600, "{}", path.display());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn archive_backup_replaces_planted_symlinks_without_following_them() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let (source, blob_dir) = source_with_image(temp.path()).await;
+        let victim = temp.path().join("victim");
+        fs::write(&victim, b"sentinel").unwrap();
+        let archive_path = temp.path().join("backup.aven-backup.tar.zst");
+        symlink(&victim, archive_path.with_extension("tmp")).unwrap();
+        symlink(&victim, &archive_path).unwrap();
+
+        source
+            .create_backup_archive(&blob_dir, &archive_path)
+            .await
+            .unwrap();
+
+        assert_eq!(fs::read(&victim).unwrap(), b"sentinel");
+        let metadata = fs::symlink_metadata(&archive_path).unwrap();
+        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+        assert!(is_archive_path(&archive_path).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn archive_restore_ignores_planted_staging_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let (source, blob_dir) = source_with_image(temp.path()).await;
+        let archive_path = temp.path().join("backup.aven-backup.tar.zst");
+        source
+            .create_backup_archive(&blob_dir, &archive_path)
+            .await
+            .unwrap();
+        let victim = temp.path().join("victim");
+        fs::write(&victim, b"sentinel").unwrap();
+        let target = temp.path().join("restored.sqlite");
+        symlink(&victim, target.with_extension("restore-staging")).unwrap();
+
+        restore_backup_archive(&target, &temp.path().join("restored-blobs"), &archive_path)
+            .await
+            .unwrap();
+
+        assert_eq!(fs::read(&victim).unwrap(), b"sentinel");
+        let metadata = fs::symlink_metadata(&target).unwrap();
+        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+        validate_sqlite_file(&target).await.unwrap();
     }
 }

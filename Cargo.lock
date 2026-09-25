@@ -331,6 +331,7 @@ dependencies = [
  "hkdf",
  "hpke",
  "image",
+ "libc",
  "oxipng",
  "rand_core 0.10.1",
  "serde",

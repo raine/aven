@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -51,12 +51,7 @@ fn open_lock(database: &Database) -> Result<Option<File>> {
         return Ok(None);
     };
     let path = lock_path(database_path);
-    OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&path)
+    aven_core::private_fs::open_lock_file(&path)
         .with_context(|| format!("open sync lock {}", path.display()))
         .map(Some)
 }

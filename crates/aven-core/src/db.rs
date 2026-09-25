@@ -153,6 +153,9 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
+    if storage == DatabaseStorage::File {
+        create_private_database_file(options.get_filename())?;
+    }
     options = options
         .create_if_missing(true)
         .foreign_keys(true)
@@ -182,6 +185,16 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     crate::epic_membership::recover(&mut tx, false).await?;
     tx.commit().await?;
     Ok(pool)
+}
+
+/// New databases are owner-only; SQLite gives WAL, SHM, and journal files the
+/// main database's mode. An existing database keeps its user-managed mode.
+fn create_private_database_file(path: &Path) -> Result<()> {
+    match crate::private_fs::create_new_file(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("could not create {}", path.display())),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

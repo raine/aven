@@ -7,6 +7,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection as _, SqliteConnection, SqlitePool};
 
 use super::MIGRATOR;
+use crate::private_fs;
 
 const MIGRATION_BACKUP_KEEP: usize = 20;
 
@@ -67,7 +68,7 @@ pub fn default_sqlite_backup_path(path: &Path, reason: &str) -> Result<PathBuf> 
 fn backup_path_with_extension(path: &Path, reason: &str, extension: &str) -> Result<PathBuf> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let backup_dir = parent.join("backups");
-    fs::create_dir_all(&backup_dir)
+    private_fs::create_dir_all(&backup_dir)
         .with_context(|| format!("could not create {}", backup_dir.display()))?;
     let stem = path
         .file_name()
@@ -92,8 +93,8 @@ async fn backup_database_unlocked(source: &Path, backup: &Path) -> Result<()> {
     if !source.is_file() {
         bail!("could not open source {}", source.display());
     }
-    if let Some(parent) = backup.parent() {
-        fs::create_dir_all(parent)
+    if let Some(parent) = backup.parent().filter(|p| !p.as_os_str().is_empty()) {
+        private_fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
     }
     let mut conn = SqliteConnection::connect_with(
@@ -122,26 +123,20 @@ pub async fn restore_database_file(target: &Path, source: &Path) -> Result<PathB
     validate_sqlite_source(source).await?;
     ensure_file_has_no_active_local_shared_capture(target, "target").await?;
     let safety = create_restore_safety_backup(target).await?;
-    let staging = target.with_extension("restore-staging");
-    if staging.exists() {
-        fs::remove_file(&staging)
-            .with_context(|| format!("could not remove {}", staging.display()))?;
-    }
-    fs::copy(source, &staging).with_context(|| {
-        format!(
-            "could not copy {} -> {}",
-            source.display(),
-            staging.display()
-        )
-    })?;
-    detach_backup_snapshot(&staging).await?;
+    let mut staging = private_fs::sibling_tempfile(target)
+        .with_context(|| format!("could not stage {}", target.display()))?;
+    std::io::copy(&mut fs::File::open(source)?, staging.as_file_mut())
+        .with_context(|| format!("could not copy {}", source.display()))?;
+    staging.as_file().sync_all()?;
+    detach_backup_snapshot(staging.path()).await?;
     for sidecar in [wal_path(target), shm_path(target)] {
         if sidecar.exists() {
             fs::remove_file(&sidecar)
                 .with_context(|| format!("could not remove {}", sidecar.display()))?;
         }
     }
-    fs::rename(&staging, target)
+    staging
+        .persist(target)
         .with_context(|| format!("could not replace {}", target.display()))?;
     Ok(safety)
 }
@@ -151,6 +146,8 @@ pub(crate) async fn create_restore_safety_backup(target: &Path) -> Result<PathBu
     if target.exists() {
         backup_database_unlocked(target, &safety).await?;
     } else {
+        private_fs::create_new_file(&safety)
+            .with_context(|| format!("could not create {}", safety.display()))?;
         SqliteConnection::connect_with(
             &SqliteConnectOptions::new()
                 .filename(&safety)
@@ -210,13 +207,18 @@ async fn backup_database_with_connection_mode(
     detach_sync: bool,
 ) -> Result<()> {
     wait_at_backup_precheck_boundary(backup).await;
-    let parent = backup.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
-    let staging_dir = tempfile::Builder::new()
-        .prefix(".aven-sqlite-backup-")
-        .tempdir_in(parent)
+    let parent = backup
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    private_fs::create_dir_all(parent)
+        .with_context(|| format!("could not create {}", parent.display()))?;
+    let staging_dir = private_fs::tempdir_in(parent, ".aven-sqlite-backup-")
         .with_context(|| format!("could not create backup staging in {}", parent.display()))?;
     let staging = staging_dir.path().join("database.sqlite");
+    // VACUUM INTO accepts an empty target, so the snapshot inherits this mode.
+    private_fs::create_new_file(&staging)
+        .with_context(|| format!("could not create {}", staging.display()))?;
     sqlx::query("VACUUM INTO ?")
         .bind(staging.display().to_string())
         .execute(&mut *conn)
@@ -481,6 +483,100 @@ mod tests {
                 .as_deref(),
             Some("second")
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn new_database_backup_and_restore_are_owner_only_under_permissive_umask() {
+        use crate::private_fs::test_umask::{Umask, mode};
+
+        let _umask = Umask::set(0o022);
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.sqlite");
+        let database = Database::open(&source).await.unwrap();
+        let mut writer = database.acquire_writer().await.unwrap();
+        set_meta(&mut writer, "mode-test", "value").await.unwrap();
+        drop(writer);
+        let _guard =
+            super::super::installation::InstallationGuard::acquire_for_backup(&source).unwrap();
+        for path in [
+            source.clone(),
+            wal_path(&source),
+            shm_path(&source),
+            temp.path().join("source.sqlite.aven-installation.lock"),
+        ] {
+            assert_eq!(mode(&path), 0o600, "{}", path.display());
+        }
+        drop(_guard);
+        let backup = temp.path().join("new-dir").join("backup.sqlite");
+        backup_database(&source, &backup).await.unwrap();
+        assert_eq!(mode(&backup), 0o600);
+        assert_eq!(mode(backup.parent().unwrap()), 0o700);
+
+        let target = temp.path().join("target.sqlite");
+        let safety = restore_database_file(&target, &backup).await.unwrap();
+        assert_eq!(mode(&target), 0o600);
+        assert_eq!(mode(&safety), 0o600);
+        assert_eq!(mode(safety.parent().unwrap()), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn existing_database_keeps_its_mode_and_sidecars_follow_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::private_fs::test_umask::{Umask, mode};
+
+        let _umask = Umask::set(0o022);
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("shared.sqlite");
+        Database::open(&path).await.unwrap().pool.close().await;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        let database = Database::open(&path).await.unwrap();
+        let mut writer = database.acquire_writer().await.unwrap();
+        set_meta(&mut writer, "mode-test", "value").await.unwrap();
+        drop(writer);
+        assert_eq!(mode(&path), 0o640);
+        assert_eq!(mode(&wal_path(&path)), 0o640);
+        assert_eq!(mode(&shm_path(&path)), 0o640);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn restore_ignores_planted_staging_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.sqlite");
+        Database::open(&source).await.unwrap().pool.close().await;
+        let victim = temp.path().join("victim");
+        fs::write(&victim, b"sentinel").unwrap();
+        let target = temp.path().join("target.sqlite");
+        let dangling = temp.path().join("dangling");
+        symlink(&dangling, target.with_extension("restore-staging")).unwrap();
+        symlink(&victim, target.with_extension("tmp")).unwrap();
+
+        restore_database_file(&target, &source).await.unwrap();
+
+        assert_eq!(fs::read(&victim).unwrap(), b"sentinel");
+        assert!(!dangling.exists());
+        let metadata = fs::symlink_metadata(&target).unwrap();
+        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lock_file_refuses_symlink_and_special_files() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let victim = temp.path().join("victim");
+        fs::write(&victim, b"sentinel").unwrap();
+        let link = temp.path().join("link.lock");
+        symlink(&victim, &link).unwrap();
+        assert!(crate::private_fs::open_lock_file(&link).is_err());
+        assert!(crate::private_fs::open_lock_file(temp.path()).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"sentinel");
     }
 
     #[tokio::test]

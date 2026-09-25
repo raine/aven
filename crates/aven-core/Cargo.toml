@@ -38,6 +38,9 @@ url.workspace = true
 zeroize.workspace = true
 zstd.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Both devices and simulators use Apple's SQLite; other targets retain the bundle.
 [target.'cfg(target_os = "ios")'.dependencies]
 sqlx = { workspace = true, features = ["sqlite-unbundled"] }

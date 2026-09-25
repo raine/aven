@@ -70,12 +70,8 @@ impl InstallationGuard {
                 "error installation-lock-unsafe"
             );
         }
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(lock_path)?;
+        let lock = crate::private_fs::open_lock_file(&lock_path)
+            .context("error installation-lock-unsafe")?;
         if exclusive {
             lock.try_lock()
         } else {
