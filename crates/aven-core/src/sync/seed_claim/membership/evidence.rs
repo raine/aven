@@ -1,87 +1,76 @@
 //! Bounded public transition evidence, without server or protected-store authority.
 use super::*;
+use crate::sync::base64_bytes;
 use serde::{Deserialize, Serialize};
 
-pub const MAX_EVIDENCE_JSON_BYTES: usize = 4 * MAX_CHAIN_BYTES + 16384;
+/// Base64 of the whole chain, up to one padding group per byte field, and
+/// JSON framing for every transition.
+pub const MAX_EVIDENCE_JSON_BYTES: usize =
+    base64_bytes::encoded_len(MAX_CHAIN_BYTES) + 4 * (3 * MAX_TRANSITIONS + 3) + 16384;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRecord {
-    #[serde(deserialize_with = "declaration_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "declaration_bytes"
+    )]
     pub declaration: Vec<u8>,
-    #[serde(deserialize_with = "request_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "request_bytes"
+    )]
     pub request: Vec<u8>,
-    #[serde(deserialize_with = "record_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "record_bytes"
+    )]
     pub record: Vec<u8>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Evidence {
-    #[serde(deserialize_with = "genesis_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "genesis_bytes"
+    )]
     pub genesis: Vec<u8>,
-    #[serde(deserialize_with = "publication_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "publication_bytes"
+    )]
     pub publication: Vec<u8>,
-    #[serde(deserialize_with = "descriptor_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "descriptor_bytes"
+    )]
     pub descriptor: Vec<u8>,
     #[serde(deserialize_with = "records")]
     pub transitions: Vec<EvidenceRecord>,
 }
-fn bounded<'de, D, T, const N: usize>(d: D) -> std::result::Result<Vec<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    struct Visitor<T, const N: usize>(std::marker::PhantomData<T>);
-    impl<'de, T: Deserialize<'de>, const N: usize> serde::de::Visitor<'de> for Visitor<T, N> {
-        type Value = Vec<T>;
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("bounded membership evidence")
-        }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut seq: A,
-        ) -> std::result::Result<Self::Value, A::Error> {
-            if seq.size_hint().is_some_and(|n| n > N) {
-                return Err(serde::de::Error::custom("membership-limit"));
-            }
-            let mut values = Vec::new();
-            while values.len() < N {
-                let Some(value) = seq.next_element()? else {
-                    return Ok(values);
-                };
-                values.push(value);
-            }
-            if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                return Err(serde::de::Error::custom("membership-limit"));
-            }
-            Ok(values)
-        }
-    }
-    d.deserialize_seq(Visitor::<T, N>(std::marker::PhantomData))
-}
 fn record_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, MAX_RECORD_BYTES>(d)
+    base64_bytes::bounded::<D, MAX_RECORD_BYTES>(d)
 }
 fn declaration_bytes<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, DECLARATION_BYTES>(d)
+    base64_bytes::bounded::<D, DECLARATION_BYTES>(d)
 }
 fn request_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, REQUEST_BYTES>(d)
+    base64_bytes::bounded::<D, REQUEST_BYTES>(d)
 }
 fn genesis_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, GENESIS_BYTES>(d)
+    base64_bytes::bounded::<D, GENESIS_BYTES>(d)
 }
 fn publication_bytes<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, PUBLICATION_BYTES>(d)
+    base64_bytes::bounded::<D, PUBLICATION_BYTES>(d)
 }
 fn descriptor_bytes<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Vec<u8>, D::Error> {
-    bounded::<D, u8, { crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES }>(d)
+    base64_bytes::bounded::<D, { crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES }>(d)
 }
 fn records<'de, D: serde::Deserializer<'de>>(
     d: D,
@@ -178,8 +167,13 @@ impl Evidence {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mailbox {
-    #[serde(deserialize_with = "declaration_bytes")]
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "declaration_bytes"
+    )]
     pub declaration: Vec<u8>,
+    #[serde(with = "base64_bytes::option")]
     pub request: Option<Vec<u8>>,
+    #[serde(with = "base64_bytes::option")]
     pub admission: Option<Vec<u8>>,
 }

@@ -116,7 +116,7 @@ async fn publish_source(f: &Fixture) {
         .tail_inputs(&f.source, &f.client.locator)
         .await
         .unwrap();
-    for _ in 0..64 {
+    for _ in 0..1024 {
         let Some(record) = f
             .source
             .prepare_encrypted_push(&inputs.authority, f.root.path())
@@ -202,8 +202,9 @@ async fn initial_image_demand_does_not_chase_a_moving_head() {
 
 async fn initial_image_demand_has_a_fixed_restart_safe_watermark(delete: bool) {
     use crate::encrypted_tail_http::ImageTransfer;
+    let page = aven_core::sync::encrypted_tail::PAGE_COUNT;
     let f = enrolled().await;
-    edit_source_descriptions(&f, 0, 17).await;
+    edit_source_descriptions(&f, 0, page + 1).await;
     if delete {
         let workspace = f.source.list_workspaces().await.unwrap().remove(0);
         let reference: String =
@@ -219,7 +220,7 @@ async fn initial_image_demand_has_a_fixed_restart_safe_watermark(delete: bool) {
     }
     let blobs = f.root.path().join("peer-blobs");
     let report = f.client.install(&f.store, &f.peer).await.unwrap();
-    let expected = report.prefix_count + 17 + u64::from(delete);
+    let expected = report.prefix_count + page as u64 + 1 + u64::from(delete);
     for stage in ["before-page-commit", "after-page-commit"] {
         let output = tokio::process::Command::new(std::env::current_exe().unwrap())
             .args([
@@ -256,7 +257,7 @@ async fn initial_image_demand_has_a_fixed_restart_safe_watermark(delete: bool) {
             assert_eq!(mark, expected.to_string());
             assert_eq!(
                 peer.meta("sync_cursor").await.unwrap().unwrap(),
-                (report.prefix_count + 16).to_string()
+                (report.prefix_count + page as u64).to_string()
             );
             let inputs = f.store.tail_inputs(&peer, &f.client.locator).await.unwrap();
             assert!(
@@ -276,7 +277,7 @@ async fn initial_image_demand_has_a_fixed_restart_safe_watermark(delete: bool) {
         );
     }
     // The second call must reach the saved target even though a full new page exists.
-    edit_source_descriptions(&f, 17, 37).await;
+    edit_source_descriptions(&f, page + 1, 2 * page + 5).await;
     let peer = Database::open(f.peer.path()).await.unwrap();
     let client = crate::encrypted_tail_http::Client::new(&f.client.locator).unwrap();
     let transfer = client.round(&f.store, &peer, &blobs).await.unwrap();
@@ -402,8 +403,9 @@ async fn missing_initial_catch_up_marker_refuses_without_reinstalling() {
 
 #[tokio::test]
 async fn pull_only_refreshes_old_head_without_uploading_or_extending_initial_watermark() {
+    let page = aven_core::sync::encrypted_tail::PAGE_COUNT;
     let f = enrolled().await;
-    edit_source_descriptions(&f, 0, 17).await;
+    edit_source_descriptions(&f, 0, page + 1).await;
     let receipt = f.client.install(&f.store, &f.peer).await.unwrap();
     let client = crate::encrypted_tail_http::Client::new(&f.client.locator).unwrap();
     let workspace = f.peer.list_workspaces().await.unwrap().remove(0);
@@ -454,8 +456,11 @@ async fn pull_only_refreshes_old_head_without_uploading_or_extending_initial_wat
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(watermark, (receipt.prefix_count + 17).to_string());
-    edit_source_descriptions(&f, 17, 20).await;
+    assert_eq!(
+        watermark,
+        (receipt.prefix_count + page as u64 + 1).to_string()
+    );
+    edit_source_descriptions(&f, page + 1, page + 4).await;
 
     let seed_keys = isolated_store(f.source.path(), &f.root.path().join("keys"));
     let third = Database::open(&f.root.path().join("third.sqlite"))

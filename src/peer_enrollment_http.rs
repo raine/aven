@@ -29,8 +29,11 @@ use std::sync::Arc;
 const PATH: &str = "/e2ee/enrollment/v1";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const BUSY_RETRIES: usize = 3;
-const CONTROL_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 4096;
-const PUBLISHED_RESPONSE_LIMIT: usize = 4 * (1_048_576 + 222) + 4096;
+const CONTROL_LIMIT: usize =
+    aven_core::sync::base64_bytes::encoded_len(membership::MAX_RECORD_BYTES) + 4096;
+const PUBLISHED_RESPONSE_LIMIT: usize = aven_core::sync::base64_bytes::encoded_len(
+    aven_core::sync::bootstrap_staging::MAX_REQUEST_BYTES,
+) + 4096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Context {
@@ -66,11 +69,13 @@ impl Context {
 enum Operation {
     Register {
         context: Context,
+        #[serde(with = "aven_core::sync::base64_bytes")]
         declaration: Vec<u8>,
     },
     Post {
         vault: [u8; 32],
         handle: [u8; 32],
+        #[serde(with = "aven_core::sync::base64_bytes")]
         request: Vec<u8>,
     },
     Mailbox {
@@ -80,6 +85,7 @@ enum Operation {
     Admit {
         context: Context,
         handle: [u8; 32],
+        #[serde(with = "aven_core::sync::base64_bytes")]
         record: Vec<u8>,
     },
     Membership {
@@ -90,6 +96,7 @@ enum Operation {
     },
     Manage {
         context: Context,
+        #[serde(with = "aven_core::sync::base64_bytes")]
         record: Vec<u8>,
     },
     Cancel {
@@ -109,12 +116,12 @@ enum Reply {
     Done,
     Registered(peer::RegistrationStatus),
     Mailbox(Mailbox),
-    Admitted(Vec<u8>),
+    Admitted(#[serde(with = "aven_core::sync::base64_bytes")] Vec<u8>),
     Membership(Evidence),
     PreparedManagement(membership::ManagementPreparation),
-    Managed(Vec<u8>),
+    Managed(#[serde(with = "aven_core::sync::base64_bytes")] Vec<u8>),
     Cancelled(membership::CancelStatus),
-    Published(Vec<u8>),
+    Published(#[serde(with = "aven_core::sync::base64_bytes")] Vec<u8>),
 }
 struct Server {
     db: Database,

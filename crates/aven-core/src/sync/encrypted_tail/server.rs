@@ -25,6 +25,21 @@ async fn found(conn: &mut SqliteConnection, id: &str) -> Result<Option<Accepted>
     })
     .transpose()
 }
+fn serialized_len(value: &impl Serialize) -> Result<usize> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, value)?;
+    Ok(count.0)
+}
 async fn prefix(conn: &mut SqliteConnection, id: &str) -> Result<bool> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM server_bootstrap_prefix WHERE operation_id=?)",
@@ -140,12 +155,7 @@ impl Database {
                 let mut size = 0;
                 let mut cursor = after;
                 for (id, sequence, commitment, record) in rows {
-                    if size + record.len() > PAGE_BYTES {
-                        break;
-                    }
-                    size += record.len();
-                    cursor = sequence;
-                    records.push(Accepted {
+                    let accepted = Accepted {
                         mapping: Mapping {
                             operation_id: id,
                             sequence,
@@ -154,7 +164,15 @@ impl Database {
                                 .map_err(|_| anyhow::anyhow!("error encrypted-tail-storage"))?,
                         },
                         record,
-                    });
+                    };
+                    // Measure the JSON the transport sends, plus one separator.
+                    let len = serialized_len(&accepted)? + 1;
+                    if size + len > PAGE_BYTES {
+                        break;
+                    }
+                    size += len;
+                    cursor = sequence;
+                    records.push(accepted);
                 }
                 let has_more:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_tail WHERE sequence>? AND sequence<=?)").bind(cursor).bind(watermark).fetch_one(&mut *tx).await?;
                 valid(!has_more || cursor > after)?;

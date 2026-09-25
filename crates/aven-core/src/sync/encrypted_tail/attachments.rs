@@ -3,7 +3,7 @@ pub(crate) mod client;
 pub(crate) mod codec;
 pub(crate) mod server;
 pub use client::{Download, ImageSourceUnavailable, Upload};
-pub use codec::{HTTP_LIMIT, TRANSFER_BYTES};
+pub use codec::{CHUNK_BYTES, HTTP_LIMIT, TRANSFER_BYTES};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,6 +16,7 @@ pub struct Ticket {
 pub enum Operation {
     Declare {
         workspace: String,
+        #[serde(with = "crate::sync::base64_bytes")]
         descriptor: Vec<u8>,
     },
     Status {
@@ -29,6 +30,7 @@ pub enum Operation {
         descriptor_commitment: [u8; 32],
         reservation: [u8; 32],
         index: usize,
+        #[serde(with = "crate::sync::base64_bytes")]
         record: Vec<u8>,
     },
     Complete {
@@ -65,7 +67,7 @@ pub struct Status {
 #[serde(deny_unknown_fields)]
 pub enum Reply {
     Status(Status),
-    Chunk(Vec<u8>),
+    Chunk(#[serde(with = "crate::sync::base64_bytes")] Vec<u8>),
     Unavailable,
     Done,
     Pruned(usize),

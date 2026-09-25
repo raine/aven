@@ -750,6 +750,15 @@ async fn edit_after_protected_identity_before_pin_survives_refused_completion() 
 
 mod install;
 
+#[test]
+fn maximal_published_chunk_fits_response_limit() {
+    let reply = Reply::Published(vec![
+        255;
+        aven_core::sync::bootstrap_staging::MAX_REQUEST_BYTES
+    ]);
+    assert!(serde_json::to_vec(&reply).unwrap().len() <= PUBLISHED_RESPONSE_LIMIT);
+}
+
 #[tokio::test]
 async fn control_exchange_retains_small_response_cap() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

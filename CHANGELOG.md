@@ -9,6 +9,8 @@ description: Release notes for aven.
 
 - An encrypted sync allows 256 device changes over its lifetime, up to 63 of them key rotations. Adding a device is one change, and removing one is two. Once a limit is reached, start a new sync to keep adding or removing devices. `aven server` now checks its stored device membership before it starts serving, and refuses to start if the check fails. See [Sync across devices](https://aventasks.dev/sync/).
 
+- Perf: Encrypted sync transfers about half as much data, and images take up to a third of their former size in transit. A device catching up on many changes downloads up to 256 per request instead of 16.
+
 - Perf: `aven sync` uploads large offline editing backlogs in one run instead of stopping after the first 1,000 changes.
 
 - Fix: Encrypted sync clients wait and retry when the server is busy, reducing failures when several devices sync at once.

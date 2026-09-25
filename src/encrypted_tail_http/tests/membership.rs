@@ -1087,7 +1087,7 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
         ImageReply::Pruned(1)
     ));
     drop(inputs);
-    for n in 0..18 {
+    for n in 0..aven_core::sync::encrypted_tail::PAGE_COUNT + 2 {
         f.seed
             .create_task(&w, draft(&format!("finite tail {n}")))
             .await
@@ -1147,7 +1147,10 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
         .await
         .unwrap()
         .unwrap();
-    assert!(watermark.parse::<u64>().unwrap() > receipt.prefix_count + 16);
+    assert!(
+        watermark.parse::<u64>().unwrap()
+            > receipt.prefix_count + aven_core::sync::encrypted_tail::PAGE_COUNT as u64
+    );
     f.seed
         .create_task(&w, draft("after captured watermark"))
         .await

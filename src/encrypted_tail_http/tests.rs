@@ -1411,12 +1411,95 @@ async fn note_and_relationship_removals_use_existing_domain_operations() {
     }
 }
 
+fn maximal_envelope<T: Serialize>(operation: T) -> usize {
+    let context = Context {
+        vault: [255; 32],
+        genesis: [255; 32],
+        device: [255; 32],
+        credential_version: u32::MAX,
+        head: [255; 32],
+        stream: [255; 32],
+        descriptor: [255; 32],
+    };
+    serde_json::to_vec(&Envelope {
+        context,
+        correlation: [255; 32],
+        operation,
+    })
+    .unwrap()
+    .len()
+}
+
+fn maximal_accepted(record: usize) -> Accepted {
+    Accepted {
+        mapping: tail::Mapping {
+            // Every character escapes to six bytes.
+            operation_id: "\u{1}".repeat(256),
+            sequence: i64::MIN,
+            commitment: [255; 32],
+        },
+        record: vec![255; record],
+    }
+}
+
+#[test]
+fn maximal_bodies_fit_their_transport_limits() {
+    use aven_core::sync::encrypted_tail::attachments::{self as images, Operation as Op};
+    let record = || vec![255; tail::RECORD_LIMIT];
+    let append = Operation::Append {
+        ticket: Some(images::Ticket {
+            reservation: [255; 32],
+        }),
+        record: record(),
+    };
+    assert!(maximal_envelope(append) <= tail::APPEND_LIMIT);
+    let found = Reply::Found(maximal_accepted(tail::RECORD_LIMIT));
+    assert!(maximal_envelope(found) <= tail::APPEND_LIMIT);
+
+    // The server stops a page at `PAGE_COUNT` records or `PAGE_BYTES` of
+    // serialized records, whichever comes first; fill both.
+    let framing = serde_json::to_vec(&maximal_accepted(0)).unwrap().len() + 1;
+    let size = (tail::PAGE_BYTES / tail::PAGE_COUNT - framing) / 4 * 3;
+    let records: Vec<_> = (0..tail::PAGE_COUNT)
+        .map(|_| maximal_accepted(size))
+        .collect();
+    assert!(serde_json::to_vec(&records).unwrap().len() > tail::PAGE_BYTES - tail::PAGE_COUNT * 4);
+    let page = Reply::Page(tail::Page {
+        after: i64::MIN,
+        watermark: i64::MIN,
+        cursor: i64::MIN,
+        has_more: false,
+        records,
+    });
+    assert!(maximal_envelope(page) <= tail::RESPONSE_LIMIT);
+    // A lone maximal record always fits a page, so every pull makes progress.
+    assert!(
+        serde_json::to_vec(&maximal_accepted(tail::RECORD_LIMIT))
+            .unwrap()
+            .len()
+            < tail::PAGE_BYTES
+    );
+
+    let chunk = images::Reply::Chunk(vec![255; images::CHUNK_BYTES]);
+    assert!(maximal_envelope(chunk) <= images::HTTP_LIMIT);
+    let put = Op::Put {
+        workspace: "\u{1}".repeat(256),
+        object: [255; 32],
+        descriptor_commitment: [255; 32],
+        reservation: [255; 32],
+        index: usize::MAX,
+        record: vec![255; images::CHUNK_BYTES],
+    };
+    assert!(maximal_envelope(put) <= images::HTTP_LIMIT);
+}
+
 #[tokio::test]
 async fn bounded_http_pull_keeps_watermark_and_makes_byte_limited_progress() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
-    for i in 0..20 {
+    let count = 40;
+    for i in 0..count {
         let mut d = draft(&format!("large {i}"));
         d.description = "x".repeat(65000);
         f.seed.create_task(&w, d).await.unwrap();
@@ -1436,7 +1519,7 @@ async fn bounded_http_pull_keeps_watermark_and_makes_byte_limited_progress() {
                 &inputs.bearer,
                 Operation::Pull {
                     after,
-                    limit: 16,
+                    limit: tail::PAGE_COUNT,
                     watermark,
                 },
             )
@@ -1445,13 +1528,14 @@ async fn bounded_http_pull_keeps_watermark_and_makes_byte_limited_progress() {
         else {
             panic!()
         };
-        assert!(page.records.len() <= 16);
-        assert!(page.records.iter().map(|r| r.record.len()).sum::<usize>() <= tail::PAGE_BYTES);
+        let raw = page.records.iter().map(|r| r.record.len()).sum::<usize>();
+        let largest = page.records.iter().map(|r| r.record.len()).max().unwrap();
+        assert!(serde_json::to_vec(&page.records).unwrap().len() <= tail::PAGE_BYTES);
         if pages == 0 {
             assert!(page.has_more);
             assert!(
-                page.records.len() < 16,
-                "byte limit must shorten the first page"
+                raw + largest <= tail::PAGE_BYTES,
+                "the serialized size, not the record bytes, must shorten the first page"
             );
         }
         if let Some(mark) = watermark {
@@ -1468,7 +1552,7 @@ async fn bounded_http_pull_keeps_watermark_and_makes_byte_limited_progress() {
         assert!(page.cursor > after);
         after = page.cursor;
     }
-    assert_eq!(total, 20);
+    assert_eq!(total, count);
     assert_eq!(pages, 2);
 }
 

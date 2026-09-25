@@ -175,11 +175,13 @@ async fn management_fault(
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let manage = value.get("Manage");
     let intercept = if let Some(manage) = manage {
-        fault
-            .records
-            .lock()
-            .unwrap()
-            .push(serde_json::from_value(manage["record"].clone()).unwrap());
+        fault.records.lock().unwrap().push(
+            base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                manage["record"].as_str().unwrap(),
+            )
+            .unwrap(),
+        );
         {
             let ordinal = fault
                 .count

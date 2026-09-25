@@ -792,3 +792,19 @@ async fn client_bounds_responses_and_rejects_redirects_and_unsafe_origins() {
         task.abort();
     }
 }
+
+#[test]
+fn maximal_chunk_put_fits_request_limit() {
+    let put = Envelope {
+        vault: [255; 32],
+        genesis: [255; 32],
+        operation: Operation::Put {
+            bootstrap: [255; 32],
+            commitment: [255; 32],
+            component: staging::Component::Image([255; 32]),
+            index: u64::MAX,
+            bytes: vec![255; staging::MAX_REQUEST_BYTES],
+        },
+    };
+    assert!(serde_json::to_vec(&put).unwrap().len() <= REQUEST_LIMIT);
+}

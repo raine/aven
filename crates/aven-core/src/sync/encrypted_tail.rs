@@ -15,11 +15,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const RECORD_LIMIT: usize = 135640;
+/// Bodies without a record; also the framing allowance around records.
 pub const CONTROL_LIMIT: usize = 16384;
-pub const APPEND_LIMIT: usize = 558944;
-pub const RESPONSE_LIMIT: usize = 4259840;
-pub const PAGE_BYTES: usize = 1048576;
-pub const PAGE_COUNT: usize = 16;
+/// One record: an append request or a lookup response.
+pub const APPEND_LIMIT: usize = super::base64_bytes::encoded_len(RECORD_LIMIT) + CONTROL_LIMIT;
+/// Serialized size of the records in one pull page.
+pub const PAGE_BYTES: usize = 2 * 1048576;
+pub const PAGE_COUNT: usize = 256;
+pub const RESPONSE_LIMIT: usize = PAGE_BYTES + CONTROL_LIMIT;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -132,6 +135,7 @@ pub struct Mapping {
 #[serde(deny_unknown_fields)]
 pub struct Accepted {
     pub mapping: Mapping,
+    #[serde(with = "crate::sync::base64_bytes")]
     pub record: Vec<u8>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -139,6 +143,7 @@ pub struct Accepted {
 pub enum Operation {
     Append {
         ticket: Option<attachments::Ticket>,
+        #[serde(with = "crate::sync::base64_bytes")]
         record: Vec<u8>,
     },
     Lookup {

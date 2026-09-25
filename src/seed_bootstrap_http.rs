@@ -1,11 +1,11 @@
 //! Isolated seed bootstrap transport, not ordinary sync or a setup command.
 //!
 //! Provisional HTTP framing: POST /e2ee/bootstrap/v1, application/json, one
-//! externally tagged operation in a context envelope. Byte arrays carry exact
+//! externally tagged operation in a context envelope. Base64 strings carry exact
 //! existing codec bytes, never a second encrypted package representation. Setup
 //! and device credentials use Authorization: Bearer <64 lowercase hex digits>;
 //! only ClaimSetup uses setup authority. IDs and payloads never enter URLs.
-//! JSON expansion is bounded at four bytes per binary byte plus 4096 bytes of
+//! Requests are bounded at the base64 length of one chunk plus 4096 bytes of
 //! framing. Status responses are bounded at 1 MiB. One active request per router
 //! bounds concurrent core materialization; busy callers retry a bounded number
 //! of times. No request tracing, credential redirects or cancellation.
@@ -18,7 +18,7 @@ use anyhow::{Result, ensure};
 use aven_core::{
     db::Database,
     sync::{
-        bootstrap_staging as staging,
+        base64_bytes, bootstrap_staging as staging,
         seed_claim::{
             ClaimAuthentication, ClaimResult, Genesis, PublicationOutcome, Secret, SetupAuthority,
         },
@@ -36,7 +36,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
 const PATH: &str = "/e2ee/bootstrap/v1";
-const REQUEST_LIMIT: usize = 4 * staging::MAX_REQUEST_BYTES + 4096;
+const REQUEST_LIMIT: usize = base64_bytes::encoded_len(staging::MAX_REQUEST_BYTES) + 4096;
 const RESPONSE_LIMIT: usize = 1_048_576;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(35);
@@ -54,12 +54,15 @@ struct Envelope {
 #[serde(deny_unknown_fields)]
 enum Operation {
     ClaimSetup {
+        #[serde(with = "aven_core::sync::base64_bytes")]
         bytes: Vec<u8>,
     },
     ClaimBearer {
+        #[serde(with = "aven_core::sync::base64_bytes")]
         bytes: Vec<u8>,
     },
     Declare {
+        #[serde(with = "aven_core::sync::base64_bytes")]
         descriptor: Vec<u8>,
         budget: staging::Budget,
     },
@@ -78,11 +81,13 @@ enum Operation {
         commitment: [u8; 32],
         component: staging::Component,
         index: u64,
+        #[serde(with = "aven_core::sync::base64_bytes")]
         bytes: Vec<u8>,
     },
     Publish {
         bootstrap: [u8; 32],
         commitment: [u8; 32],
+        #[serde(with = "aven_core::sync::base64_bytes")]
         record: Vec<u8>,
     },
 }
@@ -99,7 +104,7 @@ enum Reply {
     Canceled,
     Staging(staging::StagingStatus),
     Stored,
-    Published(Vec<u8>),
+    Published(#[serde(with = "aven_core::sync::base64_bytes")] Vec<u8>),
 }
 
 impl From<staging::Status> for Reply {

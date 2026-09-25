@@ -1,4 +1,5 @@
 mod apply;
+pub mod base64_bytes;
 mod blob;
 pub mod bootstrap_staging;
 pub mod encrypted_tail;
