@@ -134,6 +134,36 @@ impl DeviceInvitation {
     }
 }
 
+/// What pasted text looks like as an invitation. Holds only the server
+/// origin, never the secret.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum InvitationCheck {
+    #[default]
+    Empty,
+    Setup(String),
+    Device(String),
+    /// Has an invitation prefix but doesn't decode.
+    Incomplete,
+    Unknown,
+}
+
+impl InvitationCheck {
+    pub(crate) fn of(text: &str) -> Self {
+        let text = text.trim();
+        if text.is_empty() {
+            Self::Empty
+        } else if let Ok(invitation) = SetupInvitation::decode(text) {
+            Self::Setup(invitation.server)
+        } else if let Ok(invitation) = DeviceInvitation::decode(text) {
+            Self::Device(invitation.server)
+        } else if text.starts_with(SETUP_PREFIX) || text.starts_with(DEVICE_PREFIX) {
+            Self::Incomplete
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
 fn encode(prefix: &str, secret: &[u8], server: &str) -> Zeroizing<String> {
     let mut bytes = Zeroizing::new(secret.to_vec());
     bytes.extend_from_slice(server.as_bytes());
@@ -193,6 +223,16 @@ mod tests {
         assert_eq!(decoded.setup_id, setup.setup_id);
         assert_eq!(decoded.secret.expose(), setup.secret.expose());
         assert!(DeviceInvitation::decode(&text).is_err());
+        assert_eq!(
+            InvitationCheck::of(&text),
+            InvitationCheck::Setup(setup.server.clone())
+        );
+        assert_eq!(
+            InvitationCheck::of(&text[..60]),
+            InvitationCheck::Incomplete
+        );
+        assert_eq!(InvitationCheck::of("hello"), InvitationCheck::Unknown);
+        assert_eq!(InvitationCheck::of("  "), InvitationCheck::Empty);
         assert_eq!(format!("{decoded:?}"), "SetupInvitation([REDACTED])");
 
         let mut storage = vec![5; 32];

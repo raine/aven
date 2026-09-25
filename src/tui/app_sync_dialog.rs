@@ -2,22 +2,13 @@ use anyhow::Result;
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Size;
 
-use crate::sync::encrypted::{self, DeviceInvitation, LocalPhase, SetupInvitation};
+use crate::sync::encrypted::{self, InvitationCheck, LocalPhase};
 use crate::tui::app::App;
 use crate::tui::overlay::{
     InvitationKind, OverlayState, SecretText, SyncAction, SyncDialogOutcome, SyncDialogState,
     SyncDialogView, SyncPage, handle_sync_dialog_key, paste_into_sync_dialog, sync_actions,
 };
 use crate::tui::sync_operations::{OperationEvent, OperationKind, OperationResult};
-
-const NOT_A_SETUP_INVITATION: &str = "This isn't a setup invitation. Paste the invitation \
-     printed by `aven server setup` on your server.";
-const DEVICE_INVITATION_FOR_SETUP: &str = "This invitation adds a device to existing sync. \
-     Go back and choose Join existing sync.";
-const NOT_A_DEVICE_INVITATION: &str = "This isn't a device invitation. Paste the invitation \
-     shown by Add device on your other device.";
-const SETUP_INVITATION_FOR_JOIN: &str = "This invitation starts sync on a new server. Go \
-     back and choose Set up sync.";
 
 impl App {
     /// Opens the Sync dialog from `:sync`, `C s` or the header indicator.
@@ -205,24 +196,18 @@ impl App {
         let SyncPage::Invitation { kind, input, error } = &mut state.page else {
             return Ok(state);
         };
-        if input.is_empty() {
-            *error = Some("Paste the invitation first.");
-            return Ok(state);
-        }
-        let text = input.expose();
+        let server = match (*kind, input.check()) {
+            (InvitationKind::Setup, InvitationCheck::Setup(server))
+            | (InvitationKind::Join, InvitationCheck::Device(server)) => server.clone(),
+            (_, InvitationCheck::Empty) => {
+                *error = Some("Paste the invitation first.");
+                return Ok(state);
+            }
+            // The field already explains why the text can't be used.
+            _ => return Ok(state),
+        };
         match kind {
             InvitationKind::Setup => {
-                let server = match SetupInvitation::decode(text) {
-                    Ok(invitation) => invitation.server,
-                    Err(_) => {
-                        *error = Some(if DeviceInvitation::decode(text).is_ok() {
-                            DEVICE_INVITATION_FOR_SETUP
-                        } else {
-                            NOT_A_SETUP_INVITATION
-                        });
-                        return Ok(state);
-                    }
-                };
                 let invitation = std::mem::take(input);
                 if self.store.sync_status.phase == LocalPhase::SetupIncomplete {
                     self.start_sync_operation(OperationKind::Setup, Some(invitation));
@@ -236,24 +221,11 @@ impl App {
                     invitation,
                 }))
             }
-            InvitationKind::Join => {
-                let server = match DeviceInvitation::decode(text) {
-                    Ok(invitation) => invitation.server,
-                    Err(_) => {
-                        *error = Some(if SetupInvitation::decode(text).is_ok() {
-                            SETUP_INVITATION_FOR_JOIN
-                        } else {
-                            NOT_A_DEVICE_INVITATION
-                        });
-                        return Ok(state);
-                    }
-                };
-                Ok(SyncDialogState::page(SyncPage::ConfirmJoin {
-                    server,
-                    invitation: std::mem::take(input),
-                    replace: self.store.sync_status.phase == LocalPhase::JoinIncomplete,
-                }))
-            }
+            InvitationKind::Join => Ok(SyncDialogState::page(SyncPage::ConfirmJoin {
+                server,
+                invitation: std::mem::take(input),
+                replace: self.store.sync_status.phase == LocalPhase::JoinIncomplete,
+            })),
         }
     }
 

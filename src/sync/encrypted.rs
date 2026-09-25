@@ -36,7 +36,7 @@ mod invitation;
 #[cfg(test)]
 pub(crate) use invitation::sample_invitations;
 pub(super) use invitation::server_origin;
-pub(crate) use invitation::{DeviceInvitation, SetupInvitation};
+pub(crate) use invitation::{DeviceInvitation, InvitationCheck, SetupInvitation};
 
 #[cfg(test)]
 mod tests;

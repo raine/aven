@@ -170,7 +170,8 @@ async fn joining_validates_confirms_and_keeps_running_after_the_dialog_closes() 
     let crate::tui::overlay::SyncPage::Invitation { error, .. } = sync_page(&app) else {
         panic!("expected the invitation form");
     };
-    assert!(error.is_some_and(|error| error.contains("choose Set up sync")));
+    // Continue stays blocked; the field names the right choice.
+    assert!(error.is_none());
 
     app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
         .await
@@ -222,7 +223,8 @@ async fn setup_previews_this_database_and_starts_only_after_confirmation() {
     let crate::tui::overlay::SyncPage::Invitation { error, .. } = sync_page(&app) else {
         panic!("expected the invitation form");
     };
-    assert!(error.is_some_and(|error| error.contains("choose Join existing sync")));
+    // Continue stays blocked; the field names the right choice.
+    assert!(error.is_none());
 
     app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
         .await

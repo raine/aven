@@ -12,7 +12,7 @@ use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
 
 use crate::sync::encrypted::Removal;
-use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
+use crate::sync::encrypted::{InvitationCheck, LocalPhase, SetupPreview, Stage};
 use crate::tui::overlay::{
     InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage, dialog_area, sync_actions,
 };
@@ -850,21 +850,33 @@ fn invitation_lines(
     )));
     lines.extend(paragraph(guidance, Style::new().fg(FG_MUTED), width));
     lines.push(Line::from(""));
-    let field = if input.chars() == 0 {
-        Span::styled("paste the invitation", Style::new().fg(FG_DIM))
-    } else {
-        Span::styled(
-            format!("{} pasted", plural(input.chars() as u64, "character")),
-            Style::new().fg(FG),
-        )
-    };
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("{:<LABEL_WIDTH$}", "invitation"),
-            Style::new().fg(FG_DIM),
+    let (text, color) = match (kind, input.check()) {
+        (_, InvitationCheck::Empty) => ("paste the invitation".to_string(), FG_DIM),
+        (InvitationKind::Setup, InvitationCheck::Setup(server)) => {
+            (format!("✓ Setup invitation for {server}"), GREEN)
+        }
+        (InvitationKind::Join, InvitationCheck::Device(server)) => {
+            (format!("✓ Device invitation for {server}"), GREEN)
+        }
+        (InvitationKind::Setup, InvitationCheck::Device(_)) => (
+            "Device invitation; use Join existing sync instead".to_string(),
+            RED,
         ),
-        field,
-    ]));
+        (InvitationKind::Join, InvitationCheck::Setup(_)) => {
+            ("Setup invitation; use Set up sync instead".to_string(), RED)
+        }
+        (_, InvitationCheck::Incomplete) => (
+            "Incomplete invitation; part may be missing".to_string(),
+            RED,
+        ),
+        (_, InvitationCheck::Unknown) => ("Not an Aven invitation".to_string(), RED),
+    };
+    lines.extend(wrapped_row(
+        "invitation",
+        &text,
+        Style::new().fg(color),
+        width,
+    ));
     if let Some(error) = error {
         lines.extend(paragraph(error, Style::new().fg(RED), width));
     }

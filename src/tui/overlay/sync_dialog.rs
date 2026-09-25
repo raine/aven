@@ -7,7 +7,7 @@ use std::fmt;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use zeroize::Zeroizing;
 
-use crate::sync::encrypted::{LocalPhase, SetupPreview};
+use crate::sync::encrypted::{InvitationCheck, LocalPhase, SetupPreview};
 use crate::tui::store::TuiSyncStatus;
 use crate::tui::sync_operations::{OperationFailure, OperationKind, OperationResult, SyncActivity};
 
@@ -86,9 +86,10 @@ impl SyncPage {
 }
 
 /// Invitation text typed or pasted into the dialog. It never renders, and its
-/// memory is cleared when dropped.
+/// memory is cleared when dropped. The text is checked on each edit, so
+/// rendering never decodes it.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct SecretText(Zeroizing<String>);
+pub(crate) struct SecretText(Zeroizing<String>, InvitationCheck);
 
 impl fmt::Debug for SecretText {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -104,21 +105,25 @@ impl SecretText {
             }
             self.0.push(character);
         }
+        self.1 = InvitationCheck::of(&self.0);
     }
 
     /// Zeroizing also clears the spare capacity this leaves behind.
     pub(crate) fn pop(&mut self) {
         self.0.pop();
+        self.1 = InvitationCheck::of(&self.0);
     }
 
+    #[cfg(test)]
     pub(crate) fn chars(&self) -> usize {
         self.0.chars().count()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.trim().is_empty()
+    pub(crate) fn check(&self) -> &InvitationCheck {
+        &self.1
     }
 
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &str {
         &self.0
     }

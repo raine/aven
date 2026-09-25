@@ -250,6 +250,20 @@ fn interrupted_work_offers_resume_instead_of_a_fresh_attempt() {
     }
 }
 
+fn render_invitation(kind: InvitationKind, text: &str) -> String {
+    let mut input = SecretText::default();
+    input.insert(text);
+    render_page(
+        SyncPage::Invitation {
+            kind,
+            input,
+            error: None,
+        },
+        local_status(),
+        SyncActivity::default(),
+    )
+}
+
 #[test]
 fn invitation_form_never_renders_the_secret() {
     let mut input = SecretText::default();
@@ -258,7 +272,7 @@ fn invitation_form_never_renders_the_secret() {
         SyncPage::Invitation {
             kind: InvitationKind::Setup,
             input,
-            error: Some("This isn't a setup invitation."),
+            error: Some("Paste the invitation first."),
         },
         local_status(),
         SyncActivity::default(),
@@ -266,22 +280,50 @@ fn invitation_form_never_renders_the_secret() {
 
     assert!(!rendered.contains("SECRET"));
     assert!(!rendered.contains("aven-sync-setup-1"));
-    assert!(rendered.contains("30 characters pasted"));
-    let mut single = SecretText::default();
-    single.insert("a");
-    let one = render_page(
-        SyncPage::Invitation {
-            kind: InvitationKind::Join,
-            input: single,
-            error: None,
-        },
-        local_status(),
-        SyncActivity::default(),
-    );
-    assert!(one.contains("1 character pasted"), "{one}");
-    assert!(rendered.contains("This isn't a setup invitation."));
+    assert!(rendered.contains("Incomplete invitation; part may be missing"));
+    assert!(rendered.contains("Paste the invitation first."));
     assert!(rendered.contains("isn't shown or saved"));
     assert!(rendered.contains(" Continue "));
+}
+
+#[test]
+fn invitation_field_describes_what_was_pasted() {
+    let (setup, device) = crate::sync::encrypted::sample_invitations("http://127.0.0.1:37463");
+    for (kind, text, expected) in [
+        (InvitationKind::Setup, "", "paste the invitation"),
+        (
+            InvitationKind::Setup,
+            setup.as_str(),
+            "✓ Setup invitation for http://127.0.0.1:37463",
+        ),
+        (
+            InvitationKind::Join,
+            device.as_str(),
+            "✓ Device invitation for http://127.0.0.1:37463",
+        ),
+        (
+            InvitationKind::Setup,
+            device.as_str(),
+            "Device invitation; use Join existing sync instead",
+        ),
+        (
+            InvitationKind::Join,
+            setup.as_str(),
+            "Setup invitation; use Set up sync instead",
+        ),
+        (
+            InvitationKind::Join,
+            &device[..40],
+            "Incomplete invitation; part may be missing",
+        ),
+        (InvitationKind::Join, "hello", "Not an Aven invitation"),
+    ] {
+        let rendered = render_invitation(kind, text);
+        assert!(rendered.contains(expected), "{rendered}");
+        if text.len() > 20 {
+            assert!(!rendered.contains(&text[20..]), "{rendered}");
+        }
+    }
 }
 
 #[test]
