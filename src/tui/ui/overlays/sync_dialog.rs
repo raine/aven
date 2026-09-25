@@ -901,23 +901,23 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
         "Use this computer's data:",
         Style::new().fg(FG),
     )));
-    lines.push(Line::from(Span::styled(
-        format!("  {}", plural(preview.workspaces as u64, "workspace")),
+    lines.extend(indented(
+        &plural(preview.workspaces as u64, "workspace"),
         Style::new().fg(FG_MUTED),
-    )));
-    lines.extend(paragraph(
+        width,
+    ));
+    lines.extend(indented(
         &format!(
-            "  {} tasks (including scheduled and recurring)",
+            "{} tasks (including scheduled and recurring)",
             preview.tasks.max(0)
         ),
         Style::new().fg(FG_MUTED),
         width,
     ));
     if preview.missing_images > 0 {
-        lines.extend(paragraph(
+        lines.extend(indented(
             &format!(
-                "  {} missing on this computer; other devices will see {} as \
-                 unavailable.",
+                "{} missing on this computer; other devices will see {} as unavailable.",
                 plural(preview.missing_images, "image"),
                 if preview.missing_images == 1 {
                     "it"
@@ -1066,6 +1066,15 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
     }
     if !current.is_empty() || lines.is_empty() {
         lines.push(current);
+    }
+    lines
+}
+
+/// A list item: every wrapped line keeps the same two-cell indent.
+fn indented(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
+    let mut lines = paragraph(text, style, width.saturating_sub(2));
+    for line in &mut lines {
+        line.spans.insert(0, Span::raw("  "));
     }
     lines
 }

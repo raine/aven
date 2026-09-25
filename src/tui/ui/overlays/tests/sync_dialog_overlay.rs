@@ -375,6 +375,43 @@ fn invitation_field_describes_what_was_pasted() {
 }
 
 #[test]
+fn setup_data_summary_items_share_one_indent() {
+    let state = SyncDialogState::page(SyncPage::ConfirmSetup {
+        server: "https://sync.example.com".to_string(),
+        preview: SetupPreview {
+            workspaces: 1,
+            tasks: 2,
+            missing_images: 3,
+            leaves_unencrypted_server: false,
+        },
+        invitation: SecretText::default(),
+    });
+    let lines = sync_dialog_lines_for_test(&sync_view(&state, local_status()))
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let start = lines
+        .iter()
+        .position(|line| line == "Use this computer's data:")
+        .expect("data summary")
+        + 1;
+    let items = lines[start..]
+        .iter()
+        .take_while(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    assert!(items.len() > 3, "the missing-images item wraps: {items:?}");
+    assert_eq!(items[0], "  1 workspace");
+    assert_eq!(items[1], "  2 tasks (including scheduled and recurring)");
+    for item in items {
+        assert!(
+            item.starts_with("  ") && !item.starts_with("   "),
+            "{item:?}"
+        );
+    }
+}
+
+#[test]
 fn setup_confirmation_discloses_data_server_and_restrictions() {
     let rendered = render_page(
         SyncPage::ConfirmSetup {
