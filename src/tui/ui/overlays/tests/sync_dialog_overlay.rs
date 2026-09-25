@@ -65,7 +65,7 @@ fn unset_up_and_runtime_disabled_states_have_distinct_copy() {
         false,
     ));
 
-    assert!(local.contains("Local only"));
+    assert!(!local.contains("Local only"));
     assert!(!local.contains("Sync now"));
     assert!(local.contains("Set up sync"));
     assert!(disabled.contains("Sync disabled"));
@@ -225,7 +225,7 @@ fn running(kind: OperationKind, stage: Option<Stage>) -> SyncActivity {
 fn local_databases_offer_setup_and_joining() {
     let rendered = render_page(SyncPage::Home, local_status(), SyncActivity::default());
 
-    assert!(rendered.contains("Local only"));
+    assert!(!rendered.contains("Local only"));
     assert!(rendered.contains("Keep your tasks in sync across devices"));
     assert!(rendered.contains("› Set up sync"));
     assert!(rendered.contains("Join existing sync"));

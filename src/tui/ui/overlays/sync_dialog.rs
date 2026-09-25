@@ -248,10 +248,6 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     let status = view.status;
     let lines = &mut body.lines;
     if status.phase == LocalPhase::NotSetUp && view.activity.running.is_none() {
-        lines.push(Line::from(Span::styled(
-            "Local only",
-            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
-        )));
         lines.extend(paragraph(
             "Keep your tasks in sync across devices. Set up sync from this computer's \
              tasks, or join sync that another device already uses.",
