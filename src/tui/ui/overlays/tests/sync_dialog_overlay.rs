@@ -539,6 +539,7 @@ fn device_list_marks_this_device_and_disambiguates_short_ids() {
     assert!(rendered.contains("removed only from another device"));
     assert!(!rendered.contains("admission"));
     assert!(!rendered.contains("Remove device"));
+    assert!(rendered.contains("This device a1a1a1a1ff… Name Office Mac Device ID"));
 }
 
 #[test]
@@ -554,6 +555,8 @@ fn selecting_another_device_shows_its_full_id_and_removal_hint() {
     assert!(rendered.contains(&hex::encode(other)[..40]));
     assert!(rendered.contains("Enter removes this device from sync."));
     assert!(rendered.contains("y copy ID"));
+    assert!(rendered.contains("a1a1a1a1ff… Device ID"));
+    assert!(!rendered.contains("Name"));
 }
 
 #[test]

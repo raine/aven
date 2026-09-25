@@ -188,7 +188,7 @@ In the TUI, choose **Manage devices** in the Sync dialog. The list is checked
 with the server when it opens and says when it was checked. Each device appears
 with its automatic label, when available, beside the shortest ID prefix that
 tells it apart. The current one is marked **This device**; select a device to see
-its full ID, and press `y` to copy it.
+its name, when available, and full ID, and press `y` to copy it.
 Press Enter on another device and confirm to remove it. The dialog reports
 access removal and key rotation separately, and offers **Finish removal** while
 rotation is unfinished. A server refusal means the removal could not be

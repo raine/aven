@@ -665,6 +665,10 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
 
     if let Some(device) = selected_device {
         lines.push(Line::from(""));
+        if let Some(label) = &device.label {
+            lines.push(Line::from(Span::styled("Name", Style::new().fg(FG_DIM))));
+            lines.extend(paragraph(label, Style::new().fg(FG), width));
+        }
         lines.push(Line::from(Span::styled(
             "Device ID",
             Style::new().fg(FG_DIM),
