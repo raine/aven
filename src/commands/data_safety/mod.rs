@@ -88,8 +88,10 @@ pub(crate) async fn cmd_import(
     }
     let text = fs::read_to_string(&args.path)
         .with_context(|| format!("could not read {}", args.path.display()))?;
-    let export: AvenExport = serde_json::from_str(&text)
-        .with_context(|| format!("could not parse {}", args.path.display()))?;
+    let export: AvenExport = serde_json::from_str(&text).map_err(|error| {
+        let context = format!("could not parse {}: {error}", args.path.display());
+        anyhow::Error::new(error).context(context)
+    })?;
     database.validate_import_data(&export).await?;
     if export.blobs_included {
         bail!("error import-blobs-included-unsupported");

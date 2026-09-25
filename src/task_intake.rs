@@ -329,7 +329,10 @@ pub(crate) async fn parsed_output_to_result_with_database(
             .map(Some)
         })
         .transpose()
-        .context("error task-intake-recurrence-invalid")?
+        .map_err(|error| {
+            let context = format!("error task-intake-recurrence-invalid: {error}");
+            error.context(context)
+        })?
         .flatten();
     let description = parsed.description.trim().to_string();
     let available_at = parsed

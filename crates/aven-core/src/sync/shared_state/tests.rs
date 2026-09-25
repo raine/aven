@@ -1133,7 +1133,7 @@ async fn durable_pin_survives_cleanup_until_idempotent_local_cancellation() {
 }
 
 #[tokio::test]
-async fn active_local_capture_fences_sync_backup_import_and_restore() {
+async fn active_local_capture_fences_sync_import_and_restore_but_allows_local_backups() {
     let (temp, database, workspace) = fresh().await;
     task(&database, &workspace, "fenced").await;
     let prepared = database
@@ -1186,22 +1186,29 @@ async fn active_local_capture_fences_sync_backup_import_and_restore() {
             .contains("local-shared-capture-active")
     );
     let backup = temp.path().join("backup.sqlite");
-    assert!(
-        db::backup_database(database.path(), &backup)
+    db::backup_database(database.path(), &backup).await.unwrap();
+    let backup_pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", backup.display()))
+        .await
+        .unwrap();
+    let captured_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_journal")
+            .fetch_one(&backup_pool)
             .await
-            .unwrap_err()
-            .to_string()
-            .contains("local-shared-capture-active")
-    );
+            .unwrap();
+    assert_eq!(captured_rows, 0);
+    let preserved_tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title='fenced'")
+            .fetch_one(&backup_pool)
+            .await
+            .unwrap();
+    assert_eq!(preserved_tasks, 1);
+    backup_pool.close().await;
+
     let archive = temp.path().join("backup.tar.zst");
-    assert!(
-        database
-            .create_backup_archive(&temp.path().join("blobs"), &archive)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("local-shared-capture-active")
-    );
+    database
+        .create_backup_archive(&temp.path().join("blobs"), &archive)
+        .await
+        .unwrap();
 
     let restore_source = temp.path().join("restore-source.sqlite");
     let inactive = Database::open(&restore_source).await.unwrap();

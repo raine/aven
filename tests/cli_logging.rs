@@ -31,7 +31,7 @@ fn daemon_logging_does_not_require_writable_state() {
         [("XDG_STATE_HOME", unusable_state.to_str().unwrap())],
     );
 
-    contains_all(&daemon.output(), &["daemon starting", "daemon db="]);
+    contains_all(&daemon.output(), &["daemon db=", "wake="]);
 }
 
 #[test]

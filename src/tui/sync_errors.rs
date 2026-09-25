@@ -28,7 +28,7 @@ fn action(kind: OperationKind) -> ErrorAction {
 /// committed before expiry can still finish.
 #[cfg(test)]
 pub(crate) const JOIN_TIMEOUT: &str = "The other device didn't add this device in time. \
-     Keep Add device open on the other device, then choose Resume joining.";
+     Keep Add device or `aven sync invite` open on the other device, then choose Resume joining.";
 
 pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If the invitation expired, choose Use a new \
      invitation and paste a new one from the same device. The earlier invitation still \
@@ -36,8 +36,8 @@ pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If the invitation expired, choose
 
 #[cfg(test)]
 pub(crate) const JOIN_REQUIRES_EMPTY: &str = "This database already has tasks or other data, \
-     and joining needs an empty database. Choose a new, empty database and join there. \
-     Nothing here was changed.";
+     and joining needs an empty database. Start aven with `aven --db /new/path sync join` \
+     to use a new, empty database. Nothing here was changed.";
 
 pub(crate) const CHANGE_LIMIT: &str = "This sync has reached its limit on device changes. \
      Start a new sync to keep changing devices; see Recover from device loss in the sync docs.";

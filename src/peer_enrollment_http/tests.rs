@@ -465,14 +465,25 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
             .await
             .is_err()
     );
-    assert!(
-        aven_core::db::backup_database(
-            peer_db.path(),
-            &root.path().join("forbidden-backup.sqlite")
-        )
+    let backup_path = root.path().join("detached-peer-backup.sqlite");
+    aven_core::db::backup_database(peer_db.path(), &backup_path)
         .await
-        .is_err()
-    );
+        .unwrap();
+    let backup_pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", backup_path.display()))
+        .await
+        .unwrap();
+    let enrolled_peers: i64 = sqlx::query_scalar("SELECT count(*) FROM local_peer_enrollment")
+        .fetch_one(&backup_pool)
+        .await
+        .unwrap();
+    assert_eq!(enrolled_peers, 0);
+    let preserved_tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE title='LATER LOCAL EDIT'")
+            .fetch_one(&backup_pool)
+            .await
+            .unwrap();
+    assert_eq!(preserved_tasks, 1);
+    backup_pool.close().await;
     let server_pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", server.path().display()))
         .await
         .unwrap();

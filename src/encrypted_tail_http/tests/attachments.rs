@@ -1131,12 +1131,23 @@ async fn cli_drain_stops_promptly_behind_missing_local_image_and_still_pulls() {
         title(&f.peer, remote.id.as_str()).await,
         "remote behind missing image"
     );
+    let pending: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT entity_type, op_type, field FROM changes
+         WHERE server_seq IS NULL ORDER BY local_seq",
+    )
+    .fetch_all(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
+    .await
+    .unwrap();
     assert_eq!(
-        scalar(
-            &f.peer,
-            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
-        )
-        .await,
-        2
+        pending,
+        vec![
+            (
+                "task".into(),
+                "attachment_add".into(),
+                Some("attachments".into())
+            ),
+            ("task".into(), "set_field".into(), Some("title".into())),
+            ("device".into(), "publish_device_label".into(), None),
+        ]
     );
 }

@@ -9,7 +9,7 @@ async fn empty_task_list_keeps_header_and_invites_first_task() {
 
     assert!(rendered.contains("TITLE"));
     assert!(rendered.contains("No tasks in this workspace"));
-    assert!(rendered.contains("Add the first task to start building your queue."));
+    assert!(rendered.contains("Add the first task, or use :sync to join an existing sync."));
     assert!(rendered.contains("Add a task"));
 }
 
