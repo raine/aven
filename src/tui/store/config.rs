@@ -27,6 +27,11 @@ impl TuiStore {
         Ok(format!("created config {}", outcome.path.display()))
     }
 
+    pub(crate) async fn refresh_sync_status(&mut self) -> Result<()> {
+        self.sync_status = self.load_sync_status().await?;
+        Ok(())
+    }
+
     pub(super) async fn load_sync_status(&self) -> Result<TuiSyncStatus> {
         let config = self.config();
         let persistence = self.database.sync_persistence_status().await?;
@@ -36,6 +41,11 @@ impl TuiStore {
         };
         let phase = crate::sync::encrypted::local_phase(&self.database).await?;
         let invitation = crate::sync::encrypted::invitation_status(&self.database).await?;
+        let access_refused_at = self
+            .database
+            .sync_access_refusal()
+            .await?
+            .map(|refusal| refusal.at);
         Ok(TuiSyncStatus {
             enabled: config.sync.enabled,
             runtime_allowed: config.sync_is_allowed(),
@@ -48,6 +58,7 @@ impl TuiStore {
             sync_cursor: persistence.sync_cursor,
             local_sequence: persistence.local_sequence,
             invitation,
+            access_refused_at,
         })
     }
 }

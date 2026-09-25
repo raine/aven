@@ -227,7 +227,14 @@ pub(crate) async fn ensure_setup_available(database: &Database, config: &AppConf
 
 pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupArgs) -> Result<()> {
     ensure_setup_available(database, config).await?;
-    let invitation = SetupInvitation::decode(&read_invitation("Setup invitation: ")?)?;
+    let text = read_invitation("Setup invitation: ")?;
+    let invitation = SetupInvitation::decode(&text).map_err(|error| {
+        if DeviceInvitation::decode(&text).is_ok() {
+            error.context("error sync-setup-invitation-device")
+        } else {
+            error
+        }
+    })?;
     let resuming = database.local_seed_genesis_commitment().await?.is_some();
     if !resuming {
         print_setup_preview(database, config, &invitation.server).await?;
@@ -408,7 +415,8 @@ pub(crate) async fn create_invitation(
                 "error sync-invitation-unresolved hint=\"keys may already have been sent with the previous invitation; invite again after that device joins, or after the invitation expires and the next `aven sync` changes keys\"",
             ),
             _ => explain_change_limit(error),
-        })?;
+        });
+    let created = track_access_result(database, created).await?;
     ensure!(
         created.state.expires_at > now,
         "error sync-invitation-unused hint=\"the open invitation has expired; run `aven sync` before creating another invitation\""
@@ -482,7 +490,7 @@ async fn poll_admission(database: &Database, invitation: &PendingInvitation) -> 
     let _guard = super::coordination::acquire(database).await?;
     match client.admit(&store, database).await {
         Err(error) if busy(&error) => Ok(false),
-        result => result,
+        result => track_access_result(database, result).await,
     }
 }
 
@@ -635,10 +643,18 @@ const ALREADY_SET_UP: &str =
 const JOIN_REQUIRES_EMPTY: &str = "error sync-join-requires-empty-database hint=\"join with a new database, for example `aven --db PATH sync join`\"";
 
 pub(crate) async fn join(database: &Database, config: &AppConfig, args: JoinArgs) -> Result<()> {
+    let text = read_invitation("Device invitation: ")?;
+    let invitation = DeviceInvitation::decode(&text).map_err(|error| {
+        if SetupInvitation::decode(&text).is_ok() {
+            error.context("error sync-device-invitation-setup")
+        } else {
+            error
+        }
+    })?;
     let (server, outcome) = run_join(
         database,
         config,
-        || DeviceInvitation::decode(&read_invitation("Device invitation: ")?).map(Some),
+        || Ok(Some(invitation)),
         args.new_invitation,
         &|stage| match stage {
             Stage::WaitingForInviter => eprintln!("Waiting for the inviting device..."),
@@ -646,7 +662,8 @@ pub(crate) async fn join(database: &Database, config: &AppConfig, args: JoinArgs
             _ => {}
         },
     )
-    .await?;
+    .await
+    .context("error sync-join-command")?;
     println!("Joined sync with {server}");
     print_outcome(&outcome);
     Ok(())
@@ -875,6 +892,27 @@ fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
 /// Changes from the server were downloaded; local changes stay queued.
 const KEY_CHANGE_REQUIRED: &str = "error sync-key-change-required hint=\"an invitation expired after keys may have been sent to a device that never joined; this device downloads changes but uploads new ones only after sync changes keys; check the connection and run `aven sync` again\"";
 
+async fn remember_access_refusal(database: &Database, error: &anyhow::Error) {
+    if crate::sync::error_explanations::is_access_refusal(error)
+        && let Err(state_error) = database.record_sync_access_refusal().await
+    {
+        tracing::warn!(
+            error = %state_error,
+            "could not persist sync access refusal"
+        );
+    }
+}
+
+async fn track_access_result<T>(database: &Database, result: Result<T>) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            remember_access_refusal(database, &error).await;
+            Err(error)
+        }
+    }
+}
+
 /// Drains up to `round_limit` rounds with the server bound during setup or
 /// join. The caller holds the sync coordination lock.
 async fn drain_associated(
@@ -886,9 +924,19 @@ async fn drain_associated(
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let server = associated_server(&store, database).await?;
     let client = tail_http::Client::new(&server)?;
-    drain(&client, &store, database, &blob_dir, round_limit)
+    let result = drain(&client, &store, database, &blob_dir, round_limit)
         .await
-        .map_err(explain_round_error)
+        .map_err(explain_round_error);
+    match result {
+        Ok(outcome) => {
+            database.clear_sync_access_refusal().await?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            remember_access_refusal(database, &error).await;
+            Err(error)
+        }
+    }
 }
 
 /// Runs one interactive drain, waiting briefly for another sync to finish.
@@ -1050,6 +1098,7 @@ struct StatusReport {
     images_unavailable: Option<bool>,
     invitation: &'static str,
     invitation_expires_at: Option<u64>,
+    access_refused_at: Option<String>,
 }
 
 /// Local observation only; contacts no server. Waits briefly for a running
@@ -1067,6 +1116,10 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
         images_unavailable: None,
         invitation: "none",
         invitation_expires_at: None,
+        access_refused_at: database
+            .sync_access_refusal()
+            .await?
+            .map(|refusal| refusal.at),
     };
     if !is_set_up(database).await? {
         if json {
@@ -1126,6 +1179,11 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
             }
         };
     }
+    if report.access_refused_at.is_some()
+        && !matches!(report.state, "setup-incomplete" | "join-incomplete")
+    {
+        report.state = "access-refused";
+    }
     if json {
         return print_json_pretty(&report);
     }
@@ -1147,6 +1205,10 @@ pub(crate) async fn status(database: &Database, json: bool) -> Result<()> {
             "State: an invitation expired after keys may have been sent to a device that \
              never joined. The next `aven sync` changes keys before uploading new changes; \
              data that device may already hold stays readable to it."
+        ),
+        "access-refused" => println!(
+            "State: access unconfirmed. The server refused this device. It may have been \
+             removed from sync; check from another device. Local tasks and images stay here."
         ),
         _ => println!("State: ready"),
     }

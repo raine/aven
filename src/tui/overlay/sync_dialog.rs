@@ -191,6 +191,7 @@ pub(crate) fn sync_actions(
     match state.page {
         SyncPage::Home if activity.running.is_some() => Vec::new(),
         SyncPage::Home => match status.phase {
+            LocalPhase::SetUp if status.access_refused_at.is_some() => vec![SyncAction::SyncNow],
             LocalPhase::SetUp => {
                 let mut actions = vec![SyncAction::SyncNow, SyncAction::AddDevice];
                 if status.invitation.is_some() {
@@ -476,6 +477,11 @@ mod tests {
                 SyncAction::ManageDevices
             ]
         );
+        let refused = TuiSyncStatus {
+            access_refused_at: Some("2026-09-24T12:00:00Z".to_string()),
+            ..status(LocalPhase::SetUp)
+        };
+        assert_eq!(sync_actions(&state, &refused, &idle), [SyncAction::SyncNow]);
     }
 
     #[test]

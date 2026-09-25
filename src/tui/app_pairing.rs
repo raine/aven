@@ -126,7 +126,15 @@ impl App {
                 Err(error) if crate::tui::sync_errors::reached_change_limit(&error) => {
                     self.set_error(crate::tui::sync_errors::CHANGE_LIMIT)
                 }
-                Err(error) => self.set_error(format!("invitation unavailable: {error:#}")),
+                Err(error) => {
+                    self.store.refresh_sync_status().await?;
+                    let message = crate::tui::sync_errors::failure(
+                        crate::tui::sync_operations::OperationKind::ListDevices,
+                        &error,
+                    )
+                    .message;
+                    self.set_error(format!("invitation unavailable: {message}"));
+                }
             }
             return Ok(true);
         }
@@ -145,6 +153,7 @@ impl App {
         {
             Ok(()) => self.set_success("device added"),
             Err(error) => {
+                self.store.refresh_sync_status().await?;
                 let status = encrypted::invitation_status(&self.store.database()).await?;
                 if status.is_some_and(|state| state.keys_may_have_been_sent) {
                     self.set_warning("invitation expired; the next sync changes keys");
@@ -154,7 +163,12 @@ impl App {
                 {
                     self.set_warning("invitation expired unused");
                 } else {
-                    self.set_warning(format!("{error:#}"));
+                    let message = crate::tui::sync_errors::failure(
+                        crate::tui::sync_operations::OperationKind::ListDevices,
+                        &error,
+                    )
+                    .message;
+                    self.set_warning(message);
                 }
             }
         }

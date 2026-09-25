@@ -349,7 +349,7 @@ impl App {
             OperationEvent::Stage(..) => {}
             OperationEvent::Finished(kind, result) => {
                 let refreshed = if kind.manages_devices() {
-                    Ok(())
+                    self.store.refresh_sync_status().await
                 } else {
                     self.refresh().await
                 };

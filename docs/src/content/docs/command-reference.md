@@ -930,17 +930,24 @@ aven sync status --json
 ```
 
 The state is `not-set-up`, `setup-incomplete`, `setup-recovery-required`,
-`join-incomplete`, `key-change-pending`, or `ready`.
+`join-incomplete`, `key-change-pending`, `access-refused`, or `ready`.
 `setup-recovery-required` means a fenced setup was definitely refused by storage
 that belongs to another sync; local editing and export remain available, but the
 database must be backed up and restored to a new path to become local-only.
-`key-change-pending` means an invitation
-expired after keys may have been sent to a device that never joined; the next
-`aven sync` changes keys before uploading new changes. Ready and
-`key-change-pending` databases also report the server, whether local changes
-wait to sync, the server position, pending image uploads, downloads, and
-unavailable images, plus whether an invitation is open and its expiry. The
-versioned JSON report omits invitation text, keys, and task content.
+`key-change-pending` means an invitation expired after keys may have been sent
+to a device that never joined; the next `aven sync` changes keys before
+uploading new changes. `access-refused` records when the server refused this
+device's credentials. It may have been removed, but the refusal alone does not
+prove that; check from another device. Local tasks and images remain available,
+and a successful sync clears the state. Set-up databases also report the
+server, whether local changes wait to sync, the server position, pending image
+uploads, downloads, and unavailable images, plus whether an invitation is open
+and its expiry. The versioned JSON report omits invitation text, keys, and task
+content.
+
+Command failures print a plain explanation, a next step, and a stable code in
+square brackets. The full internal error chain is written to the log rather
+than repeated on standard error.
 
 ### `aven server`
 

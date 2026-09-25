@@ -7,7 +7,13 @@ use crate::ids::WorkspaceId;
 
 const IOS_QUEUE_WORKSPACE_META_KEY: &str = "ios_queue_workspace_id";
 const ONBOARDING_META_KEY: &str = "tui_onboarding_version";
+const SYNC_ACCESS_REFUSED_AT_META_KEY: &str = "sync_access_refused_at";
 const FIRST_LAUNCH_ONBOARDING_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncAccessRefusal {
+    pub at: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnboardingStatus {
@@ -17,6 +23,32 @@ pub enum OnboardingStatus {
 }
 
 impl Database {
+    /// Returns the last time this installation's sync credentials were refused.
+    pub async fn sync_access_refusal(&self) -> Result<Option<SyncAccessRefusal>> {
+        Ok(self
+            .meta(SYNC_ACCESS_REFUSED_AT_META_KEY)
+            .await?
+            .map(|at| SyncAccessRefusal { at }))
+    }
+
+    /// Remembers an authentication refusal until a later sync succeeds.
+    pub async fn record_sync_access_refusal(&self) -> Result<SyncAccessRefusal> {
+        let at = crate::ids::now();
+        let mut conn = self.acquire_writer().await?;
+        set_meta(&mut conn, SYNC_ACCESS_REFUSED_AT_META_KEY, &at).await?;
+        Ok(SyncAccessRefusal { at })
+    }
+
+    /// Clears a previous authentication refusal after a successful sync.
+    pub async fn clear_sync_access_refusal(&self) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        sqlx::query("DELETE FROM meta WHERE key = ?")
+            .bind(SYNC_ACCESS_REFUSED_AT_META_KEY)
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+
     pub async fn restore_queue_workspace(&self) -> Result<crate::workspaces::Workspace> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
@@ -148,6 +180,24 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn sync_access_refusal_persists_until_cleared() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        assert_eq!(database.sync_access_refusal().await.unwrap(), None);
+
+        let recorded = database.record_sync_access_refusal().await.unwrap();
+        assert!(!recorded.at.is_empty());
+        assert_eq!(
+            database.sync_access_refusal().await.unwrap(),
+            Some(recorded)
+        );
+
+        database.clear_sync_access_refusal().await.unwrap();
+        assert_eq!(database.sync_access_refusal().await.unwrap(), None);
+    }
 
     #[tokio::test]
     async fn sidebar_preferences_are_local_and_invalid_values_default_to_expanded() {

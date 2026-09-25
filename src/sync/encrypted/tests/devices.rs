@@ -124,6 +124,16 @@ async fn cli_lists_and_removes_devices_with_resumable_removal() {
     join_from(&a, &b).await;
     join_from(&b, &c).await;
 
+    // A successful authenticated sync clears an earlier local refusal marker.
+    let database = aven_core::db::Database::open(&a.db()).await.unwrap();
+    database.record_sync_access_refusal().await.unwrap();
+    drop(database);
+    assert_eq!(status(&a).await["state"], "access-refused");
+    a.ok(&["sync"]).await;
+    let recovered = status(&a).await;
+    assert_eq!(recovered["state"], "ready");
+    assert!(recovered["access_refused_at"].is_null());
+
     // Every device sees the same verified membership and only itself as current.
     let listing = devices(&a).await;
     let object = listing.as_object().unwrap();
@@ -217,6 +227,18 @@ async fn cli_lists_and_removes_devices_with_resumable_removal() {
     // as one possibility.
     let error = failure(&c.run(&["sync"]).await);
     assert!(error.contains("sync-server-refused"), "{error}");
+    let refused_status = status(&c).await;
+    assert_eq!(refused_status["state"], "access-refused");
+    assert!(refused_status["access_refused_at"].is_string());
+    let status_text = c.ok(&["sync", "status"]).await;
+    assert!(
+        status_text.contains("State: access unconfirmed"),
+        "{status_text}"
+    );
+    assert!(
+        status_text.contains("may have been removed"),
+        "{status_text}"
+    );
     let error = failure(&c.run(&["sync", "device", "list"]).await);
     assert!(error.contains("sync-server-refused"), "{error}");
     let error = failure(&c.run(&["sync", "device", "remove", &a_id]).await);

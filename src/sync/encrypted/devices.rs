@@ -8,7 +8,10 @@ use aven_core::db::Database;
 use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
 
-use super::{NOT_SET_UP, REFUSED, associated_server, explain_change_limit, is_set_up, key_store};
+use super::{
+    NOT_SET_UP, REFUSED, associated_server, explain_change_limit, is_set_up, key_store,
+    track_access_result,
+};
 use crate::config::AppConfig;
 use crate::peer_enrollment_http::{self, RemovalStatus};
 use crate::protected_local_keys::ProtectedLocalKeyStore;
@@ -99,13 +102,14 @@ pub(crate) async fn load_devices(database: &Database, config: &AppConfig) -> Res
         server,
     } = open(database, config).await?;
     let mut inputs = store.active_inputs(database, &server).await?;
-    client
+    let refreshed = client
         .refresh_inputs(&store, database, &mut inputs)
         .await
         .map_err(|error| match error.to_string().as_str() {
             "error enrollment-refused outcome-unknown" => error.context(REFUSED),
             _ => explain_revoked(error),
-        })?;
+        });
+    track_access_result(database, refreshed).await?;
     let current = inputs.device();
     let labels = database.device_labels().await?;
     Ok(DeviceListing {
@@ -352,7 +356,8 @@ pub(crate) async fn remove_other_device(
     let status = match client.remove_device(&store, database, target).await {
         Ok(status) => status,
         Err(error) => {
-            return Err(explain_removal_error(&store, database, &server, target, error).await);
+            let error = explain_removal_error(&store, database, &server, target, error).await;
+            return track_access_result(database, Err(error)).await;
         }
     };
     let key_rotation_pending = match status {
@@ -377,13 +382,14 @@ pub(crate) async fn finish_removal(database: &Database, config: &AppConfig) -> R
         client,
         server,
     } = open(database, config).await?;
-    client
+    let finished = client
         .finish_pending_management(&store, database)
         .await
         .map_err(|error| match error.to_string().as_str() {
             "error enrollment-refused outcome-unknown" => error.context(REFUSED),
             _ => explain_revoked(error),
-        })?;
+        });
+    track_access_result(database, finished).await?;
     Ok(store
         .active_inputs(database, &server)
         .await?

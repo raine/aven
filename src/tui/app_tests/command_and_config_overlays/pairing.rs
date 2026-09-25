@@ -48,7 +48,14 @@ async fn add_device_reports_invitation_failures_without_an_overlay() {
     assert!(app.overlay.is_none());
     let message = toast_message(&app).unwrap();
     assert!(message.starts_with("invitation unavailable:"), "{message}");
-    assert!(message.contains("sync-not-set-up"), "{message}");
+    assert!(
+        message.contains("Sync isn't set up for this database"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Set up sync or Join existing sync"),
+        "{message}"
+    );
 }
 
 #[tokio::test]

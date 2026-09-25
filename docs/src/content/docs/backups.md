@@ -41,7 +41,8 @@ a safety backup first and preserves the previous attachment directory.
 A database that has set up or joined end-to-end encrypted sync can create a
 backup, including while setup or joining is incomplete. It still refuses
 restore and import because replacing data in a database that takes part in sync
-is unsafe. Restore the backup to a fresh database path instead.
+is unsafe. The CLI directs you to restore or import into a fresh database path
+instead of printing the internal refusal chain.
 
 If one device is lost or broken, use a surviving device instead of a backup:
 run `aven sync invite` there, then run `aven sync join` on an empty database on

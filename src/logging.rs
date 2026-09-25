@@ -2,6 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::panic::{self, PanicHookInfo};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
@@ -9,6 +10,7 @@ use tracing_subscriber::EnvFilter;
 const APP_DIR: &str = "aven";
 const LOG_FILE: &str = "aven.log";
 static PANIC_HOOK: Once = Once::new();
+static LOGS_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LogMode {
@@ -19,6 +21,7 @@ pub(crate) enum LogMode {
 }
 
 pub(crate) fn init(mode: LogMode) -> Result<()> {
+    LOGS_TO_STDERR.store(mode.uses_stderr(), Ordering::Relaxed);
     let filter = std::env::var("AVEN_LOG").unwrap_or_else(|_| "aven=info".to_string());
     let filter = EnvFilter::try_new(filter).context("invalid AVEN_LOG filter")?;
     if mode.uses_stderr() {
@@ -36,6 +39,14 @@ pub(crate) fn init(mode: LogMode) -> Result<()> {
 impl LogMode {
     fn uses_stderr(self) -> bool {
         matches!(self, Self::Daemon | Self::Server)
+    }
+}
+
+pub(crate) fn record_command_error(error: &anyhow::Error) {
+    // Long-running modes already write tracing events to stderr. Their final
+    // error is rendered once by main rather than duplicated as a log record.
+    if !LOGS_TO_STDERR.load(Ordering::Relaxed) {
+        tracing::error!(error = %format_args!("{error:#}"), "command failed");
     }
 }
 

@@ -229,7 +229,7 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
         if let Some(OperationResult::Failed(failure)) = &view.activity.last {
             body.lines.extend(wrapped_row(
                 "last error",
-                &failure.details,
+                &failure.message,
                 Style::new().fg(FG_MUTED),
                 width,
             ));
@@ -280,6 +280,14 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     if status.phase == LocalPhase::SetupRecoveryRequired {
         lines.extend(paragraph(
             "Local editing and export still work. Back up this database, then restore it to a new path for a local-only copy.",
+            Style::new().fg(FG),
+            width,
+        ));
+    }
+    if summary.health == SyncHealth::AccessRefused {
+        lines.extend(paragraph(
+            "The server refused this device. It may have been removed from sync; check from \
+             another device. Local tasks and images stay here.",
             Style::new().fg(FG),
             width,
         ));
@@ -519,7 +527,7 @@ fn failure_lines(lines: &mut Vec<Line<'static>>, failure: &OperationFailure, wid
     lines.extend(paragraph_with_mark("!", ORANGE, headline, width));
     lines.extend(paragraph(&failure.message, Style::new().fg(FG), width));
     lines.extend(paragraph(
-        "Press d for technical details.",
+        "Press d for details.",
         Style::new().fg(FG_DIM),
         width,
     ));
@@ -676,7 +684,7 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         lines.push(Line::from(""));
         lines.push(super::shared::section_line("details"));
         lines.extend(paragraph(
-            &failure.details,
+            &failure.message,
             Style::new().fg(FG_MUTED),
             width,
         ));
@@ -1069,6 +1077,7 @@ fn state_line(status: &TuiSyncStatus, health: SyncHealth, syncing: bool) -> &'st
         return "Syncing now";
     }
     match (health, status.phase) {
+        (SyncHealth::AccessRefused, _) => "Access unconfirmed",
         (SyncHealth::RuntimeDisabled, _) => "Sync is disabled by the runtime override",
         (_, LocalPhase::NotSetUp) => "This database is local only",
         (_, LocalPhase::SetupIncomplete) => "Setup started here and didn't finish",
@@ -1107,20 +1116,27 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
         Style::new().fg(FG_MUTED),
         width,
     ));
+    if let Some(at) = &status.access_refused_at {
+        lines.extend(wrapped_row(
+            "access refused",
+            at,
+            Style::new().fg(RED),
+            width,
+        ));
+    }
     lines
 }
 
 fn wrapped_row(label: &str, value: &str, style: Style, width: usize) -> Vec<Line<'static>> {
     let value_width = width.saturating_sub(LABEL_WIDTH).max(1);
-    let ranges = cell_width_ranges(value, value_width);
-    ranges
+    wrap_words(value, value_width)
         .into_iter()
         .enumerate()
-        .map(|(index, (start, end))| {
+        .map(|(index, value)| {
             let label = if index == 0 { label } else { "" };
             Line::from(vec![
                 Span::styled(format!("{label:<LABEL_WIDTH$}"), Style::new().fg(FG_DIM)),
-                Span::styled(value[start..end].to_string(), style),
+                Span::styled(value, style),
             ])
         })
         .collect()

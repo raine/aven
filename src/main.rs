@@ -1,10 +1,12 @@
-use anyhow::Result;
+use std::process::ExitCode;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    if let Err(error) = aven::run_cli().await {
-        tracing::error!(error = %error, "command failed");
-        return Err(error);
+async fn main() -> ExitCode {
+    match aven::run_cli().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            aven::report_cli_error(&error);
+            ExitCode::FAILURE
+        }
     }
-    Ok(())
 }

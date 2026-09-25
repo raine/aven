@@ -382,7 +382,7 @@ fn results_distinguish_images_from_tasks() {
 }
 
 #[test]
-fn failures_show_plain_messages_and_technical_details_on_request() {
+fn failures_show_plain_messages_without_raw_error_chains() {
     let failure = OperationFailure {
         kind: OperationKind::Setup,
         message: "Couldn't reach the sync server.".to_string(),
@@ -410,7 +410,25 @@ fn failures_show_plain_messages_and_technical_details_on_request() {
         ..SyncDialogState::default()
     });
     let details = dialog_text(activity_view(state, status, activity));
-    assert!(details.contains("bootstrap-network"));
+    assert!(details.contains("Couldn't reach the sync server."));
+    assert!(!details.contains("bootstrap-network"));
+}
+
+#[test]
+fn access_refusal_shows_error_guidance_and_only_retry() {
+    let status = TuiSyncStatus {
+        access_refused_at: Some("2026-09-24T12:00:00Z".to_string()),
+        ..sync_status()
+    };
+
+    let rendered = render_page(SyncPage::Home, status, SyncActivity::default());
+
+    assert!(rendered.contains("Sync access unconfirmed"));
+    assert!(rendered.contains("may have been removed from sync"));
+    assert!(rendered.contains("Local tasks and images stay here"));
+    assert!(rendered.contains("Sync now"));
+    assert!(!rendered.contains("Add device"));
+    assert!(!rendered.contains("Manage devices"));
 }
 
 #[test]

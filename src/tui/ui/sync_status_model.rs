@@ -2,10 +2,11 @@ use ratatui::style::Color;
 
 use crate::sync::encrypted::LocalPhase;
 use crate::tui::store::TuiSyncStatus;
-use crate::tui::theme::{FG_DIM, GREEN, ORANGE};
+use crate::tui::theme::{FG_DIM, GREEN, ORANGE, RED};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SyncHealth {
+    AccessRefused,
     Attention,
     RuntimeDisabled,
     NotSetUp,
@@ -31,6 +32,7 @@ pub(super) struct SyncStatusSummary {
 impl SyncStatusSummary {
     pub(super) fn headline(&self) -> &'static str {
         match self.health {
+            SyncHealth::AccessRefused => "Sync access unconfirmed",
             SyncHealth::Attention => "Sync needs attention",
             SyncHealth::RuntimeDisabled => "Sync disabled",
             SyncHealth::NotSetUp => "Local only",
@@ -42,6 +44,7 @@ impl SyncStatusSummary {
 
     pub(super) fn color(&self) -> Color {
         match self.health {
+            SyncHealth::AccessRefused => RED,
             SyncHealth::Attention | SyncHealth::Unfinished | SyncHealth::Pending(_) => ORANGE,
             SyncHealth::Idle => GREEN,
             SyncHealth::RuntimeDisabled | SyncHealth::NotSetUp => FG_DIM,
@@ -61,6 +64,7 @@ impl SyncStatusSummary {
             }
         }
         match self.health {
+            SyncHealth::AccessRefused => (RED, "sync error".to_string()),
             SyncHealth::Attention | SyncHealth::Unfinished => (ORANGE, "sync!".to_string()),
             SyncHealth::RuntimeDisabled => (FG_DIM, "sync off".to_string()),
             SyncHealth::NotSetUp => (FG_DIM, "local".to_string()),
@@ -80,6 +84,8 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
     }
     let health = if !status.set_up {
         SyncHealth::NotSetUp
+    } else if status.access_refused_at.is_some() {
+        SyncHealth::AccessRefused
     } else if !status.runtime_allowed {
         SyncHealth::RuntimeDisabled
     } else if status.phase != LocalPhase::SetUp {
@@ -136,6 +142,23 @@ mod tests {
 
         assert_eq!(badge.0, ORANGE);
         assert!(badge.1.starts_with("inviting · 7:"), "{}", badge.1);
+    }
+
+    #[test]
+    fn access_refusal_is_a_red_error_that_can_be_retried() {
+        let status = TuiSyncStatus {
+            access_refused_at: Some("2026-09-24T12:00:00Z".to_string()),
+            ..set_up()
+        };
+
+        let summary = sync_status_summary(&status);
+
+        assert_eq!(summary.health, SyncHealth::AccessRefused);
+        assert_eq!(
+            summary.badge(&status),
+            (RED, "sync error".to_string())
+        );
+        assert!(summary.can_manual_sync);
     }
 
     #[test]

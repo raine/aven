@@ -75,7 +75,14 @@ impl App {
         {
             Ok(true) => self.notification = Some(Notification::loading("syncing")),
             Ok(false) => self.set_info("sync already in progress"),
-            Err(error) => self.set_error(format!("sync unavailable: {error:#}")),
+            Err(error) => {
+                let message = crate::tui::sync_errors::failure(
+                    crate::tui::sync_operations::OperationKind::Sync,
+                    &error,
+                )
+                .message;
+                self.set_error(format!("sync unavailable: {message}"));
+            }
         }
     }
 

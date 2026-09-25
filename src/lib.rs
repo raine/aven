@@ -60,6 +60,33 @@ pub async fn run_cli() -> Result<()> {
     run_cli_from(std::env::args_os()).await
 }
 
+pub fn report_cli_error(error: &anyhow::Error) {
+    logging::record_command_error(error);
+    for line in cli_error_lines(error) {
+        eprintln!("{line}");
+    }
+}
+
+fn cli_error_lines(error: &anyhow::Error) -> Vec<String> {
+    match sync::error_explanations::explain(
+        sync::error_explanations::ErrorAction::General,
+        sync::error_explanations::ErrorSurface::Cli,
+        error,
+    ) {
+        Some(explanation) => {
+            let mut lines = vec![format!(
+                "Error: {} [{}]",
+                explanation.message, explanation.code
+            )];
+            if !explanation.next_step.is_empty() {
+                lines.push(format!("Next: {}", explanation.next_step));
+            }
+            lines
+        }
+        None => vec![format!("Error: {error}")],
+    }
+}
+
 async fn run_cli_from<I, T>(args: I) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -457,8 +484,26 @@ async fn dispatch_database(
 
 #[cfg(test)]
 mod tests {
+    use anyhow::anyhow;
+
     use crate::ids::{BASE32, encode_crockford};
     use crate::projects::normalize_key;
+
+    #[test]
+    fn cli_sync_errors_show_plain_copy_and_stable_code_without_the_chain() {
+        let error = anyhow!("error enrollment-network outcome-unknown")
+            .context("error bootstrap-origin")
+            .context("error sync-server-refused hint=\"raw internal hint\"");
+
+        let lines = super::cli_error_lines(&error);
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("Couldn't reach the sync server"));
+        assert!(lines[0].contains("[enrollment-network]"));
+        assert!(lines[1].starts_with("Next: "));
+        assert!(!lines.join("\n").contains("bootstrap-origin"));
+        assert!(!lines.join("\n").contains("raw internal hint"));
+    }
 
     #[test]
     fn normalizes_project_keys() {
