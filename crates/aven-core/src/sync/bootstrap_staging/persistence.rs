@@ -17,12 +17,11 @@ const CATALOGS: [Component; 3] = [
     Component::ImageCatalog,
 ];
 
-type CandidateRow = (Option<Vec<u8>>, bool, i64, i64, i64, i64);
+type CandidateRow = (Option<Vec<u8>>, bool, i64, i64, i64);
 
 struct Candidate {
     descriptor: Option<Vec<u8>>,
     canceled: bool,
-    epoch: i64,
     expires: i64,
     budget: Budget,
 }
@@ -42,17 +41,11 @@ impl Candidate {
         Ok(hash(self.descriptor.as_deref().unwrap()))
     }
 
-    fn check(&self, commitment: [u8; 32], epoch: Option<u64>) -> Result<()> {
+    fn check(&self, commitment: [u8; 32]) -> Result<()> {
         ensure!(
             self.commitment()? == commitment,
             "error bootstrap-descriptor-conflict"
         );
-        if let Some(epoch) = epoch {
-            ensure!(
-                u64::try_from(self.epoch)? == epoch,
-                "error bootstrap-stale-epoch"
-            );
-        }
         Ok(())
     }
 }
@@ -75,17 +68,16 @@ async fn authorize(conn: &mut SqliteConnection, auth: &Authentication<'_>) -> Re
 
 async fn candidate(conn: &mut SqliteConnection, id: &[u8; 32]) -> Result<Option<Candidate>> {
     let row: Option<CandidateRow> = sqlx::query_as(
-        "SELECT descriptor, canceled, epoch, expires_at, byte_budget, chunk_budget
+        "SELECT descriptor, canceled, expires_at, byte_budget, chunk_budget
          FROM server_bootstrap_candidates WHERE bootstrap = ?",
     )
     .bind(id.as_slice())
     .fetch_optional(&mut *conn)
     .await?;
-    row.map(|(descriptor, canceled, epoch, expires, bytes, chunks)| {
+    row.map(|(descriptor, canceled, expires, bytes, chunks)| {
         Ok(Candidate {
             descriptor,
             canceled,
-            epoch,
             expires,
             budget: Budget {
                 bytes: u64::try_from(bytes)?,
@@ -207,37 +199,10 @@ async fn status(conn: &mut SqliteConnection, id: &[u8; 32]) -> Result<Status> {
     Ok(Status::Staging(StagingStatus {
         descriptor_commitment: c.commitment()?,
         stream_id: d.binding().stream,
-        epoch: u64::try_from(c.epoch)?,
         expires_at: c.expires,
         budget: c.budget,
         components,
     }))
-}
-
-async fn advance(
-    conn: &mut SqliteConnection,
-    id: &[u8; 32],
-    c: &Candidate,
-    reclaim: Reclaim,
-) -> Result<()> {
-    let epoch = c
-        .epoch
-        .checked_add(1)
-        .ok_or_else(|| anyhow::anyhow!("error bootstrap-epoch-exhausted"))?;
-    if reclaim == Reclaim::All {
-        sqlx::query("DELETE FROM server_bootstrap_chunks WHERE bootstrap = ?")
-            .bind(id.as_slice())
-            .execute(&mut *conn)
-            .await?;
-    }
-    sqlx::query(
-        "UPDATE server_bootstrap_candidates SET epoch = ?, expires_at = 0 WHERE bootstrap = ?",
-    )
-    .bind(epoch)
-    .bind(id.as_slice())
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
 }
 
 impl Database {
@@ -273,7 +238,7 @@ impl Database {
             "error bootstrap-context"
         );
         if let Some(c) = candidate(&mut tx, &id).await? {
-            c.check(hash(descriptor), None)?;
+            c.check(hash(descriptor))?;
             ensure!(
                 c.descriptor.as_deref() == Some(descriptor) && c.budget == budget,
                 "error bootstrap-descriptor-conflict"
@@ -287,7 +252,7 @@ impl Database {
             .await?;
             ensure!(!active, "error bootstrap-active-candidate");
             layout(&mut tx, &id, &d).await?.check_budget(budget)?;
-            sqlx::query("INSERT INTO server_bootstrap_candidates(bootstrap, descriptor, canceled, epoch, expires_at, byte_budget, chunk_budget) VALUES (?, ?, 0, 1, ?, ?, ?)")
+            sqlx::query("INSERT INTO server_bootstrap_candidates(bootstrap, descriptor, canceled, expires_at, byte_budget, chunk_budget) VALUES (?, ?, 0, ?, ?, ?)")
                 .bind(id.as_slice()).bind(descriptor).bind(now()?.checked_add(STAGING_TTL_SECONDS).ok_or_else(|| anyhow::anyhow!("error bootstrap-clock"))?)
                 .bind(i64::try_from(budget.bytes)?).bind(i64::try_from(budget.chunks)?)
                 .execute(&mut *tx).await?;
@@ -354,7 +319,7 @@ impl Database {
         }
         if candidate(&mut tx, &bootstrap_id).await?.is_none() {
             capacity(&mut tx).await?;
-            sqlx::query("INSERT INTO server_bootstrap_candidates(bootstrap, canceled, epoch, expires_at, byte_budget, chunk_budget) VALUES (?, 1, 1, 0, 0, 0)")
+            sqlx::query("INSERT INTO server_bootstrap_candidates(bootstrap, canceled, expires_at, byte_budget, chunk_budget) VALUES (?, 1, 0, 0, 0)")
                 .bind(bootstrap_id.as_slice()).execute(&mut *tx).await?;
         } else {
             sqlx::query("DELETE FROM server_bootstrap_chunks WHERE bootstrap = ?")
@@ -368,28 +333,9 @@ impl Database {
         Ok(Status::Canceled)
     }
 
-    /// Authenticated reclamation serializes deletion and epoch fencing with PUT.
-    /// It cannot cancel the candidate or affect a resumed epoch using an old token.
-    pub async fn reclaim_bootstrap_staging(
-        &self,
-        auth: &Authentication<'_>,
-        bootstrap_id: [u8; 32],
-        descriptor_commitment: [u8; 32],
-        epoch: u64,
-        reclaim: Reclaim,
-    ) -> Result<()> {
-        let mut conn = self.acquire_writer().await?;
-        let mut tx = begin_immediate(&mut conn).await?;
-        authorize(&mut tx, auth).await?;
-        let c = required(&mut tx, &bootstrap_id).await?;
-        c.check(descriptor_commitment, Some(epoch))?;
-        advance(&mut tx, &bootstrap_id, &c, reclaim).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     /// Stores one slot only after checking it against the frozen descriptor.
-    /// Rejected bytes leave storage unchanged; exact retries succeed.
+    /// Rejected bytes leave storage unchanged; exact retries succeed, including
+    /// requests delayed across expiry and resume.
     pub async fn put_bootstrap_chunk(
         &self,
         auth: &Authentication<'_>,
@@ -404,7 +350,7 @@ impl Database {
         authorize(&mut tx, auth).await?;
         let id = &request.bootstrap_id;
         let c = required(&mut tx, id).await?;
-        c.check(request.descriptor_commitment, Some(request.epoch))?;
+        c.check(request.descriptor_commitment)?;
         ensure!(c.expires > now()?, "error bootstrap-staging-expired");
         let d = c.declaration()?;
         let layout = layout(&mut tx, id, &d).await?;
@@ -495,16 +441,12 @@ async fn ensure_staging(
     commitment: [u8; 32],
 ) -> Result<StagingStatus> {
     let c = required(conn, id).await?;
-    c.check(commitment, None)?;
+    c.check(commitment)?;
     let retained = layout(conn, id, &c.declaration()?).await?;
     retained.check_budget(c.budget)?;
     revalidate(conn, id, &retained).await?;
     let now = now()?;
     if c.expires <= now {
-        // Reclaimed candidates already have their next fence; expiry needs one.
-        if c.expires != 0 {
-            advance(conn, id, &c, Reclaim::Fence).await?;
-        }
         let expires = now
             .checked_add(STAGING_TTL_SECONDS)
             .ok_or_else(|| anyhow::anyhow!("error bootstrap-clock"))?;

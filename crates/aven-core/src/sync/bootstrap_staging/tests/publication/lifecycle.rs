@@ -4,9 +4,9 @@ use super::*;
 async fn publish_restarts_exactly_and_transfers_ownership_without_snapshot_image_pins() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
-    let outcome = f.publish(&p, s.epoch).await.unwrap();
+    f.declare().await;
+    f.upload().await;
+    let outcome = f.publish(&p).await.unwrap();
     outcome
         .validate_expected(f.seed.genesis(), &f.package.descriptor)
         .unwrap();
@@ -96,7 +96,7 @@ async fn publish_restarts_exactly_and_transfers_ownership_without_snapshot_image
     let retry = server
         .publish_bootstrap(
             &f.auth(),
-            f.publish_request(&p, 0),
+            f.publish_request(&p),
             PublicationPolicy {
                 workspace_quota_bytes: 0,
             },
@@ -171,9 +171,9 @@ async fn deleted_parent_with_incomplete_history_keeps_selected_extra_protected()
         .unwrap();
     f.package = local.upload_package();
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
-    f.publish(&p, s.epoch).await.unwrap();
+    f.declare().await;
+    f.upload().await;
+    f.publish(&p).await.unwrap();
     let mut conn = f.server.acquire_reader().await.unwrap();
     let (deleted, protected): (bool, bool) =
         sqlx::query_as("SELECT deleted, protected FROM server_e2ee_image_parents")
@@ -257,13 +257,13 @@ async fn shared_references_charge_distinct_object_once_per_workspace() {
         2
     );
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     assert!(
         f.server
             .publish_bootstrap(
                 &f.auth(),
-                f.publish_request(&p, s.epoch),
+                f.publish_request(&p),
                 PublicationPolicy {
                     workspace_quota_bytes: bytes - 1
                 }
@@ -275,7 +275,7 @@ async fn shared_references_charge_distinct_object_once_per_workspace() {
     f.server
         .publish_bootstrap(
             &f.auth(),
-            f.publish_request(&p, s.epoch),
+            f.publish_request(&p),
             PublicationPolicy {
                 workspace_quota_bytes: bytes,
             },

@@ -4,8 +4,8 @@ use super::*;
 async fn committed_publication_survives_process_exit_without_response() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     // Synthetic authority stays in the private temporary test directory, never
     // in server SQLite or an environment variable containing key material.
     std::fs::write(
@@ -34,7 +34,7 @@ async fn committed_publication_survives_process_exit_without_response() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let recovered = f.publish(&p, 0).await.unwrap();
+    let recovered = f.publish(&p).await.unwrap();
     assert_eq!(recovered.publication(), &p);
     recovered
         .validate_expected(f.seed.genesis(), &f.package.descriptor)
@@ -79,7 +79,6 @@ async fn publication_exit_worker() {
             PublishBootstrap {
                 bootstrap_id: binding.bootstrap_id,
                 descriptor_commitment: binding.descriptor_commitment,
-                epoch: 1,
                 record: &record,
             },
             Default::default(),

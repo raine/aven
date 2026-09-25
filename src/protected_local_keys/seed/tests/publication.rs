@@ -166,7 +166,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
             .map(|(_, chunks)| chunks.len() as u64)
             .sum(),
     };
-    let staging = server
+    server
         .declare_bootstrap_staging(&auth, &package.descriptor, budget)
         .await
         .unwrap();
@@ -178,7 +178,6 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
                     PutChunk {
                         bootstrap_id: binding.bootstrap_id,
                         descriptor_commitment: binding.descriptor_commitment,
-                        epoch: staging.epoch,
                         component,
                         index: index as u64,
                         bytes,
@@ -191,7 +190,6 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     let request = || PublishBootstrap {
         bootstrap_id: binding.bootstrap_id,
         descriptor_commitment: binding.descriptor_commitment,
-        epoch: staging.epoch,
         record: signed.record(),
     };
     let accepted = server

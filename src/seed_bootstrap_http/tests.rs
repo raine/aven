@@ -81,7 +81,7 @@ fn budget(package: &Package) -> staging::Budget {
 }
 
 #[tokio::test]
-async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutation() {
+async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
     let root = tempfile::tempdir().unwrap();
     let (db, store, seed, package) = fixture(root.path()).await;
     let server = Database::open(&root.path().join("server.sqlite"))
@@ -187,7 +187,7 @@ async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutatio
         .unwrap(),
         Reply::Missing
     ));
-    let Reply::Staging(initial) = http
+    let Reply::Staging(_) = http
         .exchange(
             seed.genesis(),
             seed.bearer(),
@@ -214,7 +214,6 @@ async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutatio
     let publish = || Operation::Publish {
         bootstrap: b.bootstrap_id,
         commitment: b.descriptor_commitment,
-        epoch: initial.epoch,
         record: signed.record().to_vec(),
     };
     assert!(
@@ -222,23 +221,13 @@ async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutatio
             .await
             .is_err()
     ); // incomplete catalogs/artifacts
-    let put = |epoch, bytes| Operation::Put {
+    let put = |bytes| Operation::Put {
         bootstrap: b.bootstrap_id,
         commitment: b.descriptor_commitment,
-        epoch,
         component: staging::Component::DataCatalog,
         index: 0,
         bytes,
     };
-    assert!(
-        http.exchange(
-            seed.genesis(),
-            seed.bearer(),
-            put(initial.epoch + 1, package.catalogs[0].clone())
-        )
-        .await
-        .is_err()
-    );
     let mut changed = package.descriptor.clone();
     changed[0] ^= 1;
     assert!(
@@ -288,7 +277,7 @@ async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutatio
     http.exchange(
         seed.genesis(),
         seed.bearer(),
-        put(initial.epoch, package.catalogs[0].clone()),
+        put(package.catalogs[0].clone()),
     )
     .await
     .unwrap();
@@ -302,54 +291,12 @@ async fn loopback_rejects_bad_authority_context_bytes_and_epochs_without_mutatio
     let mut changed = package.catalogs[0].clone();
     changed[0] ^= 1;
     assert!(
-        http.exchange(seed.genesis(), seed.bearer(), put(initial.epoch, changed))
+        http.exchange(seed.genesis(), seed.bearer(), put(changed))
             .await
             .is_err()
     );
     assert_eq!(
         before,
-        serde_json::to_vec(
-            &http
-                .exchange(seed.genesis(), seed.bearer(), status())
-                .await
-                .unwrap()
-        )
-        .unwrap()
-    );
-    // Operator reclamation advances the real core epoch; a previously valid
-    // HTTP request cannot be silently relabeled to the resumed epoch.
-    server
-        .reclaim_bootstrap_staging(
-            &staging::Authentication {
-                vault_id: seed.genesis().context().vault_id,
-                genesis_commitment: seed.genesis().commitment(),
-                bearer: seed.bearer(),
-            },
-            b.bootstrap_id,
-            b.descriptor_commitment,
-            initial.epoch,
-            staging::Reclaim::Fence,
-        )
-        .await
-        .unwrap();
-    let fenced = serde_json::to_vec(
-        &http
-            .exchange(seed.genesis(), seed.bearer(), status())
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert!(
-        http.exchange(
-            seed.genesis(),
-            seed.bearer(),
-            put(initial.epoch, package.catalogs[0].clone())
-        )
-        .await
-        .is_err()
-    );
-    assert_eq!(
-        fenced,
         serde_json::to_vec(
             &http
                 .exchange(seed.genesis(), seed.bearer(), status())
@@ -640,7 +587,6 @@ async fn loopback_process_restart_recovers_exact_upload_and_remote_commit_before
             Operation::Publish {
                 bootstrap: b.bootstrap_id,
                 commitment: b.descriptor_commitment,
-                epoch: 0,
                 record: signed.record().to_vec(),
             },
         )

@@ -72,7 +72,6 @@ async fn removed_seed_is_denied_before_stale_and_historical_survivor_receipt_rem
             crate::sync::bootstrap_staging::PublishBootstrap {
                 bootstrap_id: m.publication().binding().bootstrap_id,
                 descriptor_commitment: m.publication().binding().descriptor_commitment,
-                epoch: 0,
                 record: f.publication.record()
             },
             Default::default()

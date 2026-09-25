@@ -14,16 +14,13 @@ async fn stored_chunks(f: &Fixture) -> Vec<(Vec<u8>, i64, Vec<u8>)> {
 #[tokio::test]
 async fn catalog_slices_are_checked_in_their_slot_before_storage() {
     let f = Fixture::build(true).await;
-    let s = f.declare().await;
+    f.declare().await;
     let slices = f.package.catalogs[1].chunks(1_048_576).collect::<Vec<_>>();
     assert_eq!(slices.len(), 2);
     // Network arrival order is irrelevant when indexes and exact bytes agree.
     for _ in 0..2 {
         f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::PrefixCatalog, 1, slices[1]),
-            )
+            .put_bootstrap_chunk(&f.auth(), f.request(Component::PrefixCatalog, 1, slices[1]))
             .await
             .unwrap();
     }
@@ -48,7 +45,7 @@ async fn catalog_slices_are_checked_in_their_slot_before_storage() {
     ] {
         assert!(
             f.server
-                .put_bootstrap_chunk(&f.auth(), f.request(s.epoch, component, index, bytes))
+                .put_bootstrap_chunk(&f.auth(), f.request(component, index, bytes))
                 .await
                 .is_err(),
             "{component:?}/{index}"
@@ -57,18 +54,15 @@ async fn catalog_slices_are_checked_in_their_slot_before_storage() {
         assert_eq!(f.status().await, partial);
     }
     f.server
-        .put_bootstrap_chunk(
-            &f.auth(),
-            f.request(s.epoch, Component::PrefixCatalog, 0, slices[0]),
-        )
+        .put_bootstrap_chunk(&f.auth(), f.request(Component::PrefixCatalog, 0, slices[0]))
         .await
         .unwrap();
     assert_eq!(
         presence(&f.status().await, Component::PrefixCatalog),
         [Presence::Verified, Presence::Verified]
     );
-    f.upload(s.epoch).await;
-    f.upload(s.epoch).await;
+    f.upload().await;
+    f.upload().await;
 }
 
 #[tokio::test]
@@ -83,7 +77,7 @@ async fn hash_valid_malformed_catalogs_never_complete_or_admit_images() {
             f.server
                 .put_bootstrap_chunk(
                     &f.auth(),
-                    f.request(s.epoch, Component::PrefixCatalog, 0, &f.package.catalogs[1])
+                    f.request(Component::PrefixCatalog, 0, &f.package.catalogs[1])
                 )
                 .await
                 .is_err()
@@ -98,11 +92,11 @@ async fn hash_valid_malformed_catalogs_never_complete_or_admit_images() {
     images.parents.clear();
     f.package.catalogs[2] = images.encode().unwrap();
     bootstrap_format::recommit_catalog(&mut f.package, 2);
-    let s = f.declare().await;
+    f.declare().await;
     f.server
         .put_bootstrap_chunk(
             &f.auth(),
-            f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0]),
+            f.request(Component::DataCatalog, 0, &f.package.catalogs[0]),
         )
         .await
         .unwrap();
@@ -111,7 +105,7 @@ async fn hash_valid_malformed_catalogs_never_complete_or_admit_images() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::ImageCatalog, 0, &f.package.catalogs[2])
+                f.request(Component::ImageCatalog, 0, &f.package.catalogs[2])
             )
             .await
             .is_err()
@@ -122,12 +116,7 @@ async fn hash_valid_malformed_catalogs_never_complete_or_admit_images() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(
-                    s.epoch,
-                    Component::Image(image.object_id),
-                    0,
-                    &image.records[0]
-                )
+                f.request(Component::Image(image.object_id), 0, &image.records[0])
             )
             .await
             .is_err()
@@ -148,12 +137,7 @@ async fn hash_valid_malformed_catalogs_never_complete_or_admit_images() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(
-                    s.epoch,
-                    Component::Image(image.object_id),
-                    0,
-                    &image.records[0]
-                )
+                f.request(Component::Image(image.object_id), 0, &image.records[0])
             )
             .await
             .is_err()
@@ -203,7 +187,7 @@ async fn storage_failures_roll_back_declaration_upload_and_cancellation() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0])
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
             )
             .await
             .is_err()
@@ -215,7 +199,7 @@ async fn storage_failures_roll_back_declaration_upload_and_cancellation() {
         .await
         .unwrap();
     drop(conn);
-    f.upload(s.epoch).await;
+    f.upload().await;
     let before = f.status().await;
     let mut conn = f.server.acquire_writer().await.unwrap();
     sqlx::query("CREATE TRIGGER fail_cancel BEFORE UPDATE ON server_bootstrap_candidates BEGIN SELECT RAISE(ABORT, 'injected'); END")
@@ -227,14 +211,8 @@ async fn storage_failures_roll_back_declaration_upload_and_cancellation() {
             .await
             .is_err()
     );
-    assert!(
-        f.server
-            .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), s.epoch, Reclaim::All)
-            .await
-            .is_err()
-    );
     assert_eq!(f.status().await, before);
-    f.upload(s.epoch).await;
+    f.upload().await;
 }
 
 #[tokio::test]
@@ -278,8 +256,7 @@ async fn declaration_request_storage_and_terminal_metadata_are_bounded() {
     );
     let mut budget = f.budget();
     budget.bytes -= 1;
-    let s = f
-        .server
+    f.server
         .declare_bootstrap_staging(&f.auth(), &f.package.descriptor, budget)
         .await
         .unwrap();
@@ -292,17 +269,14 @@ async fn declaration_request_storage_and_terminal_metadata_are_bounded() {
     let bytes = vec![0; MAX_REQUEST_BYTES + 1];
     assert!(
         f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(s.epoch, Component::Manifest, 0, &bytes)
-            )
+            .put_bootstrap_chunk(&f.auth(), f.request(Component::Manifest, 0, &bytes))
             .await
             .is_err()
     );
     f.server
         .put_bootstrap_chunk(
             &f.auth(),
-            f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0]),
+            f.request(Component::DataCatalog, 0, &f.package.catalogs[0]),
         )
         .await
         .unwrap();
@@ -311,7 +285,7 @@ async fn declaration_request_storage_and_terminal_metadata_are_bounded() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::ImageCatalog, 0, &f.package.catalogs[2])
+                f.request(Component::ImageCatalog, 0, &f.package.catalogs[2])
             )
             .await
             .is_err()
@@ -349,8 +323,8 @@ async fn declaration_request_storage_and_terminal_metadata_are_bounded() {
 #[tokio::test]
 async fn clear_server_database_and_diagnostics_exclude_private_material() {
     let f = Fixture::new().await;
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     let mut secrets = vec![
         b"PRIVATE-STAGING-TASK-TITLE".to_vec(),
         b"PRIVATE-STAGING-DESCRIPTION".to_vec(),
@@ -388,8 +362,8 @@ async fn keyless_staging_does_not_establish_arbitrary_domain_validity() {
     let byte = &mut f.package.catalogs[1][39];
     *byte = if *byte == b'0' { b'1' } else { b'0' };
     bootstrap_format::recommit_catalog(&mut f.package, 1);
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     bootstrap_format::validate_keyless(&f.package).unwrap();
     let local = f
         .source
@@ -428,8 +402,8 @@ async fn keyless_staging_does_not_establish_arbitrary_domain_validity() {
 #[tokio::test]
 async fn ensure_revalidates_retained_bytes_before_renewing_reservations() {
     let f = Fixture::new().await;
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     let mut corrupt = f.package.manifest[0].clone();
     let last = corrupt.len() - 1;
     corrupt[last] ^= 1;
@@ -452,16 +426,23 @@ async fn ensure_revalidates_retained_bytes_before_renewing_reservations() {
             .is_err()
     );
     assert_eq!(f.status().await.expires_at, 1);
-    f.server
-        .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), s.epoch, Reclaim::All)
-        .await
-        .unwrap();
-    let resumed = f
-        .server
-        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
-        .await
-        .unwrap();
-    f.upload(resumed.epoch).await;
+    assert!(
+        f.server
+            .put_bootstrap_chunk(
+                &f.auth(),
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
+            )
+            .await
+            .is_err()
+    );
+    // Retained bytes are never rewritten; cancellation is the exit.
+    assert_eq!(
+        f.server
+            .cancel_bootstrap_staging(&f.auth(), f.id)
+            .await
+            .unwrap(),
+        Status::Canceled
+    );
 }
 
 #[tokio::test]
@@ -470,11 +451,11 @@ async fn artifact_aggregate_failure_rolls_back_the_final_chunk() {
     // Corrupt the state recipe's aggregate inside a recommitted data catalog.
     f.package.catalogs[0][32] ^= 1;
     bootstrap_format::recommit_catalog(&mut f.package, 0);
-    let s = f.declare().await;
+    f.declare().await;
     f.server
         .put_bootstrap_chunk(
             &f.auth(),
-            f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0]),
+            f.request(Component::DataCatalog, 0, &f.package.catalogs[0]),
         )
         .await
         .unwrap();
@@ -482,7 +463,7 @@ async fn artifact_aggregate_failure_rolls_back_the_final_chunk() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::State, 0, &f.package.state[0])
+                f.request(Component::State, 0, &f.package.state[0])
             )
             .await
             .is_err()

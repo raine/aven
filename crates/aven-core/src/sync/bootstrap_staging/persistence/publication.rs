@@ -145,7 +145,7 @@ impl Database {
         }
         let id = &request.bootstrap_id;
         let c = required(&mut tx, id).await?;
-        c.check(request.descriptor_commitment, Some(request.epoch))?;
+        c.check(request.descriptor_commitment)?;
         let published_at = now()?;
         ensure!(c.expires > published_at, "error bootstrap-staging-expired");
         let descriptor = c

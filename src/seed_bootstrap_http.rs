@@ -76,7 +76,6 @@ enum Operation {
     Put {
         bootstrap: [u8; 32],
         commitment: [u8; 32],
-        epoch: u64,
         component: staging::Component,
         index: u64,
         bytes: Vec<u8>,
@@ -84,7 +83,6 @@ enum Operation {
     Publish {
         bootstrap: [u8; 32],
         commitment: [u8; 32],
-        epoch: u64,
         record: Vec<u8>,
     },
 }
@@ -250,7 +248,6 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
         Operation::Put {
             bootstrap,
             commitment,
-            epoch,
             component,
             index,
             bytes,
@@ -260,7 +257,6 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
                 staging::PutChunk {
                     bootstrap_id: bootstrap,
                     descriptor_commitment: commitment,
-                    epoch,
                     component,
                     index,
                     bytes: &bytes,
@@ -272,7 +268,6 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
         Operation::Publish {
             bootstrap,
             commitment,
-            epoch,
             record,
         } => Reply::Published(
             db.publish_bootstrap(
@@ -280,7 +275,6 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
                 staging::PublishBootstrap {
                     bootstrap_id: bootstrap,
                     descriptor_commitment: commitment,
-                    epoch,
                     record: &record,
                 },
                 server.policy,
@@ -544,7 +538,6 @@ impl Client {
                                 Operation::Put {
                                     bootstrap: binding.bootstrap_id,
                                     commitment: binding.descriptor_commitment,
-                                    epoch: staging.epoch,
                                     component,
                                     index: index as u64,
                                     bytes: bytes.to_vec(),
@@ -564,7 +557,6 @@ impl Client {
                         Operation::Publish {
                             bootstrap: binding.bootstrap_id,
                             commitment: binding.descriptor_commitment,
-                            epoch: staging.epoch,
                             record: publication.record().to_vec(),
                         },
                     )

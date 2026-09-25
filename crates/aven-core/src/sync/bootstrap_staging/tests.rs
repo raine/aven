@@ -210,17 +210,10 @@ impl Fixture {
         result
     }
 
-    fn request<'a>(
-        &self,
-        epoch: u64,
-        component: Component,
-        index: u64,
-        bytes: &'a [u8],
-    ) -> PutChunk<'a> {
+    fn request<'a>(&self, component: Component, index: u64, bytes: &'a [u8]) -> PutChunk<'a> {
         PutChunk {
             bootstrap_id: self.id,
             descriptor_commitment: self.commitment(),
-            epoch,
             component,
             index,
             bytes,
@@ -246,14 +239,11 @@ impl Fixture {
         }
     }
 
-    async fn upload(&self, epoch: u64) {
+    async fn upload(&self) {
         for (component, records) in self.components() {
             for (index, bytes) in records.iter().enumerate() {
                 self.server
-                    .put_bootstrap_chunk(
-                        &self.auth(),
-                        self.request(epoch, component, index as u64, bytes),
-                    )
+                    .put_bootstrap_chunk(&self.auth(), self.request(component, index as u64, bytes))
                     .await
                     .unwrap();
             }
@@ -291,7 +281,7 @@ async fn captured_package_round_trip_restart_exact_retries_and_local_immutabilit
     f.server
         .put_bootstrap_chunk(
             &f.auth(),
-            f.request(s.epoch, Component::DataCatalog, 0, &f.package.catalogs[0]),
+            f.request(Component::DataCatalog, 0, &f.package.catalogs[0]),
         )
         .await
         .unwrap();
@@ -303,13 +293,12 @@ async fn captured_package_round_trip_restart_exact_retries_and_local_immutabilit
         .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
         .await
         .unwrap();
-    assert_eq!(resumed.epoch, s.epoch);
     assert_eq!(
         presence(&resumed, Component::DataCatalog),
         [Presence::Verified]
     );
-    f.upload(resumed.epoch).await;
-    f.upload(resumed.epoch).await;
+    f.upload().await;
+    f.upload().await;
     let full = f.status().await;
     assert!(
         full.components
@@ -436,7 +425,7 @@ async fn authentication_context_and_successor_gate_protect_every_operation() {
             .await
             .is_err()
     );
-    let s = f.declare().await;
+    f.declare().await;
     let wrong_auth = Authentication {
         bearer: &wrong,
         ..f.auth()
@@ -449,20 +438,14 @@ async fn authentication_context_and_successor_gate_protect_every_operation() {
     );
     assert!(
         f.server
-            .reclaim_bootstrap_staging(&wrong_auth, f.id, f.commitment(), s.epoch, Reclaim::All)
-            .await
-            .is_err()
-    );
-    assert!(
-        f.server
             .put_bootstrap_chunk(
                 &wrong_auth,
-                f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0])
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
             )
             .await
             .is_err()
     );
-    let mut request = f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0]);
+    let mut request = f.request(Component::Manifest, 0, &f.package.manifest[0]);
     request.descriptor_commitment[0] ^= 1;
     assert!(
         f.server
@@ -506,7 +489,7 @@ async fn authentication_context_and_successor_gate_protect_every_operation() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0])
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
             )
             .await
             .is_err()
@@ -514,12 +497,6 @@ async fn authentication_context_and_successor_gate_protect_every_operation() {
     assert!(
         f.server
             .cancel_bootstrap_staging(&f.auth(), f.id)
-            .await
-            .is_err()
-    );
-    assert!(
-        f.server
-            .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), s.epoch, Reclaim::All)
             .await
             .is_err()
     );
@@ -542,12 +519,12 @@ async fn data_requires_verified_catalogs_and_exact_conflicts_never_overwrite() {
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(1, Component::State, 0, &f.package.state[0])
+                f.request(Component::State, 0, &f.package.state[0])
             )
             .await
             .is_err()
     );
-    let s = f.declare().await;
+    f.declare().await;
     for (component, bytes) in [
         (Component::State, &f.package.state[0]),
         (
@@ -557,24 +534,24 @@ async fn data_requires_verified_catalogs_and_exact_conflicts_never_overwrite() {
     ] {
         assert!(
             f.server
-                .put_bootstrap_chunk(&f.auth(), f.request(s.epoch, component, 0, bytes))
+                .put_bootstrap_chunk(&f.auth(), f.request(component, 0, bytes))
                 .await
                 .is_err()
         );
     }
-    f.upload(s.epoch).await;
+    f.upload().await;
     for (component, records) in f.components() {
         let mut bad = records[0].to_vec();
         let last = bad.len() - 1;
         bad[last] ^= 1;
         assert!(
             f.server
-                .put_bootstrap_chunk(&f.auth(), f.request(s.epoch, component, 0, &bad))
+                .put_bootstrap_chunk(&f.auth(), f.request(component, 0, &bad))
                 .await
                 .is_err()
         );
     }
-    f.upload(s.epoch).await;
+    f.upload().await;
 }
 
 #[tokio::test]
@@ -616,7 +593,7 @@ async fn cancellation_before_declare_competition_and_upload_race_are_terminal() 
     );
 
     let f = Fixture::new().await;
-    let s = f.declare().await;
+    f.declare().await;
     // Independent pools exercise SQLite serialization, not only the shared gate.
     let second = Database::open(&f.dir.path().join("server.sqlite"))
         .await
@@ -626,7 +603,7 @@ async fn cancellation_before_declare_competition_and_upload_race_are_terminal() 
         second.cancel_bootstrap_staging(&auth, f.id),
         f.server.put_bootstrap_chunk(
             &auth,
-            f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0])
+            f.request(Component::Manifest, 0, &f.package.manifest[0])
         )
     );
     cancel.unwrap();
@@ -642,7 +619,7 @@ async fn cancellation_before_declare_competition_and_upload_race_are_terminal() 
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0])
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
             )
             .await
             .is_err()
@@ -656,10 +633,10 @@ async fn cancellation_before_declare_competition_and_upload_race_are_terminal() 
 }
 
 #[tokio::test]
-async fn expiry_resume_and_reclamation_fence_stale_requests_but_preserve_verified_bytes() {
+async fn expiry_denies_puts_and_resume_preserves_verified_bytes() {
     let f = Fixture::new().await;
-    let first = f.declare().await;
-    f.upload(first.epoch).await;
+    f.declare().await;
+    f.upload().await;
     let mut conn = f.server.acquire_writer().await.unwrap();
     sqlx::query("UPDATE server_bootstrap_candidates SET expires_at = 1")
         .execute(&mut *conn)
@@ -673,7 +650,7 @@ async fn expiry_resume_and_reclamation_fence_stale_requests_but_preserve_verifie
         f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(first.epoch, Component::Manifest, 0, &f.package.manifest[0])
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
             )
             .await
             .is_err()
@@ -683,66 +660,9 @@ async fn expiry_resume_and_reclamation_fence_stale_requests_but_preserve_verifie
         .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
         .await
         .unwrap();
-    assert!(resumed.epoch > first.epoch);
+    assert!(resumed.expires_at > expired.expires_at);
     assert_eq!(resumed.components, expired.components);
-    assert!(
-        f.server
-            .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), first.epoch, Reclaim::All)
-            .await
-            .is_err()
-    );
-    f.server
-        .reclaim_bootstrap_staging(
-            &f.auth(),
-            f.id,
-            f.commitment(),
-            resumed.epoch,
-            Reclaim::Fence,
-        )
-        .await
-        .unwrap();
-    let retained = f
-        .server
-        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
-        .await
-        .unwrap();
-    assert_eq!(retained.components, resumed.components);
-    f.server
-        .reclaim_bootstrap_staging(
-            &f.auth(),
-            f.id,
-            f.commitment(),
-            retained.epoch,
-            Reclaim::All,
-        )
-        .await
-        .unwrap();
-    let empty = f
-        .server
-        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
-        .await
-        .unwrap();
-    assert!(
-        empty
-            .components
-            .iter()
-            .all(|c| c.chunks.iter().all(|p| *p == Presence::Missing))
-    );
-    assert!(
-        f.server
-            .put_bootstrap_chunk(
-                &f.auth(),
-                f.request(
-                    retained.epoch,
-                    Component::Manifest,
-                    0,
-                    &f.package.manifest[0]
-                )
-            )
-            .await
-            .is_err()
-    );
-    f.upload(empty.epoch).await;
+    f.upload().await;
 }
 
 #[tokio::test]

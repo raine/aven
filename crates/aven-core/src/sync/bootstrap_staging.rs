@@ -8,7 +8,7 @@
 //!
 //! Declaration freezes the exact profile-1 descriptor and explicit total byte and
 //! chunk budgets, including all three catalogs. One candidate may be active. PUTs
-//! carry its descriptor commitment and current epoch; exact retries are idempotent.
+//! carry its descriptor commitment; exact retries are idempotent.
 //! Every PUT is checked against its descriptor slot before it is stored, and a
 //! slice that completes a catalog is stored only if the whole catalog verifies.
 //! Data requires its complete describing catalog. Manifest descriptors are
@@ -104,7 +104,6 @@ pub struct ComponentStatus {
 pub struct StagingStatus {
     pub descriptor_commitment: [u8; 32],
     pub stream_id: [u8; 32],
-    pub epoch: u64,
     /// Unix seconds. Expiry denies PUT but does not cancel or erase verified bytes.
     pub expires_at: i64,
     pub budget: Budget,
@@ -125,18 +124,9 @@ pub enum Status {
 pub struct PutChunk<'a> {
     pub bootstrap_id: [u8; 32],
     pub descriptor_commitment: [u8; 32],
-    pub epoch: u64,
     pub component: Component,
     pub index: u64,
     pub bytes: &'a [u8],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reclaim {
-    /// Fence outstanding PUTs, preserving stored bytes.
-    Fence,
-    /// Actually remove all blobs. The descriptor remains frozen and resumable.
-    All,
 }
 
 /// First admission preconditions. Record bytes are validated against the exact
@@ -144,7 +134,6 @@ pub enum Reclaim {
 pub struct PublishBootstrap<'a> {
     pub bootstrap_id: [u8; 32],
     pub descriptor_commitment: [u8; 32],
-    pub epoch: u64,
     pub record: &'a [u8],
 }
 

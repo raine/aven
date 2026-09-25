@@ -309,7 +309,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .map(|(_, chunks)| chunks.len() as u64)
             .sum(),
     };
-    let staging = server
+    server
         .declare_bootstrap_staging(&auth, &package.descriptor, budget)
         .await
         .unwrap();
@@ -321,7 +321,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
                     PutChunk {
                         bootstrap_id: binding.bootstrap_id,
                         descriptor_commitment: binding.descriptor_commitment,
-                        epoch: staging.epoch,
                         component,
                         index: index as u64,
                         bytes,
@@ -334,7 +333,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let request = || PublishBootstrap {
         bootstrap_id: binding.bootstrap_id,
         descriptor_commitment: binding.descriptor_commitment,
-        epoch: staging.epoch,
         record: signed.record(),
     };
     let accepted = server
@@ -940,7 +938,7 @@ async fn publish_empty_package(
             .map(|(_, chunks)| chunks.len() as u64)
             .sum(),
     };
-    let staging = server
+    server
         .declare_bootstrap_staging(&auth, &package.descriptor, budget)
         .await
         .unwrap();
@@ -952,7 +950,6 @@ async fn publish_empty_package(
                     PutChunk {
                         bootstrap_id: binding.bootstrap_id,
                         descriptor_commitment: binding.descriptor_commitment,
-                        epoch: staging.epoch,
                         component,
                         index: index as u64,
                         bytes,
@@ -968,7 +965,6 @@ async fn publish_empty_package(
             PublishBootstrap {
                 bootstrap_id: binding.bootstrap_id,
                 descriptor_commitment: binding.descriptor_commitment,
-                epoch: staging.epoch,
                 record: signed.record(),
             },
             Default::default(),

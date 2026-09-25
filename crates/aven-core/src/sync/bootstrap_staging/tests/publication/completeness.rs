@@ -4,10 +4,10 @@ use super::*;
 async fn publication_rejects_every_missing_obligation_and_corrupt_stored_bytes() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    assert!(f.publish(&p, s.epoch).await.is_err());
+    f.declare().await;
+    assert!(f.publish(&p).await.is_err());
     f.unpublished().await;
-    f.upload(s.epoch).await;
+    f.upload().await;
     for (component, records) in f.components() {
         for (index, original) in records.into_iter().enumerate() {
             let mut conn = f.server.acquire_writer().await.unwrap();
@@ -21,7 +21,7 @@ async fn publication_rejects_every_missing_obligation_and_corrupt_stored_bytes()
             .unwrap();
             drop(conn);
             assert!(
-                f.publish(&p, s.epoch).await.is_err(),
+                f.publish(&p).await.is_err(),
                 "missing {component:?}/{index}"
             );
             f.unpublished().await;
@@ -32,7 +32,7 @@ async fn publication_rejects_every_missing_obligation_and_corrupt_stored_bytes()
                 .bind(f.id.as_slice()).bind(component.key()).bind(index as i64).bind(bad).execute(&mut *conn).await.unwrap();
             drop(conn);
             assert!(
-                f.publish(&p, s.epoch).await.is_err(),
+                f.publish(&p).await.is_err(),
                 "corrupt {component:?}/{index}"
             );
             f.unpublished().await;
@@ -41,20 +41,20 @@ async fn publication_rejects_every_missing_obligation_and_corrupt_stored_bytes()
                 .bind(original).bind(component.key()).bind(index as i64).execute(&mut *conn).await.unwrap();
         }
     }
-    f.publish(&p, s.epoch).await.unwrap();
+    f.publish(&p).await.unwrap();
 }
 
 #[tokio::test]
 async fn every_publication_write_failure_and_quota_refusal_rolls_back_all_effects() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     assert!(
         f.server
             .publish_bootstrap(
                 &f.auth(),
-                f.publish_request(&p, s.epoch),
+                f.publish_request(&p),
                 PublicationPolicy {
                     workspace_quota_bytes: 0
                 }
@@ -80,12 +80,12 @@ async fn every_publication_write_failure_and_quota_refusal_rolls_back_all_effect
         let f = Fixture::new().await;
         let p = f.publication();
         let s = f.declare().await;
-        f.upload(s.epoch).await;
+        f.upload().await;
         let mut conn = f.server.acquire_writer().await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER fail_publication BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'injected'); END")))
             .persistent(false).execute(&mut *conn).await.unwrap_or_else(|error| panic!("create {table}/{action}: {error}"));
         drop(conn);
-        let error = f.publish(&p, s.epoch).await.unwrap_err();
+        let error = f.publish(&p).await.unwrap_err();
         assert!(
             error.to_string().contains("injected"),
             "{table}/{action}: {error}"
@@ -99,7 +99,7 @@ async fn every_publication_write_failure_and_quota_refusal_rolls_back_all_effect
             .unwrap();
         assert_eq!(count as u64, f.budget().chunks);
     }
-    f.publish(&p, s.epoch).await.unwrap();
+    f.publish(&p).await.unwrap();
 }
 
 #[tokio::test]
@@ -178,9 +178,9 @@ async fn empty_prefix_initializes_zero_allocator_and_signing_requires_authentica
         image_hash: String::new(),
     };
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
-    f.publish(&p, s.epoch).await.unwrap();
+    f.declare().await;
+    f.upload().await;
+    f.publish(&p).await.unwrap();
     let mut conn = f.server.acquire_reader().await.unwrap();
     let (n, high): (i64, i64) =
         sqlx::query_as("SELECT prefix_count, high_water FROM server_e2ee_allocator")
@@ -199,9 +199,9 @@ async fn empty_prefix_initializes_zero_allocator_and_signing_requires_authentica
 async fn published_database_wal_and_diagnostics_contain_no_domain_plaintext_or_secrets() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
-    let outcome = f.publish(&p, s.epoch).await.unwrap();
+    f.declare().await;
+    f.upload().await;
+    let outcome = f.publish(&p).await.unwrap();
     let status = f
         .server
         .bootstrap_staging_status(&f.auth(), f.id)

@@ -7,28 +7,19 @@ impl Fixture {
             .unwrap()
     }
 
-    fn publish_request<'a>(
-        &self,
-        publication: &'a Publication,
-        epoch: u64,
-    ) -> PublishBootstrap<'a> {
+    fn publish_request<'a>(&self, publication: &'a Publication) -> PublishBootstrap<'a> {
         PublishBootstrap {
             bootstrap_id: self.id,
             descriptor_commitment: self.commitment(),
-            epoch,
             record: publication.record(),
         }
     }
 
-    async fn publish(
-        &self,
-        publication: &Publication,
-        epoch: u64,
-    ) -> anyhow::Result<PublicationOutcome> {
+    async fn publish(&self, publication: &Publication) -> anyhow::Result<PublicationOutcome> {
         self.server
             .publish_bootstrap(
                 &self.auth(),
-                self.publish_request(publication, epoch),
+                self.publish_request(publication),
                 PublicationPolicy::default(),
             )
             .await

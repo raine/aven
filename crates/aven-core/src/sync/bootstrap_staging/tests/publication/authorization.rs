@@ -4,8 +4,8 @@ use super::*;
 async fn current_authority_precedes_exact_outcome_and_never_uses_historical_credentials() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     let wrong = Secret::new([0; 32]);
     let auth = Authentication {
         bearer: &wrong,
@@ -13,15 +13,15 @@ async fn current_authority_precedes_exact_outcome_and_never_uses_historical_cred
     };
     assert!(
         f.server
-            .publish_bootstrap(&auth, f.publish_request(&p, s.epoch), Default::default())
+            .publish_bootstrap(&auth, f.publish_request(&p), Default::default())
             .await
             .is_err()
     );
     f.unpublished().await;
-    f.publish(&p, s.epoch).await.unwrap();
+    f.publish(&p).await.unwrap();
     assert!(
         f.server
-            .publish_bootstrap(&auth, f.publish_request(&p, s.epoch), Default::default())
+            .publish_bootstrap(&auth, f.publish_request(&p), Default::default())
             .await
             .is_err()
     );
@@ -61,15 +61,9 @@ async fn current_authority_precedes_exact_outcome_and_never_uses_historical_cred
     );
     assert!(
         f.server
-            .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), s.epoch, Reclaim::All)
-            .await
-            .is_err()
-    );
-    assert!(
-        f.server
             .put_bootstrap_chunk(
                 &f.auth(),
-                f.request(s.epoch, Component::Manifest, 0, &f.package.manifest[0])
+                f.request(Component::Manifest, 0, &f.package.manifest[0])
             )
             .await
             .is_err()
@@ -89,7 +83,7 @@ async fn current_authority_precedes_exact_outcome_and_never_uses_historical_cred
             .await
             .unwrap();
         drop(conn);
-        assert!(f.publish(&p, s.epoch).await.is_err());
+        assert!(f.publish(&p).await.is_err());
         assert!(
             f.server
                 .bootstrap_staging_status(&f.auth(), f.id)
@@ -99,12 +93,6 @@ async fn current_authority_precedes_exact_outcome_and_never_uses_historical_cred
         assert!(
             f.server
                 .cancel_bootstrap_staging(&f.auth(), f.id)
-                .await
-                .is_err()
-        );
-        assert!(
-            f.server
-                .reclaim_bootstrap_staging(&f.auth(), f.id, f.commitment(), s.epoch, Reclaim::All)
                 .await
                 .is_err()
         );
@@ -118,66 +106,31 @@ async fn current_authority_precedes_exact_outcome_and_never_uses_historical_cred
 }
 
 #[tokio::test]
-async fn cancellation_and_epoch_races_serialize_across_independent_pools() {
-    for cancel in [false, true] {
-        let f = Fixture::new().await;
-        let p = f.publication();
-        let s = f.declare().await;
-        f.upload(s.epoch).await;
-        let second = Database::open(&f.dir.path().join("server.sqlite"))
-            .await
-            .unwrap();
-        let auth = f.auth();
-        if cancel {
-            let (publish, cancellation) = tokio::join!(
-                f.publish(&p, s.epoch),
-                second.cancel_bootstrap_staging(&auth, f.id)
+async fn cancellation_races_serialize_across_independent_pools() {
+    let f = Fixture::new().await;
+    let p = f.publication();
+    f.declare().await;
+    f.upload().await;
+    let second = Database::open(&f.dir.path().join("server.sqlite"))
+        .await
+        .unwrap();
+    let auth = f.auth();
+    let (publish, cancellation) =
+        tokio::join!(f.publish(&p), second.cancel_bootstrap_staging(&auth, f.id));
+    match cancellation.unwrap() {
+        Status::Published(outcome) => assert_eq!(publish.unwrap(), outcome),
+        Status::Canceled => {
+            assert!(publish.is_err());
+            f.unpublished().await;
+            assert!(f.publish(&p).await.is_err());
+            assert!(
+                f.server
+                    .declare_bootstrap_staging(&auth, &f.package.descriptor, f.budget())
+                    .await
+                    .is_err()
             );
-            match cancellation.unwrap() {
-                Status::Published(outcome) => assert_eq!(publish.unwrap(), outcome),
-                Status::Canceled => {
-                    assert!(publish.is_err());
-                    f.unpublished().await;
-                    assert!(f.publish(&p, s.epoch).await.is_err());
-                    assert!(
-                        f.server
-                            .declare_bootstrap_staging(&auth, &f.package.descriptor, f.budget())
-                            .await
-                            .is_err()
-                    );
-                }
-                _ => panic!("nonterminal cancellation"),
-            }
-        } else {
-            let (publish, reclaim) = tokio::join!(
-                f.publish(&p, s.epoch),
-                second.reclaim_bootstrap_staging(
-                    &auth,
-                    f.id,
-                    f.commitment(),
-                    s.epoch,
-                    Reclaim::Fence
-                )
-            );
-            match publish {
-                Ok(outcome) => {
-                    assert!(reclaim.is_err());
-                    assert_eq!(f.publish(&p, s.epoch).await.unwrap(), outcome);
-                }
-                Err(_) => {
-                    reclaim.unwrap();
-                    f.unpublished().await;
-                    assert!(f.publish(&p, s.epoch).await.is_err());
-                    let resumed = f
-                        .server
-                        .ensure_bootstrap_staging(&auth, f.id, f.commitment())
-                        .await
-                        .unwrap();
-                    assert!(resumed.epoch > s.epoch);
-                    f.publish(&p, resumed.epoch).await.unwrap();
-                }
-            }
         }
+        _ => panic!("nonterminal cancellation"),
     }
     let f = Fixture::new().await;
     let p = f.publication();
@@ -185,7 +138,105 @@ async fn cancellation_and_epoch_races_serialize_across_independent_pools() {
         .cancel_bootstrap_staging(&f.auth(), f.id)
         .await
         .unwrap();
-    assert!(f.publish(&p, 1).await.is_err());
+    assert!(f.publish(&p).await.is_err());
+    f.unpublished().await;
+}
+
+/// A request delayed across expiry and resume is indistinguishable from a
+/// current one. Slot verification, expiry, cancellation and the single active
+/// candidate still bound what it can change.
+#[tokio::test]
+async fn delayed_requests_across_expiry_resume_and_cancellation_cannot_change_staging() {
+    let f = Fixture::new().await;
+    let p = f.publication();
+    f.declare().await;
+    let put = async |component, index, bytes: &[u8]| {
+        f.server
+            .put_bootstrap_chunk(&f.auth(), f.request(component, index, bytes))
+            .await
+    };
+    put(Component::DataCatalog, 0, &f.package.catalogs[0])
+        .await
+        .unwrap();
+    let mut conn = f.server.acquire_writer().await.unwrap();
+    sqlx::query("UPDATE server_bootstrap_candidates SET expires_at = 1")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+    assert!(
+        put(Component::Manifest, 0, &f.package.manifest[0])
+            .await
+            .is_err()
+    );
+    assert!(f.publish(&p).await.is_err());
+    f.server
+        .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
+        .await
+        .unwrap();
+    let stored = async || -> Vec<(Vec<u8>, i64, Vec<u8>)> {
+        sqlx::query_as("SELECT component, chunk_index, bytes FROM server_bootstrap_chunks ORDER BY component, chunk_index")
+            .fetch_all(&mut *f.server.acquire_reader().await.unwrap())
+            .await
+            .unwrap()
+    };
+    // A delayed exact request stores only the bytes its slot commits to.
+    put(Component::Manifest, 0, &f.package.manifest[0])
+        .await
+        .unwrap();
+    let before = stored().await;
+    let mut tampered = f.package.manifest[0].clone();
+    tampered[0] ^= 1;
+    let mut catalog = f.package.catalogs[0].clone();
+    catalog[0] ^= 1;
+    for (component, bytes) in [
+        (Component::Manifest, tampered.as_slice()),
+        (Component::State, f.package.manifest[0].as_slice()),
+        (Component::DataCatalog, catalog.as_slice()),
+    ] {
+        assert!(put(component, 0, bytes).await.is_err());
+    }
+    assert!(f.publish(&p).await.is_err());
+    assert_eq!(stored().await, before);
+    f.unpublished().await;
+    // Cancellation fences every delayed request for the canceled candidate.
+    f.server
+        .cancel_bootstrap_staging(&f.auth(), f.id)
+        .await
+        .unwrap();
+    assert!(
+        put(Component::Manifest, 0, &f.package.manifest[0])
+            .await
+            .is_err()
+    );
+    assert!(f.publish(&p).await.is_err());
+    assert!(
+        f.server
+            .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
+            .await
+            .is_err()
+    );
+    // A replacement has its own ID and commitment, so delayed requests for the
+    // canceled candidate cannot land in it.
+    let mut descriptor = f.package.descriptor.clone();
+    descriptor[103] ^= 1;
+    f.server
+        .declare_bootstrap_staging(&f.auth(), &descriptor, f.budget())
+        .await
+        .unwrap();
+    assert!(
+        f.server
+            .put_bootstrap_chunk(
+                &f.auth(),
+                PutChunk {
+                    bootstrap_id: descriptor[103..135].try_into().unwrap(),
+                    ..f.request(Component::DataCatalog, 0, &f.package.catalogs[0])
+                },
+            )
+            .await
+            .is_err()
+    );
+    assert!(stored().await.is_empty());
     f.unpublished().await;
 }
 
@@ -193,38 +244,31 @@ async fn cancellation_and_epoch_races_serialize_across_independent_pools() {
 async fn expired_status_is_read_only_and_conflicting_outcomes_never_replace_bindings() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     let mut conn = f.server.acquire_writer().await.unwrap();
     sqlx::query("UPDATE server_bootstrap_candidates SET expires_at = 1")
         .execute(&mut *conn)
         .await
         .unwrap();
     drop(conn);
-    assert!(f.publish(&p, s.epoch).await.is_err());
+    assert!(f.publish(&p).await.is_err());
     assert_eq!(f.status().await.expires_at, 1);
-    assert_eq!(f.status().await.epoch, s.epoch);
-    let resumed = f
-        .server
+    f.server
         .ensure_bootstrap_staging(&f.auth(), f.id, f.commitment())
         .await
         .unwrap();
-    assert!(f.publish(&p, s.epoch).await.is_err());
     let second = Database::open(&f.dir.path().join("server.sqlite"))
         .await
         .unwrap();
     let auth = f.auth();
     let (a, b) = tokio::join!(
-        f.publish(&p, resumed.epoch),
-        second.publish_bootstrap(
-            &auth,
-            f.publish_request(&p, resumed.epoch),
-            Default::default()
-        )
+        f.publish(&p),
+        second.publish_bootstrap(&auth, f.publish_request(&p), Default::default())
     );
     assert_eq!(a.unwrap(), b.unwrap());
     for field in 0..3 {
-        let mut request = f.publish_request(&p, resumed.epoch);
+        let mut request = f.publish_request(&p);
         let mut record = p.record().to_vec();
         match field {
             0 => request.bootstrap_id[0] ^= 1,
@@ -241,15 +285,15 @@ async fn expired_status_is_read_only_and_conflicting_outcomes_never_replace_bind
                 .is_err()
         );
     }
-    assert!(f.publish(&p, 0).await.is_ok());
+    assert!(f.publish(&p).await.is_ok());
 }
 
 #[tokio::test]
 async fn concurrent_unsupported_authority_change_never_reactivates_genesis() {
     let f = Fixture::new().await;
     let p = f.publication();
-    let s = f.declare().await;
-    f.upload(s.epoch).await;
+    f.declare().await;
+    f.upload().await;
     let second = Database::open(&f.dir.path().join("server.sqlite"))
         .await
         .unwrap();
@@ -266,8 +310,8 @@ async fn concurrent_unsupported_authority_change_never_reactivates_genesis() {
             .unwrap();
         tx.commit().await.unwrap();
     };
-    let (publication, ()) = tokio::join!(f.publish(&p, s.epoch), advance);
-    assert!(f.publish(&p, s.epoch).await.is_err());
+    let (publication, ()) = tokio::join!(f.publish(&p), advance);
+    assert!(f.publish(&p).await.is_err());
     assert!(
         f.server
             .bootstrap_staging_status(&f.auth(), f.id)

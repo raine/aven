@@ -82,8 +82,7 @@ impl Fixture {
                 .sum(),
             chunks: components.iter().map(|(_, v)| v.len() as u64).sum(),
         };
-        let status = db
-            .declare_bootstrap_staging(&auth, &package.descriptor, budget)
+        db.declare_bootstrap_staging(&auth, &package.descriptor, budget)
             .await
             .unwrap();
         for (component, records) in components {
@@ -93,7 +92,6 @@ impl Fixture {
                     staging::PutChunk {
                         bootstrap_id: p.binding().bootstrap_id,
                         descriptor_commitment: p.binding().descriptor_commitment,
-                        epoch: status.epoch,
                         component,
                         index: index as u64,
                         bytes,
@@ -108,7 +106,6 @@ impl Fixture {
             staging::PublishBootstrap {
                 bootstrap_id: p.binding().bootstrap_id,
                 descriptor_commitment: p.binding().descriptor_commitment,
-                epoch: status.epoch,
                 record: p.record(),
             },
             Default::default(),
