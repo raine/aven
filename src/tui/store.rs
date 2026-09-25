@@ -91,7 +91,7 @@ pub(crate) struct TuiStore {
     #[cfg(test)]
     fail_next_refresh: Option<RefreshFailureStage>,
     #[cfg(test)]
-    _test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
+    pub(crate) _test_database_dir: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
 #[derive(Default)]

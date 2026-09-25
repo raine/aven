@@ -10,6 +10,10 @@ use crate::operations::{
 use crate::types::Project;
 use crate::workspaces::Workspace;
 
+mod blank_database;
+
+pub use blank_database::{blank_database_template, open_blank_database};
+
 pub fn task_id(value: &str) -> TaskId {
     let mut encoded = value
         .bytes()
@@ -27,6 +31,11 @@ pub fn task_id(value: &str) -> TaskId {
 
 pub async fn acquire(database: &Database) -> Result<PoolConnection<Sqlite>> {
     database.acquire_reader().await
+}
+
+/// Shares the database's own connection pool for raw SQL in tests.
+pub fn pool(database: &Database) -> sqlx::SqlitePool {
+    database.pool().clone()
 }
 
 pub async fn ensure_default_workspace(conn: &mut SqliteConnection) -> Result<Workspace> {
@@ -150,7 +159,7 @@ pub async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str) -> Re
 #[cfg(test)]
 pub async fn test_conn() -> (tempfile::TempDir, PoolConnection<Sqlite>) {
     let temp = tempfile::tempdir().unwrap();
-    let database = Database::open(&temp.path().join("test.sqlite"))
+    let database = open_blank_database(&temp.path().join("test.sqlite"))
         .await
         .unwrap();
     let conn = database.acquire_reader().await.unwrap();

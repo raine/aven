@@ -11,10 +11,9 @@ use sqlx::SqlitePool;
 
 async fn test_store() -> TuiStore {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = crate::test_support::open_db(&db_path).await.unwrap();
-    reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(&db_path).await.unwrap();
+    let (database, _) = crate::test_support::open_database(&dir.path().join("test.db"))
+        .await
+        .unwrap();
     let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
         .await
         .unwrap();
@@ -31,10 +30,9 @@ async fn reset_default_workspace(pool: &SqlitePool) {
 
 async fn test_store_with_pool() -> (tempfile::TempDir, sqlx::SqlitePool, TuiStore) {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = crate::test_support::open_db(&db_path).await.unwrap();
-    reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(&db_path).await.unwrap();
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
+        .await
+        .unwrap();
     let store = TuiStore::new(database, crate::workspaces::Workspace::default())
         .await
         .unwrap();

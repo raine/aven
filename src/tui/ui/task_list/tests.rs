@@ -132,15 +132,13 @@ pub(super) fn render_task_list_buffer_with_selection(
 
 pub(super) async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = crate::test_support::open_db(&db_path).await.unwrap();
-    let mut conn = pool.acquire().await.unwrap();
-    let workspace = crate::workspaces::ensure_default_workspace(&mut conn)
+    let (database, _) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    drop(conn);
-    let database = crate::db::Database::open(&db_path).await.unwrap();
-    let mut store = TuiStore::new(database, workspace).await.unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
+    store._test_database_dir = Some(std::sync::Arc::new(dir));
     if !tasks.is_empty() {
         store.create_project("app".to_string()).await.unwrap();
     }

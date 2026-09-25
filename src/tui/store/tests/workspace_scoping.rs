@@ -241,18 +241,12 @@ async fn workspace_administration_preserves_active_workspace_and_task_ownership(
 #[tokio::test]
 async fn switch_workspace_refreshes_workspace_scoped_state() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    reset_default_workspace(&pool).await;
-    let mut store = TuiStore::new(
-        aven_core::db::Database::open(&dir.path().join("test.db"))
-            .await
-            .unwrap(),
-        crate::workspaces::Workspace::default(),
-    )
-    .await
-    .unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
     let (_, selected) = store
         .create_task(task_draft("Default workspace task"), None)
         .await
@@ -304,18 +298,12 @@ async fn switch_workspace_refreshes_workspace_scoped_state() {
 #[tokio::test]
 async fn workspace_picker_order_is_stable_when_active_workspace_changes() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    reset_default_workspace(&pool).await;
-    let mut store = TuiStore::new(
-        aven_core::db::Database::open(&dir.path().join("test.db"))
-            .await
-            .unwrap(),
-        crate::workspaces::Workspace::default(),
-    )
-    .await
-    .unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     crate::workspaces::create_workspace(&mut conn, "Client Work")
@@ -351,18 +339,12 @@ async fn workspace_picker_order_is_stable_when_active_workspace_changes() {
 #[tokio::test]
 async fn refresh_reads_store_workspace() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    reset_default_workspace(&pool).await;
-    let mut store = TuiStore::new(
-        aven_core::db::Database::open(&dir.path().join("test.db"))
-            .await
-            .unwrap(),
-        crate::workspaces::Workspace::default(),
-    )
-    .await
-    .unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
     let (_, selected) = store
         .create_task(task_draft("Default workspace task"), None)
         .await

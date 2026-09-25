@@ -20,11 +20,15 @@ names containing the same text. `test-target` runs the named integration-test
 target; target names use Rust/Cargo naming, such as `cli_local` for
 `tests/cli_local.rs`.
 
-`just test-tui-template` prepares a fully migrated, checkpointed blank database
-once, then runs keyboard-dispatch and conflict TUI tests with a private copy per
-test. The template path is under `target/test-fixtures/`; ordinary test commands
-keep using real database creation. Tests for migrations, historical schemas,
-WAL, backups, restores, or installation identity should use the normal path.
+Ordinary database fixtures copy a blank template instead of migrating a new
+file per test. `aven_core::test_support::open_blank_database` builds one fully
+migrated, checkpointed, single-file database per test binary build under
+`aven-db-templates/` next to the binary, copies it to the test's private path,
+and opens the copy through `Database::open`. The template omits
+`meta.client_id`, so every copy receives its own installation identity. Use
+`Database::open` on a new path instead when the test's subject is first-open
+behavior: migrations, historical schemas, WAL handling, backups, restores, or
+installation identity.
 
 ## Affected-package handoff
 

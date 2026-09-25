@@ -4,16 +4,14 @@ use std::path::Path;
 
 use crate::ids::{BASE32, TaskId};
 
-pub(crate) async fn open_db(path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
-    aven_core::db::Database::open(path).await?;
-    Ok(sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(path)
-                .create_if_missing(true),
-        )
-        .await?)
+/// Opens a private copy of the blank migrated database template at `path`,
+/// returning the database with its own pool for raw SQL.
+pub(crate) async fn open_database(
+    path: &Path,
+) -> anyhow::Result<(aven_core::db::Database, sqlx::SqlitePool)> {
+    let database = aven_core::test_support::open_blank_database(path).await?;
+    let pool = aven_core::test_support::pool(&database);
+    Ok((database, pool))
 }
 
 pub(crate) fn task_id(value: &str) -> TaskId {

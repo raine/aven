@@ -643,15 +643,7 @@ async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
 async fn sidebar_write_failure_warns_and_keeps_runtime_choice() {
     use crate::tui::store::SidebarSection;
     let mut app = test_app().await;
-    let pool = crate::test_support::open_db(
-        &app._test_database_dir
-            .as_ref()
-            .unwrap()
-            .path()
-            .join("test.db"),
-    )
-    .await
-    .unwrap();
+    let pool = aven_core::test_support::pool(&app.store.database());
     sqlx::query("CREATE TRIGGER reject_sidebar BEFORE INSERT ON meta WHEN NEW.key LIKE 'tui_sidebar_%' BEGIN SELECT RAISE(FAIL, 'sidebar write blocked'); END")
         .execute(&pool).await.unwrap();
     app.apply_sidebar_target(Some(SidebarEntryTarget::Section(SidebarSection::Views)))
@@ -670,11 +662,10 @@ async fn sidebar_load_failure_warns_and_defaults_to_expanded() {
     use crate::tui::store::SidebarSection;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("sidebar.db");
-    let database = aven_core::db::Database::open(&path).await.unwrap();
+    let (database, pool) = crate::test_support::open_database(&path).await.unwrap();
     let store = TuiStore::new(database, crate::workspaces::Workspace::default())
         .await
         .unwrap();
-    let pool = crate::test_support::open_db(&path).await.unwrap();
     sqlx::query("DROP TABLE meta").execute(&pool).await.unwrap();
     let app = App::new_with_store(store).await.unwrap();
     assert!(

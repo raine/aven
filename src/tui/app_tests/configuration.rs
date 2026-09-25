@@ -3,10 +3,9 @@ use super::*;
 #[tokio::test]
 async fn constructor_applies_supplied_configuration_to_every_owner() {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = crate::test_support::open_db(&db_path).await.unwrap();
-    reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(&db_path).await.unwrap();
+    let (database, _) = crate::test_support::open_database(&dir.path().join("test.db"))
+        .await
+        .unwrap();
     let mut config = AppConfig::default();
     config.tui.columns = vec![crate::config::TaskColumnConfig {
         name: "Configured".to_string(),

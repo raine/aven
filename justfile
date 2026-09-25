@@ -113,20 +113,6 @@ test-lib package filter:
 test-target package target:
     just _test --package {{package}} --test {{target}}
 
-# Run selected TUI tests using a prepared blank database template
-test-tui-template:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export SQLX_OFFLINE=true RUST_MIN_STACK=4194304
-    mkdir -p target/test-fixtures
-    template_dir="$(mktemp -d target/test-fixtures/run.XXXXXX)"
-    trap 'rm -rf "$template_dir"' EXIT
-    export AVEN_TUI_DB_TEMPLATE="$(pwd)/$template_dir/tui-blank.sqlite"
-    cargo test --target-dir target/test --locked --package aven --lib \
-        -- --ignored --exact tui::app::tests::prepare_tui_database_template
-    just _test --package aven --lib tui::app::tests::keyboard_dispatch::
-    just _test --package aven --lib tui::app::tests::conflicts::
-
 # Run all non-documentation test targets in one package
 test-package package:
     just _test --package {{package}} --all-targets

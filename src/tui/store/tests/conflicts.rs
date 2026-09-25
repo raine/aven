@@ -44,17 +44,12 @@ fn next_conflict_flag_index_keeps_single_conflict() {
 #[tokio::test]
 async fn resolve_conflict_value_updates_task_and_clears_conflict() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    let mut store = TuiStore::new(
-        aven_core::db::Database::open(&dir.path().join("test.db"))
-            .await
-            .unwrap(),
-        crate::workspaces::Workspace::default(),
-    )
-    .await
-    .unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
     let (_, selected) = store.create_task(task_draft("Before"), None).await.unwrap();
     let selected = selected.unwrap();
     let task_id = store.tasks[selected].task.id.clone();
@@ -131,17 +126,12 @@ async fn conflict_resolution_rolls_back_when_undo_recording_fails() {
 #[tokio::test]
 async fn resolve_missing_conflict_leaves_task_unchanged() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    let mut store = TuiStore::new(
-        aven_core::db::Database::open(&dir.path().join("test.db"))
-            .await
-            .unwrap(),
-        crate::workspaces::Workspace::default(),
-    )
-    .await
-    .unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
     let (_, selected) = store
         .create_task(task_draft("Stable title"), None)
         .await
@@ -172,17 +162,12 @@ async fn resolve_missing_conflict_leaves_task_unchanged() {
 #[tokio::test]
 async fn update_title_returns_conflicted_field_error() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = crate::test_support::open_db(&dir.path().join("test.db"))
+    let (database, pool) = crate::test_support::open_database(&dir.path().join("test.db"))
         .await
         .unwrap();
-    let mut store = TuiStore::new(
-        aven_core::db::Database::open(&dir.path().join("test.db"))
-            .await
-            .unwrap(),
-        crate::workspaces::Workspace::default(),
-    )
-    .await
-    .unwrap();
+    let mut store = TuiStore::new(database, crate::workspaces::Workspace::default())
+        .await
+        .unwrap();
     let (_, selected) = store
         .create_task(task_draft("Conflict"), None)
         .await

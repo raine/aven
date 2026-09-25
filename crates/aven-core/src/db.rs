@@ -123,6 +123,11 @@ impl Database {
         conflict_exists(&mut conn, workspace_id, task_id, field).await
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     pub(crate) async fn acquire_reader(&self) -> Result<sqlx::pool::PoolConnection<Sqlite>> {
         Ok(self.pool.acquire().await?)
     }

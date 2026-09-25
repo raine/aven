@@ -164,9 +164,7 @@ async fn dispatch_keys(app: &mut App, size: ratatui::layout::Size, codes: &[KeyC
 async fn recurrence_history_test_app() -> (App, aven_core::db::Database) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history-test.db");
-    let pool = crate::test_support::open_db(&path).await.unwrap();
-    reset_default_workspace(&pool).await;
-    let database = aven_core::db::Database::open(&path).await.unwrap();
+    let (database, _) = crate::test_support::open_database(&path).await.unwrap();
     let mut app = App::new_for_tests(database.clone()).await.unwrap();
     app._test_database_dir = Some(dir);
     (app, database)
