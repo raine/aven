@@ -360,7 +360,9 @@ impl AppConfig {
 
     pub(crate) fn ensure_sync_allowed(&self) -> Result<()> {
         if !self.sync_is_allowed() {
-            bail!("error sync-disabled hint=\"sync is disabled in this environment\"");
+            return Err(anyhow::anyhow!("error sync-disabled-by-environment").context(
+                "error sync-disabled hint=\"sync is disabled by AVEN_SYNC_DISABLED; unset it to allow sync\"",
+            ));
         }
         Ok(())
     }
@@ -368,7 +370,7 @@ impl AppConfig {
     pub(crate) fn ensure_automatic_sync_enabled(&self) -> Result<()> {
         self.ensure_sync_allowed()?;
         if !self.sync.enabled {
-            bail!("error sync-disabled hint=\"set sync.enabled = true in config.yaml\"");
+            bail!("error sync-disabled hint=\"run `aven config set sync.enabled true`\"");
         }
         Ok(())
     }

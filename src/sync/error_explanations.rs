@@ -166,11 +166,18 @@ pub(crate) fn explain(
             },
         });
     }
+    if has("sync-disabled-by-environment") {
+        return Some(Explanation {
+            code: "sync-disabled",
+            message: "Sync is disabled by the AVEN_SYNC_DISABLED environment variable.",
+            next_step: "Unset AVEN_SYNC_DISABLED and try again.",
+        });
+    }
     if has("sync-disabled") {
         return Some(Explanation {
             code: "sync-disabled",
-            message: "Sync is disabled in this environment.",
-            next_step: "Enable sync and try again.",
+            message: "Automatic sync is turned off in config.yaml.",
+            next_step: "Run `aven config set sync.enabled true` and try again.",
         });
     }
     if has("sync-setup-invitation-mismatch") {
@@ -592,6 +599,24 @@ mod tests {
         assert_eq!(explanation.code, "sync-server-refused");
         assert!(explanation.combined().contains("may have been removed"));
         assert!(!explanation.combined().contains("was removed"));
+    }
+
+    #[test]
+    fn disabled_sync_names_its_cause() {
+        let mut config = crate::config::AppConfig::default();
+        config.sync.disable_override = true;
+        let error = config.ensure_sync_allowed().unwrap_err();
+        let environment = explain(ErrorAction::Sync, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(environment.code, "sync-disabled");
+        assert!(environment.next_step.contains("AVEN_SYNC_DISABLED"));
+
+        let error = crate::config::AppConfig::default()
+            .ensure_automatic_sync_enabled()
+            .unwrap_err();
+        let configured = explain(ErrorAction::Sync, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(configured.code, "sync-disabled");
+        assert!(configured.next_step.contains("sync.enabled true"));
+        assert!(!configured.combined().contains("AVEN_SYNC_DISABLED"));
     }
 
     #[test]
