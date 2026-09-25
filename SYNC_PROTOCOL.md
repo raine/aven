@@ -1,8 +1,9 @@
 # Sync protocol maintenance
 
 Read this before changing synchronized operations, their interpretation, or the
-protocol constants. [ARCHITECTURE.md](ARCHITECTURE.md) maps the implementation
-owners. This document describes the compatibility contract and the evidence
+protocol constants. Core sync implementation lives in
+`crates/aven-core/src/sync/`; application sync and HTTP integration live under
+`src/`. This document describes the compatibility contract and the evidence
 required to change it.
 
 Scope: this workspace ships only end-to-end encrypted sync. Its encrypted tail
@@ -243,10 +244,10 @@ For a protocol addition, retain evidence for:
   deterministic identities across the supported contracts.
 - Import, standalone behavior, and host surfaces affected by the new contract.
 
-Start with `cargo test -p aven-core --lib sync::`, then choose focused CLI sync,
+Start with `just test-lib aven-core sync::`, then choose focused CLI sync,
 conflict, recurrence, encrypted tail, and consumer tests for the affected paths.
-Follow the validation guidance in `ARCHITECTURE.md`; automated tests do not replace
-an unchanged released-server interoperability exercise.
+Follow the validation tiers in [TESTING.md](TESTING.md); automated tests do not
+replace an unchanged released-server interoperability exercise.
 
 `crates/aven-core/tests/fixtures/sync-protocol-18.json` is a frozen historical
 oracle from unchanged `v0.1.40`, revision

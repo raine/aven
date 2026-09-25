@@ -14,3 +14,6 @@ time than implementing it directly.
 If you would like to see a substantial change, please open an issue. Discussion
 helps shape the project and prioritize work, but does not guarantee that a
 proposal or pull request will be accepted.
+
+For focused package checks and the full validation gate, see
+[TESTING.md](TESTING.md).

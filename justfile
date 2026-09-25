@@ -101,6 +101,31 @@ public-tooling-test:
 test:
     @checkle run tests
 
+# Run tests with the same environment and target directory as the full suite
+_test *ARGS:
+    env SQLX_OFFLINE=true RUST_MIN_STACK=4194304 cargo nextest run --target-dir target/test --locked --no-fail-fast --status-level fail {{ARGS}}
+
+# Run library tests matching a test-name filter
+test-lib package filter:
+    just _test --package {{package}} --lib {{filter}}
+
+# Run one integration-test target
+test-target package target:
+    just _test --package {{package}} --test {{target}}
+
+# Run all non-documentation test targets in one package
+test-package package:
+    just _test --package {{package}} --all-targets
+
+# Lint every target in one package
+_clippy-package package:
+    @scripts/quiet-check "clippy {{package}}" cargo clippy --message-format=json --target-dir target/clippy --package {{package}} --all-targets -- -D warnings -D clippy::all
+
+# Run the package handoff checks
+check-package package:
+    just _clippy-package {{package}}
+    just test-package {{package}}
+
 # Generate sqlx offline query metadata
 sqlx-prepare:
     #!/usr/bin/env bash
