@@ -843,6 +843,7 @@ async fn recurrence_hydration_statement_shapes_stay_bounded() {
     .unwrap();
     assert_eq!(items.len(), 24);
     assert!(items.iter().all(|item| item.recurrence.is_some()));
+    // SQLx counts distinct SQL text, so this bound detects row-dependent query shapes.
     let statement_count = conn.cached_statements_size();
     assert!(statement_count <= 18, "statement count: {statement_count}");
 }

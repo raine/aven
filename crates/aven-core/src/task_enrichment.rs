@@ -3,8 +3,8 @@ use crate::metadata::TaskMetadataValue;
 use std::collections::{HashMap, HashSet};
 
 use crate::query::{
-    AttachmentMetadata, EpicRollup, RecentActionItem, TaskDependencyLink, TaskNote,
-    TaskRecurrenceSummary,
+    AttachmentMetadata, EpicRollup, RecentActionItem, TaskConflictValue, TaskDependencyLink,
+    TaskNote, TaskRecurrenceSummary,
 };
 use crate::refs::DisplayRefContext;
 use anyhow::Result;
@@ -27,6 +27,7 @@ pub struct TaskEnrichment {
     pub live_attachment_counts_by_task: HashMap<TaskId, u32>,
     pub metadata_by_task: HashMap<TaskId, Vec<TaskMetadataValue>>,
     pub activity_by_task: HashMap<TaskId, Vec<RecentActionItem>>,
+    pub conflicts_by_task: HashMap<TaskId, Vec<TaskConflictValue>>,
     pub conflicted_task_ids: HashSet<TaskId>,
     pub unresolved_blocker_counts_by_task: HashMap<TaskId, i64>,
     pub dependent_counts_by_task: HashMap<TaskId, i64>,
@@ -124,6 +125,14 @@ async fn load_task_enrichment_with_detail(
     } else {
         HashMap::new()
     };
+    let (conflicted_task_ids, conflicts_by_task) = if include_detail {
+        conflicts_for_tasks(conn, workspace_id, task_ids).await?
+    } else {
+        (
+            tasks_with_unresolved_conflicts(conn, workspace_id, task_ids).await?,
+            HashMap::new(),
+        )
+    };
     let epic_children_by_task =
         epics::epic_children_for_tasks(conn, workspace_id, task_ids, display_refs).await?;
     let epic_child_dependencies_by_task = if include_detail {
@@ -153,7 +162,8 @@ async fn load_task_enrichment_with_detail(
         live_attachment_counts_by_task,
         metadata_by_task,
         activity_by_task,
-        conflicted_task_ids: tasks_with_unresolved_conflicts(conn, workspace_id, task_ids).await?,
+        conflicts_by_task,
+        conflicted_task_ids,
         unresolved_blocker_counts_by_task: dependencies::unresolved_blocker_counts_for_tasks(
             conn,
             workspace_id,
@@ -257,6 +267,47 @@ fn dependency_link_from_row(
         unresolved: row.get::<i64, _>("unresolved") != 0,
     }
 }
+async fn conflicts_for_tasks(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    task_ids: &[TaskId],
+) -> Result<(HashSet<TaskId>, HashMap<TaskId, Vec<TaskConflictValue>>)> {
+    let mut conflicted = HashSet::new();
+    let mut conflicts_by_task = HashMap::new();
+    if task_ids.is_empty() {
+        return Ok((conflicted, conflicts_by_task));
+    }
+    for chunk in task_ids.chunks(SQLITE_BIND_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT task_id, field, local_value, remote_value
+             FROM conflicts WHERE workspace_id = ",
+        );
+        query.push_bind(workspace_id);
+        query.push(" AND resolved = 0 AND task_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for task_id in chunk {
+                separated.push_bind(task_id);
+            }
+        }
+        query.push(") ORDER BY task_id, field, id");
+
+        for row in query.build().fetch_all(&mut *conn).await? {
+            let task_id: TaskId = row.get("task_id");
+            conflicted.insert(task_id.clone());
+            conflicts_by_task
+                .entry(task_id)
+                .or_insert_with(Vec::new)
+                .push(TaskConflictValue {
+                    field: row.get("field"),
+                    local_value: row.get("local_value"),
+                    remote_value: row.get("remote_value"),
+                });
+        }
+    }
+    Ok((conflicted, conflicts_by_task))
+}
+
 async fn tasks_with_unresolved_conflicts(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,

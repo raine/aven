@@ -283,11 +283,20 @@ async fn list_items_include_labels_and_unresolved_conflict_flags() {
         vec!["alpha".to_string(), "zeta".to_string()]
     );
     assert!(items[0].has_conflict);
+    assert_eq!(
+        items[0].conflicts,
+        vec![crate::query::TaskConflictValue {
+            field: "title".to_string(),
+            local_value: "local".to_string(),
+            remote_value: "remote".to_string(),
+        }]
+    );
     assert_eq!(items[0].blocks[0].display_ref, "APP-0000000000000302");
     assert_eq!(items[0].blocks[0].title, "resolved");
     assert_eq!(items[1].depends_on[0].display_ref, "APP-0000000000000301");
     assert_eq!(items[1].depends_on[0].title, "labeled");
     assert!(!items[1].has_conflict);
+    assert!(items[1].conflicts.is_empty());
     assert!(items[2].labels.is_empty());
 }
 
