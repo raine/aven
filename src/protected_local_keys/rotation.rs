@@ -280,7 +280,7 @@ impl ProtectedLocalKeyStore {
         if target.is_none() && withdraw.is_none() && !inputs.membership.rotation_pending() {
             return Ok(None);
         }
-        ensure!(next < MAX_TRANSITIONS, "error management-limit");
+        ensure!(next < MAX_TRANSITIONS, "error membership-change-limit");
         if let Some(target) = target {
             inputs
                 .authority()

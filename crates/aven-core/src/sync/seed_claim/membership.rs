@@ -266,9 +266,22 @@ impl Membership {
     }
     fn capacity(&self) -> Result<()> {
         let reserve = usize::from(self.pending);
-        check(self.heads.len() - 1 + reserve <= MAX_TRANSITIONS)?;
-        check(self.generations.len() + reserve <= MAX_GENERATIONS)?;
-        check(self.evidence_bytes <= MAX_CHAIN_BYTES - reserve * MAX_ROTATION_BYTES)
+        ensure!(
+            self.heads.len() - 1 + reserve <= MAX_TRANSITIONS
+                && self.generations.len() + reserve <= MAX_GENERATIONS
+                && self.evidence_bytes <= MAX_CHAIN_BYTES - reserve * MAX_ROTATION_BYTES,
+            "error membership-change-limit"
+        );
+        Ok(())
+    }
+    /// Room for the costlier outcome of an invitation: withdrawing it with a
+    /// freeze and key rotation, which also covers admitting its device.
+    pub fn ensure_change_capacity(&self) -> Result<()> {
+        ensure!(
+            self.heads.len() - 1 + 2 <= MAX_TRANSITIONS && self.generations.len() < MAX_GENERATIONS,
+            "error membership-change-limit"
+        );
+        Ok(())
     }
     pub fn rotation_pending(&self) -> bool {
         self.pending

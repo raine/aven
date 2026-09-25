@@ -385,9 +385,14 @@ async fn unpopulated_bootstrap_tables_take_the_catalog_slice_schema() {
     );
 }
 
+const BEFORE_MEMBERSHIP_LIMITS: i64 = 20260924164546;
+
 async fn before_membership_limits(path: &Path) -> SqlitePool {
     let pool = before_bootstrap_catalog_slices(path).await;
-    MIGRATOR.run_to(20260924112730, &pool).await.unwrap();
+    MIGRATOR
+        .run_to(BEFORE_MEMBERSHIP_LIMITS, &pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -427,7 +432,7 @@ async fn enrolled_devices_refuse_the_membership_limit_migration_unchanged() {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(version, 20260924112730, "{name}");
+        assert_eq!(version, BEFORE_MEMBERSHIP_LIMITS, "{name}");
     }
 }
 

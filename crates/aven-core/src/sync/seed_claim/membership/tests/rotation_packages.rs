@@ -250,12 +250,17 @@ fn reserved_transition_slot_cannot_be_consumed_by_pending_management() {
     let f = fixture();
     let mut m = f.membership.clone();
     let keys = m.verify_initial_key(&f.key).unwrap();
+    let (inv, d) = Device::seed(&f.seed).prepare_invitation(&m, 100).unwrap();
     for _ in 0..MAX_TRANSITIONS - 1 {
         let raw = Device::seed(&f.seed).prepare_revoke(&m, &[]).unwrap();
         m = m.append(&[], &[], &raw).unwrap();
     }
     assert!(Device::seed(&f.seed).prepare_revoke(&m, &[]).is_err());
-    let (inv, d) = Device::seed(&f.seed).prepare_invitation(&m, 100).unwrap();
+    let error = Device::seed(&f.seed)
+        .prepare_invitation(&m, 100)
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "error membership-change-limit");
     let peer = Joiner::generate(copy_invitation(&inv)).unwrap();
     assert!(
         Device::seed(&f.seed)

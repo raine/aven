@@ -696,3 +696,21 @@ fn join_timeout_hint_covers_expiry_without_suggesting_discarding_data() {
         assert!(!hint.contains(word), "{hint}");
     }
 }
+
+#[test]
+fn device_change_limit_hint_points_to_starting_a_new_sync() {
+    let error = super::explain_change_limit(anyhow::anyhow!("error membership-change-limit"));
+    let hint = error.to_string();
+    assert!(
+        hint.starts_with("error sync-device-change-limit hint="),
+        "{hint}"
+    );
+    assert!(
+        hint.contains("reached its limit on device changes"),
+        "{hint}"
+    );
+    assert!(hint.contains("start a new sync"), "{hint}");
+    assert!(hint.contains("#recover-from-device-loss"), "{hint}");
+    let other = super::explain_change_limit(anyhow::anyhow!("error membership-invalid"));
+    assert_eq!(other.to_string(), "error membership-invalid");
+}

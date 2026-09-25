@@ -119,6 +119,9 @@ impl App {
                         ));
                     }
                 },
+                Err(error) if crate::tui::sync_errors::reached_change_limit(&error) => {
+                    self.set_error(crate::tui::sync_errors::CHANGE_LIMIT)
+                }
                 Err(error) => self.set_error(format!("invitation unavailable: {error:#}")),
             }
             return Ok(true);

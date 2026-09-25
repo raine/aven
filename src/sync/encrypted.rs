@@ -328,7 +328,7 @@ pub(crate) async fn create_invitation(
             "error withdrawal-required-unsupported" => error.context(
                 "error sync-invitation-unresolved hint=\"keys may already have been sent with the previous invitation; invite again after that device joins, or after the invitation expires and the next `aven sync` changes keys\"",
             ),
-            _ => error,
+            _ => explain_change_limit(error),
         })?;
     let text = DeviceInvitation {
         server: server.clone(),
@@ -616,6 +616,20 @@ async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) 
             Ok(server)
         }
         None => bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\""),
+    }
+}
+
+/// The vault's lifetime budget of signed membership changes is spent.
+const CHANGE_LIMIT: &str = "error sync-device-change-limit hint=\"this sync has reached its limit on device changes, so devices can no longer be added or removed; start a new sync to keep changing devices, see https://aventasks.dev/sync/#recover-from-device-loss\"";
+
+fn explain_change_limit(error: anyhow::Error) -> anyhow::Error {
+    if error
+        .chain()
+        .any(|cause| cause.to_string() == "error membership-change-limit")
+    {
+        error.context(CHANGE_LIMIT)
+    } else {
+        error
     }
 }
 

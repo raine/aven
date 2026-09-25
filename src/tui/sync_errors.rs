@@ -42,6 +42,15 @@ const KEY_CHANGE_REQUIRED: &str = "An invitation expired after keys may have \
      been sent to a device that never joined. Changes from other devices still download; \
      changes made here upload once sync changes keys. Check the connection and sync again.";
 
+/// The vault's lifetime budget of device changes is spent.
+pub(crate) const CHANGE_LIMIT: &str = "This sync has reached its limit on device changes, so \
+     devices can no longer be added or removed. To keep changing devices, start a new \
+     sync; see Recover from device loss in the sync docs.";
+
+pub(crate) fn reached_change_limit(error: &anyhow::Error) -> bool {
+    codes(error).any(|code| code == "sync-device-change-limit" || code == "membership-change-limit")
+}
+
 fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
     let codes = codes(error).collect::<Vec<_>>();
     let has = |code: &str| codes.iter().any(|candidate| candidate == code);
@@ -103,6 +112,9 @@ fn explain(kind: OperationKind, error: &anyhow::Error) -> &'static str {
         return "The last invitation may already have sent keys to a device that hasn't \
                 joined. Add a device again once it joins, or once that invitation expires \
                 and the next sync changes keys.";
+    }
+    if reached_change_limit(error) {
+        return CHANGE_LIMIT;
     }
     if has("enrollment-busy") {
         return "The server is busy with another device. Try again in a moment.";
@@ -278,6 +290,22 @@ mod tests {
         for message in [KEY_CHANGE_REQUIRED, message.as_str()] {
             assert!(!message.contains("paused"), "{message}");
         }
+    }
+
+    #[test]
+    fn device_change_limit_points_to_starting_a_new_sync() {
+        for kind in [
+            OperationKind::Sync,
+            OperationKind::RemoveDevice([1; 32]),
+            OperationKind::FinishRemoval,
+        ] {
+            let error = anyhow!("error membership-change-limit")
+                .context("error sync-device-change-limit hint=\"x\"");
+            assert_eq!(failure(kind, &error).message, CHANGE_LIMIT);
+        }
+        let error = anyhow!("error membership-change-limit");
+        assert_eq!(failure(OperationKind::Sync, &error).message, CHANGE_LIMIT);
+        assert!(CHANGE_LIMIT.contains("Recover from device loss"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use anyhow::{Result, bail, ensure};
 use aven_core::db::Database;
 use serde::Serialize;
 
-use super::{NOT_SET_UP, REFUSED, associated_server, is_set_up, key_store};
+use super::{NOT_SET_UP, REFUSED, associated_server, explain_change_limit, is_set_up, key_store};
 use crate::config::AppConfig;
 use crate::peer_enrollment_http::{self, RemovalStatus};
 use crate::protected_local_keys::ProtectedLocalKeyStore;
@@ -186,6 +186,7 @@ async fn explain_removal_error(
                 _ => return error,
             }
         }
+        "error membership-change-limit" => return explain_change_limit(error),
         "error management-unfinished" => {
             "error sync-device-removal-unfinished hint=\"an earlier device removal from this device is unfinished; run `aven sync` to finish it, then retry\""
         }

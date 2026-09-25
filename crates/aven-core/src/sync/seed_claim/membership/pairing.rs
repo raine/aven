@@ -55,6 +55,7 @@ impl<'a> Device<'a> {
     ) -> Result<(Invitation, Declaration)> {
         let member = self.active(membership)?;
         check(membership.device_count() < MAX_DEVICES)?;
+        membership.ensure_change_capacity()?;
         let inv = Invitation {
             vault: membership.genesis.context.vault_id,
             inviter: member.hpke,

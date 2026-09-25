@@ -433,21 +433,30 @@ fn maximum_signed_chain_fits_every_bound() {
         MAX_COVERAGE_BYTES
     );
     VerifiedKeys::from_protected_storage(&full, &full_keys.protected_storage_bytes()).unwrap();
-    assert!(seed().prepare_revoke(&full, &[]).is_err());
+    let error = seed().prepare_revoke(&full, &[]).err().unwrap();
+    assert_eq!(error.to_string(), "error membership-change-limit");
 
-    // The largest admission grants every generation key to the last free slot.
+    // The largest admission grants every generation key to the last free slot,
+    // through an invitation made while a withdrawal still fit.
     let removal = seed().prepare_revoke(&m, &[[1; 32]]).unwrap();
     m = m.append(&[], &[], &removal).unwrap();
     transitions.push(record(removal));
+    let (inv, d) = seed()
+        .invitation_with_psk(&m, 100, Secret::new([186; 32]))
+        .unwrap();
     let (raw, next, next_keys) = rotate_fixed(seed(), &m, &keys, 201, 0);
     m = next;
     keys = next_keys;
     transitions.push(record(raw));
-    let (d, peer, raw, next) = add_fixed(seed(), &m, &keys, 186);
-    assert_eq!(raw.len(), MAX_ADMISSION_BYTES);
+    let error = seed().prepare_invitation(&m, 100).err().unwrap();
+    assert_eq!(error.to_string(), "error membership-change-limit");
+    let peer = joiner(&inv, 187);
     let plain =
         admission::grant_plaintext(&m, &d, peer.request(), &peer.0.recipient().unwrap(), &keys);
     assert_eq!(plain.len(), MAX_KEY_PLAINTEXT_BYTES);
+    let raw = reseal(&m, &d, &peer, seed().signing, &plain, 191);
+    let next = m.append(d.record(), peer.request(), &raw).unwrap();
+    assert_eq!(raw.len(), MAX_ADMISSION_BYTES);
     peer.verify_enrollment(&m, d.record(), &raw).unwrap();
     transitions.push(EvidenceRecord {
         declaration: d.record().to_vec(),

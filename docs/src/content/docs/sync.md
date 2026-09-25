@@ -164,10 +164,12 @@ confirmed, not that it happened.
 
 A sync supports a limited number of device changes over its lifetime. Adding a
 device is one change. Removing a device is two: the removal and the key
-rotation that follows it. A rotation after an expired invitation that may have
-sent keys is also one change. A sync allows 256 changes, and at most 63 of them
-can be key rotations. Once either limit is reached, devices can no longer be
-added or removed.
+rotation that follows it. Changing keys after an invitation expired when it may
+have sent keys also takes two. A sync allows 256 changes, and at most 63 of them
+can be key rotations. Inviting a device needs room for that key change, in case
+the invitation expires after sending keys. Once a limit
+is reached, devices can no longer be added or removed, and `aven sync invite`,
+`aven sync device remove` and the Sync dialog say so.
 
 To keep changing devices, start a new sync. Back up a device that is up to
 date with `aven backup`. Then follow
