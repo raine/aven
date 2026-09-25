@@ -612,3 +612,116 @@ async fn cancellation_serializes_with_admission_and_only_the_inviter_may_cancel(
         second.head()
     );
 }
+
+#[tokio::test]
+async fn cached_membership_follows_the_stored_head_and_keeps_per_request_checks() {
+    let f = Fixture::new().await;
+    let m = initial(&f);
+    let a = auth(&f, m.head(), f.seed.genesis().device_id(), f.seed.bearer());
+    let (d, peer, raw) = prepare(Device::seed(&f.seed), &m, &f, 3700);
+    register(&f, &a, &d, &peer).await;
+    f.db.admit_membership_device_at(&a, d.handle(), &raw, 101)
+        .await
+        .unwrap();
+    // A head change replaces the entry cached before the admission.
+    let admitted =
+        f.db.membership_evidence(&a)
+            .await
+            .unwrap()
+            .verify()
+            .unwrap();
+    assert_eq!(admitted.sequence(), 2);
+    let a = auth(
+        &f,
+        admitted.head(),
+        f.seed.genesis().device_id(),
+        f.seed.bearer(),
+    );
+    let (_, d2) = Device::seed(&f.seed)
+        .prepare_invitation(&admitted, 3700)
+        .unwrap();
+    f.db.register_membership_invitation_at(&a, d2.record(), 102)
+        .await
+        .unwrap();
+    let db = &f.db;
+    let execute = |sql: &'static str| async move {
+        sqlx::query(sql)
+            .execute(&mut *db.acquire_writer().await.unwrap())
+            .await
+            .unwrap();
+    };
+
+    // An unchanged head serves the verified replay without reading history.
+    execute("UPDATE server_membership_transitions SET record=zeroblob(length(record))").await;
+    let cached = f.db.membership_evidence(&a).await.unwrap();
+    assert_eq!(cached.verify().unwrap().head(), admitted.head());
+
+    // Invitation bounds, orphan and projection checks still run on every request.
+    execute(
+        "UPDATE server_membership_invitations SET revoked=1,expired=1 WHERE admitted_sequence=2",
+    )
+    .await;
+    let error = f.db.membership_evidence(&a).await.err().unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("membership-invitation-projection"),
+        "{error}"
+    );
+    execute(
+        "UPDATE server_membership_invitations SET revoked=0,expired=0 WHERE admitted_sequence=2",
+    )
+    .await;
+    execute("UPDATE server_membership_invitations SET admitted_sequence=3 WHERE admitted_sequence IS NULL").await;
+    let error = f.db.membership_evidence(&a).await.err().unwrap();
+    assert!(
+        error.to_string().contains("membership-history-missing"),
+        "{error}"
+    );
+    execute(
+        "UPDATE server_membership_invitations SET admitted_sequence=NULL WHERE admitted_sequence=3",
+    )
+    .await;
+    f.db.membership_evidence(&a).await.unwrap();
+
+    // A new process replays at startup and refuses the altered history.
+    let restarted = Database::open(&f.dir.path().join("server.db"))
+        .await
+        .unwrap();
+    assert!(restarted.verify_membership_history().await.is_err());
+    assert!(restarted.membership_evidence(&a).await.is_err());
+
+    // A changed head misses the cache and replays.
+    execute("UPDATE server_e2ee_membership_head SET commitment=zeroblob(32)").await;
+    let error = f.db.membership_evidence(&a).await.err().unwrap();
+    assert!(error.to_string().contains("membership"), "{error}");
+}
+
+#[tokio::test]
+async fn startup_verification_accepts_intact_and_unpublished_storage() {
+    let f = Fixture::new().await;
+    let m = initial(&f);
+    let a = auth(&f, m.head(), f.seed.genesis().device_id(), f.seed.bearer());
+    let (d, peer, raw) = prepare(Device::seed(&f.seed), &m, &f, 3700);
+    register(&f, &a, &d, &peer).await;
+    f.db.admit_membership_device_at(&a, d.handle(), &raw, 101)
+        .await
+        .unwrap();
+    let restarted = Database::open(&f.dir.path().join("server.db"))
+        .await
+        .unwrap();
+    restarted.verify_membership_history().await.unwrap();
+    assert_eq!(
+        restarted
+            .membership_evidence(&a)
+            .await
+            .unwrap()
+            .transitions
+            .len(),
+        1
+    );
+    let empty = Database::open(&f.dir.path().join("empty.db"))
+        .await
+        .unwrap();
+    empty.verify_membership_history().await.unwrap();
+}

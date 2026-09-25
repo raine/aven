@@ -1,5 +1,5 @@
 //! Independent installation identity, inbound enrollment and outbound journals.
-use super::membership::{EvidenceRef, FLOOR_LIMIT};
+use super::membership::{COVERAGE_LIMIT, EvidenceRef, FLOOR_LIMIT};
 use super::*;
 use anyhow::{Context, Result, ensure};
 use aven_core::db::installation::InstallationGuard;
@@ -231,8 +231,12 @@ impl ProtectedLocalKeyStore {
                     "error enrollment-protected-missing"
                 );
                 ensure!(
-                    self.read_owned(&format!("membership-coverage-{sequence}"), 4096, false)?
-                        .is_none(),
+                    self.read_owned(
+                        &format!("membership-coverage-{sequence}"),
+                        COVERAGE_LIMIT,
+                        false
+                    )?
+                    .is_none(),
                     "error enrollment-protected-missing"
                 );
             }

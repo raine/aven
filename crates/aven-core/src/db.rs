@@ -50,6 +50,7 @@ pub struct Database {
     path: PathBuf,
     file_identity: Option<PathBuf>,
     _inspection_dir: Option<Arc<tempfile::TempDir>>,
+    pub(crate) membership_cache: crate::sync::seed_claim::membership::persistence::Cache,
 }
 
 pub(crate) struct WriterConnection {
@@ -94,6 +95,7 @@ impl Database {
             path: path.to_path_buf(),
             file_identity,
             _inspection_dir: None,
+            membership_cache: Default::default(),
         })
     }
 

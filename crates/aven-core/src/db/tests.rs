@@ -384,3 +384,92 @@ async fn unpopulated_bootstrap_tables_take_the_catalog_slice_schema() {
             .is_err()
     );
 }
+
+async fn before_membership_limits(path: &Path) -> SqlitePool {
+    let pool = before_bootstrap_catalog_slices(path).await;
+    MIGRATOR.run_to(20260924112730, &pool).await.unwrap();
+    pool
+}
+
+#[tokio::test]
+async fn enrolled_devices_refuse_the_membership_limit_migration_unchanged() {
+    const ENROLLMENT: &str =
+        "INSERT INTO local_peer_enrollment VALUES (1, zeroblob(32), 'c', 'peer');";
+    for (name, setup) in [
+        ("enrollment", ENROLLMENT.to_string()),
+        (
+            "checkpoint",
+            format!(
+                "{ENROLLMENT} INSERT INTO local_membership_checkpoint
+                 VALUES (1, zeroblob(32), 129, zeroblob(32), zeroblob(32));"
+            ),
+        ),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("old.sqlite");
+        let pool = before_membership_limits(&path).await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(setup))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let dump = "SELECT group_concat(v, ',') FROM (
+            SELECT role AS v FROM local_peer_enrollment
+            UNION ALL SELECT sequence FROM local_membership_checkpoint)";
+        let before: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
+        let error = MIGRATOR.run(&pool).await.unwrap_err().to_string();
+        assert!(
+            error.contains("error membership-development-format-unsupported"),
+            "{name}: {error}"
+        );
+        let after: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
+        assert_eq!(after, before, "{name}");
+        let version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(version, 20260924112730, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn server_membership_rows_survive_the_membership_limit_migration() {
+    let temp = tempfile::tempdir().unwrap();
+    let pool = before_membership_limits(&temp.path().join("server.sqlite")).await;
+    sqlx::query("INSERT INTO server_membership_transitions VALUES (129, NULL, x'01')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    MIGRATOR.run(&pool).await.unwrap();
+    let kept: Vec<u8> =
+        sqlx::query_scalar("SELECT record FROM server_membership_transitions WHERE sequence = 129")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, [1]);
+    let highest = crate::sync::seed_claim::membership::MAX_TRANSITIONS as i64 + 1;
+    for (table, insert) in [
+        (
+            "server_membership_transitions",
+            "INSERT INTO server_membership_transitions VALUES (?, NULL, x'01')",
+        ),
+        (
+            "local_membership_checkpoint",
+            "INSERT OR REPLACE INTO local_membership_checkpoint
+             VALUES (1, zeroblob(32), ?, zeroblob(32), zeroblob(32))",
+        ),
+    ] {
+        sqlx::query(insert)
+            .bind(highest)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            sqlx::query(insert)
+                .bind(highest + 1)
+                .execute(&pool)
+                .await
+                .is_err(),
+            "{table}"
+        );
+    }
+}

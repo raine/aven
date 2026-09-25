@@ -88,6 +88,8 @@ impl Membership {
     }
 }
 
+/// Protected coverage holding every generation key.
+pub const MAX_COVERAGE_BYTES: usize = 40 + GENERATION_BYTES * MAX_GENERATIONS;
 impl VerifiedKeys {
     /// Installation-bound protected storage only, never public evidence or SQLite.
     pub fn protected_storage_bytes(&self) -> Zeroizing<Vec<u8>> {
@@ -98,7 +100,7 @@ impl VerifiedKeys {
     }
     /// Revalidate complete commitments against authenticated membership on every load.
     pub fn from_protected_storage(m: &Membership, bytes: &[u8]) -> Result<Self> {
-        check(bytes.len() <= 40 + MAX_GENERATIONS * 72)?;
+        check(bytes.len() <= MAX_COVERAGE_BYTES)?;
         let mut r = Reader(bytes);
         check(r.take(6)? == b"AVKC\0\x01" && r.array::<32>()? == m.genesis.context.vault_id)?;
         Self::read(m, &mut r)

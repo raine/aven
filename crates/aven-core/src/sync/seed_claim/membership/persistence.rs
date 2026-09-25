@@ -3,6 +3,7 @@ use super::super::peer::{Authentication, RegistrationStatus, request_parts};
 use super::*;
 use crate::db::{Database, begin_immediate};
 use sqlx::SqliteConnection;
+use std::sync::Arc;
 
 pub const MAX_INVITATIONS: usize = 128;
 pub const MAX_CANDIDATES: usize = 8;
@@ -10,8 +11,26 @@ pub(crate) struct Current {
     pub membership: Membership,
     pub evidence: Evidence,
 }
-/// Bound stored byte lengths before materializing any attacker-influenced blobs.
-pub(crate) async fn current(conn: &mut SqliteConnection) -> Result<Current> {
+/// The verified replay of one stored head. Heads are hash-linked over every
+/// record, so an unchanged head means unchanged history; storage integrity
+/// behind a cached head is established by the full replay at server start.
+#[derive(Clone, Default)]
+pub(crate) struct Cache(Arc<std::sync::Mutex<Option<Arc<Current>>>>);
+impl Cache {
+    fn get(&self, sequence: i64, head: &[u8]) -> Option<Arc<Current>> {
+        let cached = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        cached
+            .as_ref()
+            .filter(|c| c.membership.sequence() as i64 == sequence && c.membership.head() == head)
+            .cloned()
+    }
+    fn set(&self, current: Arc<Current>) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(current);
+    }
+}
+/// Replays only when the stored head differs from the cached one; invitation
+/// bounds and projections are checked on every call.
+pub(crate) async fn current(db: &Database, conn: &mut SqliteConnection) -> Result<Arc<Current>> {
     let (invitations, malformed): (i64, i64) = sqlx::query_as("SELECT count(*),coalesce(sum(CASE WHEN length(declaration)!=280 OR (request IS NOT NULL AND length(request)!=314) OR length(handle)!=32 OR length(inviter)!=32 THEN 1 ELSE 0 END),0) FROM server_membership_invitations")
         .fetch_one(&mut *conn).await?;
     ensure!(
@@ -24,6 +43,39 @@ pub(crate) async fn current(conn: &mut SqliteConnection) -> Result<Current> {
     .fetch_one(&mut *conn)
     .await?;
     ensure!(invitations == 0 || clock, "error enrollment-clock-missing");
+    let head: Option<(i64, Vec<u8>)> = sqlx::query_as(
+        "SELECT sequence,commitment FROM server_e2ee_membership_head WHERE singleton=1",
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    let cached = head.and_then(|(sequence, head)| db.membership_cache.get(sequence, &head));
+    let current = match cached {
+        Some(current) => current,
+        None => {
+            let current = Arc::new(replay(conn).await?);
+            db.membership_cache.set(current.clone());
+            current
+        }
+    };
+    let orphans: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_membership_invitations i WHERE admitted_sequence IS NOT NULL AND NOT EXISTS(SELECT 1 FROM server_membership_transitions a WHERE a.handle=i.handle AND a.sequence=i.admitted_sequence))")
+        .fetch_one(&mut *conn).await?;
+    ensure!(!orphans, "error membership-history-missing");
+    let invitations: Vec<(Vec<u8>, bool, bool, bool)> = sqlx::query_as("SELECT inviter,admitted_sequence IS NOT NULL,revoked,expired FROM server_membership_invitations")
+        .fetch_all(&mut *conn).await?;
+    for (inviter, admitted, revoked, expired) in invitations {
+        let inviter: Hash = inviter
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("error membership-storage"))?;
+        ensure!(
+            revoked == (!admitted && current.membership.member(&inviter).is_err())
+                && (!revoked || expired),
+            "error membership-invitation-projection"
+        );
+    }
+    Ok(current)
+}
+/// Bound stored byte lengths before materializing any attacker-influenced blobs.
+async fn replay(conn: &mut SqliteConnection) -> Result<Current> {
     let sizes: Option<(i64, i64, i64, bool)> = sqlx::query_as("SELECT length(s.genesis),length(p.signed_record),length(p.descriptor),s.genesis_only FROM server_seed_claim s JOIN server_bootstrap_publication p ON p.singleton=s.singleton WHERE s.singleton=1")
         .fetch_optional(&mut *conn).await?;
     let (g, p, d, only) = sizes.context("error enrollment-requires-ready")?;
@@ -96,20 +148,6 @@ pub(crate) async fn current(conn: &mut SqliteConnection) -> Result<Current> {
         seq == membership.sequence() as i64 && head == membership.head(),
         "error membership-head-invalid"
     );
-    let orphans: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_membership_invitations i WHERE admitted_sequence IS NOT NULL AND NOT EXISTS(SELECT 1 FROM server_membership_transitions a WHERE a.handle=i.handle AND a.sequence=i.admitted_sequence))")
-        .fetch_one(&mut *conn).await?;
-    ensure!(!orphans, "error membership-history-missing");
-    let invitations: Vec<(Vec<u8>, bool, bool, bool)> = sqlx::query_as("SELECT inviter,admitted_sequence IS NOT NULL,revoked,expired FROM server_membership_invitations")
-        .fetch_all(&mut *conn).await?;
-    for (inviter, admitted, revoked, expired) in invitations {
-        let inviter: Hash = inviter
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("error membership-storage"))?;
-        ensure!(
-            revoked == (!admitted && membership.member(&inviter).is_err()) && (!revoked || expired),
-            "error membership-invitation-projection"
-        );
-    }
     Ok(Current {
         membership,
         evidence,
@@ -192,12 +230,12 @@ impl Database {
     ) -> Result<ManagementPreparation> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         let high_water = allocator(&mut tx, &c.membership).await?;
         tx.commit().await?;
         Ok(ManagementPreparation {
-            evidence: c.evidence,
+            evidence: c.evidence.clone(),
             high_water,
         })
     }
@@ -209,7 +247,7 @@ impl Database {
         ensure!(record.len() <= MAX_RECORD_BYTES, "error membership-limit");
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         let (core, _, _, _) = encoding::components(record)?;
         let (signer, action) = encoding::signer_action(core)?;
@@ -240,14 +278,31 @@ impl Database {
     }
 }
 impl Database {
+    /// Replays the complete stored membership history and fills the cache.
+    /// Servers run this before accepting requests; storage without published
+    /// membership has nothing to verify.
+    pub async fn verify_membership_history(&self) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let published: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_membership_head)")
+                .fetch_one(&mut *tx)
+                .await?;
+        if published {
+            self.membership_cache.set(Arc::new(replay(&mut tx).await?));
+            current(self, &mut tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
     /// This read alone accepts a verified ancestor head, after current credential authentication.
     pub async fn membership_evidence(&self, auth: &Authentication<'_>) -> Result<Evidence> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, true)?;
         tx.commit().await?;
-        Ok(c.evidence)
+        Ok(c.evidence.clone())
     }
     pub async fn register_membership_invitation(
         &self,
@@ -266,7 +321,7 @@ impl Database {
         ensure!(raw.len() == DECLARATION_BYTES, "error membership-limit");
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         let d = Declaration::from_record(&c.membership, raw)?;
         ensure!(d.inviter == auth.device, "error enrollment-unauthorized");
@@ -332,7 +387,7 @@ impl Database {
         request_parts(request, &handle)?;
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         check(vault == c.membership.genesis.context.vault_id)?;
         observe(&mut tx, time).await?;
         let (stored, expired, revoked, admitted): (Option<Vec<u8>>, bool, bool, bool) = sqlx::query_as(
@@ -365,7 +420,7 @@ impl Database {
     pub async fn membership_mailbox(&self, vault: Hash, handle: Hash) -> Result<Mailbox> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         check(vault == c.membership.genesis.context.vault_id)?;
         let (declaration, request, admission): (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) = sqlx::query_as("SELECT i.declaration,i.request,a.record FROM server_membership_invitations i LEFT JOIN server_membership_transitions a ON a.handle=i.handle WHERE i.handle=?")
             .bind(handle.as_slice()).fetch_optional(&mut *tx).await?.context("error enrollment-unavailable")?;
@@ -404,7 +459,7 @@ impl Database {
     ) -> Result<CancelStatus> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         let (declaration, inviter, admitted): (Vec<u8>, Vec<u8>, bool) = sqlx::query_as("SELECT declaration,inviter,admitted_sequence IS NOT NULL FROM server_membership_invitations WHERE handle=?")
             .bind(handle.as_slice())
@@ -449,7 +504,7 @@ impl Database {
         ensure!(record.len() <= MAX_RECORD_BYTES, "error membership-limit");
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let c = current(&mut tx).await?;
+        let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         type Row = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>, bool);
         let (declaration, request, saved, fenced): Row = sqlx::query_as("SELECT i.declaration,i.request,a.record,i.expired FROM server_membership_invitations i LEFT JOIN server_membership_transitions a ON a.handle=i.handle WHERE i.handle=?")

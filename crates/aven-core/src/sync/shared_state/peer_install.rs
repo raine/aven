@@ -20,7 +20,8 @@ impl Database {
     ) -> Result<Vec<u8>> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
-        let current = crate::sync::seed_claim::membership::persistence::current(&mut tx).await?;
+        let current =
+            crate::sync::seed_claim::membership::persistence::current(self, &mut tx).await?;
         current.membership.authenticate(auth, false)?;
         let binding = current.membership.publication().binding();
         ensure!(
@@ -30,7 +31,7 @@ impl Database {
         let bytes = match component {
             None => {
                 ensure!(index == 0, "error snapshot-index");
-                current.evidence.descriptor
+                current.evidence.descriptor.clone()
             }
             Some(Component::Image(object)) => {
                 // SQLite owns the bytes. A prune transaction cannot invalidate

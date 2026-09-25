@@ -160,6 +160,21 @@ access removal and key rotation separately, and offers **Finish removal** while
 rotation is unfinished. A server refusal means the removal could not be
 confirmed, not that it happened.
 
+### Device change limit
+
+A sync supports a limited number of device changes over its lifetime. Adding a
+device is one change. Removing a device is two: the removal and the key
+rotation that follows it. A rotation after an expired invitation that may have
+sent keys is also one change. A sync allows 256 changes, and at most 63 of them
+can be key rotations. Once either limit is reached, devices can no longer be
+added or removed.
+
+To keep changing devices, start a new sync. Back up a device that is up to
+date with `aven backup`. Then follow
+[Recover from device loss](#recover-from-device-loss): restore the backup to a
+fresh database path, set up a new sync on new server storage, and join the
+other devices from empty databases.
+
 ## Sync a client
 
 ```sh

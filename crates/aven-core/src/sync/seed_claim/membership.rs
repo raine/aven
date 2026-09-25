@@ -10,7 +10,7 @@ mod pairing;
 pub use evidence::{Evidence, EvidenceRecord, MAX_EVIDENCE_JSON_BYTES, Mailbox};
 mod keys;
 mod rotation;
-pub use keys::VerifiedKeys;
+pub use keys::{MAX_COVERAGE_BYTES, VerifiedKeys};
 pub use rotation::{Generation, RotationMaterial};
 pub(crate) mod persistence;
 pub use persistence::{CancelStatus, MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
@@ -26,14 +26,43 @@ pub use pairing::{Declaration, Device, Joiner, ProvisionalGrant, VerifiedEnrollm
 
 pub const MAX_DEVICES: usize = 32;
 pub const MAX_RECORD_BYTES: usize = 32768;
-pub const MAX_CHAIN_BYTES: usize = 1048576;
-pub const MAX_TRANSITIONS: usize = 128;
-pub const MAX_GENERATIONS: usize = 32;
-pub const MAX_KEY_PLAINTEXT_BYTES: usize = 4096;
+/// Lifetime signed transitions after genesis; every admission, removal and
+/// rotation consumes one.
+pub const MAX_TRANSITIONS: usize = 256;
+/// Lifetime key generations including the initial one; every rotation consumes one.
+pub const MAX_GENERATIONS: usize = 64;
+/// Grant plaintext carrying every generation key.
+pub const MAX_KEY_PLAINTEXT_BYTES: usize =
+    GRANT_PREFIX_BYTES + 2 + GENERATION_BYTES * MAX_GENERATIONS;
 pub const DECLARATION_BYTES: usize = 280;
 pub const REQUEST_BYTES: usize = 314;
 const CORE_BYTES: usize = 461;
 const GRANT_PREFIX_BYTES: usize = 1 + 12 * 32 + 8;
+/// Encoded member and generation entries of the full state carried by every record.
+const MEMBER_BYTES: usize = 164;
+const GENERATION_BYTES: usize = 72;
+/// Largest admission: its state and grant both list every generation.
+const MAX_ADMISSION_BYTES: usize =
+    1257 + MEMBER_BYTES * MAX_DEVICES + 2 * GENERATION_BYTES * MAX_GENERATIONS;
+/// Largest rotation: full state plus one key package per member.
+const MAX_ROTATION_BYTES: usize =
+    540 + (MEMBER_BYTES + 306) * MAX_DEVICES + GENERATION_BYTES * MAX_GENERATIONS;
+/// Largest removal, with no targets and every member retained.
+const MAX_REVOKE_BYTES: usize =
+    438 + MEMBER_BYTES * MAX_DEVICES + GENERATION_BYTES * MAX_GENERATIONS;
+/// Worst-case chain: every rotation at its maximum and every other transition
+/// a maximal admission with its declaration and request.
+pub const MAX_CHAIN_BYTES: usize = GENESIS_BYTES
+    + PUBLICATION_BYTES
+    + crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES
+    + (MAX_GENERATIONS - 1) * MAX_ROTATION_BYTES
+    + (MAX_TRANSITIONS + 1 - MAX_GENERATIONS)
+        * (DECLARATION_BYTES + REQUEST_BYTES + MAX_ADMISSION_BYTES);
+const _: () = assert!(
+    MAX_ADMISSION_BYTES <= MAX_RECORD_BYTES
+        && MAX_ROTATION_BYTES <= MAX_RECORD_BYTES
+        && MAX_REVOKE_BYTES <= DECLARATION_BYTES + REQUEST_BYTES + MAX_ADMISSION_BYTES
+);
 const DOMAIN_VERSION: u32 = crate::sync::bootstrap_format::DOMAIN_VERSION;
 
 type Hash = [u8; 32];
@@ -239,7 +268,7 @@ impl Membership {
         let reserve = usize::from(self.pending);
         check(self.heads.len() - 1 + reserve <= MAX_TRANSITIONS)?;
         check(self.generations.len() + reserve <= MAX_GENERATIONS)?;
-        check(self.evidence_bytes <= MAX_CHAIN_BYTES - reserve * MAX_RECORD_BYTES)
+        check(self.evidence_bytes <= MAX_CHAIN_BYTES - reserve * MAX_ROTATION_BYTES)
     }
     pub fn rotation_pending(&self) -> bool {
         self.pending

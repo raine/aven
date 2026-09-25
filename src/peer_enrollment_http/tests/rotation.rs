@@ -350,7 +350,10 @@ async fn protected_coverage_precedes_mirror_and_missing_or_corrupt_established_k
     );
     let path = owned_file(root.path(), "third", "membership-coverage-7");
     let protected = std::fs::read(&path).unwrap();
-    assert_eq!(protected.len(), 4096);
+    assert_eq!(
+        protected.len(),
+        44 + aven_core::sync::seed_claim::membership::MAX_COVERAGE_BYTES
+    );
     assert!(owned_file(root.path(), "third", "membership-floor-7").exists());
     execute(&third.db, "DROP TRIGGER mirror_fault").await;
     let reopened = Database::open(third.db.path()).await.unwrap();

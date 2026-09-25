@@ -16,6 +16,7 @@ const SETUP_INVITATION_SECONDS: u64 = 3600;
 
 const UNPREPARED_STORAGE: &str =
     "error server-storage-unprepared hint=\"run `aven server setup --data PATH --url URL` first\"";
+const INVALID_MEMBERSHIP: &str = "error server-membership-invalid hint=\"stored device membership failed verification; restore this path from a backup or prepare a new one with `aven server setup`\"";
 const UNSUPPORTED_STORAGE: &str = "error server-storage-unsupported hint=\"this storage holds unencrypted sync history, which is no longer supported; prepare a new path with `aven server setup`\"";
 
 pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
@@ -71,6 +72,10 @@ async fn serve(bind: SocketAddr, data: &Path, config: &config::AppConfig) -> Res
         }
         bail!(UNPREPARED_STORAGE);
     }
+    database
+        .verify_membership_history()
+        .await
+        .map_err(|error| error.context(INVALID_MEMBERSHIP))?;
     let app = crate::seed_bootstrap_http::router(database.clone(), None, Default::default())
         .merge(crate::peer_enrollment_http::router(database.clone()))
         .merge(crate::encrypted_tail_http::router_with_policy(

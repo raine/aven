@@ -215,6 +215,7 @@ impl Database {
             path: path.to_path_buf(),
             file_identity: fs::canonicalize(path).ok(),
             _inspection_dir: Some(inspection_dir),
+            membership_cache: Default::default(),
         });
         InspectedDatabase {
             inspection,

@@ -385,49 +385,140 @@ fn complete_ordered_join_history_is_required_before_verified_keys() {
 }
 
 #[test]
-fn encoded_maxima_and_freeze_reserves_are_exercised_with_signed_history() {
+fn maximum_signed_chain_fits_every_bound() {
     let f = fixture();
+    let seed = || Device::seed(&f.seed);
     let mut m = f.membership.clone();
     let mut keys = m.verify_initial_key(&f.key).unwrap();
-    for i in 0..30 {
-        let (_, _, _, next) = add_fixed(Device::seed(&f.seed), &m, &keys, i * 6);
+    let mut transitions = Vec::new();
+    let record = |record: Vec<u8>| EvidenceRecord {
+        declaration: vec![],
+        request: vec![],
+        record,
+    };
+    for i in 0..MAX_DEVICES as u8 - 1 {
+        let (d, peer, raw, next) = add_fixed(seed(), &m, &keys, i * 6);
+        transitions.push(EvidenceRecord {
+            declaration: d.record().to_vec(),
+            request: peer.request().to_vec(),
+            record: raw,
+        });
         m = next;
     }
-    assert_eq!(m.device_count(), 31);
-    // Actual rotations reach all 32 retained generations, without fabricated rows.
-    for i in 0..30 {
-        let freeze = Device::seed(&f.seed).prepare_revoke(&m, &[]).unwrap();
+    assert_eq!(m.device_count(), MAX_DEVICES);
+    for i in 0..MAX_GENERATIONS as u8 - 2 {
+        let freeze = seed().prepare_revoke(&m, &[]).unwrap();
         m = m.append(&[], &[], &freeze).unwrap();
-        let (raw, next, next_keys) = rotate_fixed(Device::seed(&f.seed), &m, &keys, 190 + i, 0);
-        assert!(raw.len() <= MAX_RECORD_BYTES);
+        transitions.push(record(freeze));
+        let (raw, next, next_keys) = rotate_fixed(seed(), &m, &keys, 100 + i, 0);
         m = next;
         keys = next_keys;
+        transitions.push(record(raw));
     }
-    let (_, _, _, full) = add_fixed(Device::seed(&f.seed), &m, &keys, 181);
-    let freeze = Device::seed(&f.seed).prepare_revoke(&full, &[]).unwrap();
-    let full = full.append(&[], &[], &freeze).unwrap();
-    let (maximum, _, _) = rotate_fixed(Device::seed(&f.seed), &full, &keys, 220, 0);
-    assert_eq!(maximum.len(), 17884);
-    let freeze = Device::seed(&f.seed).prepare_revoke(&m, &[]).unwrap();
-    let pending = m.append(&[], &[], &freeze).unwrap();
-    let (_, m, keys) = rotate_fixed(Device::seed(&f.seed), &pending, &keys, 220, 0);
-    let (d, peer, raw, next) = add_fixed(Device::seed(&f.seed), &m, &keys, 181);
-    assert_eq!(encoding::state(&next).len(), 7734);
-    assert_eq!(raw.len(), 11113);
+    // Freezes retaining every member fill the history up to the final removal,
+    // rotation and admission.
+    while transitions.len() + 3 < MAX_TRANSITIONS {
+        let freeze = seed().prepare_revoke(&m, &[]).unwrap();
+        assert_eq!(freeze.len(), MAX_REVOKE_BYTES - GENERATION_BYTES);
+        m = m.append(&[], &[], &freeze).unwrap();
+        transitions.push(record(freeze));
+    }
+
+    // The largest rotation packages a key for every member into the last generation.
+    let (largest, full, full_keys) = rotate_fixed(seed(), &m, &keys, 200, 0);
+    assert_eq!(largest.len(), MAX_ROTATION_BYTES);
+    assert_eq!(full.generations().len(), MAX_GENERATIONS);
+    assert_eq!(
+        full_keys.protected_storage_bytes().len(),
+        MAX_COVERAGE_BYTES
+    );
+    VerifiedKeys::from_protected_storage(&full, &full_keys.protected_storage_bytes()).unwrap();
+    assert!(seed().prepare_revoke(&full, &[]).is_err());
+
+    // The largest admission grants every generation key to the last free slot.
+    let removal = seed().prepare_revoke(&m, &[[1; 32]]).unwrap();
+    m = m.append(&[], &[], &removal).unwrap();
+    transitions.push(record(removal));
+    let (raw, next, next_keys) = rotate_fixed(seed(), &m, &keys, 201, 0);
+    m = next;
+    keys = next_keys;
+    transitions.push(record(raw));
+    let (d, peer, raw, next) = add_fixed(seed(), &m, &keys, 186);
+    assert_eq!(raw.len(), MAX_ADMISSION_BYTES);
     let plain =
         admission::grant_plaintext(&m, &d, peer.request(), &peer.0.recipient().unwrap(), &keys);
-    assert_eq!(plain.len(), 2699);
-    assert_eq!(keys.protected_storage_bytes().len(), 2344);
-    VerifiedKeys::from_protected_storage(&m, &keys.protected_storage_bytes()).unwrap();
+    assert_eq!(plain.len(), MAX_KEY_PLAINTEXT_BYTES);
     peer.verify_enrollment(&m, d.record(), &raw).unwrap();
-    assert!(Device::seed(&f.seed).prepare_revoke(&next, &[]).is_err());
+    transitions.push(EvidenceRecord {
+        declaration: d.record().to_vec(),
+        request: peer.request().to_vec(),
+        record: raw,
+    });
+    m = next;
 
+    // The complete signed history verifies within the evidence and response bounds.
+    let evidence = Evidence {
+        genesis: f.seed.genesis.record().to_vec(),
+        publication: f.membership.publication.record().to_vec(),
+        descriptor: publication::tests::descriptor(f.seed.genesis()),
+        transitions,
+    };
+    assert_eq!(evidence.transitions.len(), MAX_TRANSITIONS);
+    assert_eq!(evidence.verify().unwrap().head(), m.head());
+    assert!(m.evidence_bytes <= MAX_CHAIN_BYTES);
+    let json = serde_json::to_vec(&evidence).unwrap();
+    assert_eq!(
+        Evidence::decode(&json).unwrap().verify().unwrap().head(),
+        m.head()
+    );
+    assert!(seed().prepare_revoke(&m, &[]).is_err());
+    assert!(seed().prepare_invitation(&m, 100).is_err());
+
+    // Every stored byte at its encoded maximum still fits the JSON and HTTP bounds.
+    let filled = |n: usize| vec![255; n];
+    let mut worst = Evidence {
+        genesis: filled(GENESIS_BYTES),
+        publication: filled(PUBLICATION_BYTES),
+        descriptor: filled(crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES),
+        transitions: vec![],
+    };
+    for index in 0..MAX_TRANSITIONS {
+        worst.transitions.push(if index < MAX_GENERATIONS - 1 {
+            record(filled(MAX_ROTATION_BYTES))
+        } else {
+            EvidenceRecord {
+                declaration: filled(DECLARATION_BYTES),
+                request: filled(REQUEST_BYTES),
+                record: filled(MAX_ADMISSION_BYTES),
+            }
+        });
+    }
+    let bytes = worst.genesis.len()
+        + worst.publication.len()
+        + worst.descriptor.len()
+        + worst
+            .transitions
+            .iter()
+            .map(|t| t.declaration.len() + t.request.len() + t.record.len())
+            .sum::<usize>();
+    assert_eq!(bytes, MAX_CHAIN_BYTES);
+    assert!(serde_json::to_vec(&worst).unwrap().len() <= MAX_EVIDENCE_JSON_BYTES);
+    let preparation = ManagementPreparation {
+        evidence: worst,
+        high_water: u64::MAX,
+    };
+    assert!(serde_json::to_vec(&preparation).unwrap().len() <= MAX_EVIDENCE_JSON_BYTES + 128);
+}
+
+#[test]
+fn pending_rotation_reserve_fits_the_largest_rotation() {
+    let f = fixture();
     let keys = f.membership.verify_initial_key(&f.key).unwrap();
     let freeze = Device::seed(&f.seed)
         .prepare_revoke(&f.membership, &[])
         .unwrap();
     let mut near = f.membership.clone();
-    near.evidence_bytes = MAX_CHAIN_BYTES - MAX_RECORD_BYTES - freeze.len();
+    near.evidence_bytes = MAX_CHAIN_BYTES - MAX_ROTATION_BYTES - freeze.len();
     let pending = near.append(&[], &[], &freeze).unwrap();
     Device::seed(&f.seed)
         .prepare_rotation(&pending, &keys, 0)

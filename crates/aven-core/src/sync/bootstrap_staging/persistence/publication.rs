@@ -6,6 +6,7 @@ use crate::sync::seed_claim::{PUBLICATION_BYTES, Publication, PublicationOutcome
 /// Only verified supported membership chains can authorize requests.
 /// A historical outcome is never itself the current membership checkpoint.
 pub(super) async fn authorize_current(
+    db: &Database,
     conn: &mut SqliteConnection,
     auth: &Authentication<'_>,
 ) -> Result<(Genesis, Option<PublicationOutcome>)> {
@@ -37,7 +38,7 @@ pub(super) async fn authorize_current(
         );
         return Ok((genesis, None));
     }
-    let current = crate::sync::seed_claim::membership::persistence::current(conn).await?;
+    let current = crate::sync::seed_claim::membership::persistence::current(db, conn).await?;
     current.membership.authenticate(
         &crate::sync::seed_claim::peer::Authentication {
             vault: auth.vault_id,
@@ -131,7 +132,7 @@ impl Database {
         );
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let (genesis, published) = authorize_current(&mut tx, auth).await?;
+        let (genesis, published) = authorize_current(self, &mut tx, auth).await?;
         if let Some(outcome) = published {
             let publication = outcome.publication();
             ensure!(

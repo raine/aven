@@ -60,8 +60,12 @@ fn now() -> Result<i64> {
     )?)
 }
 
-async fn authorize(conn: &mut SqliteConnection, auth: &Authentication<'_>) -> Result<Genesis> {
-    let (genesis, outcome) = publication::authorize_current(conn, auth).await?;
+async fn authorize(
+    db: &Database,
+    conn: &mut SqliteConnection,
+    auth: &Authentication<'_>,
+) -> Result<Genesis> {
+    let (genesis, outcome) = publication::authorize_current(db, conn, auth).await?;
     ensure!(outcome.is_none(), "error bootstrap-published");
     Ok(genesis)
 }
@@ -227,7 +231,7 @@ impl Database {
         );
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let genesis = authorize(&mut tx, auth).await?;
+        let genesis = authorize(self, &mut tx, auth).await?;
         let d = DeclarationView::decode(descriptor)?;
         let binding = d.binding();
         let id = binding.bootstrap;
@@ -273,7 +277,7 @@ impl Database {
         let mut conn = self.acquire_reader().await?;
         use sqlx::Connection;
         let mut tx = conn.begin().await?;
-        let (_, published) = publication::authorize_current(&mut tx, auth).await?;
+        let (_, published) = publication::authorize_current(self, &mut tx, auth).await?;
         let result = match published {
             Some(outcome) if outcome.publication().binding().bootstrap_id == bootstrap_id => {
                 Status::Published(outcome)
@@ -292,7 +296,7 @@ impl Database {
     ) -> Result<StagingStatus> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        authorize(&mut tx, auth).await?;
+        authorize(self, &mut tx, auth).await?;
         let result = ensure_staging(&mut tx, &bootstrap_id, descriptor_commitment).await?;
         tx.commit().await?;
         Ok(result)
@@ -308,7 +312,7 @@ impl Database {
     ) -> Result<Status> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let (_, published) = publication::authorize_current(&mut tx, auth).await?;
+        let (_, published) = publication::authorize_current(self, &mut tx, auth).await?;
         if let Some(outcome) = published {
             ensure!(
                 outcome.publication().binding().bootstrap_id == bootstrap_id,
@@ -347,7 +351,7 @@ impl Database {
         );
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        authorize(&mut tx, auth).await?;
+        authorize(self, &mut tx, auth).await?;
         let id = &request.bootstrap_id;
         let c = required(&mut tx, id).await?;
         c.check(request.descriptor_commitment)?;

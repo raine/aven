@@ -168,7 +168,8 @@ impl Database {
     ) -> Result<Reply> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let current = crate::sync::seed_claim::membership::persistence::current(&mut tx).await?;
+        let current =
+            crate::sync::seed_claim::membership::persistence::current(self, &mut tx).await?;
         current
             .membership
             .authenticate(&context.authentication(bearer), false)?;

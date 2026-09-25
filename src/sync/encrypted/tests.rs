@@ -510,6 +510,37 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     let error = failure(&a.run(&["sync"]).await);
     assert!(error.contains("outcome-unknown"), "{error}");
     assert_eq!(status(&a).await["local_changes_pending"], true);
+    // Startup replays stored membership and refuses altered history before binding.
+    let tampered = root.join("tampered.sqlite");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", server_data.display()))
+        .await
+        .unwrap();
+    sqlx::query("VACUUM INTO ?")
+        .bind(tampered.display().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", tampered.display()))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE server_membership_transitions SET record=zeroblob(length(record))")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let error = failure(
+        &operator
+            .run(&[
+                "server",
+                "--data",
+                &tampered.display().to_string(),
+                "--bind",
+                "127.0.0.1:0",
+            ])
+            .await,
+    );
+    assert!(error.contains("server-membership-invalid"), "{error}");
     let _server = start_server(&operator, &server_data, &bind).await;
     converge(&[&a, &b]).await;
     assert!(

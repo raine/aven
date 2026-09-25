@@ -2,11 +2,13 @@
 use super::*;
 use anyhow::{Context, Result, ensure};
 use aven_core::sync::seed_claim::membership::{
-    Device, Evidence, MAX_EVIDENCE_JSON_BYTES, MAX_TRANSITIONS, Membership, VerifiedKeys,
+    Device, Evidence, MAX_COVERAGE_BYTES, MAX_EVIDENCE_JSON_BYTES, MAX_TRANSITIONS, Membership,
+    VerifiedKeys,
 };
 use serde::{Deserialize, Serialize};
 type Hash = [u8; 32];
 pub(super) const FLOOR_LIMIT: usize = 1024;
+pub(super) const COVERAGE_LIMIT: usize = 44 + MAX_COVERAGE_BYTES;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct EvidenceRef {
@@ -157,7 +159,7 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         identity: Hash,
     ) -> Result<Option<(Membership, EvidenceRef, VerifiedKeys)>> {
-        let mut latest: Option<(Membership, EvidenceRef, VerifiedKeys)> = None;
+        let mut floors: Vec<Floor> = Vec::new();
         for sequence in 1..=MAX_TRANSITIONS + 1 {
             let kind = format!("membership-floor-{sequence}");
             let Some(bytes) = self.read_owned(&kind, FLOOR_LIMIT, false)? else {
@@ -165,31 +167,51 @@ impl ProtectedLocalKeyStore {
             };
             let floor: Floor = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("error membership-floor-corrupt"))?;
-            let m = self.load_evidence(&floor.evidence)?.verify()?;
             ensure!(
-                floor.sequence == sequence as u64
-                    && m.sequence() == floor.sequence
-                    && m.head() == floor.head,
+                floor.sequence == sequence as u64,
                 "error membership-floor-corrupt"
             );
-            if let Some((before, _, _)) = &latest {
+            if let Some(before) = floors.last() {
                 ensure!(
-                    floor.previous == before.sequence() && m.extends(before),
+                    floor.previous == before.sequence,
                     "error membership-floor-fork"
                 );
             } else {
                 ensure!(floor.previous == 0, "error membership-floor-missing");
             }
-            let coverage = self
-                .read_owned(&format!("membership-coverage-{sequence}"), 4096, true)?
-                .context("error membership-coverage-missing")?;
-            ensure!(
-                Sha256::digest(&coverage).as_slice() == floor.coverage,
-                "error membership-coverage-corrupt"
-            );
-            let keys = VerifiedKeys::from_protected_storage(&m, &coverage)?;
-            latest = Some((m, floor.evidence, keys));
+            floors.push(floor);
         }
+        // Only the latest chain is replayed; its hash-linked heads prove every
+        // earlier floor is an ancestor, so loads stay linear in the chain length.
+        let latest = match floors.last() {
+            Some(floor) => {
+                let m = self.load_evidence(&floor.evidence)?.verify()?;
+                ensure!(
+                    m.sequence() == floor.sequence && m.head() == floor.head,
+                    "error membership-floor-corrupt"
+                );
+                ensure!(
+                    floors
+                        .iter()
+                        .all(|earlier| m.head_at(earlier.sequence) == Some(earlier.head)),
+                    "error membership-floor-fork"
+                );
+                let coverage = self
+                    .read_owned(
+                        &format!("membership-coverage-{}", floor.sequence),
+                        COVERAGE_LIMIT,
+                        true,
+                    )?
+                    .context("error membership-coverage-missing")?;
+                ensure!(
+                    Sha256::digest(&coverage).as_slice() == floor.coverage,
+                    "error membership-coverage-corrupt"
+                );
+                let keys = VerifiedKeys::from_protected_storage(&m, &coverage)?;
+                Some((m, floor.evidence.clone(), keys))
+            }
+            None => None,
+        };
         if let Some((id, sequence, head, digest)) = db.membership_checkpoint_mirror().await? {
             let (m, _, _) = latest.as_ref().context("error membership-floor-missing")?;
             ensure!(
@@ -226,7 +248,7 @@ impl ProtectedLocalKeyStore {
         let coverage = keys.protected_storage_bytes();
         self.write_owned(
             &format!("membership-coverage-{}", m.sequence()),
-            4096,
+            COVERAGE_LIMIT,
             &coverage,
         )?;
         let reference = self.save_evidence(evidence)?;
@@ -305,9 +327,9 @@ mod tests {
     #[test]
     fn largest_floor_fits_protected_frame() {
         let floor = Floor {
-            sequence: 129,
+            sequence: MAX_TRANSITIONS as u64 + 1,
             head: [255; 32],
-            previous: 128,
+            previous: MAX_TRANSITIONS as u64,
             evidence: EvidenceRef {
                 digest: [255; 32],
                 length: MAX_EVIDENCE_JSON_BYTES,
