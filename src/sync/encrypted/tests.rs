@@ -279,11 +279,16 @@ async fn status(node: &Installation) -> serde_json::Value {
     serde_json::from_str(&node.ok(&["sync", "status", "--json"]).await).unwrap()
 }
 
+/// Whether `aven sync` text output reports a completed task sync.
+fn synced(stdout: &str) -> bool {
+    stdout.contains("Changes: sent ") || stdout.contains("Tasks were already up to date")
+}
+
 async fn converge(nodes: &[&Installation]) {
     for _ in 0..2 {
         for node in nodes {
             let stdout = node.ok(&["sync"]).await;
-            assert!(stdout.contains("Tasks"), "{stdout}");
+            assert!(synced(&stdout), "{stdout}");
         }
     }
 }
@@ -490,17 +495,17 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     expiring.wait().await.unwrap();
     assert_eq!(status(&a).await["state"], "ready");
     let stdout = a.ok(&["sync"]).await;
-    assert!(stdout.contains("Tasks"), "{stdout}");
+    assert!(synced(&stdout), "{stdout}");
     tokio::time::sleep_until(declared + Duration::from_secs(6)).await;
     let stdout = a.ok(&["sync"]).await;
-    assert!(stdout.contains("Tasks"), "{stdout}");
+    assert!(synced(&stdout), "{stdout}");
     assert_eq!(status(&a).await["state"], "ready");
 
     let (mut abandoned, first_invitation, _) = spawn_invite(&a, None).await;
     assert_ne!(first_invitation, expired_invitation);
     assert_eq!(status(&a).await["state"], "ready");
     let stdout = a.ok(&["sync"]).await;
-    assert!(stdout.contains("Tasks"), "{stdout}");
+    assert!(synced(&stdout), "{stdout}");
     abandoned.kill().await.unwrap();
     abandoned.wait().await.unwrap();
     // A join interrupted while waiting for admission resumes its stored request.
@@ -564,6 +569,8 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         .await;
     a.ok(&["note", &blocker, "note from A"]).await;
     a.ok(&["add", "Task from A", "--project", "app"]).await;
+    let sent = a.ok(&["sync"]).await;
+    assert!(sent.contains("Changes: sent "), "{sent}");
     converge(&[&b, &a, &b]).await;
     assert_eq!(titles(&a).await, titles(&b).await);
     assert!(titles(&a).await.contains(&"Child renamed on B".to_string()));

@@ -1242,7 +1242,7 @@ fn print_outcome(outcome: &Outcome) {
         println!("Tasks were already up to date");
     } else {
         println!(
-            "Tasks: sent {}, received {}",
+            "Changes: sent {}, received {}",
             outcome.sent_changes, outcome.received_changes
         );
     }
