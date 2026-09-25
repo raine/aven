@@ -77,7 +77,7 @@ CREATE INDEX idx_local_shared_capture_pins_sha256
 -- Absence on a frozen capture requires explicit cancellation and recapture.
 CREATE TABLE local_shared_capture_publication (
     candidate_id TEXT PRIMARY KEY,
-    descriptor BLOB NOT NULL CHECK (length(descriptor) <= 1024),
+    descriptor BLOB NOT NULL CHECK (length(descriptor) <= 1978),
     data_catalog BLOB NOT NULL CHECK (length(data_catalog) <= 16777216),
     prefix_catalog BLOB NOT NULL CHECK (length(prefix_catalog) <= 16777216),
     image_catalog BLOB NOT NULL CHECK (length(image_catalog) <= 16777216),
@@ -146,26 +146,22 @@ END;
 -- Terminal identities remain even after their bounded artifact storage is reclaimed.
 CREATE TABLE server_bootstrap_candidates (
     bootstrap BLOB PRIMARY KEY CHECK (length(bootstrap) = 32),
-    descriptor BLOB CHECK (descriptor IS NULL OR length(descriptor) <= 1024),
+    descriptor BLOB CHECK (descriptor IS NULL OR length(descriptor) <= 1978),
     canceled INTEGER NOT NULL CHECK (canceled IN (0, 1)),
-    epoch INTEGER NOT NULL CHECK (epoch > 0),
     expires_at INTEGER NOT NULL,
     byte_budget INTEGER NOT NULL CHECK (byte_budget BETWEEN 0 AND 629145600),
     chunk_budget INTEGER NOT NULL CHECK (chunk_budget BETWEEN 0 AND 4096),
-    catalog_failure INTEGER CHECK (catalog_failure BETWEEN 0 AND 2),
-    failure_reason INTEGER CHECK (failure_reason IN (0, 1)),
-    CHECK ((catalog_failure IS NULL) = (failure_reason IS NULL)),
     CHECK (canceled = 1 OR descriptor IS NOT NULL)
 );
 CREATE UNIQUE INDEX server_bootstrap_one_active
     ON server_bootstrap_candidates(canceled) WHERE canceled = 0;
 
 -- Component keys are fixed typed discriminators, never caller-provided text.
+-- Only slices already checked against their descriptor slot are stored.
 CREATE TABLE server_bootstrap_chunks (
     bootstrap BLOB NOT NULL REFERENCES server_bootstrap_candidates(bootstrap),
     component BLOB NOT NULL CHECK (length(component) IN (1, 33)),
     chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
-    verified INTEGER NOT NULL CHECK (verified IN (0, 1)),
     bytes BLOB NOT NULL CHECK (length(bytes) BETWEEN 1 AND 1048798),
     PRIMARY KEY (bootstrap, component, chunk_index)
 );
@@ -180,7 +176,7 @@ CREATE TABLE server_e2ee_membership_head (
 CREATE TABLE server_bootstrap_publication (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     bootstrap BLOB NOT NULL UNIQUE REFERENCES server_bootstrap_candidates(bootstrap),
-    descriptor BLOB NOT NULL CHECK (length(descriptor) <= 1024),
+    descriptor BLOB NOT NULL CHECK (length(descriptor) <= 1978),
     signed_record BLOB NOT NULL CHECK (length(signed_record) = 805),
     published_at INTEGER NOT NULL
 );
@@ -215,7 +211,7 @@ CREATE UNIQUE INDEX server_membership_unfinished_inviter
     WHERE expired = 0 AND admitted_sequence IS NULL;
 
 CREATE TABLE server_membership_transitions (
-    sequence INTEGER PRIMARY KEY CHECK (sequence BETWEEN 2 AND 129),
+    sequence INTEGER PRIMARY KEY CHECK (sequence BETWEEN 2 AND 257),
     handle BLOB UNIQUE REFERENCES server_membership_invitations(handle),
     record BLOB NOT NULL CHECK (length(record) <= 32768)
 );
@@ -244,7 +240,7 @@ CREATE TABLE local_peer_enrollment_artifacts (
 CREATE TABLE local_membership_checkpoint (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     identity BLOB NOT NULL CHECK (length(identity) = 32),
-    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 129),
+    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 257),
     head BLOB NOT NULL CHECK (length(head) = 32),
     evidence BLOB NOT NULL CHECK (length(evidence) = 32)
 );
@@ -340,7 +336,6 @@ CREATE TABLE server_e2ee_images (
     unreferenced_at INTEGER,
     descriptor BLOB NOT NULL CHECK(length(descriptor) <= 1984),
     origin TEXT,
-    epoch INTEGER NOT NULL DEFAULT 1 CHECK(epoch > 0),
     complete INTEGER NOT NULL DEFAULT 0 CHECK(complete IN (0,1))
 );
 CREATE TABLE server_e2ee_image_references (
@@ -368,7 +363,6 @@ CREATE TABLE server_e2ee_image_tickets (
     object BLOB NOT NULL REFERENCES server_e2ee_images(object),
     workspace TEXT NOT NULL,
     device BLOB NOT NULL CHECK(length(device) = 32),
-    epoch INTEGER NOT NULL CHECK(epoch > 0),
     expires_at INTEGER NOT NULL,
     UNIQUE(object, workspace, device)
 );
@@ -445,3 +439,9 @@ CREATE TRIGGER local_e2ee_image_preparation_update BEFORE UPDATE ON local_e2ee_i
 BEGIN SELECT RAISE(ABORT, 'image preparation is immutable'); END;
 CREATE TRIGGER local_e2ee_image_staging_update BEFORE UPDATE ON local_e2ee_image_staging
 BEGIN SELECT RAISE(ABORT, 'frozen image records are immutable'); END;
+
+-- Device labels.
+
+CREATE INDEX idx_changes_device_label
+ON changes(entity_id, server_seq, local_seq)
+WHERE op_type = 'publish_device_label';

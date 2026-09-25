@@ -261,112 +261,74 @@ async fn recurrence_migration_enforces_schedule_immutability_and_task_conflict_c
     );
 }
 
-async fn before_bootstrap_catalog_slices(path: &Path) -> SqlitePool {
+const PRE_ENCRYPTED_SYNC: i64 = 20260913105309;
+
+#[tokio::test]
+async fn pre_encrypted_sync_database_keeps_its_data_through_the_upgrade() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("pre-e2ee.sqlite");
     let options = SqliteConnectOptions::from_str(&path.to_string_lossy())
         .unwrap()
         .create_if_missing(true)
         .foreign_keys(true);
     let pool = SqlitePool::connect_with(options).await.unwrap();
-    MIGRATOR.run_to(20260924091148, &pool).await.unwrap();
-    pool
+    MIGRATOR.run_to(PRE_ENCRYPTED_SYNC, &pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO meta VALUES ('client_id', 'C1'), ('sync_cursor', '7'),
+             ('local_seq', '2'), ('sync_generation', '3');
+         INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
+             VALUES ('7KQ9A1X4MV2P8D6S', 'app', 'App', 'APP', 't', 't');
+         INSERT INTO tasks(id, title, description, project_id, status, priority,
+                 created_at, updated_at, source)
+             VALUES ('7KQ9A1X4MV2P8D6T', 'first', 'body', '7KQ9A1X4MV2P8D6S',
+                     'todo', 'high', 't', 't', 'ios'),
+                    ('7KQ9A1X4MV2P8D6V', 'second', '', '7KQ9A1X4MV2P8D6S',
+                     'done', 'none', 't', 't', 'cli');
+         INSERT INTO task_dependencies
+             VALUES ('0000000000000000', '7KQ9A1X4MV2P8D6T', '7KQ9A1X4MV2P8D6V', 't');
+         INSERT INTO changes(change_id, client_id, local_seq, entity_type, entity_id,
+                 field, op_type, payload, created_at, server_seq)
+             VALUES ('X1', 'C1', 1, 'task', '7KQ9A1X4MV2P8D6T', 'title', 'set',
+                     '\"first\"', 't', 5),
+                    ('X2', 'C1', 2, 'task', '7KQ9A1X4MV2P8D6T', NULL, 'add_note',
+                     '{}', 't', NULL);
+         INSERT INTO notes(id, task_id, body, created_at, change_id)
+             VALUES ('N1', '7KQ9A1X4MV2P8D6T', 'note', 't', 'X2');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let dump = "SELECT group_concat(v, '|') FROM (
+        SELECT key || '=' || value AS v FROM meta
+            WHERE key IN ('client_id', 'sync_cursor', 'local_seq', 'sync_generation')
+        UNION ALL SELECT id || title || description || status || priority || source FROM tasks
+        UNION ALL SELECT task_id || depends_on_task_id FROM task_dependencies
+        UNION ALL SELECT change_id || local_seq || payload || ifnull(server_seq, '-') FROM changes
+        UNION ALL SELECT id || body || change_id FROM notes
+        ORDER BY 1)";
+    let before: String = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
+    pool.close().await;
+
+    let database = Database::open(&path).await.unwrap();
+    let mut conn = database.acquire_reader().await.unwrap();
+    let after: String = sqlx::query_scalar(dump)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+    assert_eq!(
+        current_schema_version(&mut conn).await.unwrap(),
+        MIGRATOR.iter().last().unwrap().version
+    );
+    sqlx::query("UPDATE changes SET server_seq = 6 WHERE change_id = 'X2'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
-async fn old_bootstrap_state_refuses_the_catalog_slice_migration_unchanged() {
-    const JOURNAL: &str = "INSERT INTO local_shared_capture_journal(singleton, candidate_id,
-        stream_id, state, internal_format, internal_version, snapshot_json,
-        local_seq_floor, sync_generation, created_at, frozen_descriptor_commitment)
-        VALUES (1, 'c', 's', 'never_dispatched', 'f', 1, '{}', 0, 1, 't', zeroblob(32));";
-    const CANDIDATE: &str = "INSERT INTO server_bootstrap_candidates
-        VALUES (zeroblob(32), x'41564250000101', 0, 3, 9, 10, 2, 0, 0);";
-    for (name, setup) in [
-        ("frozen marker", JOURNAL.to_string()),
-        (
-            "frozen package",
-            format!(
-                "{JOURNAL} INSERT INTO local_shared_capture_publication
-                 VALUES ('c', x'41564250000101', x'00', x'01', x'02');"
-            ),
-        ),
-        (
-            "seed intent",
-            "INSERT INTO local_seed_publication_intent(singleton, candidate_id, intent, state)
-             VALUES (1, 'c', x'7b7d', 'sealed');"
-                .to_string(),
-        ),
-        ("candidate", CANDIDATE.to_string()),
-        (
-            "quarantined slice",
-            format!(
-                "{CANDIDATE} INSERT INTO server_bootstrap_chunks VALUES (zeroblob(32), x'01', 0, 0, x'bb');"
-            ),
-        ),
-        (
-            "publication",
-            format!(
-                "{CANDIDATE} INSERT INTO server_bootstrap_publication
-                 VALUES (1, zeroblob(32), x'41564250000101', zeroblob(805), 5);"
-            ),
-        ),
-    ] {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("old.sqlite");
-        let pool = before_bootstrap_catalog_slices(&path).await;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(setup))
-            .execute(&pool)
-            .await
-            .unwrap();
-        let dump = "SELECT group_concat(hex(v), ',') FROM (
-            SELECT descriptor AS v FROM local_shared_capture_publication
-            UNION ALL SELECT frozen_descriptor_commitment FROM local_shared_capture_journal
-            UNION ALL SELECT intent FROM local_seed_publication_intent
-            UNION ALL SELECT descriptor FROM server_bootstrap_candidates
-            UNION ALL SELECT quote(verified) || hex(bytes) FROM server_bootstrap_chunks
-            UNION ALL SELECT descriptor FROM server_bootstrap_publication)";
-        let before: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
-        let error = MIGRATOR.run(&pool).await.unwrap_err().to_string();
-        assert!(
-            error.contains("error bootstrap-development-format-unsupported"),
-            "{name}: {error}"
-        );
-        let after: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
-        assert_eq!(after, before, "{name}");
-        let version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(version, 20260924091148, "{name}");
-        pool.close().await;
-        // Opt-in development backups refuse active captures first; either way
-        // the open fails and nothing changes.
-        assert!(Database::open(&path).await.is_err(), "{name}");
-        let pool = SqlitePool::connect(&format!("sqlite:{}", path.display()))
-            .await
-            .unwrap();
-        let reopened: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
-        assert_eq!(reopened, before, "{name}");
-    }
-}
-
-#[tokio::test]
-async fn unpopulated_bootstrap_tables_take_the_catalog_slice_schema() {
-    let temp = tempfile::tempdir().unwrap();
-    let pool = before_bootstrap_catalog_slices(&temp.path().join("fresh.sqlite")).await;
-    MIGRATOR.run(&pool).await.unwrap();
-    for (table, column) in [
-        ("server_bootstrap_chunks", "verified"),
-        ("server_bootstrap_candidates", "catalog_failure"),
-        ("server_bootstrap_candidates", "failure_reason"),
-    ] {
-        let present: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name = ?)")
-                .bind(table)
-                .bind(column)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(!present, "{table}.{column}");
-    }
+async fn encrypted_sync_schema_bounds_match_protocol_limits() {
+    let (_temp, mut conn) = crate::test_support::test_conn().await;
     let widest = vec![0_u8; crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES];
     let insert = "INSERT INTO server_bootstrap_candidates
         (bootstrap, descriptor, canceled, expires_at, byte_budget, chunk_budget)
@@ -374,85 +336,17 @@ async fn unpopulated_bootstrap_tables_take_the_catalog_slice_schema() {
     sqlx::query(insert)
         .bind([1_u8; 32].as_slice())
         .bind(&widest)
-        .execute(&pool)
+        .execute(&mut *conn)
         .await
         .unwrap();
     assert!(
         sqlx::query(insert)
             .bind([2_u8; 32].as_slice())
             .bind([widest.as_slice(), &[0]].concat())
-            .execute(&pool)
+            .execute(&mut *conn)
             .await
             .is_err()
     );
-}
-
-const BEFORE_MEMBERSHIP_LIMITS: i64 = 20260924164546;
-
-async fn before_membership_limits(path: &Path) -> SqlitePool {
-    let pool = before_bootstrap_catalog_slices(path).await;
-    MIGRATOR
-        .run_to(BEFORE_MEMBERSHIP_LIMITS, &pool)
-        .await
-        .unwrap();
-    pool
-}
-
-#[tokio::test]
-async fn enrolled_devices_refuse_the_membership_limit_migration_unchanged() {
-    const ENROLLMENT: &str =
-        "INSERT INTO local_peer_enrollment VALUES (1, zeroblob(32), 'c', 'peer');";
-    for (name, setup) in [
-        ("enrollment", ENROLLMENT.to_string()),
-        (
-            "checkpoint",
-            format!(
-                "{ENROLLMENT} INSERT INTO local_membership_checkpoint
-                 VALUES (1, zeroblob(32), 129, zeroblob(32), zeroblob(32));"
-            ),
-        ),
-    ] {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("old.sqlite");
-        let pool = before_membership_limits(&path).await;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(setup))
-            .execute(&pool)
-            .await
-            .unwrap();
-        let dump = "SELECT group_concat(v, ',') FROM (
-            SELECT role AS v FROM local_peer_enrollment
-            UNION ALL SELECT sequence FROM local_membership_checkpoint)";
-        let before: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
-        let error = MIGRATOR.run(&pool).await.unwrap_err().to_string();
-        assert!(
-            error.contains("error membership-development-format-unsupported"),
-            "{name}: {error}"
-        );
-        let after: Option<String> = sqlx::query_scalar(dump).fetch_one(&pool).await.unwrap();
-        assert_eq!(after, before, "{name}");
-        let version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(version, BEFORE_MEMBERSHIP_LIMITS, "{name}");
-    }
-}
-
-#[tokio::test]
-async fn server_membership_rows_survive_the_membership_limit_migration() {
-    let temp = tempfile::tempdir().unwrap();
-    let pool = before_membership_limits(&temp.path().join("server.sqlite")).await;
-    sqlx::query("INSERT INTO server_membership_transitions VALUES (129, NULL, x'01')")
-        .execute(&pool)
-        .await
-        .unwrap();
-    MIGRATOR.run(&pool).await.unwrap();
-    let kept: Vec<u8> =
-        sqlx::query_scalar("SELECT record FROM server_membership_transitions WHERE sequence = 129")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(kept, [1]);
     let highest = crate::sync::seed_claim::membership::MAX_TRANSITIONS as i64 + 1;
     for (table, insert) in [
         (
@@ -467,13 +361,13 @@ async fn server_membership_rows_survive_the_membership_limit_migration() {
     ] {
         sqlx::query(insert)
             .bind(highest)
-            .execute(&pool)
+            .execute(&mut *conn)
             .await
             .unwrap();
         assert!(
             sqlx::query(insert)
                 .bind(highest + 1)
-                .execute(&pool)
+                .execute(&mut *conn)
                 .await
                 .is_err(),
             "{table}"
