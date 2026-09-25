@@ -1756,7 +1756,7 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
     ),
     BuiltInCommand::implemented_in_detail(
         "conflict-use-local",
-        "resolve with local value",
+        "resolve with current value",
         "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('a')],
@@ -1766,7 +1766,7 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
     ),
     BuiltInCommand::implemented_in_detail(
         "conflict-use-remote",
-        "resolve with remote value",
+        "resolve with incoming value",
         "Conflicts",
         &[KeySequence {
             codes: &[KeyCode::Char('c'), KeyCode::Char('r')],

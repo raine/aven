@@ -204,7 +204,7 @@ pub(super) fn detail_metadata_lines_with_children(
         lines.extend([Line::from(""), metadata_label("CONFLICTS")]);
         if item.conflicts.is_empty() {
             lines.push(Line::from(Span::styled(
-                "open · c s details · c a this · c r other · c m manual",
+                "open · c s details · c a current · c r incoming · c m manual",
                 Style::new().fg(ORANGE).add_modifier(Modifier::BOLD),
             )));
         } else {
@@ -213,13 +213,10 @@ pub(super) fn detail_metadata_lines_with_children(
                     conflict.field.clone(),
                     Style::new().fg(ORANGE).add_modifier(Modifier::BOLD),
                 )));
-                lines.push(Line::from(format!("this device  {}", conflict.local_value)));
-                lines.push(Line::from(format!(
-                    "other device {}",
-                    conflict.remote_value
-                )));
+                lines.push(Line::from(format!("current  {}", conflict.local_value)));
+                lines.push(Line::from(format!("incoming {}", conflict.remote_value)));
                 lines.push(Line::from(Span::styled(
-                    "c a this · c r other · c m manual",
+                    "c a current · c r incoming · c m manual",
                     Style::new().fg(FG_MUTED),
                 )));
             }

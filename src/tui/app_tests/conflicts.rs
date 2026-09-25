@@ -25,8 +25,8 @@ async fn conflict_show_opens_text_panel_and_esc_closes() {
         &app.overlay,
         Some(OverlayState::TextPanel(state))
             if state.lines.iter().any(|line| line == "title")
-                && state.lines.iter().any(|line| line == "this device: local title")
-                && state.lines.iter().any(|line| line == "other device: remote title")
+                && state.lines.iter().any(|line| line == "current: local title")
+                && state.lines.iter().any(|line| line == "incoming: remote title")
                 && state.lines.iter().all(|line| !line.contains("variant-a"))
     ));
 
@@ -90,6 +90,7 @@ async fn accept_local_conflict_resolves_after_confirmation() {
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::Confirm(state)) if state.title == CONFLICT_CONFIRM_LOCAL_TITLE
+            && state.prompt.starts_with("Keep the current title?")
     ));
 
     app.handle_overlay_key(key(KeyCode::Char('y')))
@@ -112,6 +113,13 @@ async fn accept_remote_conflict_resolves_after_confirmation() {
 
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('r')).await.unwrap();
+    // The joined device may have authored neither value.
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(state)) if state.title == CONFLICT_CONFIRM_REMOTE_TITLE
+            && state.prompt.starts_with("Keep the incoming title?")
+            && !state.prompt.contains("device")
+    ));
     app.handle_overlay_key(key(KeyCode::Char('y')))
         .await
         .unwrap();

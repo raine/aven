@@ -2,7 +2,7 @@ use super::*;
 use crate::choices::{TaskPriority, TaskSource, TaskStatus};
 use crate::operations::TaskDraft;
 use crate::query::RecurrenceSeriesLifecycleFilter;
-use crate::tui::app_conflicts::CONFLICT_CONFIRM_LOCAL_TITLE;
+use crate::tui::app_conflicts::{CONFLICT_CONFIRM_LOCAL_TITLE, CONFLICT_CONFIRM_REMOTE_TITLE};
 use crate::tui::app_edit::{
     EDIT_AVAILABILITY_TITLE, EDIT_DESCRIPTION_TITLE, EDIT_DUE_TITLE, EDIT_LABELS_TITLE,
     EDIT_PROJECT_TITLE, EDIT_TITLE_TITLE,

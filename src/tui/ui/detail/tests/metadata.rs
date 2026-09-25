@@ -50,9 +50,9 @@ fn detail_metadata_includes_operational_fields() {
     assert!(rendered.contains("LABELS\nbug, mobile"));
     assert!(rendered.contains("AVAILABILITY\nnone\n\nDUE\nnone\n\nREF"));
     assert!(rendered.contains("CONFLICTS\ntitle"));
-    assert!(rendered.contains("this device  Fix token refresh race"));
-    assert!(rendered.contains("other device Fix refresh race"));
-    assert!(rendered.contains("c a this · c r other · c m manual"));
+    assert!(rendered.contains("current  Fix token refresh race"));
+    assert!(rendered.contains("incoming Fix refresh race"));
+    assert!(rendered.contains("c a current · c r incoming · c m manual"));
 }
 
 #[test]
