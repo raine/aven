@@ -62,6 +62,17 @@ To compare test-profile builds, use separate empty target directories with
 `cargo nextest run --no-run --locked --workspace --all-targets`, setting
 `CARGO_PROFILE_TEST_DEBUG=2` or `1` in each environment.
 
+The test profile keeps workspace crates at opt-level 0 and builds dependencies
+at opt-level 2. This speeds warm full-suite runs at the cost of slower cold
+no-run builds. Debug level 1 retains line tables, but optimized dependency code
+can inline frames and omit locals, reducing stepping and backtrace detail.
+
+To rebenchmark, compare this profile with the package override removed, using
+separate clean target directories for cold builds and alternating warm full
+suites at 12 threads. Record wall, user, and system time for both phases. Keep
+sccache disabled or hold its cache state equal; on macOS and Linux,
+`RUSTC_WRAPPER=/usr/bin/env` bypasses the configured wrapper.
+
 The workspace packages are `aven` and `aven-core`; `aven` depends on
 `aven-core`, not the reverse. Select the package that owns the changed behavior.
 If a core API or contract change affects its `aven` consumer, check both

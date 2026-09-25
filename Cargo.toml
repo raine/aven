@@ -97,3 +97,6 @@ crossterm = { git = "https://github.com/raine/crossterm", rev = "f99eeae405e28fa
 
 [profile.test]
 debug = 1
+
+[profile.test.package."*"]
+opt-level = 2
