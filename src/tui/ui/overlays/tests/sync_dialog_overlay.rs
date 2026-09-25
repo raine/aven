@@ -282,15 +282,40 @@ fn invitation_form_never_renders_the_secret() {
     assert!(!rendered.contains("aven-sync-setup-1"));
     assert!(rendered.contains("Incomplete invitation; part may be missing"));
     assert!(rendered.contains("Paste the invitation first."));
-    assert!(rendered.contains("isn't shown or saved"));
+    assert!(!rendered.contains("isn't shown or saved"));
     assert!(rendered.contains(" Continue "));
+}
+
+#[test]
+fn empty_invitation_field_draws_an_input_cursor() {
+    let state = SyncDialogState::page(SyncPage::Invitation {
+        kind: InvitationKind::Join,
+        input: SecretText::default(),
+        error: None,
+    });
+    let lines = sync_dialog_lines_for_test(&sync_view(&state, local_status()));
+    let field = lines
+        .iter()
+        .find(|line| line.to_string().contains("Paste the invitation here"))
+        .expect("invitation field");
+
+    assert!(
+        field
+            .spans
+            .iter()
+            .any(|span| span.content == "P" && span.style.bg == Some(crate::tui::theme::FG))
+    );
 }
 
 #[test]
 fn invitation_field_describes_what_was_pasted() {
     let (setup, device) = crate::sync::encrypted::sample_invitations("http://127.0.0.1:37463");
     for (kind, text, expected) in [
-        (InvitationKind::Setup, "", "paste the invitation"),
+        (
+            InvitationKind::Setup,
+            "",
+            "Invitation      Paste the invitation here",
+        ),
         (
             InvitationKind::Setup,
             setup.as_str(),

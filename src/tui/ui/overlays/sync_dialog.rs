@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
+use super::super::input::cursor_cell;
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
 
@@ -847,7 +848,21 @@ fn invitation_lines(
     lines.extend(paragraph(guidance, Style::new().fg(FG_MUTED), width));
     lines.push(Line::from(""));
     let (text, color) = match (kind, input.check()) {
-        (_, InvitationCheck::Empty) => ("paste the invitation".to_string(), FG_DIM),
+        (_, InvitationCheck::Empty) => {
+            // The same cursor-on-placeholder cell other TUI inputs draw.
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<LABEL_WIDTH$}", "Invitation"),
+                    Style::new().fg(FG_DIM),
+                ),
+                cursor_cell("P"),
+                Span::styled("aste the invitation here", Style::new().fg(FG_DIM)),
+            ]));
+            if let Some(error) = error {
+                lines.extend(paragraph(error, Style::new().fg(RED), width));
+            }
+            return;
+        }
         (InvitationKind::Setup, InvitationCheck::Setup(server))
         | (InvitationKind::Join, InvitationCheck::Device(server)) => (format!("✓ {server}"), GREEN),
         (InvitationKind::Setup, InvitationCheck::Device(_)) => (
@@ -872,12 +887,6 @@ fn invitation_lines(
     if let Some(error) = error {
         lines.extend(paragraph(error, Style::new().fg(RED), width));
     }
-    lines.push(Line::from(""));
-    lines.extend(paragraph(
-        "The invitation is secret. It isn't shown or saved.",
-        Style::new().fg(FG_DIM),
-        width,
-    ));
 }
 
 fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, width: usize) {
