@@ -414,6 +414,7 @@ mod tests {
             crate::pairing::PairingPresentation::new(
                 "https://sync.example.test:8443",
                 "AVEN:AEMGC5TFNYXGK6DBNVYGYZJOORSXG5A",
+                0,
                 crate::pairing::QrGlyphs::HalfBlock,
             )
             .unwrap(),

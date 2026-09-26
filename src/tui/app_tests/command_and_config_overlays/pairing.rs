@@ -84,6 +84,7 @@ async fn copy_invitation_writes_the_clipboard_only_when_asked() {
         crate::pairing::PairingPresentation::new(
             "https://sync.example.com",
             &invitation,
+            0,
             crate::pairing::QrGlyphs::HalfBlock,
         )
         .unwrap(),

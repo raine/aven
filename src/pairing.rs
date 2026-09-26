@@ -104,14 +104,11 @@ fn tmux_client_terminal() -> Option<String> {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PairingQr {
     width: usize,
-    quiet_zone: usize,
-    version: i16,
-    alphanumeric: bool,
     rows: Vec<String>,
 }
 
 impl PairingQr {
-    fn encode(payload: &[u8], glyphs: QrGlyphs) -> Result<Self> {
+    pub(crate) fn encode(payload: &[u8], glyphs: QrGlyphs) -> Result<Self> {
         Self::encode_with(payload, EcLevel::M, PAIRING_QUIET_ZONE_MODULES, glyphs)
     }
 
@@ -131,10 +128,9 @@ impl PairingQr {
             bail!("error pairing-qr-too-large");
         };
         let source_width = code.width();
-        let version = match code.version() {
-            Version::Normal(version) => version,
-            Version::Micro(_) => bail!("error pairing-qr-version"),
-        };
+        if let Version::Micro(_) = code.version() {
+            bail!("error pairing-qr-version");
+        }
         let colors = code.into_colors();
         let modules = source_width + 2 * quiet_zone;
         let dark = |x, y| source_is_dark(&colors, source_width, quiet_zone, x, y);
@@ -145,9 +141,6 @@ impl PairingQr {
 
         Ok(Self {
             width: rows.first().map_or(0, |row| row.chars().count()),
-            quiet_zone,
-            version,
-            alphanumeric,
             rows,
         })
     }
@@ -254,8 +247,6 @@ impl fmt::Debug for PairingQr {
         formatter
             .debug_struct("PairingQr")
             .field("width", &self.width)
-            .field("quiet_zone", &self.quiet_zone)
-            .field("version", &self.version)
             .finish()
     }
 }
@@ -265,19 +256,11 @@ impl fmt::Debug for PairingQr {
 pub(crate) struct PairingPresentation {
     server_identity: String,
     qr: PairingQr,
-    expires_at: Option<u64>,
+    expires_at: u64,
 }
 
 impl PairingPresentation {
-    pub(crate) fn new(server_origin: &str, invitation: &str, glyphs: QrGlyphs) -> Result<Self> {
-        Ok(Self {
-            server_identity: server_origin.to_string(),
-            qr: PairingQr::encode(invitation.as_bytes(), glyphs)?,
-            expires_at: None,
-        })
-    }
-
-    pub(crate) fn new_tui(
+    pub(crate) fn new(
         server_origin: &str,
         invitation: &str,
         expires_at: u64,
@@ -291,7 +274,7 @@ impl PairingPresentation {
                 TUI_PAIRING_QUIET_ZONE_MODULES,
                 glyphs,
             )?,
-            expires_at: Some(expires_at),
+            expires_at,
         })
     }
 
@@ -303,7 +286,7 @@ impl PairingPresentation {
         &self.qr
     }
 
-    pub(crate) fn expires_at(&self) -> Option<u64> {
+    pub(crate) fn expires_at(&self) -> u64 {
         self.expires_at
     }
 }
@@ -379,6 +362,7 @@ mod tests {
         PairingPresentation::new(
             TEST_SERVER,
             TEST_INVITATION,
+            0,
             crate::pairing::QrGlyphs::HalfBlock,
         )
         .unwrap()
@@ -391,7 +375,7 @@ mod tests {
         let qr = first.qr();
 
         assert_eq!(first, second);
-        assert_eq!(qr.quiet_zone, PAIRING_QUIET_ZONE_MODULES);
+        let quiet_zone = TUI_PAIRING_QUIET_ZONE_MODULES;
         assert_eq!(qr.rows().len(), qr.width().div_ceil(2));
         assert!(
             qr.rows()
@@ -399,18 +383,13 @@ mod tests {
                 .all(|row| row.chars().count() == qr.width())
         );
         for row in qr.rows() {
-            assert!(row.chars().take(qr.quiet_zone).all(|cell| cell == ' '));
-            assert!(
-                row.chars()
-                    .rev()
-                    .take(qr.quiet_zone)
-                    .all(|cell| cell == ' ')
-            );
+            assert!(row.chars().take(quiet_zone).all(|cell| cell == ' '));
+            assert!(row.chars().rev().take(quiet_zone).all(|cell| cell == ' '));
         }
         assert!(
             qr.rows()
                 .iter()
-                .take(qr.quiet_zone / 2)
+                .take(quiet_zone / 2)
                 .all(|row| row.chars().all(|cell| cell == ' '))
         );
     }
@@ -419,7 +398,7 @@ mod tests {
     fn realistic_invitation_uses_one_alphanumeric_segment_up_to_version_7() {
         let (_, invitation) =
             crate::sync::encrypted::sample_invitations("https://sync.example.com");
-        let presentation = PairingPresentation::new_tui(
+        let presentation = PairingPresentation::new(
             TEST_SERVER,
             &invitation,
             123,
@@ -429,11 +408,8 @@ mod tests {
         let qr = presentation.qr();
 
         assert!(invitation.starts_with("AVEN:"));
-        assert!(qr.alphanumeric);
-        assert!(qr.version <= 7, "version {}", qr.version);
         // Version 7 has 45 modules, plus the two-module quiet zone.
-        assert_eq!(qr.quiet_zone, TUI_PAIRING_QUIET_ZONE_MODULES);
-        assert_eq!(qr.width(), 49);
+        assert_eq!(qr.width(), 45 + 2 * TUI_PAIRING_QUIET_ZONE_MODULES);
         assert_eq!(qr.rows().len(), 25);
 
         // The same bytes in byte mode need a larger symbol.
@@ -465,6 +441,7 @@ mod tests {
         let error = PairingPresentation::new(
             TEST_SERVER,
             &"t".repeat(3000),
+            0,
             crate::pairing::QrGlyphs::HalfBlock,
         )
         .unwrap_err();
@@ -542,10 +519,10 @@ mod tests {
     fn sextant_qr_is_smaller_and_keeps_the_quiet_zone() {
         let (_, invitation) =
             crate::sync::encrypted::sample_invitations("https://sync.example.com");
-        let half = PairingPresentation::new_tui(TEST_SERVER, &invitation, 123, QrGlyphs::HalfBlock)
-            .unwrap();
+        let half =
+            PairingPresentation::new(TEST_SERVER, &invitation, 123, QrGlyphs::HalfBlock).unwrap();
         let sextant =
-            PairingPresentation::new_tui(TEST_SERVER, &invitation, 123, QrGlyphs::Sextant).unwrap();
+            PairingPresentation::new(TEST_SERVER, &invitation, 123, QrGlyphs::Sextant).unwrap();
         let qr = sextant.qr();
 
         assert_eq!(half.qr().width(), 49);

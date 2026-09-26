@@ -8,6 +8,7 @@ fn presentation() -> std::sync::Arc<crate::pairing::PairingPresentation> {
         crate::pairing::PairingPresentation::new(
             TEST_SERVER,
             TEST_INVITATION,
+            0,
             crate::pairing::QrGlyphs::HalfBlock,
         )
         .unwrap(),
@@ -72,6 +73,7 @@ fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
         crate::pairing::PairingPresentation::new(
             &server,
             TEST_INVITATION,
+            0,
             crate::pairing::QrGlyphs::HalfBlock,
         )
         .unwrap(),
@@ -93,7 +95,7 @@ fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
 #[test]
 fn low_correction_invitation_fits_a_39_row_terminal() {
     let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
-    let presentation = crate::pairing::PairingPresentation::new_tui(
+    let presentation = crate::pairing::PairingPresentation::new(
         TEST_SERVER,
         &invitation,
         crate::sync::encrypted::unix_now().unwrap() + 600,
@@ -197,7 +199,7 @@ fn failed_page_offers_retry_and_back() {
 
 fn tui_presentation(glyphs: crate::pairing::QrGlyphs) -> crate::pairing::PairingPresentation {
     let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
-    crate::pairing::PairingPresentation::new_tui(
+    crate::pairing::PairingPresentation::new(
         TEST_SERVER,
         &invitation,
         crate::sync::encrypted::unix_now().unwrap() + 600,

@@ -171,7 +171,6 @@ fn render_presentation(frame: &mut Frame, presentation: &PairingPresentation) {
 fn waiting_text(presentation: &PairingPresentation) -> String {
     let remaining = presentation
         .expires_at()
-        .unwrap_or_default()
         .saturating_sub(crate::sync::encrypted::unix_now().unwrap_or_default());
     format!(
         "Waiting for a device · {}:{:02} left",

@@ -165,8 +165,10 @@ impl App {
                 .context("invitation task stopped")
                 .and_then(|result| result)
             {
-                Ok(invitation) => match encrypted::tui_presentation(
-                    &invitation,
+                Ok(invitation) => match crate::pairing::PairingPresentation::new(
+                    invitation.server(),
+                    invitation.text(),
+                    invitation.expires_at(),
                     crate::pairing::qr_glyphs(self.intake.config().sync.qr_glyphs),
                 ) {
                     Ok(presentation) => {

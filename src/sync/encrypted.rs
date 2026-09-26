@@ -168,26 +168,6 @@ async fn await_admission_until_interrupt(
     result
 }
 
-/// QR presentation of the invitation text.
-pub(crate) fn presentation(
-    invitation: &PendingInvitation,
-    glyphs: crate::pairing::QrGlyphs,
-) -> Result<crate::pairing::PairingPresentation> {
-    crate::pairing::PairingPresentation::new(invitation.server(), invitation.text(), glyphs)
-}
-
-pub(crate) fn tui_presentation(
-    invitation: &PendingInvitation,
-    glyphs: crate::pairing::QrGlyphs,
-) -> Result<crate::pairing::PairingPresentation> {
-    crate::pairing::PairingPresentation::new_tui(
-        invitation.server(),
-        invitation.text(),
-        invitation.expires_at(),
-        glyphs,
-    )
-}
-
 pub(crate) async fn ensure_join_available(database: &Database, config: &AppConfig) -> Result<()> {
     engine::ensure_join_available(database, &DesktopHost(config)).await
 }
@@ -519,9 +499,9 @@ fn print_invitation_qr(
         crate::pairing::output_options(true, std::env::var_os("NO_COLOR").is_some(), || {
             crossterm::terminal::size().ok().map(|(columns, _)| columns)
         });
-    match presentation(invitation, glyphs).and_then(|presentation| {
-        crate::pairing::render_terminal_qr(presentation.qr(), columns, styled)
-    }) {
+    match crate::pairing::PairingQr::encode(invitation.text().as_bytes(), glyphs)
+        .and_then(|qr| crate::pairing::render_terminal_qr(&qr, columns, styled))
+    {
         Ok(qr) => {
             eprintln!();
             eprintln!("{label}");
