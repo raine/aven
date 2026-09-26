@@ -153,7 +153,8 @@ async fn replay(conn: &mut SqliteConnection) -> Result<Current> {
         evidence,
     })
 }
-fn now() -> Result<i64> {
+/// Unix seconds that enrollment expiry compares against.
+pub fn now() -> Result<i64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -303,15 +304,7 @@ impl Database {
         tx.commit().await?;
         Ok(c.evidence.clone())
     }
-    pub async fn register_membership_invitation(
-        &self,
-        auth: &Authentication<'_>,
-        raw: &[u8],
-    ) -> Result<RegistrationStatus> {
-        self.register_membership_invitation_at(auth, raw, now()?)
-            .await
-    }
-    pub(super) async fn register_membership_invitation_at(
+    pub async fn register_membership_invitation_at(
         &self,
         auth: &Authentication<'_>,
         raw: &[u8],
@@ -367,16 +360,7 @@ impl Database {
             RegistrationStatus::Open
         })
     }
-    pub async fn post_membership_request(
-        &self,
-        vault: Hash,
-        handle: Hash,
-        request: &[u8],
-    ) -> Result<()> {
-        self.post_membership_request_at(vault, handle, request, now()?)
-            .await
-    }
-    pub(super) async fn post_membership_request_at(
+    pub async fn post_membership_request_at(
         &self,
         vault: Hash,
         handle: Hash,
@@ -442,15 +426,7 @@ impl Database {
     /// Terminally fences a registered, unadmitted invitation of the caller so
     /// no new admission can commit. Serialized with admission; idempotent.
     /// Unknown handles allocate nothing.
-    pub async fn cancel_membership_invitation(
-        &self,
-        auth: &Authentication<'_>,
-        handle: Hash,
-    ) -> Result<CancelStatus> {
-        self.cancel_membership_invitation_at(auth, handle, now()?)
-            .await
-    }
-    pub(super) async fn cancel_membership_invitation_at(
+    pub async fn cancel_membership_invitation_at(
         &self,
         auth: &Authentication<'_>,
         handle: Hash,
@@ -484,16 +460,7 @@ impl Database {
         tx.commit().await?;
         Ok(status)
     }
-    pub async fn admit_membership_device(
-        &self,
-        auth: &Authentication<'_>,
-        handle: Hash,
-        record: &[u8],
-    ) -> Result<Vec<u8>> {
-        self.admit_membership_device_at(auth, handle, record, now()?)
-            .await
-    }
-    pub(super) async fn admit_membership_device_at(
+    pub async fn admit_membership_device_at(
         &self,
         auth: &Authentication<'_>,
         handle: Hash,

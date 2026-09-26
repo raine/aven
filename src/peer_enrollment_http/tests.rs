@@ -922,7 +922,7 @@ async fn enrollment_permit_timeout_is_retryable_and_uncacheable() {
     let server = Arc::new(Server {
         db,
         gate: crate::http_admission::Admission::new(1),
-        enrollment_clock: None,
+        clock: Arc::new(membership::now),
     });
     let permit = server.gate.hold_operation().await;
     let request = Request::builder()
@@ -1347,14 +1347,14 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
             .unwrap_err();
         assert_eq!(error.to_string(), "error enrollment-invitation-withdrawing");
         assert_eq!(
-            membership::cancel_membership_invitation_at(
-                &server,
-                &Context::active(&inputs).auth(inputs.bearer()),
-                handle,
-                i64::try_from(expires).unwrap(),
-            )
-            .await
-            .unwrap(),
+            server
+                .cancel_membership_invitation_at(
+                    &Context::active(&inputs).auth(inputs.bearer()),
+                    handle,
+                    i64::try_from(expires).unwrap(),
+                )
+                .await
+                .unwrap(),
             aven_core::sync::seed_claim::membership::CancelStatus::Cancelled
         );
         store
@@ -1393,15 +1393,15 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
         assert!(
-            membership::admit_membership_device_at(
-                &server,
-                &Context::active(&inputs).auth(inputs.bearer()),
-                handle,
-                &record,
-                i64::try_from(expires).unwrap(),
-            )
-            .await
-            .is_err()
+            server
+                .admit_membership_device_at(
+                    &Context::active(&inputs).auth(inputs.bearer()),
+                    handle,
+                    &record,
+                    i64::try_from(expires).unwrap(),
+                )
+                .await
+                .is_err()
         );
     }
     rounds
@@ -1432,15 +1432,15 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     assert_eq!(store.outbound_invitation(&db).await.unwrap(), None);
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
-        let error = membership::admit_membership_device_at(
-            &server,
-            &Context::active(&inputs).auth(inputs.bearer()),
-            handle,
-            &record,
-            i64::try_from(expires).unwrap(),
-        )
-        .await
-        .unwrap_err();
+        let error = server
+            .admit_membership_device_at(
+                &Context::active(&inputs).auth(inputs.bearer()),
+                handle,
+                &record,
+                i64::try_from(expires).unwrap(),
+            )
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "error enrollment-expired");
     }
     assert!(!client.complete(&other_keys, &other_db).await.unwrap());
@@ -1456,15 +1456,15 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     let (handle, record) = sent_candidate(&client, &store, &db, &origin).await;
     {
         let inputs = store.active_inputs(&db, &origin).await.unwrap();
-        membership::admit_membership_device_at(
-            &server,
-            &Context::active(&inputs).auth(inputs.bearer()),
-            handle,
-            &record,
-            i64::try_from(expires - 1).unwrap(),
-        )
-        .await
-        .unwrap();
+        server
+            .admit_membership_device_at(
+                &Context::active(&inputs).auth(inputs.bearer()),
+                handle,
+                &record,
+                i64::try_from(expires - 1).unwrap(),
+            )
+            .await
+            .unwrap();
     }
     advance_clock(&clock, expires);
     client.finish_pending_management(&store, &db).await.unwrap();

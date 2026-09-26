@@ -77,13 +77,14 @@ async fn enroll(f: &Fixture, m: &mut Membership) -> Joiner {
         head: m.head(),
         bearer: f.seed.bearer(),
     };
-    f.db.register_membership_invitation(&auth, d.record())
+    let now = crate::sync::seed_claim::membership::now().unwrap();
+    f.db.register_membership_invitation_at(&auth, d.record(), now)
         .await
         .unwrap();
-    f.db.post_membership_request(auth.vault, d.handle(), peer.request())
+    f.db.post_membership_request_at(auth.vault, d.handle(), peer.request(), now)
         .await
         .unwrap();
-    f.db.admit_membership_device(&auth, d.handle(), &record)
+    f.db.admit_membership_device_at(&auth, d.handle(), &record, now)
         .await
         .unwrap();
     *m = m.append(d.record(), peer.request(), &record).unwrap();

@@ -27,46 +27,39 @@ use axum::{
     response::Response,
     routing::post,
 };
+use std::sync::Arc;
 #[cfg(test)]
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const CODES: http_admission::Codes = http_admission::codes!("enrollment");
+/// Unix seconds that invitation expiry is judged against.
+type Clock = Arc<dyn Fn() -> Result<i64> + Send + Sync>;
 struct Server {
     db: Database,
     gate: http_admission::Admission,
-    #[cfg(test)]
-    enrollment_clock: Option<Arc<AtomicU64>>,
+    clock: Clock,
 }
 pub fn router(db: Database) -> Router {
-    router_with_clock_inner(db, None)
+    router_with(db, Arc::new(membership::now))
 }
-fn router_with_clock_inner(db: Database, clock: Option<Arc<AtomicU64>>) -> Router {
-    #[cfg(not(test))]
-    let _ = clock;
+fn router_with(db: Database, clock: Clock) -> Router {
     Router::new()
         .route(PATH, post(handle))
         .with_state(Arc::new(Server {
             db,
             gate: http_admission::Admission::new(1),
-            #[cfg(test)]
-            enrollment_clock: clock,
+            clock,
         }))
 }
 #[cfg(test)]
 pub(crate) fn router_with_clock(db: Database, clock: Arc<AtomicU64>) -> Router {
-    router_with_clock_inner(db, Some(clock))
+    router_with(
+        db,
+        Arc::new(move || Ok(i64::try_from(clock.load(Ordering::SeqCst))?)),
+    )
 }
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    #[cfg(test)]
-    let time = server
-        .enrollment_clock
-        .as_ref()
-        .map(|clock| clock.load(Ordering::SeqCst))
-        .map(|time| i64::try_from(time).expect("test clock fits Unix time"));
-    #[cfg(not(test))]
-    let time = None;
     let server = &*server;
     let outcome = http_admission::dispatch(
         &server.gate,
@@ -74,7 +67,7 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
         request,
         CONTROL_LIMIT,
         |headers, bytes| async move {
-            match dispatch(&server.db, headers, bytes, time).await {
+            match dispatch(server, headers, bytes).await {
                 Ok(reply) => {
                     let limit = match &reply {
                         Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
@@ -91,151 +84,77 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     .await;
     http_admission::respond(&CODES, outcome)
 }
-async fn dispatch(
-    db: &Database,
-    headers: HeaderMap,
-    bytes: Option<Bytes>,
-    time: Option<i64>,
-) -> Result<Reply> {
-    #[cfg(not(test))]
-    let _ = time;
+async fn dispatch(server: &Server, headers: HeaderMap, bytes: Option<Bytes>) -> Result<Reply> {
+    let db = &server.db;
     let bytes = CODES.json_body(&headers, bytes)?;
     let credential = CODES.optional_bearer(&headers)?;
     let op: Operation = CODES.parse(&bytes)?;
+    let bearer = || {
+        credential
+            .as_ref()
+            .ok_or_else(|| CODES.missing_credential())
+    };
     Ok(match op {
-        Operation::PrepareManagement { context } => Reply::PreparedManagement(
-            db.prepare_membership_management(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| CODES.missing_credential())?,
-                ),
-            )
-            .await?,
-        ),
-        Operation::Manage { context, record } => Reply::Managed(
-            db.apply_membership_management(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| CODES.missing_credential())?,
-                ),
-                &record,
-            )
-            .await?,
-        ),
-        Operation::Cancel { context, handle } => {
-            let auth = context.auth(
-                credential
-                    .as_ref()
-                    .ok_or_else(|| CODES.missing_credential())?,
-            );
-            #[cfg(test)]
-            let status = match time {
-                Some(time) => {
-                    membership::cancel_membership_invitation_at(db, &auth, handle, time).await?
-                }
-                None => db.cancel_membership_invitation(&auth, handle).await?,
-            };
-            #[cfg(not(test))]
-            let status = db.cancel_membership_invitation(&auth, handle).await?;
-            Reply::Cancelled(status)
-        }
         Operation::Post {
             vault,
             handle,
             request,
         } => {
-            #[cfg(test)]
-            match time {
-                Some(time) => {
-                    membership::post_membership_request_at(db, vault, handle, &request, time)
-                        .await?
-                }
-                None => db.post_membership_request(vault, handle, &request).await?,
-            }
-            #[cfg(not(test))]
-            db.post_membership_request(vault, handle, &request).await?;
+            db.post_membership_request_at(vault, handle, &request, (server.clock)()?)
+                .await?;
             Reply::Done
         }
         Operation::Mailbox { vault, handle } => {
             Reply::Mailbox(db.membership_mailbox(vault, handle).await?)
         }
+        Operation::PrepareManagement { context } => Reply::PreparedManagement(
+            db.prepare_membership_management(&context.auth(bearer()?))
+                .await?,
+        ),
+        Operation::Manage { context, record } => Reply::Managed(
+            db.apply_membership_management(&context.auth(bearer()?), &record)
+                .await?,
+        ),
+        Operation::Cancel { context, handle } => Reply::Cancelled(
+            db.cancel_membership_invitation_at(&context.auth(bearer()?), handle, (server.clock)()?)
+                .await?,
+        ),
         Operation::Register {
             context,
             declaration,
-        } => {
-            let auth = context.auth(
-                credential
-                    .as_ref()
-                    .ok_or_else(|| CODES.missing_credential())?,
-            );
-            #[cfg(test)]
-            let status = match time {
-                Some(time) => {
-                    membership::register_membership_invitation_at(db, &auth, &declaration, time)
-                        .await?
-                }
-                None => {
-                    db.register_membership_invitation(&auth, &declaration)
-                        .await?
-                }
-            };
-            #[cfg(not(test))]
-            let status = db
-                .register_membership_invitation(&auth, &declaration)
-                .await?;
-            Reply::Registered(status)
-        }
+        } => Reply::Registered(
+            db.register_membership_invitation_at(
+                &context.auth(bearer()?),
+                &declaration,
+                (server.clock)()?,
+            )
+            .await?,
+        ),
         Operation::Admit {
             context,
             handle,
             record,
-        } => {
-            let auth = context.auth(
-                credential
-                    .as_ref()
-                    .ok_or_else(|| CODES.missing_credential())?,
-            );
-            #[cfg(test)]
-            let admitted = match time {
-                Some(time) => {
-                    membership::admit_membership_device_at(db, &auth, handle, &record, time).await?
-                }
-                None => db.admit_membership_device(&auth, handle, &record).await?,
-            };
-            #[cfg(not(test))]
-            let admitted = db.admit_membership_device(&auth, handle, &record).await?;
-            Reply::Admitted(admitted)
-        }
+        } => Reply::Admitted(
+            db.admit_membership_device_at(
+                &context.auth(bearer()?),
+                handle,
+                &record,
+                (server.clock)()?,
+            )
+            .await?,
+        ),
         Operation::Published {
             context,
             descriptor,
             component,
             index,
         } => Reply::Published(
-            db.published_snapshot_read(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| CODES.missing_credential())?,
-                ),
-                descriptor,
-                component,
-                index,
-            )
-            .await?,
+            db.published_snapshot_read(&context.auth(bearer()?), descriptor, component, index)
+                .await?,
         ),
-        Operation::Membership { context } => Reply::Membership(
-            db.membership_evidence(
-                &context.auth(
-                    credential
-                        .as_ref()
-                        .ok_or_else(|| CODES.missing_credential())?,
-                ),
-            )
-            .await?,
-        ),
+        Operation::Membership { context } => {
+            Reply::Membership(db.membership_evidence(&context.auth(bearer()?)).await?)
+        }
     })
 }
 
