@@ -97,8 +97,17 @@ sqlx = { workspace = true, features = ["sqlite"] }
 [patch.crates-io]
 crossterm = { git = "https://github.com/raine/crossterm", rev = "f99eeae405e28fa8cb353a6c6e36c493e72891bd" }
 
+[profile.dev]
+opt-level = 1
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
 [profile.test]
 debug = 1
 
 [profile.test.package."*"]
 opt-level = 2
+debug = false
