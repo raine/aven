@@ -5,7 +5,12 @@ const TEST_INVITATION: &str = "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2
 
 fn presentation() -> std::sync::Arc<crate::pairing::PairingPresentation> {
     std::sync::Arc::new(
-        crate::pairing::PairingPresentation::new(TEST_SERVER, TEST_INVITATION).unwrap(),
+        crate::pairing::PairingPresentation::new(
+            TEST_SERVER,
+            TEST_INVITATION,
+            crate::pairing::QrGlyphs::HalfBlock,
+        )
+        .unwrap(),
     )
 }
 
@@ -55,8 +60,8 @@ fn normal_overlay_renders_shared_compact_qr_rows() {
     assert_eq!(rendered_row, presentation.qr().rows()[row_index]);
     assert!(buffer.content.iter().any(|cell| {
         !cell.symbol().trim().is_empty()
-            && cell.fg == ratatui::style::Color::Black
-            && cell.bg == ratatui::style::Color::White
+            && cell.fg == ratatui::style::Color::Rgb(0, 0, 0)
+            && cell.bg == ratatui::style::Color::Rgb(255, 255, 255)
     }));
 }
 
@@ -64,7 +69,12 @@ fn normal_overlay_renders_shared_compact_qr_rows() {
 fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
     let server = format!("https://{}.example.test:8443", "a".repeat(63));
     let presentation = std::sync::Arc::new(
-        crate::pairing::PairingPresentation::new(&server, TEST_INVITATION).unwrap(),
+        crate::pairing::PairingPresentation::new(
+            &server,
+            TEST_INVITATION,
+            crate::pairing::QrGlyphs::HalfBlock,
+        )
+        .unwrap(),
     );
     let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 200, 100), &presentation);
     let qr = layout.qr.expect("expected QR layout");
@@ -90,6 +100,7 @@ fn low_correction_invitation_fits_a_39_row_terminal() {
         TEST_SERVER,
         &invitation,
         crate::sync::encrypted::unix_now().unwrap() + 600,
+        crate::pairing::QrGlyphs::HalfBlock,
     )
     .unwrap();
 
@@ -117,7 +128,8 @@ fn constrained_overlay_renders_complete_actionable_fallback_without_secrets() {
     assert!(text.contains(NETWORK_REQUIREMENT));
     assert!(!text.contains("aven://pair/"));
     assert!(!buffer.content.iter().any(|cell| {
-        cell.fg == ratatui::style::Color::Black && cell.bg == ratatui::style::Color::White
+        cell.fg == ratatui::style::Color::Rgb(0, 0, 0)
+            && cell.bg == ratatui::style::Color::Rgb(255, 255, 255)
     }));
 }
 

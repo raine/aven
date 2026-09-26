@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 
 use crate::cli::{ConfigCommand, ConfigKey, ConfigSubcommand};
-use crate::config::{AppConfig, ImageOptimizationConfig, config_file_path};
+use crate::config::{AppConfig, ImageOptimizationConfig, QrGlyphsConfig, config_file_path};
 use crate::config_edit::set_scalar;
 use crate::operations::{init_config, show_config};
 use crate::render::quote;
@@ -39,6 +39,7 @@ impl ConfigKey {
         match self {
             Self::SyncEnabled => "sync.enabled",
             Self::SyncIntervalSeconds => "sync.interval_seconds",
+            Self::SyncQrGlyphs => "sync.qr_glyphs",
             Self::UpdateAutomaticChecks => "update.automatic_checks",
             Self::LocalDbPath => "local.db_path",
             Self::LocalImageOptimization => "local.image_optimization",
@@ -55,6 +56,11 @@ impl ConfigKey {
         match self {
             Self::SyncEnabled => config.sync.enabled.to_string(),
             Self::SyncIntervalSeconds => config.sync_interval_seconds().to_string(),
+            Self::SyncQrGlyphs => match config.sync.qr_glyphs {
+                QrGlyphsConfig::Auto => "auto".to_string(),
+                QrGlyphsConfig::Sextant => "sextant".to_string(),
+                QrGlyphsConfig::HalfBlock => "half-block".to_string(),
+            },
             Self::UpdateAutomaticChecks => config.update.automatic_checks.to_string(),
             Self::LocalDbPath => render_optional_string(
                 config
@@ -102,6 +108,13 @@ impl ConfigKey {
                 }
                 yaml_string(value)
             }
+            Self::SyncQrGlyphs => match value {
+                "auto" | "sextant" | "half-block" => Ok(value.to_string()),
+                _ => bail!(
+                    "invalid value for {}: expected auto, sextant, or half-block",
+                    self.name()
+                ),
+            },
             Self::LocalImageOptimization => match value {
                 "off" | "paste" | "on" => Ok(value.to_string()),
                 _ => bail!(

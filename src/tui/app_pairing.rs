@@ -140,7 +140,9 @@ impl App {
                 .context("invitation task stopped")
                 .and_then(|result| result)
             {
-                Ok(invitation) => match invitation.tui_presentation() {
+                Ok(invitation) => match invitation.tui_presentation(crate::pairing::qr_glyphs(
+                    self.intake.config().sync.qr_glyphs,
+                )) {
                     Ok(presentation) => {
                         let presentation = Arc::new(presentation);
                         self.store.sync_status.invitation = Some(encrypted::InvitationStatus {

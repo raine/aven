@@ -19,6 +19,7 @@ aven reads `config.yaml` from `AVEN_CONFIG_DIR` when set, otherwise from `~/.con
 | --- | --- |
 | `sync.enabled` | `true` or `false` |
 | `sync.interval_seconds` | Positive integer, with the default resolved to `30` |
+| `sync.qr_glyphs` | `auto`, `sextant`, or `half-block` |
 | `update.automatic_checks` | `true` or `false` |
 | `local.db_path` | JSON-quoted path, or `null` when unset |
 | `local.image_optimization` | `off`, `paste`, or `on` |
@@ -228,6 +229,17 @@ daemon:
 :::note[Loopback wake address]
 Daemon wake addresses must be loopback.
 :::
+
+Device invitation QR codes use Unicode sextants, which make them about half as
+wide and two thirds as tall, in terminals known to draw them: Alacritty, kitty,
+WezTerm, and Ghostty, including inside tmux. Other terminals get half-block
+QR codes. Set `qr_glyphs` to `sextant` or `half-block` when detection chooses
+wrong for your terminal or font:
+
+```yaml
+sync:
+  qr_glyphs: half-block
+```
 
 ## Automatic update checks
 

@@ -241,7 +241,10 @@ fn render_qr_header(frame: &mut Frame, area: Rect, presentation: &PairingPresent
 }
 
 fn render_qr(frame: &mut Frame, area: Rect, qr: &PairingQr) {
-    let style = Style::new().fg(Color::Black).bg(Color::White);
+    // Explicit RGB, since themes can remap the named black and white.
+    let style = Style::new()
+        .fg(Color::Rgb(0, 0, 0))
+        .bg(Color::Rgb(255, 255, 255));
     let lines = qr
         .rows()
         .iter()

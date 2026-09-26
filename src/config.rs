@@ -255,6 +255,19 @@ pub struct SyncConfig {
     #[serde(skip)]
     pub(crate) disable_override: bool,
     pub interval_seconds: Option<u64>,
+    /// Terminal glyphs for device invitation QR codes.
+    #[serde(default)]
+    pub qr_glyphs: QrGlyphsConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum QrGlyphsConfig {
+    /// Sextants in terminals known to draw them, half-blocks elsewhere.
+    #[default]
+    Auto,
+    Sextant,
+    HalfBlock,
 }
 
 impl Default for SyncConfig {
@@ -263,6 +276,7 @@ impl Default for SyncConfig {
             enabled: false,
             disable_override: false,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
+            qr_glyphs: QrGlyphsConfig::Auto,
         }
     }
 }

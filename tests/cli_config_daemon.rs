@@ -14,6 +14,7 @@ fn config_help_lists_scalar_commands_and_non_secret_keys() {
         for key in [
             "sync.enabled",
             "sync.interval_seconds",
+            "sync.qr_glyphs",
             "update.automatic_checks",
             "local.db_path",
             "local.image_optimization",
@@ -36,6 +37,7 @@ local:
 sync:
   enabled: true
   interval_seconds: 45
+  qr_glyphs: half-block
   auth_token: "top-secret-token"
 update:
   automatic_checks: false
@@ -45,6 +47,7 @@ update:
     for (key, expected) in [
         ("sync.enabled", "true"),
         ("sync.interval_seconds", "45"),
+        ("sync.qr_glyphs", "half-block"),
         ("update.automatic_checks", "false"),
         ("local.db_path", "\"/tmp/aven tasks.sqlite\""),
         ("local.image_optimization", "paste"),
@@ -67,6 +70,7 @@ fn config_get_reports_defaults_and_unset_optional_values() {
     for (key, expected) in [
         ("sync.enabled", "false"),
         ("sync.interval_seconds", "30"),
+        ("sync.qr_glyphs", "auto"),
         ("update.automatic_checks", "true"),
         ("local.db_path", "null"),
         ("local.image_optimization", "off"),
@@ -102,6 +106,7 @@ project:
     for (key, value, expected) in [
         ("sync.enabled", "true", "true"),
         ("sync.interval_seconds", "90", "90"),
+        ("sync.qr_glyphs", "sextant", "sextant"),
         ("update.automatic_checks", "false", "false"),
         (
             "local.db_path",

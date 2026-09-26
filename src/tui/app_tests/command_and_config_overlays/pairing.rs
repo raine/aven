@@ -81,7 +81,12 @@ async fn copy_invitation_writes_the_clipboard_only_when_asked() {
     let mut app = test_app().await;
     let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
     let presentation = std::sync::Arc::new(
-        crate::pairing::PairingPresentation::new("https://sync.example.com", &invitation).unwrap(),
+        crate::pairing::PairingPresentation::new(
+            "https://sync.example.com",
+            &invitation,
+            crate::pairing::QrGlyphs::HalfBlock,
+        )
+        .unwrap(),
     );
     let before = crate::tui::platform::clipboard_text_for_test();
     app.invite.show_for_test(presentation, &invitation);

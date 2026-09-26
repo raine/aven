@@ -14,6 +14,7 @@ commands."#;
 pub(super) const CONFIG_SET_HELP: &str = r#"Accepted values:
   sync.enabled, update.automatic_checks       true | false
   sync.interval_seconds                       positive integer
+  sync.qr_glyphs                              auto | sextant | half-block
   local.db_path                               nonempty path | null
   local.image_optimization                    off | paste | on
 
@@ -259,6 +260,8 @@ pub(crate) enum ConfigKey {
     SyncEnabled,
     #[value(name = "sync.interval_seconds")]
     SyncIntervalSeconds,
+    #[value(name = "sync.qr_glyphs")]
+    SyncQrGlyphs,
     #[value(name = "update.automatic_checks")]
     UpdateAutomaticChecks,
     #[value(name = "local.db_path")]

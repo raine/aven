@@ -430,8 +430,11 @@ impl PendingInvitation {
     }
 
     /// QR presentation of the invitation text.
-    pub(crate) fn presentation(&self) -> Result<crate::pairing::PairingPresentation> {
-        crate::pairing::PairingPresentation::new(&self.server, &self.text)
+    pub(crate) fn presentation(
+        &self,
+        glyphs: crate::pairing::QrGlyphs,
+    ) -> Result<crate::pairing::PairingPresentation> {
+        crate::pairing::PairingPresentation::new(&self.server, &self.text, glyphs)
     }
 
     #[cfg(test)]
@@ -447,8 +450,16 @@ impl PendingInvitation {
         }
     }
 
-    pub(crate) fn tui_presentation(&self) -> Result<crate::pairing::PairingPresentation> {
-        crate::pairing::PairingPresentation::new_tui(&self.server, &self.text, self.expires_at)
+    pub(crate) fn tui_presentation(
+        &self,
+        glyphs: crate::pairing::QrGlyphs,
+    ) -> Result<crate::pairing::PairingPresentation> {
+        crate::pairing::PairingPresentation::new_tui(
+            &self.server,
+            &self.text,
+            self.expires_at,
+            glyphs,
+        )
     }
 }
 
@@ -666,7 +677,10 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
     }
     println!("{}", invitation.text());
     std::io::stdout().flush()?;
-    print_invitation_qr(&invitation);
+    print_invitation_qr(
+        &invitation,
+        crate::pairing::qr_glyphs(config.sync.qr_glyphs),
+    );
     eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
     eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
     match await_admission_until_interrupt(database, &invitation).await? {
@@ -713,7 +727,7 @@ pub(crate) fn format_expiry(expires_at: u64) -> String {
 
 /// Shows the invitation QR on an interactive standard error; standard output
 /// keeps only the invitation text for scripts.
-fn print_invitation_qr(invitation: &PendingInvitation) {
+fn print_invitation_qr(invitation: &PendingInvitation, glyphs: crate::pairing::QrGlyphs) {
     let stderr_is_terminal = std::io::stderr().is_terminal();
     if !stderr_is_terminal {
         return;
@@ -723,7 +737,7 @@ fn print_invitation_qr(invitation: &PendingInvitation) {
         std::env::var_os("NO_COLOR").is_some(),
         || crossterm::terminal::size().ok().map(|(columns, _)| columns),
     );
-    match invitation.presentation().and_then(|presentation| {
+    match invitation.presentation(glyphs).and_then(|presentation| {
         crate::pairing::render_terminal_qr(presentation.qr(), columns, styled)
     }) {
         Ok(qr) => {
