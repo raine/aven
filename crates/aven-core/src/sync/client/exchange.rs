@@ -143,7 +143,9 @@ struct LinkState {
     pending: Pending,
 }
 
-/// The engine's connection to its host within one session.
+/// The engine's connection to its host within one session. It carries one
+/// request or wait at a time: callers await each `send` or `wait` before
+/// starting the next, never running two concurrently.
 #[derive(Clone, Default)]
 pub struct Link {
     state: Arc<Mutex<LinkState>>,
@@ -156,6 +158,16 @@ impl Link {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    /// A state with nothing in flight, ready for the next request or wait.
+    fn idle(&self) -> MutexGuard<'_, LinkState> {
+        let state = self.state();
+        debug_assert!(
+            state.outgoing.is_none() && matches!(state.pending, Pending::None),
+            "a link carries one request or wait at a time"
+        );
+        state
+    }
+
     /// Hands `request` to the host and waits for its answer.
     pub(crate) async fn send(
         &self,
@@ -166,7 +178,7 @@ impl Link {
         response_limit: usize,
     ) -> Result<HttpResponse, TransportFailure> {
         let id = {
-            let mut state = self.state();
+            let mut state = self.idle();
             let id = state.next_id;
             state.next_id += 1;
             state.outgoing = Some(Outgoing::Request(PreparedRequest {
@@ -197,7 +209,7 @@ impl Link {
     /// Lets the host wait `delay` before the engine continues.
     pub(crate) async fn wait(&self, delay: Duration) {
         {
-            let mut state = self.state();
+            let mut state = self.idle();
             state.outgoing = Some(Outgoing::Wait(delay));
             state.pending = Pending::Waiting;
         }
