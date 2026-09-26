@@ -2,6 +2,7 @@ use crate::ids::WorkspaceId;
 use anyhow::Result;
 use aven_core::db::Database;
 use serde::Serialize;
+use std::path::Path;
 
 use crate::cli::ContextArgs;
 use crate::query::{self, TaskDependencyItem};
@@ -17,10 +18,11 @@ use crate::workspaces::Workspace;
 pub(crate) async fn cmd_context(
     database: &Database,
     workspace: &Workspace,
+    blob_dir: &Path,
     args: ContextArgs,
 ) -> Result<()> {
     let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
-    let snapshot = task_context_snapshot(database, workspace, &task).await?;
+    let snapshot = task_context_snapshot(database, workspace, blob_dir, &task).await?;
     if args.json {
         print_json_pretty(&snapshot)?;
     } else {
@@ -124,6 +126,7 @@ struct ContextConflictVariant {
 async fn task_context_snapshot(
     database: &Database,
     workspace: &Workspace,
+    blob_dir: &Path,
     task: &Task,
 ) -> Result<TaskContextSnapshot> {
     let display_refs = database.display_ref_context(&workspace.id).await?;
@@ -145,7 +148,7 @@ async fn task_context_snapshot(
     let summary = detail.dependencies;
     let details = detail.conflicts;
     let attachments = database
-        .attachment_read_items_by_task(&task.workspace_id, &task.id, true)
+        .attachment_read_items_by_task(blob_dir, &task.workspace_id, &task.id, true)
         .await?
         .into_iter()
         .map(attachment_metadata_json)

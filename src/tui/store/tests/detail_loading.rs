@@ -48,7 +48,11 @@ async fn task_full_report_renders_shareable_markdown() {
         .unwrap();
     seed_title_conflict(&pool, &task_id).await;
 
-    let report = store.task_full_report(&task_id).await.unwrap().unwrap();
+    let report = store
+        .task_full_report(std::path::Path::new("no-attachments"), &task_id)
+        .await
+        .unwrap()
+        .unwrap();
     let markdown = crate::task_render::task_markdown(&report);
 
     assert!(markdown.starts_with("# Task "));
@@ -76,7 +80,11 @@ async fn task_markdown_omits_empty_optional_sections() {
     let mut store = test_store().await;
     let (task_id, _) = create_selected_task(&mut store, "Minimal share").await;
 
-    let report = store.task_full_report(&task_id).await.unwrap().unwrap();
+    let report = store
+        .task_full_report(std::path::Path::new("no-attachments"), &task_id)
+        .await
+        .unwrap()
+        .unwrap();
     let markdown = crate::task_render::task_markdown(&report);
 
     assert!(markdown.starts_with("# Minimal share\n\n"));

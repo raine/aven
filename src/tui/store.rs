@@ -476,15 +476,21 @@ impl TuiStore {
 
     pub(crate) async fn task_full_report(
         &self,
+        blob_dir: &std::path::Path,
         task_id: &crate::ids::TaskId,
     ) -> Result<Option<crate::task_render::TaskFullReport>> {
         let Some(item) = self.load_task_item(task_id).await? else {
             return Ok(None);
         };
         let detail = self.database.task_detail(&item.task).await?;
-        crate::task_render::build_full_task_report(&self.database, &self.active_workspace, detail)
-            .await
-            .map(Some)
+        crate::task_render::build_full_task_report(
+            &self.database,
+            &self.active_workspace,
+            blob_dir,
+            detail,
+        )
+        .await
+        .map(Some)
     }
 
     pub(crate) fn show_exact_task(&mut self, item: TaskListItem) {

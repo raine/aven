@@ -134,3 +134,85 @@ fn doctor_reports_attachment_lifecycle_categories() {
         ],
     );
 }
+
+#[test]
+fn missing_object_file_is_reported_unavailable_and_blocks_reads() {
+    let env = TestEnv::new();
+    let db = env.db("missing-object.sqlite");
+    let task = extract_ref(&ok(env.aven(&db, ["add", "attach me"]))).to_string();
+    let image = env.path("photo.png");
+    std::fs::write(&image, png_bytes(2, 2)).unwrap();
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "add",
+            &task,
+            image.to_str().unwrap(),
+            "--no-optimize",
+        ],
+    ));
+    let list = |env: &TestEnv| -> serde_json::Value {
+        serde_json::from_str(&ok(env.aven(&db, ["attachment", "list", &task, "--json"]))).unwrap()
+    };
+    let listed = list(&env);
+    assert_eq!(listed[0]["has_blob"], true);
+    let attachment_id = listed[0]["attachment_id"].as_str().unwrap().to_string();
+    let sha256 = listed[0]["sha256"].as_str().unwrap().to_string();
+    let present_copy = env.path("present.png");
+    ok(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            present_copy.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(
+        std::fs::read(&present_copy).unwrap(),
+        std::fs::read(&image).unwrap()
+    );
+
+    let object = std::path::PathBuf::from(format!("{}.blobs", db.display()))
+        .join("objects/sha256")
+        .join(&sha256);
+    std::fs::remove_file(&object).unwrap();
+
+    assert_eq!(list(&env)[0]["has_blob"], false);
+    let got: serde_json::Value = serde_json::from_str(&ok(
+        env.aven(&db, ["attachment", "get", &attachment_id, "--json"])
+    ))
+    .unwrap();
+    assert_eq!(got["has_blob"], false);
+    let full: serde_json::Value =
+        serde_json::from_str(&ok(env.aven(&db, ["show", &task, "--full", "--json"]))).unwrap();
+    assert_eq!(full["attachments"][0]["has_blob"], false);
+
+    let missing_copy = env.path("missing.png");
+    let error = fail(env.aven(
+        &db,
+        [
+            "attachment",
+            "get",
+            &attachment_id,
+            "--output",
+            missing_copy.to_str().unwrap(),
+        ],
+    ));
+    contains_all(
+        &error,
+        &["error attachment-blob-missing", &attachment_id, "hint="],
+    );
+    contains_none(&error, &["No such file", "os error"]);
+    assert!(!missing_copy.exists());
+
+    let backup = env.path("backup.aven");
+    let error = fail(env.aven(&db, ["backup", "--output", backup.to_str().unwrap()]));
+    contains_all(&error, &["error backup-blob-missing"]);
+
+    // Metadata stays intact, so restoring the file restores availability.
+    std::fs::write(&object, std::fs::read(&image).unwrap()).unwrap();
+    assert_eq!(list(&env)[0]["has_blob"], true);
+}

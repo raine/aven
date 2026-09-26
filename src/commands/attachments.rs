@@ -13,7 +13,7 @@ use crate::cli::{
     AttachmentListArgs, AttachmentPruneArgs, AttachmentSubcommand,
 };
 use crate::config::{self as app_config, AppConfig};
-use crate::operations::AttachmentAddInput;
+use crate::operations::{AttachmentAddInput, local_object_missing};
 use crate::render::print_json_pretty;
 use crate::types::TaskAttachment;
 use crate::workspaces::Workspace;
@@ -92,7 +92,9 @@ pub(crate) async fn cmd_attachment(
         AttachmentSubcommand::Add(args) => {
             cmd_attachment_add(database, workspace, config, db_path, args).await
         }
-        AttachmentSubcommand::List(args) => cmd_attachment_list(database, workspace, args).await,
+        AttachmentSubcommand::List(args) => {
+            cmd_attachment_list(database, workspace, config, db_path, args).await
+        }
         AttachmentSubcommand::Get(args) => {
             cmd_attachment_get(database, workspace, config, db_path, args).await
         }
@@ -173,11 +175,14 @@ pub(crate) async fn cmd_attachment_add(
 pub(crate) async fn cmd_attachment_list(
     database: &Database,
     workspace: &Workspace,
+    config: &AppConfig,
+    db_path: &Path,
     args: AttachmentListArgs,
 ) -> Result<()> {
     let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
     let items = database
-        .attachment_read_items_by_task(&workspace.id, &task.id, args.all)
+        .attachment_read_items_by_task(&blob_dir, &workspace.id, &task.id, args.all)
         .await?;
 
     if args.json {
@@ -201,6 +206,13 @@ pub(crate) async fn cmd_attachment_list(
     Ok(())
 }
 
+fn missing_blob_error(attachment: &TaskAttachment) -> String {
+    format!(
+        "error attachment-blob-missing attachment_id={} sha256={} hint=\"the local image file is missing; restore it from a backup or attach the image again\"",
+        attachment.attachment_id, attachment.sha256
+    )
+}
+
 pub(crate) async fn cmd_attachment_get(
     database: &Database,
     workspace: &Workspace,
@@ -208,9 +220,13 @@ pub(crate) async fn cmd_attachment_get(
     db_path: &Path,
     args: AttachmentGetArgs,
 ) -> Result<()> {
-    let outcome = database
+    let mut outcome = database
         .attachment_by_id(workspace, &args.attachment_id)
         .await?;
+    let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
+    let object_missing =
+        outcome.has_blob && local_object_missing(&blob_dir, &outcome.attachment.sha256)?;
+    outcome.has_blob &= !object_missing;
 
     if !args.all && outcome.attachment.deleted {
         bail!(
@@ -223,20 +239,32 @@ pub(crate) async fn cmd_attachment_get(
         if output_path.exists() {
             bail!("error output-exists path={}", output_path.display());
         }
+        if object_missing {
+            bail!(missing_blob_error(&outcome.attachment));
+        }
         if !outcome.has_blob {
             bail!(
                 "error attachment-blob-unavailable attachment_id={}",
                 outcome.attachment.attachment_id
             );
         }
-        let blob_dir = app_config::resolve_blob_dir(db_path, config)?;
         let lease_id = database
             .acquire_attachment_lease(&outcome.attachment.sha256, "read")
             .await?;
         let obj_path = object_path(&blob_dir, &outcome.attachment.sha256)?;
         let copy_result = fs::copy(&obj_path, output_path);
         database.release_attachment_lease(&lease_id).await?;
-        copy_result?;
+        match copy_result {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && matches!(obj_path.try_exists(), Ok(false)) =>
+            {
+                bail!(missing_blob_error(&outcome.attachment));
+            }
+            result => {
+                result?;
+            }
+        }
     }
 
     if args.json {

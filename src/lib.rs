@@ -325,12 +325,14 @@ async fn dispatch_database(
         DatabaseCommand::Context(args) => {
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
-            cmd_context(&database, &workspace, args).await
+            let blob_dir = config::resolve_blob_dir(&db_path, &config)?;
+            cmd_context(&database, &workspace, &blob_dir, args).await
         }
         DatabaseCommand::Show(args) => {
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
-            cmd_show(&database, &workspace, args).await
+            let blob_dir = config::resolve_blob_dir(&db_path, &config)?;
+            cmd_show(&database, &workspace, &blob_dir, args).await
         }
         DatabaseCommand::List(args) => {
             let workspace =

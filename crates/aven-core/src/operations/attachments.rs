@@ -150,6 +150,13 @@ async fn attachment_has_blob(conn: &mut SqliteConnection, sha256: &str) -> Resul
     Ok(attachment_bytes_state(conn, sha256).await? == AttachmentBytesState::Present)
 }
 
+/// Returns true only when the object file is definitely absent. Other
+/// filesystem errors leave availability to the read path, which reports them.
+pub fn local_object_missing(blob_dir: &Path, sha256: &str) -> Result<bool> {
+    let path = crate::attachments::storage::object_path(blob_dir, sha256)?;
+    Ok(matches!(path.try_exists(), Ok(false)))
+}
+
 async fn existing_live_attachments_by_sha(
     conn: &mut SqliteConnection,
     workspace_id: &crate::ids::WorkspaceId,
@@ -668,20 +675,46 @@ impl Database {
         delete_task_attachment(&mut conn, workspace, attachment_id).await
     }
 
+    /// Reports inventory availability, downgraded to unavailable when the
+    /// object file is absent from `blob_dir`.
     pub async fn attachment_read_items_by_task(
         &self,
+        blob_dir: &Path,
         workspace_id: &WorkspaceId,
         task_id: &TaskId,
         include_deleted: bool,
     ) -> Result<Vec<AttachmentReadItem>> {
         let mut conn = self.acquire_reader().await?;
-        attachment_read_items_by_task(
+        let mut items = attachment_read_items_by_task(
             &mut conn,
             workspace_id.as_str(),
             task_id.as_str(),
             include_deleted,
         )
-        .await
+        .await?;
+        drop(conn);
+        let present = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.bytes_state == AttachmentBytesState::Present)
+            .map(|(index, item)| (index, item.attachment.sha256.clone()))
+            .collect::<Vec<_>>();
+        let blob_dir = blob_dir.to_path_buf();
+        let missing = crate::attachments::run_blocking(move || {
+            let mut missing = Vec::new();
+            for (index, sha256) in present {
+                if local_object_missing(&blob_dir, &sha256)? {
+                    missing.push(index);
+                }
+            }
+            Ok(missing)
+        })
+        .await?;
+        for index in missing {
+            items[index].bytes_state = AttachmentBytesState::Unavailable;
+            items[index].has_blob = false;
+        }
+        Ok(items)
     }
 
     pub async fn prune_attachments(
@@ -813,5 +846,44 @@ mod tests {
             .expect("lifecycle reporting should proceed after the writer is released")
             .unwrap()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod local_object_tests {
+    use super::local_object_missing;
+    use crate::attachments::storage::object_path;
+
+    #[test]
+    fn missing_only_when_object_file_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let sha256 = "a".repeat(64);
+        assert!(local_object_missing(dir.path(), &sha256).unwrap());
+
+        let path = object_path(dir.path(), &sha256).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"bytes").unwrap();
+        assert!(!local_object_missing(dir.path(), &sha256).unwrap());
+        assert!(local_object_missing(dir.path(), "short").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_object_directory_is_not_reported_missing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sha256 = "b".repeat(64);
+        let path = object_path(dir.path(), &sha256).unwrap();
+        let objects = path.parent().unwrap();
+        std::fs::create_dir_all(objects).unwrap();
+        std::fs::write(&path, b"bytes").unwrap();
+        std::fs::set_permissions(objects, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = std::fs::metadata(&path).is_err();
+        let missing = local_object_missing(dir.path(), &sha256).unwrap();
+        std::fs::set_permissions(objects, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if denied {
+            assert!(!missing);
+        }
     }
 }

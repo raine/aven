@@ -13,7 +13,7 @@ mod tasks;
 pub use attachments::attachment_read_items_by_task;
 pub use attachments::{
     AttachmentAddInput, AttachmentAddOutcome, AttachmentOutcome, AttachmentReadItem,
-    PreparedAttachment, TaskAttachmentAddInput,
+    PreparedAttachment, TaskAttachmentAddInput, local_object_missing,
 };
 pub use conflicts::{ConflictDetail, ConflictListItem, ConflictOutcome, ConflictResolutionOutcome};
 pub(crate) use conflicts::{

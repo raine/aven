@@ -104,11 +104,20 @@ impl App {
         }
     }
 
+    fn attachment_blob_dir(&self) -> Result<std::path::PathBuf> {
+        let db_path = self
+            .intake
+            .db_path()
+            .unwrap_or_else(|| self.store.database_path());
+        crate::config::resolve_blob_dir(db_path, self.intake.config())
+    }
+
     pub(super) async fn copy_task_markdown_for(
         &mut self,
         task_id: &crate::ids::TaskId,
     ) -> Result<()> {
-        let Some(report) = self.store.task_full_report(task_id).await? else {
+        let blob_dir = self.attachment_blob_dir()?;
+        let Some(report) = self.store.task_full_report(&blob_dir, task_id).await? else {
             self.set_warning("task is unavailable");
             return Ok(());
         };
@@ -147,7 +156,12 @@ impl App {
     }
 
     pub(super) async fn submit_create_task_gist(&mut self, task_id: crate::ids::TaskId) {
-        let report = match self.store.task_full_report(&task_id).await {
+        let report = match async {
+            let blob_dir = self.attachment_blob_dir()?;
+            self.store.task_full_report(&blob_dir, &task_id).await
+        }
+        .await
+        {
             Ok(Some(report)) => report,
             Ok(None) => {
                 self.set_warning("task is unavailable");

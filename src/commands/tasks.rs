@@ -373,12 +373,13 @@ fn due_on_display(due_on: Option<&str>) -> String {
 pub(crate) async fn cmd_show(
     database: &Database,
     workspace: &Workspace,
+    blob_dir: &std::path::Path,
     args: ShowArgs,
 ) -> Result<()> {
     let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
     if args.full {
         let detail = database.task_detail(&task).await?;
-        let report = build_full_task_report(database, workspace, detail).await?;
+        let report = build_full_task_report(database, workspace, blob_dir, detail).await?;
         if args.json {
             print_json_pretty(&task_full_json(&report))?;
         } else {

@@ -6,6 +6,7 @@ pub use aven_core::operations::attachment_read_items_by_task;
 pub use aven_core::operations::{
     AttachmentAddInput, ConflictDetail, ConflictListItem, TaskAttachmentAddInput,
     TaskCreationOptions, TaskCreationUndo, TaskDraft, TaskOutcome, TaskUpdate,
+    local_object_missing,
 };
 #[cfg(test)]
 pub use aven_core::test_support::{
