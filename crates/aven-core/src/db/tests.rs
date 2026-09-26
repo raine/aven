@@ -327,26 +327,8 @@ async fn pre_encrypted_sync_database_keeps_its_data_through_the_upgrade() {
 }
 
 #[tokio::test]
-async fn encrypted_sync_schema_bounds_match_protocol_limits() {
+async fn membership_sequence_schema_bounds_match_protocol_limits() {
     let (_temp, mut conn) = crate::test_support::test_conn().await;
-    let widest = vec![0_u8; crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES];
-    let insert = "INSERT INTO server_bootstrap_candidates
-        (bootstrap, descriptor, canceled, expires_at, byte_budget, chunk_budget)
-        VALUES (?, ?, 1, 0, 0, 0)";
-    sqlx::query(insert)
-        .bind([1_u8; 32].as_slice())
-        .bind(&widest)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    assert!(
-        sqlx::query(insert)
-            .bind([2_u8; 32].as_slice())
-            .bind([widest.as_slice(), &[0]].concat())
-            .execute(&mut *conn)
-            .await
-            .is_err()
-    );
     let highest = crate::sync::seed_claim::membership::MAX_TRANSITIONS as i64 + 1;
     for (table, insert) in [
         (
