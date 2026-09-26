@@ -1058,7 +1058,7 @@ async fn normal_whole_engine_e2ee_journey() {
         .path()
         .join("checkpoint-journey-client-worker.log");
     let output = std::fs::File::create(log).unwrap();
-    let status = e2ee_http::worker("encrypted_tail_http::tests::checkpoint_journey::client_worker")
+    let status = e2ee_http::worker("encrypted_tail_http::tests::journey::client_worker")
         .env("E2EE_JOURNEY_ORIGIN", &journey.origin)
         .env("E2EE_JOURNEY_DB", &d_db_path)
         .env("E2EE_JOURNEY_KEYS", &d_keys_path)

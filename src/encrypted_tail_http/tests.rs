@@ -2898,6 +2898,6 @@ mod attachments;
 mod recurrence;
 
 mod bench;
-mod checkpoint_faults;
-mod checkpoint_journey;
+mod faults;
+mod journey;
 mod membership;

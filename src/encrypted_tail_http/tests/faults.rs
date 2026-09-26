@@ -545,13 +545,12 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
         }
         assert_eq!(fault.remaining.load(Ordering::SeqCst), 0);
         restart_server(&mut f, fault.clone()).await;
-        let output =
-            e2ee_http::worker("encrypted_tail_http::tests::checkpoint_faults::recovery_worker")
-                .env("AVEN_CHECKPOINT_ROOT", f.root.path())
-                .env("AVEN_CHECKPOINT_ORIGIN", &f.origin)
-                .output()
-                .await
-                .unwrap();
+        let output = e2ee_http::worker("encrypted_tail_http::tests::faults::recovery_worker")
+            .env("AVEN_CHECKPOINT_ROOT", f.root.path())
+            .env("AVEN_CHECKPOINT_ORIGIN", &f.origin)
+            .output()
+            .await
+            .unwrap();
         assert_eq!(
             output.status.code(),
             Some(84),
