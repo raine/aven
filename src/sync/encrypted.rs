@@ -431,17 +431,36 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
     }
     let cancellation = tokio::select! {
         result = cancel_invitation(database, config) => result?,
-        _ = tokio::signal::ctrl_c() => return Ok(()),
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!(
+                "Invitation remains open until {}.",
+                format_expiry(invitation.expires_at())
+            );
+            return Ok(());
+        }
     };
+    eprintln!("{}", cancellation_message(cancellation));
+    Ok(())
+}
+
+/// Cancels the open invitation for `aven sync invite --cancel`.
+pub(crate) async fn cancel(database: &Database, config: &AppConfig) -> Result<()> {
+    println!(
+        "{}",
+        cancellation_message(cancel_invitation(database, config).await?)
+    );
+    Ok(())
+}
+
+fn cancellation_message(cancellation: Cancellation) -> String {
     match cancellation {
-        Cancellation::Cancelled => eprintln!("Invitation cancelled."),
-        Cancellation::KeysMayHaveBeenSent { expires_at } => eprintln!(
+        Cancellation::Cancelled => "Invitation cancelled.".to_string(),
+        Cancellation::KeysMayHaveBeenSent { expires_at } => format!(
             "Keys may already have been sent. The invitation remains open until {}; the next sync then changes keys.",
             format_expiry(expires_at)
         ),
-        Cancellation::None => eprintln!("No invitation is open."),
+        Cancellation::None => "No invitation is open.".to_string(),
     }
-    Ok(())
 }
 
 fn format_duration(seconds: u64) -> String {

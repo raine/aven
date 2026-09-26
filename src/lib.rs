@@ -442,19 +442,7 @@ async fn dispatch_database(
                 sync::encrypted::setup(&database, &config, setup).await
             }
             Some(SyncSubcommand::Invite(args)) if args.cancel => {
-                match sync::encrypted::cancel_invitation(&database, &config).await? {
-                    sync::encrypted::Cancellation::Cancelled => {
-                        println!("Invitation cancelled");
-                    }
-                    sync::encrypted::Cancellation::KeysMayHaveBeenSent { expires_at } => {
-                        println!(
-                            "Keys may already have been sent. The invitation remains open until {}; the next sync then changes keys.",
-                            sync::encrypted::format_expiry(expires_at)
-                        );
-                    }
-                    sync::encrypted::Cancellation::None => println!("No invitation is open"),
-                }
-                Ok(())
+                sync::encrypted::cancel(&database, &config).await
             }
             Some(SyncSubcommand::Invite(_)) => sync::encrypted::invite(&database, &config).await,
             Some(SyncSubcommand::Join(join)) => {
