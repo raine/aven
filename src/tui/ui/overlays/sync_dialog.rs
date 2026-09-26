@@ -24,6 +24,7 @@ use crate::tui::sync_operations::{
     DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
     short_device_ids,
 };
+use crate::tui::text::truncate_width;
 use crate::tui::theme::{
     ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, RED, SELECTED,
 };
@@ -670,6 +671,7 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
             Style::new().fg(FG_DIM),
         )));
     }
+    let columns = DeviceColumns::new(devices, &short_ids, width);
     let mut selected_device = None;
     for (index, action) in actions.iter().enumerate() {
         let focused = index == view.state.selected;
@@ -679,16 +681,7 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
                 if focused {
                     selected_device = Some(device);
                 }
-                let identity = match &device.label {
-                    Some(label) => format!("{}  {label}", short_ids[*device_index]),
-                    None => short_ids[*device_index].clone(),
-                };
-                let row = if device.current {
-                    format!("{identity:<32}This device")
-                } else {
-                    identity
-                };
-                action_line_owned(row, focused)
+                columns.row(device, &short_ids[*device_index], focused)
             }
             action => action_line(action.label(), focused),
         };
@@ -703,27 +696,21 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     if let Some(device) = selected_device {
         lines.push(Line::from(""));
         if let Some(label) = &device.label {
-            lines.push(Line::from(Span::styled("Name", Style::new().fg(FG_DIM))));
-            lines.extend(paragraph(label, Style::new().fg(FG), width));
+            lines.extend(wrapped_row("Name", label, Style::new().fg(FG), width));
         }
-        lines.push(Line::from(Span::styled(
+        lines.extend(wrapped_row(
             "Device ID",
-            Style::new().fg(FG_DIM),
-        )));
-        lines.extend(paragraph(
-            &hex::encode(device.id),
+            &elide_middle(&hex::encode(device.id), width.saturating_sub(LABEL_WIDTH)),
             Style::new().fg(FG),
             width,
         ));
-        lines.extend(paragraph(
-            if device.current {
-                "This device can be removed only from another device in sync."
-            } else {
-                "Enter removes this device from sync."
-            },
-            Style::new().fg(FG_MUTED),
-            width,
-        ));
+        if device.current {
+            lines.extend(paragraph(
+                "Remove it from another device.",
+                Style::new().fg(FG_DIM),
+                width,
+            ));
+        }
     }
     if view.state.details
         && let Some(OperationResult::Failed(failure)) = activity.device_result()
@@ -736,6 +723,91 @@ fn devices_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
             width,
         ));
     }
+}
+
+const UNNAMED_DEVICE: &str = "Unnamed device";
+const THIS_DEVICE: &str = "This device";
+const COLUMN_GAP: usize = 3;
+
+/// Column widths for the device list. The name column shrinks first so a row
+/// never wraps; the ID prefix and status keep their full width.
+struct DeviceColumns {
+    name: usize,
+    id: usize,
+}
+
+impl DeviceColumns {
+    fn new(devices: &[crate::sync::encrypted::Device], short_ids: &[String], width: usize) -> Self {
+        let id = short_ids
+            .iter()
+            .map(|id| id.trim_end_matches('…').len())
+            .max()
+            .unwrap_or(0);
+        let status = if devices.iter().any(|device| device.current) {
+            THIS_DEVICE.width()
+        } else {
+            0
+        };
+        let widest_name = devices
+            .iter()
+            .map(|device| device.label.as_deref().unwrap_or(UNNAMED_DEVICE).width())
+            .max()
+            .unwrap_or(0);
+        let fixed = 2 + COLUMN_GAP + id + if status > 0 { COLUMN_GAP + status } else { 0 };
+        let name = widest_name.min(width.saturating_sub(fixed)).max(1);
+        Self { name, id }
+    }
+
+    fn row(
+        &self,
+        device: &crate::sync::encrypted::Device,
+        short_id: &str,
+        focused: bool,
+    ) -> Line<'static> {
+        let base = if focused {
+            SELECTED
+        } else {
+            Style::new().fg(FG)
+        };
+        let dim = base.fg(FG_DIM);
+        let (name, name_style) = match &device.label {
+            Some(label) => (label.as_str(), base),
+            None => (UNNAMED_DEVICE, dim),
+        };
+        let name = truncate_width(name, self.name);
+        let name_pad = self.name.saturating_sub(name.width());
+        let mut spans = vec![
+            Span::styled(if focused { "› " } else { "  " }, base),
+            Span::styled(name, name_style),
+            Span::styled(" ".repeat(name_pad + COLUMN_GAP), base),
+        ];
+        let id = short_id.trim_end_matches('…');
+        if device.current {
+            spans.push(Span::styled(format!("{id:<width$}", width = self.id), dim));
+            spans.push(Span::styled(" ".repeat(COLUMN_GAP), base));
+            spans.push(Span::styled(THIS_DEVICE, base));
+        } else {
+            spans.push(Span::styled(id.to_string(), dim));
+        }
+        Line::from(spans)
+    }
+}
+
+/// Shortens `value` to `max_width` cells by replacing its middle with an
+/// ellipsis, keeping both ends recognizable.
+fn elide_middle(value: &str, max_width: usize) -> String {
+    let len = value.chars().count();
+    if len <= max_width {
+        return value.to_string();
+    }
+    let keep = max_width.saturating_sub(1);
+    let head = keep.div_ceil(2);
+    let tail = keep - head;
+    let chars = value.chars().collect::<Vec<_>>();
+    let mut elided = chars[..head].iter().collect::<String>();
+    elided.push('…');
+    elided.extend(&chars[len - tail..]);
+    elided
 }
 
 fn removal_lines(lines: &mut Vec<Line<'static>>, removal: &Removal, width: usize) {
@@ -826,14 +898,6 @@ fn elapsed(since: Instant) -> String {
         0 => "just now".to_string(),
         1 => "1 minute ago".to_string(),
         minutes => format!("{minutes} minutes ago"),
-    }
-}
-
-fn action_line_owned(label: String, focused: bool) -> Line<'static> {
-    if focused {
-        Line::from(Span::styled(format!("› {label}"), SELECTED))
-    } else {
-        Line::from(Span::styled(format!("  {label}"), Style::new().fg(FG)))
     }
 }
 
@@ -1190,11 +1254,20 @@ fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
         }
         SyncPage::Devices => {
             hints.push(("↑↓", "select"));
-            if actions
-                .get(view.state.selected)
-                .is_some_and(|action| !matches!(action, SyncAction::Device(_)))
-            {
-                hints.push(("Enter", "choose"));
+            let devices = view
+                .activity
+                .devices
+                .as_ref()
+                .map(|snapshot| snapshot.listing.devices.as_slice())
+                .unwrap_or_default();
+            match actions.get(view.state.selected) {
+                Some(SyncAction::Device(index)) => {
+                    if devices.get(*index).is_some_and(|device| !device.current) {
+                        hints.push(("Enter", "remove"));
+                    }
+                }
+                Some(_) => hints.push(("Enter", "choose")),
+                None => {}
             }
             if matches!(
                 actions.get(view.state.selected),
@@ -1231,4 +1304,12 @@ pub(in crate::tui::ui) fn sync_dialog_lines_for_test(
     view: &SyncDialogView<'_>,
 ) -> Vec<Line<'static>> {
     body(view, 60).lines
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn sync_dialog_lines_for_test_width(
+    view: &SyncDialogView<'_>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    body(view, width).lines
 }

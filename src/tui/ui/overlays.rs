@@ -68,7 +68,9 @@ pub(super) use multiline::{
 pub(super) use onboarding::onboarding_lines_for_test;
 
 #[cfg(test)]
-pub(super) use sync_dialog::{SYNC_TITLE, sync_dialog_lines_for_test};
+pub(super) use sync_dialog::{
+    SYNC_TITLE, sync_dialog_lines_for_test, sync_dialog_lines_for_test_width,
+};
 
 #[cfg(test)]
 pub(super) use text_input::{

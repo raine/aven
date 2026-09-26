@@ -813,35 +813,59 @@ fn device_activity(rotation_pending: bool) -> SyncActivity {
 }
 
 #[test]
-fn device_list_marks_this_device_and_disambiguates_short_ids() {
+fn device_list_aligns_name_id_and_status_columns() {
     let rendered = render_page(SyncPage::Devices, sync_status(), device_activity(false));
 
     assert!(rendered.contains("Checked with the server just now."));
-    assert!(rendered.contains("› a1a1a1a1a1…  Office Mac"));
-    assert!(rendered.contains("This device"));
-    assert!(rendered.contains("a1a1a1a1ff…"));
-    assert!(rendered.contains(&hex::encode([0xa1; 32])[..40]));
-    assert!(rendered.contains("removed only from another device"));
+    assert!(rendered.contains("› Office Mac       a1a1a1a1a1   This device"));
+    assert!(rendered.contains("Unnamed device   a1a1a1a1ff"));
+    assert!(rendered.contains("Name            Office Mac"));
+    assert!(rendered.contains("Device ID       a1a1a1a1a1a1a1a1a1a1a…1a1a1a1a1a1a1a1a1a1a1"));
+    assert!(rendered.contains("Remove it from another device."));
+    assert!(!rendered.contains("Enter remove"));
     assert!(!rendered.contains("admission"));
     assert!(!rendered.contains("Remove device"));
-    assert!(rendered.contains("This device a1a1a1a1ff… Name Office Mac Device ID"));
 }
 
 #[test]
-fn selecting_another_device_shows_its_full_id_and_removal_hint() {
+fn selecting_another_device_offers_removal_in_the_footer() {
     let state = borrow_value(SyncDialogState {
         selected: 1,
         ..SyncDialogState::page(SyncPage::Devices)
     });
     let rendered = dialog_text(activity_view(state, sync_status(), device_activity(false)));
-    let mut other = [0xa1; 32];
-    other[4] = 0xff;
 
-    assert!(rendered.contains(&hex::encode(other)[..40]));
-    assert!(rendered.contains("Enter removes this device from sync."));
+    assert!(rendered.contains("› Unnamed device   a1a1a1a1ff"));
+    assert!(rendered.contains("Enter remove"));
     assert!(rendered.contains("y copy ID"));
-    assert!(rendered.contains("a1a1a1a1ff… Device ID"));
-    assert!(!rendered.contains("Name"));
+    assert!(!rendered.contains("Remove it from another device."));
+    assert!(!rendered.contains("Name "));
+}
+
+#[test]
+fn narrow_device_list_elides_names_and_ids_instead_of_wrapping() {
+    let mut activity = device_activity(false);
+    activity.devices.as_mut().unwrap().listing.devices[0].label =
+        Some("A very long laptop name that does not fit".to_string());
+    let state = borrow_value(SyncDialogState::page(SyncPage::Devices));
+    let view = activity_view(state, sync_status(), activity);
+    let lines = sync_dialog_lines_for_test_width(&view, 40);
+    use unicode_width::UnicodeWidthStr;
+    let text = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+
+    assert!(text.iter().all(|line| line.width() <= 40), "{text:#?}");
+    assert!(
+        text.iter()
+            .any(|line| line.contains("› A very lon…   a1a1a1a1a1   This device")),
+        "{text:#?}"
+    );
+    assert!(
+        text.iter()
+            .any(|line| line.starts_with("Device ID") && line.contains('…'))
+    );
 }
 
 #[test]
