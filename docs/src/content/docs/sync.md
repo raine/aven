@@ -10,6 +10,10 @@ upload; the self-hosted server stores ciphertext and cannot read your data. One
 device starts the sync from its database, and each other device joins with an
 invitation from a device that already syncs.
 
+The sync server is not a backup. Only your devices hold the decryption keys;
+if all devices are lost, the server cannot restore your data. Keep
+[backups](/backups/) or add another device.
+
 A database that has not been set up or joined stays local. Everything except
 sync keeps working.
 
@@ -200,7 +204,8 @@ while key rotation is unfinished; rerunning the command, or syncing any
 remaining device, finishes it. If the command is interrupted, use the full ID
 selected by the first attempt to resume. Removal does not erase anything on the
 removed device: it keeps the
-tasks and images it already downloaded. A device cannot remove itself.
+tasks and images it already downloaded. Devices must be removed from another
+device: a device cannot remove itself, and there is no leave command.
 
 In the TUI, choose **Manage devices** in the Sync dialog. The list is checked
 with the server when it opens and says when it was checked. Each device appears
@@ -252,7 +257,10 @@ aven sync status --json
 
 The status report shows whether the database is set up, the server, whether
 local changes wait to sync, open conflicts, and pending image uploads and
-downloads. Text output omits the internal server position; JSON retains it. If the
+downloads. JSON includes `devices`, the count from local verified membership
+(or `null` when unavailable). With exactly one device, the CLI and TUI show a
+reminder to keep backups or add a device. Text output omits the internal server
+position; JSON retains it. If the
 server refuses this device's credentials, the status persists
 `access-refused` with the time of the refusal. This does not prove that the
 device was removed; check from another device. Local tasks and images remain

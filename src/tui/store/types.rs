@@ -658,10 +658,11 @@ pub(crate) struct TuiDatabaseStats {
     pub(crate) latest_updated_at: Option<String>,
 }
 
-/// Local sync state read from the database and configuration; contacts no
-/// server and reads no protected keys.
+/// Local sync state read from the database, configuration, and protected
+/// membership; contacts no server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TuiSyncStatus {
+    pub(crate) devices: Option<usize>,
     /// Automatic sync by the daemon is configured.
     pub(crate) enabled: bool,
     pub(crate) runtime_allowed: bool,
@@ -684,6 +685,7 @@ pub(crate) struct TuiSyncStatus {
 impl Default for TuiSyncStatus {
     fn default() -> Self {
         Self {
+            devices: None,
             enabled: false,
             runtime_allowed: true,
             set_up: false,

@@ -362,11 +362,12 @@ pub async fn create_invitation(
     })
 }
 
-/// The sync server this database is associated with, and its open
-/// invitation. Local observation only; contacts no server.
+/// The sync server, verified member count, and open invitation.
+/// Local observation only; contacts no server.
 #[derive(Debug, Default)]
 pub struct AssociationStatus {
     pub server: Option<String>,
+    pub devices: Option<usize>,
     pub invitation: Option<InvitationStatus>,
 }
 
@@ -392,6 +393,7 @@ pub async fn association_status(
         });
     Ok(AssociationStatus {
         server: Some(server),
+        devices: Some(inputs.membership.device_count()),
         invitation,
     })
 }
@@ -977,6 +979,8 @@ pub enum SyncState {
 #[derive(Serialize)]
 pub struct StatusReport {
     pub version: u32,
+    /// Member count from local verified membership, or unknown before enrollment.
+    pub devices: Option<usize>,
     pub server: Option<String>,
     pub state: SyncState,
     pub local_changes_pending: Option<bool>,
@@ -996,6 +1000,7 @@ pub struct StatusReport {
 pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result<StatusReport> {
     let mut report = StatusReport {
         version: 1,
+        devices: None,
         server: None,
         state: SyncState::NotSetUp,
         local_changes_pending: None,
@@ -1027,6 +1032,7 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
             );
         if enrollment_ready {
             let invitation_inputs = store.active_inputs(database, &server).await?;
+            report.devices = Some(invitation_inputs.membership.device_count());
             if let Some(invitation) = store.open_invitation(database, &invitation_inputs).await? {
                 report.invitation = "open";
                 report.invitation_expires_at = Some(invitation.expires_at);

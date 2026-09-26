@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::theme::FG_MUTED;
 use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
 use crate::tui::overlay::{AutomaticSyncService, InvitationKind, SecretText, SyncPage};
 use crate::tui::sync_operations::{
@@ -19,6 +20,51 @@ fn idle_sync_renders_compact_summary_and_actions() {
     assert!(rendered.contains("Add device"));
     assert!(rendered.contains("d details"));
     assert!(!rendered.contains("Sync cursor"));
+}
+
+#[test]
+fn single_device_hint_is_muted_and_wraps() {
+    let state = SyncDialogState::default();
+    let status = TuiSyncStatus {
+        devices: Some(1),
+        ..sync_status()
+    };
+    let view = sync_view(&state, status);
+    for width in [36, 60] {
+        let lines = sync_dialog_lines_for_test_width(&view, width);
+        let row = lines
+            .iter()
+            .position(|line| line.to_string().starts_with("Devices"))
+            .expect("single device row");
+        assert!(lines[row].to_string().ends_with('1'));
+        let mut hint = Vec::new();
+        for line in &lines[row + 1..] {
+            let text = line.to_string();
+            if text.is_empty() {
+                break;
+            }
+            assert!(line.width() <= width);
+            assert!(line.spans.iter().all(|span| span.style.fg == Some(FG_MUTED)));
+            hint.push(text);
+        }
+        assert!(hint.len() > 1);
+        assert_eq!(hint.join(" "), crate::sync::encrypted::SINGLE_DEVICE_HINT);
+    }
+}
+
+#[test]
+fn multiple_or_unknown_devices_leave_home_unchanged() {
+    let baseline = render_page(SyncPage::Home, sync_status(), SyncActivity::default());
+    for devices in [None, Some(0), Some(2), Some(3)] {
+        let status = TuiSyncStatus {
+            devices,
+            ..sync_status()
+        };
+        let rendered = render_page(SyncPage::Home, status, SyncActivity::default());
+        assert_eq!(rendered, baseline);
+        assert!(!rendered.contains("Devices"));
+        assert!(!rendered.contains("Only this device"));
+    }
 }
 
 #[test]

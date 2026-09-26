@@ -44,6 +44,8 @@ mod tests;
 
 const INPUT_LIMIT: u64 = 8192;
 
+pub(crate) const SINGLE_DEVICE_HINT: &str = "Only this device has the keys. The server can't restore it, so keep backups or add a device.";
+
 const INVITATION_CANCELLED: &str = "error sync-invitation-cancelled hint=\"another command cancelled this invitation; run `aven sync invite` again to add a device\"";
 
 /// The desktop's answers to what the engine asks of its host.
@@ -654,6 +656,9 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     println!("Sync: end-to-end encrypted");
     if let Some(server) = &report.server {
         println!("Server: {server}");
+    }
+    if report.devices == Some(1) {
+        println!("{SINGLE_DEVICE_HINT}");
     }
     match report.state {
         SyncState::SetupIncomplete => println!("State: setup incomplete. Rerun `aven sync setup`."),

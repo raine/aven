@@ -59,6 +59,7 @@ impl TuiStore {
             sync_cursor: persistence.sync_cursor,
             local_sequence: persistence.local_sequence,
             server: association.server,
+            devices: association.devices,
             invitation: association.invitation,
             access_refused_at,
         })

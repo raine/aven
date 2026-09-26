@@ -741,6 +741,34 @@ async fn set_up(root: &Path) -> (Child, Installation) {
     (server, a)
 }
 
+#[tokio::test]
+async fn cli_single_device_status_hint_uses_local_membership() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let local = Installation::new(root, "local");
+    assert!(status(&local).await["devices"].is_null());
+    assert!(!local.ok(&["sync", "status"]).await.contains(super::SINGLE_DEVICE_HINT));
+
+    let (mut server, a) = set_up(root).await;
+    assert_eq!(status(&a).await["devices"], 1);
+    let text = a.ok(&["sync", "status"]).await;
+    assert_eq!(text.lines().filter(|line| *line == super::SINGLE_DEVICE_HINT).count(), 1);
+
+    let b = Installation::new(root, "b");
+    let (invite, invitation, _stdout) = spawn_invite(&a, None).await;
+    success(
+        &b.run_with_input(&["sync", "join", "--yes"], &invitation).await,
+        &["sync", "join", "--yes"],
+    );
+    assert!(invite.wait_with_output().await.unwrap().status.success());
+    server.kill().await.unwrap();
+    server.wait().await.unwrap();
+    for node in [&a, &b] {
+        assert_eq!(status(node).await["devices"], 2);
+        assert!(!node.ok(&["sync", "status"]).await.contains(super::SINGLE_DEVICE_HINT));
+    }
+}
+
 /// A waiting `sync invite` stops as soon as another command cancels its
 /// invitation, with a distinct failure scripts can detect.
 #[cfg(unix)]
