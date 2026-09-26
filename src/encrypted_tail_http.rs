@@ -17,8 +17,9 @@ use aven_core::{
 };
 use axum::{
     Router,
+    body::Bytes,
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -38,7 +39,7 @@ struct Envelope<T> {
 }
 struct Server {
     db: Database,
-    gate: tokio::sync::Semaphore,
+    gate: http_admission::Admission,
     image_policy: aven_core::attachments::LifecyclePolicy,
 }
 pub fn router(db: Database) -> Router {
@@ -56,7 +57,7 @@ pub fn router_with_policy(
         .route(images::PATH, post(images::handle))
         .with_state(Arc::new(Server {
             db,
-            gate: tokio::sync::Semaphore::new(2),
+            gate: http_admission::Admission::new(2),
             image_policy,
         }))
 }
@@ -64,7 +65,9 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
-        dispatch(&server.db, request),
+        request,
+        tail::APPEND_LIMIT,
+        |headers, bytes| dispatch(&server.db, headers, bytes),
     )
     .await
     {
@@ -94,19 +97,20 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     };
     http_admission::no_store(response)
 }
-async fn dispatch(db: &Database, request: Request) -> Result<Envelope<Reply>> {
+async fn dispatch(
+    db: &Database,
+    headers: HeaderMap,
+    bytes: Option<Bytes>,
+) -> Result<Envelope<Reply>> {
     ensure!(
-        http_admission::is_json(request.headers()),
+        http_admission::is_json(&headers),
         "error encrypted-tail-http"
     );
-    let secret = request
-        .headers()
+    let secret = headers
         .get(header::AUTHORIZATION)
         .and_then(http_admission::bearer)
         .ok_or_else(|| anyhow::anyhow!("error encrypted-tail-credential"))?;
-    let bytes = http_admission::body(request, tail::APPEND_LIMIT)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("error encrypted-tail-limit"))?;
+    let bytes = bytes.ok_or_else(|| anyhow::anyhow!("error encrypted-tail-limit"))?;
     let input: Envelope<Operation> =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error encrypted-tail-http"))?;
     ensure!(

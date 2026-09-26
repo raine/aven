@@ -263,6 +263,20 @@ pub(crate) fn explain(
             },
         });
     }
+    if has("sync-setup-fenced-storage-claimed") {
+        return Some(Explanation {
+            code: "sync-setup-fenced-storage-claimed",
+            message: "The server reported that this storage belongs to another sync.",
+            next_step: match surface {
+                ErrorSurface::Cli => {
+                    "Rerun `aven sync setup` to retry the same setup. If it keeps failing, back up and restore to a new path. Local work continues."
+                }
+                ErrorSurface::Tui => {
+                    "Choose Resume setup to retry. If it keeps failing, back up and restore to a new path. Local work continues."
+                }
+            },
+        });
+    }
     if has("sync-setup-recovery-required") {
         return Some(Explanation {
             code: "sync-setup-recovery-required",

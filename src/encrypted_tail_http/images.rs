@@ -35,7 +35,9 @@ pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) 
     let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
-        dispatch(&server.db, request, server.image_policy),
+        request,
+        images::HTTP_LIMIT,
+        |headers, bytes| dispatch(&server.db, headers, bytes, server.image_policy),
     )
     .await
     {
@@ -63,21 +65,19 @@ pub(super) async fn handle(State(server): State<Arc<Server>>, request: Request) 
 }
 async fn dispatch(
     db: &Database,
-    request: Request,
+    headers: HeaderMap,
+    bytes: Option<Bytes>,
     policy: aven_core::attachments::LifecyclePolicy,
 ) -> Result<Envelope<ImageReply>> {
     ensure!(
-        http_admission::is_json(request.headers()),
+        http_admission::is_json(&headers),
         "error encrypted-image-http"
     );
-    let bearer = request
-        .headers()
+    let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(http_admission::bearer)
         .ok_or_else(|| anyhow::anyhow!("error encrypted-image-credential"))?;
-    let bytes = http_admission::body(request, images::HTTP_LIMIT)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("error encrypted-image-limit"))?;
+    let bytes = bytes.ok_or_else(|| anyhow::anyhow!("error encrypted-image-limit"))?;
     let input: Envelope<ImageOperation> = serde_json::from_slice(&bytes)
         .map_err(|_| anyhow::anyhow!("error encrypted-image-http"))?;
     ensure!(

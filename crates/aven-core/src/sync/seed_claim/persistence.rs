@@ -8,6 +8,7 @@ use super::{
 use crate::db::{self, Database, begin_immediate};
 
 const SERVER_SETUP_KEY: &str = "e2ee_server_setup";
+const SEED_CLAIM_REFUSED: &str = "e2ee_seed_claim_refused";
 
 impl Database {
     /// Admits one immutable sequence-zero claim under operator setup authority.
@@ -153,13 +154,28 @@ impl Database {
         Ok(())
     }
 
-    /// Records that a fenced setup cannot resume against its server.
-    pub async fn mark_local_seed_setup_refused(&self, reason: &str) -> Result<()> {
+    /// Records that a server refused this unfenced provisional claim. Refusals
+    /// are unauthenticated, so the seed authority stays for an exact retry;
+    /// hosts present the database as not set up until the next claim attempt.
+    pub async fn mark_local_seed_claim_refused(&self, reason: &str) -> Result<()> {
         let mut conn = self.acquire_writer().await?;
-        crate::db::set_meta(&mut conn, "e2ee_setup_refused", reason).await
+        crate::db::set_meta(&mut conn, SEED_CLAIM_REFUSED, reason).await
     }
 
-    /// Removes a provisional seed pin after a claim was definitely rejected.
+    pub async fn clear_local_seed_claim_refused(&self) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        sqlx::query("DELETE FROM meta WHERE key = ?")
+            .bind(SEED_CLAIM_REFUSED)
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn local_seed_claim_refused(&self) -> Result<bool> {
+        Ok(self.meta(SEED_CLAIM_REFUSED).await?.is_some())
+    }
+
+    /// Removes an abandoned provisional seed pin and its recorded refusal.
     /// Once source authority or publication state exists, the installation is
     /// fenced and this operation refuses to undo it.
     pub async fn rollback_local_seed_genesis(&self, expected: [u8; 32]) -> Result<()> {
@@ -184,6 +200,10 @@ impl Database {
             "error seed-claim-rollback-conflict"
         );
         sqlx::query("DELETE FROM local_seed_genesis_pin WHERE singleton = 1")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM meta WHERE key = ?")
+            .bind(SEED_CLAIM_REFUSED)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

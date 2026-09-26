@@ -879,10 +879,10 @@ async fn enrollment_permit_timeout_is_retryable_and_uncacheable() {
     tokio::time::pause();
     let server = Arc::new(Server {
         db,
-        gate: tokio::sync::Semaphore::new(1),
+        gate: crate::http_admission::Admission::new(1),
         enrollment_clock: None,
     });
-    let permit = server.gate.acquire().await.unwrap();
+    let permit = server.gate.hold_operation().await;
     let request = Request::builder()
         .method("POST")
         .uri(PATH)
@@ -900,7 +900,7 @@ async fn enrollment_permit_timeout_is_retryable_and_uncacheable() {
         to_bytes(response.into_body(), 256).await.unwrap(),
         "enrollment-busy"
     );
-    assert_eq!(server.gate.available_permits(), 0);
+    assert_eq!(server.gate.available_operations(), 0);
     drop(permit);
 }
 

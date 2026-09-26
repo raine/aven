@@ -10,24 +10,77 @@ use axum::{
 use serde::Serialize;
 use tokio::sync::Semaphore;
 
+/// Requests collecting or holding a body per router. Callers beyond it are
+/// refused as busy rather than queued, which also bounds operation waiters.
+const INGRESS_LIMIT: usize = 16;
+/// Longest a request may take to deliver its complete body.
+pub(crate) const BODY_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub(crate) enum Outcome<T> {
     Dispatched(T),
     PermitTimeout,
     DispatchTimeout,
 }
 
-/// Waits for admission and dispatches within one deadline.
-pub(crate) async fn dispatch<T>(
-    admission: &Semaphore,
+/// Admission for one router. Bodies are collected under a bounded ingress
+/// pool, so a slow body never holds one of the scarce operation permits.
+pub(crate) struct Admission {
+    ingress: Semaphore,
+    operations: Semaphore,
+}
+
+impl Admission {
+    pub(crate) fn new(operations: usize) -> Self {
+        Self {
+            ingress: Semaphore::new(INGRESS_LIMIT),
+            operations: Semaphore::new(operations),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn hold_operation(&self) -> tokio::sync::SemaphorePermit<'_> {
+        self.operations.acquire().await.unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn available_operations(&self) -> usize {
+        self.operations.available_permits()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn available_ingress(&self) -> usize {
+        self.ingress.available_permits()
+    }
+}
+
+/// Collects a body of at most `limit` bytes within [`BODY_TIMEOUT`], then
+/// waits for an operation permit and runs `operate` within one deadline.
+/// `operate` receives `None` for a body over `limit` or otherwise unreadable.
+pub(crate) async fn dispatch<T, F>(
+    admission: &Admission,
     timeout: Duration,
-    future: impl Future<Output = T>,
-) -> Outcome<T> {
+    request: Request,
+    limit: usize,
+    operate: impl FnOnce(HeaderMap, Option<Bytes>) -> F,
+) -> Outcome<T>
+where
+    F: Future<Output = T>,
+{
     let deadline = tokio::time::Instant::now() + timeout;
-    let permit = match tokio::time::timeout_at(deadline, admission.acquire()).await {
+    let Ok(_ingress) = admission.ingress.try_acquire() else {
+        return Outcome::PermitTimeout;
+    };
+    let (parts, body) = request.into_parts();
+    let body_deadline = deadline.min(tokio::time::Instant::now() + BODY_TIMEOUT);
+    let Ok(bytes) = tokio::time::timeout_at(body_deadline, to_bytes(body, limit)).await else {
+        return Outcome::DispatchTimeout;
+    };
+    let permit = match tokio::time::timeout_at(deadline, admission.operations.acquire()).await {
         Ok(Ok(permit)) => permit,
         Ok(Err(_)) | Err(_) => return Outcome::PermitTimeout,
     };
-    let outcome = match tokio::time::timeout_at(deadline, future).await {
+    let outcome = match tokio::time::timeout_at(deadline, operate(parts.headers, bytes.ok())).await
+    {
         Ok(value) => Outcome::Dispatched(value),
         Err(_) => Outcome::DispatchTimeout,
     };
@@ -66,11 +119,6 @@ pub(crate) fn bearer(value: &HeaderValue) -> Option<Secret> {
         .map(Secret::new)
 }
 
-/// Reads the whole body, refusing bodies over `limit` bytes.
-pub(crate) async fn body(request: Request, limit: usize) -> Option<Bytes> {
-    to_bytes(request.into_body(), limit).await.ok()
-}
-
 /// A JSON response, or `None` when the encoded reply exceeds `limit` bytes.
 pub(crate) fn json(reply: &impl Serialize, limit: usize) -> Option<Response> {
     serde_json::to_vec(reply)
@@ -89,21 +137,52 @@ pub(crate) fn no_store(mut response: Response) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+    use axum::body::{Body, HttpBody};
+    use std::{
+        pin::Pin,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::{Context, Poll},
     };
+
+    /// A body whose sender never delivers a byte.
+    struct Stalled;
+
+    impl HttpBody for Stalled {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+            Poll::Pending
+        }
+    }
+
+    fn request(body: Body) -> Request {
+        Request::builder().body(body).unwrap()
+    }
 
     #[tokio::test(start_paused = true)]
     async fn permit_timeout_never_starts_dispatch() {
-        let admission = Arc::new(Semaphore::new(1));
-        let permit = admission.clone().acquire_owned().await.unwrap();
+        let admission = Arc::new(Admission::new(1));
+        let held = admission.clone();
+        let permit = held.hold_operation().await;
         let started = Arc::new(AtomicBool::new(false));
         let dispatched = started.clone();
         let task = tokio::spawn(async move {
-            dispatch(&admission, Duration::from_secs(30), async move {
-                dispatched.store(true, Ordering::SeqCst);
-            })
+            dispatch(
+                &admission,
+                Duration::from_secs(30),
+                request(Body::empty()),
+                16,
+                |_, _| async move {
+                    dispatched.store(true, Ordering::SeqCst);
+                },
+            )
             .await
         });
         tokio::time::advance(Duration::from_secs(30)).await;
@@ -114,19 +193,93 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn dispatch_timeout_is_distinct_after_dispatch_starts() {
-        let admission = Semaphore::new(1);
+        let admission = Admission::new(1);
         let started = Arc::new(AtomicBool::new(false));
         let dispatched = started.clone();
         let task = tokio::spawn(async move {
-            dispatch(&admission, Duration::from_secs(30), async move {
-                dispatched.store(true, Ordering::SeqCst);
-                std::future::pending::<()>().await;
-            })
+            dispatch(
+                &admission,
+                Duration::from_secs(30),
+                request(Body::empty()),
+                16,
+                |_, _| async move {
+                    dispatched.store(true, Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                },
+            )
             .await
         });
         tokio::task::yield_now().await;
         assert!(started.load(Ordering::SeqCst));
         tokio::time::advance(Duration::from_secs(30)).await;
         assert!(matches!(task.await.unwrap(), Outcome::DispatchTimeout));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_body_holds_no_operation_permit_and_times_out() {
+        let admission = Arc::new(Admission::new(1));
+        let stalled = {
+            let admission = admission.clone();
+            tokio::spawn(async move {
+                dispatch(
+                    &admission,
+                    Duration::from_secs(30),
+                    request(Body::new(Stalled)),
+                    16,
+                    |_, _| async { unreachable!("a stalled body never dispatches") },
+                )
+                .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert_eq!(admission.available_ingress(), INGRESS_LIMIT - 1);
+        assert_eq!(admission.available_operations(), 1);
+        // A complete request is served at once while the body stalls.
+        let served = dispatch(
+            &admission,
+            Duration::from_secs(30),
+            request(Body::from("{}")),
+            16,
+            |_, bytes| async move { bytes },
+        )
+        .await;
+        assert!(matches!(served, Outcome::Dispatched(Some(bytes)) if bytes == "{}"));
+        tokio::time::advance(BODY_TIMEOUT).await;
+        assert!(matches!(stalled.await.unwrap(), Outcome::DispatchTimeout));
+        assert_eq!(admission.available_ingress(), INGRESS_LIMIT);
+        assert_eq!(admission.available_operations(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn full_ingress_is_refused_without_queueing() {
+        let admission = Admission::new(1);
+        let held = admission
+            .ingress
+            .try_acquire_many(INGRESS_LIMIT as u32)
+            .unwrap();
+        let outcome = dispatch(
+            &admission,
+            Duration::from_secs(30),
+            request(Body::from("{}")),
+            16,
+            |_, _| async { unreachable!("refused before collecting the body") },
+        )
+        .await;
+        assert!(matches!(outcome, Outcome::PermitTimeout));
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn oversized_body_reaches_the_operation_as_none() {
+        let admission = Admission::new(1);
+        let outcome = dispatch(
+            &admission,
+            Duration::from_secs(30),
+            request(Body::from("x".repeat(17))),
+            16,
+            |_, bytes| async move { bytes.is_none() },
+        )
+        .await;
+        assert!(matches!(outcome, Outcome::Dispatched(true)));
     }
 }

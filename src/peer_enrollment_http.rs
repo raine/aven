@@ -18,8 +18,9 @@ use aven_core::{
 };
 use axum::{
     Router,
+    body::Bytes,
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -135,7 +136,7 @@ enum Reply {
 }
 struct Server {
     db: Database,
-    gate: tokio::sync::Semaphore,
+    gate: http_admission::Admission,
     #[cfg(test)]
     enrollment_clock: Option<Arc<AtomicU64>>,
 }
@@ -150,7 +151,7 @@ fn router_with_clock_inner(db: Database, clock: Option<Arc<AtomicU64>>) -> Route
         .route(PATH, post(handle))
         .with_state(Arc::new(Server {
             db,
-            gate: tokio::sync::Semaphore::new(1),
+            gate: http_admission::Admission::new(1),
             #[cfg(test)]
             enrollment_clock: clock,
         }))
@@ -171,7 +172,9 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     let response = match http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
-        dispatch(&server.db, request, time),
+        request,
+        CONTROL_LIMIT,
+        |headers, bytes| dispatch(&server.db, headers, bytes, time),
     )
     .await
     {
@@ -208,23 +211,22 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     };
     http_admission::no_store(response)
 }
-async fn dispatch(db: &Database, request: Request, time: Option<i64>) -> Result<Reply> {
+async fn dispatch(
+    db: &Database,
+    headers: HeaderMap,
+    bytes: Option<Bytes>,
+    time: Option<i64>,
+) -> Result<Reply> {
     #[cfg(not(test))]
     let _ = time;
-    ensure!(
-        http_admission::is_json(request.headers()),
-        "error enrollment-http"
-    );
-    let credential = request
-        .headers()
+    ensure!(http_admission::is_json(&headers), "error enrollment-http");
+    let credential = headers
         .get(header::AUTHORIZATION)
         .map(|h| {
             http_admission::bearer(h).ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))
         })
         .transpose()?;
-    let bytes = http_admission::body(request, CONTROL_LIMIT)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("error enrollment-limit"))?;
+    let bytes = bytes.ok_or_else(|| anyhow::anyhow!("error enrollment-limit"))?;
     let op: Operation =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))?;
     Ok(match op {

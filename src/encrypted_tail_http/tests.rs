@@ -32,7 +32,7 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
         .route(images::PATH, post(images::handle))
         .with_state(Arc::new(Server {
             db: server.clone(),
-            gate: tokio::sync::Semaphore::new(1),
+            gate: crate::http_admission::Admission::new(1),
             image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
         }));
     let app = e2ee_http::router_with_tail(server, tail).layer(axum::middleware::from_fn(
@@ -1588,7 +1588,7 @@ async fn server_worker() {
 }
 
 #[tokio::test]
-async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
+async fn stalled_http_bodies_never_hold_operation_permits() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn read_response(stream: &mut tokio::net::TcpStream) -> String {
@@ -1616,7 +1616,7 @@ async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
     let server = Arc::new(Server {
         image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
         db,
-        gate: tokio::sync::Semaphore::new(2),
+        gate: crate::http_admission::Admission::new(2),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1627,28 +1627,36 @@ async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
         axum::serve(listener, app).await.unwrap();
     });
     // The syntactically valid bearer has no admitted authority. Neither body
-    // supplies even a JSON byte, so admission must be bounded before authentication.
+    // supplies even a JSON byte, so both stall in body collection.
     let headers = format!(
         "POST {PATH} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
         "0".repeat(64)
     );
+    let ingress = server.gate.available_ingress();
     let mut first = tokio::net::TcpStream::connect(address).await.unwrap();
     let mut second = tokio::net::TcpStream::connect(address).await.unwrap();
     first.write_all(headers.as_bytes()).await.unwrap();
     second.write_all(headers.as_bytes()).await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while server.gate.available_permits() != 0 {
+        while server.gate.available_ingress() != ingress - 2 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
+    assert_eq!(server.gate.available_operations(), 2);
 
+    // A complete request is dispatched while both bodies stall.
     let complete = headers.replace("Content-Length: 100", "Content-Length: 2") + "{}";
-    // A third request now waits for admission instead of being refused immediately.
+    let mut admitted = tokio::net::TcpStream::connect(address).await.unwrap();
+    admitted.write_all(complete.as_bytes()).await.unwrap();
+    let response = read_response(&mut admitted).await;
+    assert!(response.starts_with("HTTP/1.1 409"));
+    assert!(response.ends_with("encrypted_tail_refused"));
+
     // Advance the server clock rather than waiting for a client-side timeout.
     tokio::time::pause();
-    tokio::time::advance(REQUEST_TIMEOUT).await;
+    tokio::time::advance(crate::http_admission::BODY_TIMEOUT).await;
     tokio::time::resume();
     for stream in [&mut first, &mut second] {
         let response = read_response(stream).await;
@@ -1656,13 +1664,8 @@ async fn stalled_http_bodies_time_out_and_release_both_admission_permits() {
         assert!(response.ends_with("encrypted_tail_timeout"));
         assert!(!response.contains(&"0".repeat(64)));
     }
-    assert_eq!(server.gate.available_permits(), 2);
-    let mut admitted = tokio::net::TcpStream::connect(address).await.unwrap();
-    admitted.write_all(complete.as_bytes()).await.unwrap();
-    let response = read_response(&mut admitted).await;
-    assert!(response.starts_with("HTTP/1.1 409"));
-    assert!(response.ends_with("encrypted_tail_refused"));
-    assert_eq!(server.gate.available_permits(), 2);
+    assert_eq!(server.gate.available_ingress(), ingress);
+    assert_eq!(server.gate.available_operations(), 2);
     task.abort();
     let _ = task.await;
 }
@@ -1696,7 +1699,7 @@ async fn successful_tail_response_is_not_cacheable() {
         State(Arc::new(Server {
             image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
             db: f.server.clone(),
-            gate: tokio::sync::Semaphore::new(2),
+            gate: crate::http_admission::Admission::new(2),
         })),
         request,
     )

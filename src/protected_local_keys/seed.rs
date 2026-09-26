@@ -38,7 +38,18 @@ impl ProtectedLocalKeyStore {
         } else {
             self.load_or_create()?
         };
-        let seed = self.load_or_create_seed(&package, setup_id, pin)?;
+        let seed = match (self.load_or_create_seed(&package, setup_id, pin), pin) {
+            // A refused claim stays unconfirmed, so its authority is kept for
+            // an exact retry. Choosing another server's invitation abandons it.
+            (Err(error), Some(commitment))
+                if error.kind() == ProtectedLocalKeyStoreErrorKind::SetupMismatch
+                    && database.local_seed_claim_refused().await? =>
+            {
+                self.rollback_seed_commitment(database, commitment).await?;
+                self.load_or_create_seed(&package, setup_id, None)?
+            }
+            (result, _) => result?,
+        };
         database.pin_local_seed_genesis(seed.genesis()).await?;
         Ok(seed)
     }
@@ -65,6 +76,15 @@ impl ProtectedLocalKeyStore {
         seed: &SeedAuthority,
     ) -> anyhow::Result<()> {
         self.validate_database(database)?;
+        self.rollback_seed_commitment(database, seed.genesis().commitment())
+            .await
+    }
+
+    async fn rollback_seed_commitment(
+        &self,
+        database: &Database,
+        commitment: [u8; 32],
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             database.seed_source_pin().await?.is_none()
                 && database.seed_publication_intent_bytes().await?.is_none()
@@ -73,7 +93,6 @@ impl ProtectedLocalKeyStore {
                     .await?,
             "error seed-claim-rollback-fenced"
         );
-        let commitment = seed.genesis().commitment();
         // Protected authority goes first so an interruption leaves an unfenced
         // pin without authority, which `prepare_seed_claim` clears.
         {

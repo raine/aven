@@ -849,3 +849,154 @@ fn device_change_limit_hint_points_to_starting_a_new_sync() {
     let other = super::explain_change_limit(anyhow::anyhow!("error membership-invalid"));
     assert_eq!(other.to_string(), "error membership-invalid");
 }
+
+/// Relays every request to a real server and, depending on `mode`, replaces
+/// the reply to a committed claim or a status request with a refusal.
+struct ForgingRelay {
+    upstream: String,
+    http: reqwest::Client,
+    mode: std::sync::atomic::AtomicU8,
+}
+
+const RELAY: u8 = 0;
+const FORGE_CLAIM_REJECTED: u8 = 1;
+const FORGE_STATUS_CLAIMED: u8 = 2;
+
+async fn forging_relay(
+    axum::extract::State(relay): axum::extract::State<std::sync::Arc<ForgingRelay>>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+
+    let path = request.uri().path().to_string();
+    let authorization = request.headers().get(header::AUTHORIZATION).cloned();
+    let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    let claim = text.contains("\"ClaimSetup\"") || text.contains("\"ClaimBearer\"");
+    let status = text.contains("\"Status\"");
+    let mut forwarded = relay
+        .http
+        .post(format!("{}{path}", relay.upstream))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(bytes);
+    if let Some(authorization) = authorization {
+        forwarded = forwarded.header(header::AUTHORIZATION, authorization);
+    }
+    let upstream = forwarded.send().await.unwrap();
+    let forged = match relay.mode.load(std::sync::atomic::Ordering::SeqCst) {
+        FORGE_CLAIM_REJECTED if claim => {
+            assert!(
+                upstream.status().is_success(),
+                "the server commits the claim"
+            );
+            Some("bootstrap-setup-invitation-rejected")
+        }
+        FORGE_STATUS_CLAIMED if status => Some("bootstrap-storage-already-claimed"),
+        _ => None,
+    };
+    if let Some(code) = forged {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            [(header::CONTENT_TYPE, "application/json")],
+            format!("{{\"error\":\"{code}\"}}"),
+        )
+            .into_response();
+    }
+    let code = upstream.status();
+    let content_type = upstream.headers().get(header::CONTENT_TYPE).cloned();
+    let body = upstream.bytes().await.unwrap();
+    let mut response = (code, body).into_response();
+    if let Some(content_type) = content_type {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type);
+    }
+    response
+}
+
+/// Unsigned refusals may hide a committed claim, so they never discard the
+/// seed authority or fence the setup; a later exact retry completes it.
+#[tokio::test]
+async fn cli_forged_setup_refusals_keep_committed_claim_recoverable() {
+    use std::sync::{Arc, atomic::Ordering};
+
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let operator = Installation::new(root, "operator");
+    let a = Installation::new(root, "a");
+    a.ok(&["add", "Keep local"]).await;
+    let data = root.join("server.sqlite");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_url = format!("http://{}", listener.local_addr().unwrap());
+    let relay = Arc::new(ForgingRelay {
+        upstream: format!("http://127.0.0.1:{port}"),
+        http: reqwest::Client::builder().no_proxy().build().unwrap(),
+        mode: FORGE_CLAIM_REJECTED.into(),
+    });
+    let app = axum::Router::new()
+        .fallback(forging_relay)
+        .with_state(relay.clone());
+    let relay_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let setup = line_with(
+        &operator
+            .ok(&[
+                "server",
+                "setup",
+                "--data",
+                &data.display().to_string(),
+                "--url",
+                &relay_url,
+            ])
+            .await,
+        "aven-sync-setup-1:",
+    );
+    let _server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
+
+    // Both the setup claim and the bearer retry commit, but come back refused.
+    let error = failure(&a.run_with_input(&["sync", "setup", "--yes"], &setup).await);
+    assert!(error.contains("sync-setup-invitation-rejected"), "{error}");
+    let server = aven_core::db::Database::open(&data).await.unwrap();
+    assert!(server.e2ee_server_is_claimed().await.unwrap());
+    assert_eq!(status(&a).await["state"], "not-set-up");
+    let local = aven_core::db::Database::open(&a.db()).await.unwrap();
+    assert!(
+        local
+            .local_seed_genesis_commitment()
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(local.seed_source_pin().await.unwrap().is_none());
+
+    // The retry claims exactly; a forged status refusal then leaves the fenced
+    // setup resumable instead of requiring recovery to a new path.
+    relay.mode.store(FORGE_STATUS_CLAIMED, Ordering::SeqCst);
+    let error = failure(&a.run_with_input(&["sync", "setup", "--yes"], &setup).await);
+    assert!(
+        error.contains("sync-setup-fenced-storage-claimed"),
+        "{error}"
+    );
+    assert!(!error.contains("sync-setup-recovery-required"), "{error}");
+    assert_eq!(status(&a).await["state"], "setup-incomplete");
+
+    relay.mode.store(RELAY, Ordering::SeqCst);
+    let stdout = success(
+        &a.run_with_input(&["sync", "setup"], &setup).await,
+        &["sync", "setup"],
+    );
+    assert!(
+        stdout.contains(&format!("Sync set up with {relay_url}")),
+        "{stdout}"
+    );
+    assert_eq!(status(&a).await["state"], "ready");
+
+    relay_task.abort();
+}

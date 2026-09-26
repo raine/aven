@@ -284,6 +284,8 @@ dependencies = [
  "flate2",
  "getrandom 0.4.3",
  "hex",
+ "hyper",
+ "hyper-util",
  "iana-time-zone",
  "image",
  "libc",

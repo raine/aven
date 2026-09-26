@@ -42,6 +42,8 @@ clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
 getrandom = "0.4"
 hex.workspace = true
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["http1", "server", "server-graceful", "service", "tokio"] }
 image.workspace = true
 iana-time-zone = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }

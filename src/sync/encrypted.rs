@@ -71,8 +71,14 @@ const NOT_SET_UP: &str = "error sync-not-set-up hint=\"run `aven sync setup` wit
 /// True when this database takes part in sync, including an interrupted
 /// setup or join.
 pub(crate) async fn is_set_up(database: &Database) -> Result<bool> {
-    Ok(database.enrollment_pin().await?.is_some()
-        || database.local_seed_genesis_commitment().await?.is_some())
+    Ok(database.enrollment_pin().await?.is_some() || has_seed_setup(database).await?)
+}
+
+/// A seed pin whose claim the server refused is kept only for an exact retry;
+/// it doesn't make this database take part in sync.
+async fn has_seed_setup(database: &Database) -> Result<bool> {
+    Ok(database.local_seed_genesis_commitment().await?.is_some()
+        && !database.local_seed_claim_refused().await?)
 }
 
 /// Where this database stands in sync, from database facts alone. Reads no
@@ -82,7 +88,7 @@ pub(crate) enum LocalPhase {
     NotSetUp,
     /// Setup started from this database and has not bound the server yet.
     SetupIncomplete,
-    /// Setup is fenced and the server definitely rejected its claim.
+    /// A fenced setup whose database records a server refusal.
     SetupRecoveryRequired,
     /// Joining started and the synced data has not been installed yet.
     JoinIncomplete,
@@ -99,7 +105,7 @@ pub(crate) async fn local_phase(database: &Database) -> Result<LocalPhase> {
             }
         }
         Some(_) => LocalPhase::SetUp,
-        None if database.local_seed_genesis_commitment().await?.is_some() => {
+        None if has_seed_setup(database).await? => {
             if database.meta("e2ee_setup_refused").await?.is_some() {
                 LocalPhase::SetupRecoveryRequired
             } else {
@@ -279,7 +285,7 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
             error
         }
     })?;
-    let resuming = database.local_seed_genesis_commitment().await?.is_some();
+    let resuming = has_seed_setup(database).await?;
     if !resuming {
         print_setup_preview(database, config, &invitation.server).await?;
         confirm_setup(args.yes)?;
@@ -331,6 +337,7 @@ pub(crate) async fn run_setup(
             .prepare_seed_claim(database, invitation.setup_id)
             .await
             .map_err(explain_seed_claim_error)?;
+        database.clear_local_seed_claim_refused().await?;
         let setup = ClaimAuthentication::SetupSecret(&invitation.secret);
         let claim = match bootstrap.claim(seed.genesis(), setup).await {
             Ok(()) => Ok(()),
@@ -342,18 +349,14 @@ pub(crate) async fn run_setup(
             }
         };
         if let Err(error) = claim {
-            if definite_setup_refusal(&error) {
+            // Refusals are unauthenticated and may hide a committed claim, so
+            // the seed authority stays for an exact retry and nothing is fenced.
+            if setup_refusal(&error) {
                 if database.seed_source_pin().await?.is_none() {
-                    store.rollback_seed_claim(database, &seed).await?;
-                    return Err(explain_setup_refusal(error));
-                }
-                if error.to_string() == "error bootstrap-storage-already-claimed" {
                     database
-                        .mark_local_seed_setup_refused(error.to_string().as_str())
+                        .mark_local_seed_claim_refused(error.to_string().as_str())
                         .await?;
-                    return Err(error.context(
-                        "error sync-setup-recovery-required hint=\"this fenced setup was definitely refused; back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
-                    ));
+                    return Err(explain_setup_refusal(error));
                 }
                 return Err(explain_fenced_setup_refusal(error));
             }
@@ -379,19 +382,10 @@ pub(crate) async fn run_setup(
             .await?;
     }
     progress(Stage::UploadingData);
-    if let Err(error) = bootstrap.resume(&store, database).await {
-        if error.to_string() == "error bootstrap-storage-already-claimed"
-            && database.seed_source_pin().await?.is_some()
-        {
-            database
-                .mark_local_seed_setup_refused(error.to_string().as_str())
-                .await?;
-            return Err(error.context(
-                "error sync-setup-recovery-required hint=\"this fenced setup was definitely refused; back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
-            ));
-        }
-        return Err(error);
-    }
+    bootstrap
+        .resume(&store, database)
+        .await
+        .map_err(explain_fenced_setup_refusal)?;
     progress(Stage::FinishingSetup);
     // Binds this installation's enrollment identity to the server.
     peer_enrollment_http::Client::new(&invitation.server)?
@@ -929,7 +923,7 @@ pub(crate) async fn await_join(
     }
 }
 
-fn definite_setup_refusal(error: &anyhow::Error) -> bool {
+fn setup_refusal(error: &anyhow::Error) -> bool {
     matches!(
         error.to_string().as_str(),
         "error bootstrap-storage-already-claimed"
@@ -942,6 +936,9 @@ fn explain_fenced_setup_refusal(error: anyhow::Error) -> anyhow::Error {
     match error.to_string().as_str() {
         "error bootstrap-setup-invitation-rejected" | "error bootstrap-setup-invitation-expired" => error.context(
             "error sync-setup-fenced-invitation-rejected hint=\"this setup is already frozen; resume with the invitation that started setup or the newest invitation for that same server storage; if neither is available, back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
+        ),
+        "error bootstrap-storage-already-claimed" => error.context(
+            "error sync-setup-fenced-storage-claimed hint=\"the server reported that this storage belongs to another sync; this setup is frozen and resuming retries it; if it keeps failing, back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
         ),
         _ => error,
     }

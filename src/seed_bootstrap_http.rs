@@ -27,14 +27,14 @@ use aven_core::{
 };
 use axum::{
     Router,
+    body::Bytes,
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::Semaphore;
 
 const PATH: &str = "/e2ee/bootstrap/v1";
 const REQUEST_LIMIT: usize = base64_bytes::encoded_len(staging::MAX_REQUEST_BYTES) + 4096;
@@ -125,7 +125,7 @@ struct Server {
     database: Database,
     setup: Option<SetupAuthority>,
     policy: staging::PublicationPolicy,
-    admission: Semaphore,
+    admission: http_admission::Admission,
 }
 
 /// A dedicated router with no plaintext routes or legacy-token authentication.
@@ -145,7 +145,7 @@ pub fn router(
             database,
             setup,
             policy,
-            admission: Semaphore::new(1),
+            admission: http_admission::Admission::new(1),
         }))
 }
 
@@ -166,8 +166,14 @@ fn refusal_with(status: StatusCode, code: &'static str) -> Response {
 }
 
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    match http_admission::dispatch(&server.admission, TIMEOUT, handle_bounded(&server, request))
-        .await
+    match http_admission::dispatch(
+        &server.admission,
+        TIMEOUT,
+        request,
+        REQUEST_LIMIT,
+        |headers, bytes| handle_bounded(&server, headers, bytes),
+    )
+    .await
     {
         Outcome::Dispatched(response) => response,
         Outcome::DispatchTimeout => refusal(StatusCode::REQUEST_TIMEOUT),
@@ -179,9 +185,8 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
     }
 }
 
-async fn handle_bounded(server: &Server, request: Request) -> Response {
-    let headers = request.headers();
-    if !http_admission::is_json(headers) {
+async fn handle_bounded(server: &Server, headers: HeaderMap, bytes: Option<Bytes>) -> Response {
+    if !http_admission::is_json(&headers) {
         return refusal(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
     let Some(secret) = headers
@@ -190,7 +195,7 @@ async fn handle_bounded(server: &Server, request: Request) -> Response {
     else {
         return refusal(StatusCode::UNAUTHORIZED);
     };
-    let Some(bytes) = http_admission::body(request, REQUEST_LIMIT).await else {
+    let Some(bytes) = bytes else {
         return refusal(StatusCode::PAYLOAD_TOO_LARGE);
     };
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {

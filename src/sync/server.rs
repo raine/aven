@@ -1,10 +1,17 @@
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 use aven_core::sync::seed_claim::Secret;
+use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::server::graceful::GracefulShutdown;
+use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tracing::info;
 
 use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
@@ -13,6 +20,14 @@ use crate::signals::shutdown_signal;
 
 /// Setup invitations stay usable for one hour, or until a device claims storage.
 const SETUP_INVITATION_SECONDS: u64 = 3600;
+
+/// Open connections, including idle keep-alive ones. Further clients wait in
+/// the listen backlog.
+const MAX_CONNECTIONS: usize = 256;
+/// Longest a connection may take to send one request's headers.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest graceful shutdown waits for in-flight requests.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 const UNPREPARED_STORAGE: &str =
     "error server-storage-unprepared hint=\"run `aven server setup --data PATH --url URL` first\"";
@@ -94,8 +109,101 @@ async fn serve(bind: SocketAddr, data: &Path, config: &config::AppConfig) -> Res
     let addr = listener.local_addr()?;
     info!(bind = %addr, "sync server starting");
     println!("listening url=http://{addr}");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    serve_connections(listener, app, MAX_CONNECTIONS, shutdown_signal()).await
+}
+
+/// Serves HTTP/1 with bounded connections and a header deadline, so a
+/// stalled client can't hold server resources without limit.
+async fn serve_connections(
+    listener: TcpListener,
+    app: axum::Router,
+    max_connections: usize,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
+    let connections = Arc::new(Semaphore::new(max_connections));
+    let graceful = GracefulShutdown::new();
+    let mut shutdown = std::pin::pin!(shutdown);
+    loop {
+        let permit = tokio::select! {
+            permit = connections.clone().acquire_owned() => permit?,
+            () = &mut shutdown => break,
+        };
+        let stream = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => stream,
+                Err(_) => {
+                    // Usually descriptor exhaustion; back off instead of spinning.
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            },
+            () = &mut shutdown => break,
+        };
+        let connection = hyper::server::conn::http1::Builder::new()
+            .timer(TokioTimer::new())
+            .header_read_timeout(HEADER_TIMEOUT)
+            .serve_connection(TokioIo::new(stream), TowerToHyperService::new(app.clone()));
+        let connection = graceful.watch(connection);
+        tokio::spawn(async move {
+            let _ = connection.await;
+            drop(permit);
+        });
+    }
+    let _ = tokio::time::timeout(SHUTDOWN_GRACE, graceful.shutdown()).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    async fn read_to_end(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut bytes))
+            .await
+            .expect("the server answers or closes")
+            .unwrap();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn incomplete_headers_time_out_and_release_the_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/", axum::routing::get(|| async { "served" }));
+        let server = tokio::spawn(serve_connections(listener, app, 1, std::future::pending()));
+
+        // The only connection slot holds a request whose headers never finish.
+        let mut stalled = TcpStream::connect(address).await.unwrap();
+        stalled
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+            .await
+            .unwrap();
+        let mut waiting = TcpStream::connect(address).await.unwrap();
+        waiting
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        // Let the server start reading the stalled headers before time moves.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut byte = [0; 1];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), waiting.read(&mut byte))
+                .await
+                .is_err(),
+            "a second connection waits while the only slot is held"
+        );
+
+        tokio::time::pause();
+        tokio::time::advance(HEADER_TIMEOUT).await;
+        tokio::time::resume();
+        let closed = read_to_end(&mut stalled).await;
+        assert!(!closed.contains("served"), "{closed}");
+        let response = read_to_end(&mut waiting).await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.ends_with("served"), "{response}");
+        server.abort();
+    }
 }

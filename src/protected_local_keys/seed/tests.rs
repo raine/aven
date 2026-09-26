@@ -590,3 +590,39 @@ async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
 }
 
 mod publication;
+
+#[tokio::test]
+async fn refused_claim_keeps_authority_until_another_invitation_replaces_it() {
+    let root = tempfile::tempdir().unwrap();
+    let db = Database::open(&root.path().join("db.sqlite"))
+        .await
+        .unwrap();
+    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+    db.mark_local_seed_claim_refused("error bootstrap-setup-invitation-rejected")
+        .await
+        .unwrap();
+    // The same setup keeps its exact authority for a retry.
+    let retry = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+    assert_eq!(
+        seed.protected_storage_bytes(),
+        retry.protected_storage_bytes()
+    );
+    // Another server's invitation abandons the refused, unfenced claim.
+    let replaced = store.prepare_seed_claim(&db, [8; 32]).await.unwrap();
+    assert_eq!(replaced.genesis().setup_id(), [8; 32]);
+    assert_eq!(
+        Some(replaced.genesis().commitment()),
+        db.local_seed_genesis_commitment().await.unwrap()
+    );
+    assert!(!db.local_seed_claim_refused().await.unwrap());
+    // Without a recorded refusal a different setup still can't replace it.
+    let mismatch = store.prepare_seed_claim(&db, [7; 32]).await.unwrap_err();
+    assert_eq!(
+        mismatch
+            .downcast_ref::<ProtectedLocalKeyStoreError>()
+            .unwrap()
+            .kind(),
+        ProtectedLocalKeyStoreErrorKind::SetupMismatch
+    );
+}
