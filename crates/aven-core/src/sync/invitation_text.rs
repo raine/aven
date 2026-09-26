@@ -289,9 +289,23 @@ mod tests {
     }
 
     #[test]
+    fn accepts_http_server_origins() {
+        for server in [
+            "http://127.0.0.1:3746",
+            "http://100.100.20.30:3746",
+            "http://sync.private.example:3746",
+        ] {
+            for kind in [Kind::Device, Kind::Setup] {
+                let text = encode(kind, server, &secret(kind)).unwrap();
+                assert_eq!(decode(&text).unwrap().server, server);
+            }
+        }
+    }
+
+    #[test]
     fn refuses_servers_encrypted_sync_cannot_use() {
         for server in [
-            "http://sync.example.net",
+            "ftp://sync.example.net",
             "https://sync.example.net/x",
             "https://sync.example.net/",
         ] {

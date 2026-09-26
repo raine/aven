@@ -791,8 +791,10 @@ async fn invalid_http_outcome_preserves_sealed_intent_and_capture_until_verified
 
 #[tokio::test]
 async fn client_bounds_responses_and_rejects_redirects_and_unsafe_origins() {
+    assert!(Client::new("http://100.100.20.30:3746").is_ok());
+    assert!(Client::new("http://sync.private.example:3746").is_ok());
     for origin in [
-        "http://remote.example",
+        "ftp://remote.example",
         "https://user:secret@example.com",
         "https://example.com/private",
         "https://example.com/?token=secret",

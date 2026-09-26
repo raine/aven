@@ -53,9 +53,9 @@ import '../styles/privacy.css';
 
           <section aria-labelledby="sync">
             <h2 id="sync">Sync to your own server</h2>
-            <p>Desktop sync is optional. The iPhone companion connects to a user-operated sync server. Once connected, Aven sends task content, attachments, changes, workspace and sync-client identifiers, and authentication information to the server you configure.</p>
-            <p>We and our partners have no access to your sync server. Its operator controls access, logs, retention, and backups. The server can read the content it stores: Aven sync is not end-to-end encrypted.</p>
-            <p>Use HTTPS or a trusted private network. HTTPS encrypts data in transit; HTTP connections do not and can expose task content and credentials to network observers. Keep pairing invitations and tokens private.</p>
+            <p>Sync is optional. The iPhone companion connects to a user-operated sync server. Aven end-to-end encrypts task content, attachments, and changes before uploading them. The server also receives ciphertext, sync identifiers, authentication information, and connection metadata needed to operate sync.</p>
+            <p>We and our partners have no access to your sync server. Its operator controls access, logs, retention, and backups. The server stores encrypted Aven content and cannot decrypt it, but it can observe connection metadata and disrupt or delete stored data.</p>
+            <p>Use HTTPS or HTTP over a trusted VPN or private network. A VPN independently protects the HTTP connection. Plain HTTP on an untrusted network can expose credentials, invitations, identifiers, and traffic metadata even though Aven encrypts task and attachment content. Keep pairing invitations and credentials private.</p>
           </section>
 
           <section aria-labelledby="images">

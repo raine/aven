@@ -14,8 +14,8 @@ Inspect both variants before resolving. Variant tokens come from `conflict show`
 of --value, --value-file, or --value-stdin."#;
 
 pub(super) const SERVER_HELP: &str = r#"Prepare storage with `aven server setup` first. The server binds only
-loopback addresses and does not terminate TLS; put a TLS reverse proxy in front
-of it for other devices."#;
+loopback addresses by default and does not terminate TLS. For direct HTTP,
+bind it only to a trusted VPN; otherwise put a TLS reverse proxy in front."#;
 
 pub(super) const SYNC_HELP: &str = r#"Sync is end-to-end encrypted. Start it on one device with `aven sync setup`
 and add other devices with `aven sync invite` and `aven sync join`. The server
@@ -147,12 +147,12 @@ pub(crate) struct DaemonRepairArgs {
 pub(crate) struct ServerArgs {
     #[command(subcommand)]
     pub(crate) command: Option<ServerSubcommand>,
-    /// Listen address; loopback unless --allow-non-loopback
+    /// Listen address; defaults to loopback
     #[arg(long, default_value = "127.0.0.1:3746")]
     pub(crate) bind: SocketAddr,
-    /// Allow a non-loopback bind; TLS must terminate in front of the server
+    /// Allow a public or wildcard bind
     #[arg(long)]
-    pub(crate) allow_non_loopback: bool,
+    pub(crate) unsafe_public_bind: bool,
     /// SQLite path of storage prepared by `server setup`
     #[arg(long, required = true)]
     pub(crate) data: Option<PathBuf>,
@@ -170,7 +170,7 @@ pub(crate) struct ServerSetupArgs {
     /// SQLite path of the server storage
     #[arg(long)]
     pub(crate) data: PathBuf,
-    /// Server URL that devices reach: HTTPS, or HTTP on a loopback address
+    /// HTTP or HTTPS origin that devices use to reach the server
     #[arg(long)]
     pub(crate) url: String,
 }
@@ -180,9 +180,9 @@ its database. It expires after one hour; until a device has claimed the
 server, running setup again replaces it. The replacement keeps the server's
 setup identity, so a device whose setup was interrupted resumes with the new
 invitation. Serve the storage with `aven server --data PATH --bind ADDRESS`;
-setup prints a suggested command. The server binds only loopback addresses
-unless given --allow-non-loopback; put a TLS reverse proxy in front of it for
-other devices."#;
+setup prints a suggested command. Bind the server directly to its trusted VPN
+address for HTTP, or put a TLS reverse proxy in front of it. Public and wildcard
+binds require --unsafe-public-bind."#;
 
 const SERVER_COMMAND_HELP: &str = r#"Run the sync server
 
@@ -194,16 +194,16 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-      --bind <BIND>             Listen address; loopback unless --allow-non-loopback [default: 127.0.0.1:3746]
-      --allow-non-loopback      Allow a non-loopback bind; TLS must terminate in front of the server
+      --bind <BIND>             Listen address [default: 127.0.0.1:3746]
+      --unsafe-public-bind      Allow a public or wildcard bind
       --data <DATA>             SQLite path of storage prepared by `server setup`
   -h, --help                    Print help
 
 Prepare storage with `aven server setup` first. The server does not terminate
-TLS; put a TLS reverse proxy in front of it for other devices. It binds only
-loopback addresses unless given --allow-non-loopback, for proxies on another
-host or container networks; device credentials and setup invitations cross
-that hop, so it must stay private or carry TLS.
+TLS. Bind it directly to a trusted VPN address for HTTP, or use a TLS reverse
+proxy. Public and wildcard binds require --unsafe-public-bind. Device
+credentials and setup invitations are not protected by Aven's end-to-end
+payload encryption.
 "#;
 
 #[derive(Args)]

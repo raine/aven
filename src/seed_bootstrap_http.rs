@@ -37,7 +37,7 @@ struct Server {
 
 /// A router serving only the bootstrap route.
 /// Claims use the storage's unexpired issued setup verifier.
-/// Bind loopback for local construction, or terminate TLS before remote access.
+/// Bind loopback, a trusted VPN interface, or a TLS-protected private hop.
 pub fn router(database: Database, policy: staging::PublicationPolicy) -> Router {
     Router::new()
         .route(PATH, post(handle))

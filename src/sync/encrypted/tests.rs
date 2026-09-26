@@ -285,6 +285,28 @@ async fn converge(nodes: &[&Installation]) {
 }
 
 #[tokio::test]
+async fn server_setup_accepts_http_over_vpn_origin() {
+    let temp = tempfile::tempdir().unwrap();
+    let operator = Installation::new(temp.path(), "operator");
+    let data = temp.path().join("server.sqlite");
+    let origin = "http://100.100.20.30:47831";
+    let invitation = line_with(
+        &operator
+            .ok(&[
+                "server",
+                "setup",
+                "--data",
+                &data.display().to_string(),
+                "--url",
+                origin,
+            ])
+            .await,
+        "aven-setup:",
+    );
+    assert_eq!(SetupInvitation::decode(&invitation).unwrap().server, origin);
+}
+
+#[tokio::test]
 async fn cli_sets_up_pairs_and_syncs_two_installations() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -382,10 +404,10 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
             .run(&["server", "--data", &data, "--bind", "0.0.0.0:0"])
             .await,
     );
-    assert!(error.contains("server-bind-loopback"), "{error}");
+    assert!(error.contains("public-bind-requires"), "{error}");
     for retired in [
         &["server", "--encrypted", "--data", &data][..],
-        &["server", "--unsafe-public-bind", "--data", &data][..],
+        &["server", "--allow-non-loopback", "--data", &data][..],
         &["sync", "--server", &url][..],
         &["sync", "pair"][..],
     ] {

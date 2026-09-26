@@ -18,6 +18,19 @@ fn sync_existing_forms_parse() {
 }
 
 #[test]
+fn public_server_bind_flag_parses() {
+    let cli = Cli::try_parse_from([
+        "aven",
+        "server",
+        "--unsafe-public-bind",
+        "--data",
+        "server.sqlite",
+    ])
+    .unwrap();
+    assert!(matches!(cli.command, Some(Commands::Server(_))));
+}
+
+#[test]
 fn retired_sync_forms_are_rejected() {
     for args in [
         vec!["aven", "sync", "--server", "https://sync.example.test"],
@@ -26,7 +39,7 @@ fn retired_sync_forms_are_rejected() {
         vec![
             "aven",
             "server",
-            "--unsafe-public-bind",
+            "--allow-non-loopback",
             "--data",
             "server.sqlite",
         ],

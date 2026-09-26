@@ -667,8 +667,10 @@ async fn tampered_grant_and_protected_loss_cannot_complete_or_regenerate() {
 
 #[tokio::test]
 async fn bounded_http_redacts_refusals_and_rejects_unsafe_origins() {
+    assert!(Client::new("http://100.100.20.30:3746").is_ok());
+    assert!(Client::new("http://sync.private.example:3746").is_ok());
     for origin in [
-        "http://example.com",
+        "ftp://example.com",
         "https://user:secret@example.com",
         "https://example.com/private",
         "https://example.com/?token=secret",

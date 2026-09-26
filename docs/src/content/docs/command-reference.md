@@ -960,30 +960,33 @@ than repeated on standard error.
 Serve end-to-end encrypted sync from storage prepared by `aven server setup`.
 
 ```sh
-aven server --data <path> [--bind <address>] [--allow-non-loopback]
+aven server --data <path> [--bind <address>] [--unsafe-public-bind]
 aven server setup --data <path> --url <url>
 ```
 
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Required server SQLite database path. |
-| `--bind <ip:port>` | Listen address. Defaults to `127.0.0.1:3746`. Must be loopback unless `--allow-non-loopback` is given. |
-| `--allow-non-loopback` | Allow binding a non-loopback address, for a TLS proxy on another host or a container network. Prints a warning, since credentials and setup invitations reach the server without TLS. |
-| `--url <url>` | For `setup`: the origin devices reach, HTTPS or loopback HTTP. |
+| `--bind <ip:port>` | Listen address. Defaults to `127.0.0.1:3746`. Loopback, private, and VPN addresses are accepted directly. |
+| `--unsafe-public-bind` | Allow binding a public or wildcard address. Prints a warning because payload encryption does not protect credentials or setup invitations. |
+| `--url <url>` | For `setup`: the HTTP or HTTPS origin devices use to reach the server. |
 
 `server setup` stores an expiring setup verifier, prints a setup invitation for
-`aven sync setup`, and prints the matching `aven server --data ... --bind ...`
-command to standard error. The suggested bind uses port 3746, or the URL's port
-when the URL is a loopback address. Running setup again before a device claims
-the server replaces the invitation. The server does not terminate TLS; put a TLS
-reverse proxy in front of it. Both commands refuse
-storage that holds change history, including storage from the unencrypted sync
-of earlier releases. The server shuts down gracefully on an operating-system
-termination signal.
+`aven sync setup`, and prints a starting `aven server --data ... --bind ...`
+command to standard error. The suggested bind uses an HTTP URL's port; HTTPS
+uses port 3746 for the service behind its proxy. For direct VPN HTTP, replace
+the loopback bind with the server's VPN address. Running setup again before a
+device claims the server replaces the invitation. The server does not terminate
+TLS. Use HTTP only over a trusted VPN or another protected private network;
+otherwise put a TLS reverse proxy in front of it. Both commands refuse storage
+that holds
+change history, including storage from the unencrypted sync of earlier
+releases. The server shuts down gracefully on an operating-system termination
+signal.
 
 ```sh
-aven server setup --data /srv/aven/server.sqlite --url https://sync.example.com
-aven server --data /srv/aven/server.sqlite --bind 127.0.0.1:3000
+aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746
+aven server --data /srv/aven/server.sqlite --bind 100.100.20.30:3746
 ```
 
 ### `aven conflict`

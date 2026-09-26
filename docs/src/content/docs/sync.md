@@ -43,17 +43,19 @@ Then serve the storage:
 aven server --data ~/.local/state/aven/sync-server.sqlite --bind 127.0.0.1:3746
 ```
 
-The server does not terminate TLS. Put a TLS reverse proxy in front of it for
-other devices. The URL passed to `server setup` must be an origin such as
-`https://sync.example.com`, or `http://` with a loopback address; it has no
-path, query, or credentials, and is at most 255 bytes.
+The server does not terminate TLS. The URL passed to `server setup` must be an
+HTTP or HTTPS origin, with no path, query, or credentials, and at most 255
+bytes. HTTPS works through a TLS reverse proxy. HTTP is supported for direct
+connections over a trusted VPN, where the VPN independently protects the
+connection.
 
-By default the server binds only loopback addresses. When the proxy runs on
-another host or the server runs in a container, pass `--allow-non-loopback` to
-bind another address, such as `--bind 0.0.0.0:3746`. The server then prints a
-warning: device credentials and setup invitations cross the hop between the
-proxy and the server unencrypted, so keep that network private or carry TLS
-across it.
+By default the server binds only to loopback. For direct VPN access, bind it to
+its VPN address, such as `--bind 100.100.20.30:3746`. Loopback, private, and VPN
+addresses need no additional flag. Public and wildcard addresses require
+`--unsafe-public-bind`. Device credentials, setup invitations, server
+identifiers, and traffic metadata are outside Aven's end-to-end encrypted
+payload, so every network hop must be protected by a trusted VPN, TLS, or an
+otherwise private network.
 
 Server storage used by the unencrypted sync of earlier releases is not
 supported. `aven server` and `aven server setup` refuse storage that holds

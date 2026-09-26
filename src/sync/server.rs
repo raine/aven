@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +43,7 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
         return setup_server(setup).await;
     }
     let data = args.data.context("error server-data-required")?;
-    serve(args.bind, args.allow_non_loopback, &data, &config).await
+    serve(args.bind, args.unsafe_public_bind, &data, &config).await
 }
 
 async fn setup_server(args: ServerSetupArgs) -> Result<()> {
@@ -79,45 +79,85 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
         args.data.display(),
         suggested_port(&args.url)
     );
+    if args.url.starts_with("http://") && !origin_is_loopback(&args.url) {
+        eprintln!("For direct VPN HTTP, bind the server's VPN address.");
+    }
     Ok(())
 }
 
-/// The port for the suggested loopback bind: the URL's own port when devices
-/// reach the server directly on loopback, otherwise the default port behind
-/// a reverse proxy.
+/// The local service port: an HTTP origin's port is direct, while HTTPS
+/// normally terminates at a reverse proxy in front of the default port.
 fn suggested_port(url: &str) -> u16 {
     let Ok(url) = url::Url::parse(url) else {
         return DEFAULT_PORT;
     };
-    let loopback = match url.host() {
-        Some(url::Host::Domain(domain)) => domain == "localhost",
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    };
     match url.port_or_known_default() {
-        Some(port) if loopback => port,
+        Some(port) if url.scheme() == "http" || origin_is_loopback(url.as_str()) => port,
         _ => DEFAULT_PORT,
     }
 }
 
+fn origin_is_loopback(origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BindScope {
+    Loopback,
+    Private,
+    Public,
+}
+
+impl BindScope {
+    fn classify(address: IpAddr) -> Self {
+        if address.is_loopback() {
+            Self::Loopback
+        } else if is_private_address(address) {
+            Self::Private
+        } else {
+            Self::Public
+        }
+    }
+}
+
+fn is_private_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            address.is_private()
+                || address.is_link_local()
+                || octets[0] == 100 && (64..=127).contains(&octets[1])
+        }
+        IpAddr::V6(address) => address.is_unique_local() || address.is_unicast_link_local(),
+    }
+}
+
 /// Serves the seed, enrollment and tail/image routers. Each operation
-/// authenticates against the stored vault. The server does not terminate
-/// TLS, so other binds need explicit consent.
+/// authenticates against the stored vault. The server does not terminate TLS,
+/// so non-loopback binds need an independently protected network.
 async fn serve(
     bind: SocketAddr,
-    allow_non_loopback: bool,
+    unsafe_public_bind: bool,
     data: &Path,
     config: &config::AppConfig,
 ) -> Result<()> {
-    if !bind.ip().is_loopback() {
-        if !allow_non_loopback {
-            bail!(
-                "error server-bind-loopback hint=\"bind 127.0.0.1 behind a TLS reverse proxy, or pass --allow-non-loopback when TLS terminates elsewhere\""
-            );
-        }
+    let scope = BindScope::classify(bind.ip());
+    if scope == BindScope::Public && !unsafe_public_bind {
+        bail!(
+            "error public-bind-requires hint=\"bind a loopback or private VPN address, or pass --unsafe-public-bind for a public or wildcard address\""
+        );
+    }
+    if scope == BindScope::Public {
         eprintln!(
-            "Warning: listening on {bind} without TLS. Device credentials and setup invitations cross this connection; terminate TLS in front of it."
+            "Warning: public or wildcard bind {bind} enabled without TLS. Device credentials and setup invitations are not protected by payload encryption."
         );
     }
     if !data.exists() {
@@ -212,15 +252,56 @@ async fn serve_connections(
 
 #[cfg(test)]
 mod tests {
+    use super::{BindScope, suggested_port};
+    use std::net::IpAddr;
+
     #[test]
-    fn setup_suggests_the_default_port_unless_devices_reach_loopback() {
-        use super::suggested_port;
+    fn classifies_private_and_vpn_bind_addresses() {
+        for address in ["127.0.0.1", "::1"] {
+            assert_eq!(
+                BindScope::classify(address.parse::<IpAddr>().unwrap()),
+                BindScope::Loopback
+            );
+        }
+        for address in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "169.254.1.1",
+            "fd00::1",
+            "fe80::1",
+        ] {
+            assert_eq!(
+                BindScope::classify(address.parse::<IpAddr>().unwrap()),
+                BindScope::Private
+            );
+        }
+        for address in [
+            "0.0.0.0",
+            "::",
+            "1.1.1.1",
+            "100.128.0.1",
+            "2606:4700:4700::1111",
+        ] {
+            assert_eq!(
+                BindScope::classify(address.parse::<IpAddr>().unwrap()),
+                BindScope::Public
+            );
+        }
+    }
+
+    #[test]
+    fn setup_suggests_direct_http_port() {
         assert_eq!(suggested_port("https://sync.example.com"), 3746);
         assert_eq!(suggested_port("https://sync.example.com:8443"), 3746);
         assert_eq!(suggested_port("http://127.0.0.1:4000"), 4000);
         assert_eq!(suggested_port("http://localhost:4001"), 4001);
         assert_eq!(suggested_port("http://[::1]:4002"), 4002);
         assert_eq!(suggested_port("http://localhost"), 80);
+        assert_eq!(suggested_port("http://100.100.20.30:47831"), 47831);
+        assert_eq!(suggested_port("http://sync.private.example:47831"), 47831);
     }
 
     use super::*;

@@ -6,18 +6,13 @@ use url::Url;
 pub const MAX_SERVER_BYTES: usize = 255;
 
 /// Validates `origin` for encrypted transport and returns the endpoint at
-/// `path`: HTTPS, or HTTP only with a loopback host, with no credentials,
-/// query, fragment or path.
+/// `path`: HTTP or HTTPS with a host and no credentials, query, fragment or
+/// path.
 pub(crate) fn endpoint(origin: &str, path: &str) -> Result<Url> {
     let mut url = Url::parse(origin).map_err(|_| anyhow::anyhow!("error bootstrap-origin"))?;
-    let loopback = url.host_str().is_some_and(|h| {
-        h == "localhost"
-            || h.parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-            || h == "[::1]"
-    });
     ensure!(
-        (url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
             && url.username().is_empty()
             && url.password().is_none()
             && url.query().is_none()
@@ -32,7 +27,7 @@ pub(crate) fn endpoint(origin: &str, path: &str) -> Result<Url> {
 /// Validates a server URL for encrypted transport and returns its origin.
 pub fn server_origin(url: &str) -> Result<String> {
     endpoint(url, "/").context(
-        "error sync-server-url-invalid hint=\"use an origin such as https://sync.example.com, or http:// only with a loopback address; no path, query or credentials\"",
+        "error sync-server-url-invalid hint=\"use an HTTP or HTTPS origin with no path, query or credentials\"",
     )?;
     let origin = Url::parse(url)?.origin().ascii_serialization();
     ensure!(
@@ -40,4 +35,40 @@ pub fn server_origin(url: &str) -> Result<String> {
         "error sync-server-url-too-long hint=\"use a server origin of at most 255 bytes\""
     );
     Ok(origin)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_http_and_https_origins() {
+        for origin in [
+            "http://127.0.0.1:3746",
+            "http://100.100.20.30:3746",
+            "http://sync.private.example:3746",
+            "https://sync.example.com",
+        ] {
+            assert_eq!(server_origin(origin).unwrap(), origin);
+        }
+    }
+
+    #[test]
+    fn rejects_non_http_and_non_origin_urls() {
+        for origin in [
+            "ftp://sync.example.com",
+            "https://user:secret@sync.example.com",
+            "https://sync.example.com/private",
+            "https://sync.example.com/?token=secret",
+            "https://sync.example.com/#fragment",
+            "https://",
+            "not a URL",
+        ] {
+            let error = server_origin(origin).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("sync-server-url-invalid"),
+                "{origin}: {error:#}"
+            );
+        }
+    }
 }
