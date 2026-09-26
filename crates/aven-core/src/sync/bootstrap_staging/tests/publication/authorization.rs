@@ -131,14 +131,6 @@ async fn cancellation_races_serialize_across_independent_pools() {
         }
         _ => panic!("nonterminal cancellation"),
     }
-    let f = Fixture::new().await;
-    let p = f.publication();
-    f.server
-        .cancel_bootstrap_staging(&f.auth(), f.id)
-        .await
-        .unwrap();
-    assert!(f.publish(&p).await.is_err());
-    f.unpublished().await;
 }
 
 /// Cancellation is terminal for the bootstrap ID, whether or not it was
