@@ -534,7 +534,7 @@ fn setup_confirmation_discloses_data_server_and_restrictions() {
     assert!(rendered.contains("3 workspaces"));
     assert!(rendered.contains("142 tasks (including scheduled and recurring)"));
     assert!(rendered.contains("2 images missing on this computer"));
-    assert!(rendered.contains("backup restore or import"));
+    assert!(!rendered.contains("restore"));
     assert!(rendered.contains("previous unencrypted sync server"));
     assert!(rendered.contains(" Back "));
     assert!(rendered.contains(" Set up sync "));

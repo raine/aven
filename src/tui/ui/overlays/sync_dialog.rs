@@ -944,8 +944,7 @@ fn confirm_setup_lines(body: &mut Body, server: &str, preview: &SetupPreview, wi
     }
     lines.push(Line::from(""));
     lines.extend(paragraph(
-        "Other devices will receive this data when they join. After setup, this \
-         database can no longer use backup restore or import.",
+        "Other devices will receive this data when they join.",
         Style::new().fg(FG_MUTED),
         width,
     ));

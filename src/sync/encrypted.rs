@@ -258,10 +258,7 @@ async fn print_setup_preview(database: &Database, config: &AppConfig, server: &s
     if preview.leaves_unencrypted_server {
         eprintln!("  This database stops using its previous unencrypted sync server.");
     }
-    eprintln!(
-        "Every other device starts from this data. Afterwards this database cannot use \
-         backup restore or import."
-    );
+    eprintln!("Every other device starts from this data.");
     Ok(())
 }
 

@@ -150,8 +150,10 @@ pub(crate) fn explain(
     if has("e2ee-installation-fenced") {
         return Some(Explanation {
             code: "e2ee-installation-fenced",
-            message: "This database's encrypted sync state prevents replacing its data.",
-            next_step: "For restore or import, use a new database path instead.",
+            message: "This database takes part in encrypted sync, so restore and import can't \
+                      replace its data without breaking sync with other devices.",
+            next_step: "Restore or import into a new database path instead, for example \
+                        `aven --db <new-path> backup restore <archive> --yes`.",
         });
     }
     if has("sync-not-set-up") {
