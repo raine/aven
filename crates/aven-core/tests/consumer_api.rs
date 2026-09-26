@@ -1992,6 +1992,13 @@ async fn task_detail_is_exact_bounded_and_attachment_aware() {
     .await
     .unwrap();
     let present_sha = "1".repeat(64);
+    let present_object = aven_core::attachments::object_path(
+        &aven_core::attachments::default_blob_dir(&path),
+        &present_sha,
+    )
+    .unwrap();
+    std::fs::create_dir_all(present_object.parent().unwrap()).unwrap();
+    std::fs::write(&present_object, b"data").unwrap();
     let remote_sha = "2".repeat(64);
     for (attachment_id, sha, filename) in [
         ("ATTACHMENT000001", present_sha.as_str(), "present.png"),
@@ -2902,5 +2909,85 @@ async fn detail_status_receipts_preserve_recurrence_routing() {
             .unwrap()
             .status,
         TaskStatus::Done
+    );
+}
+
+#[tokio::test]
+async fn task_detail_reports_deleted_object_file_as_unavailable() {
+    use aven_core::api::{AttachmentAvailability, AttachmentRead};
+    use aven_core::attachments::{default_blob_dir, object_path, sha256_hex};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("images.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap();
+    let database = Database::open(&path).await.unwrap();
+    database
+        .resolve_or_create_project(&workspace.id, "Images")
+        .await
+        .unwrap();
+    let task = store
+        .capture_queue_task(
+            &workspace.id,
+            TaskCapture {
+                title: "Images".into(),
+                description: String::new(),
+                project: Some("images".into()),
+                status: TaskStatus::Inbox,
+                priority: TaskPriority::None,
+                source: TaskSource::Ios,
+                due_on: None,
+                labels: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let bytes = b"stale inventory".to_vec();
+    let sha = sha256_hex(&bytes);
+    let object = object_path(&default_blob_dir(&path), &sha).unwrap();
+    std::fs::create_dir_all(object.parent().unwrap()).unwrap();
+    std::fs::write(&object, &bytes).unwrap();
+    let mut conn = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO task_attachments(workspace_id, attachment_id, task_id, sha256, byte_size, media_type, width, height, created_at, deleted) VALUES (?, 'ATTACHMENT000001', ?, ?, ?, 'image/png', 1, 1, '2026-09-01T10:00:00Z', 0)")
+        .bind(&workspace.id).bind(&task.task_id).bind(&sha).bind(bytes.len() as i64).execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO blob_inventory(sha256, byte_size, media_type, available, first_seen_at) VALUES (?, ?, 'image/png', 1, '2026-09-01T10:00:00Z')")
+        .bind(&sha).bind(bytes.len() as i64).execute(&mut conn).await.unwrap();
+    let attachment = || async {
+        store
+            .task_detail(&workspace.id, &task.task_id)
+            .await
+            .unwrap()
+            .attachments[0]
+            .clone()
+    };
+
+    let present = attachment().await;
+    assert_eq!(present.availability, AttachmentAvailability::Present);
+    assert!(present.has_blob);
+
+    std::fs::remove_file(&object).unwrap();
+    let missing = attachment().await;
+    assert_eq!(missing.availability, AttachmentAvailability::Unavailable);
+    assert!(!missing.has_blob);
+    assert_eq!(missing.attachment_id, present.attachment_id);
+    assert_eq!(missing.byte_size, present.byte_size);
+    let available: i64 = sqlx::query_scalar("SELECT available FROM blob_inventory")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(available, 1);
+    assert_eq!(
+        store
+            .attachment_bytes(&workspace.id, &task.task_id, "ATTACHMENT000001")
+            .await
+            .unwrap(),
+        AttachmentRead::Missing
+    );
+
+    std::fs::write(&object, &bytes).unwrap();
+    assert_eq!(
+        attachment().await.availability,
+        AttachmentAvailability::Present
     );
 }

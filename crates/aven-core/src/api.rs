@@ -235,11 +235,38 @@ impl Store {
             .await
             .map_err(Error::from_internal)?;
         drop(connection);
-        let detail = self
+        let mut detail = self
             .database
             .task_detail(&task)
             .await
             .map_err(Error::from_internal)?;
+        let blob_dir = crate::attachments::default_blob_dir(self.database.path());
+        let present = detail
+            .item
+            .attachments
+            .iter()
+            .enumerate()
+            .filter(|(_, attachment)| {
+                attachment.bytes_state == crate::attachments::AttachmentBytesState::Present
+            })
+            .map(|(index, attachment)| (index, attachment.sha256.clone()))
+            .collect::<Vec<_>>();
+        let missing = crate::attachments::run_blocking(move || {
+            let mut missing = Vec::new();
+            for (index, sha256) in present {
+                if crate::operations::local_object_missing(&blob_dir, &sha256)? {
+                    missing.push(index);
+                }
+            }
+            Ok(missing)
+        })
+        .await
+        .map_err(Error::from_internal)?;
+        for index in missing {
+            let attachment = &mut detail.item.attachments[index];
+            attachment.bytes_state = crate::attachments::AttachmentBytesState::Unavailable;
+            attachment.has_blob = false;
+        }
         TaskDetail::from_detail(detail, workspace)
     }
 
