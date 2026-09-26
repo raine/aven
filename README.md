@@ -56,6 +56,17 @@ popup, or agent-friendly commands, then schedule it to appear when it needs your
 
 Inspired by Taskwarrior. See [aven and Taskwarrior](https://aventasks.dev/taskwarrior/).
 
+## Some kind words from early users
+
+- *"This is by far the best TUI application I've come across in months."* -
+  [Edke on GitHub](https://github.com/raine/aven/issues/5#issuecomment-5048980472)
+- *"I'm having a blast using the TUI, UX is perfect."* -
+  [xe6 on GitHub](https://github.com/raine/aven/pull/19#issuecomment-5455250814)
+- *"It's a genuinely beautiful TUI and a really promising task manager."* -
+  [sudoremo on GitHub](https://github.com/raine/aven/issues/3)
+- *"I use it daily and it has been great."* -
+  [seungjuchoi on GitHub](https://github.com/raine/aven/pull/11)
+
 ## Quick start
 
 Install with the release script:

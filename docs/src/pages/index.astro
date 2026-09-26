@@ -22,6 +22,11 @@ const features = [
   { label: 'SQLITE · OFFLINE', title: 'Local is the default.', description: 'Your tasks live in SQLite, outside your repositories. Work offline. Switch branches. Keep your data.', color: 'green', href: '/backups/' },
   { label: 'SYNC · SELF-HOSTED', title: 'Sync you control', description: 'Works fully offline. Need it on more machines? Run the sync server on a Raspberry Pi and connect over your own network.', color: 'yellow', href: '/sync/' },
 ];
+const testimonials = [
+  { quote: "This is by far the best TUI application I've come across in months.", author: 'Edke', source: 'GitHub', href: 'https://github.com/raine/aven/issues/5#issuecomment-5048980472' },
+  { quote: "I'm having a blast using the TUI, UX is perfect.", author: 'xe6', source: 'GitHub', href: 'https://github.com/raine/aven/pull/19#issuecomment-5455250814' },
+  { quote: "It's a genuinely beautiful TUI and a really promising task manager.", author: 'sudoremo', source: 'GitHub', href: 'https://github.com/raine/aven/issues/3' },
+];
 ---
 
 <!doctype html>
@@ -184,6 +189,21 @@ const features = [
               <p>Aven for iOS shows the same queue, priorities, and project labels, synced through the server you already run.</p>
             </div>
             <img src="/ios-dark.webp" width="1326" height="2742" alt="Aven for iOS showing the synced task queue with priorities and project labels in dark mode." loading="lazy" />
+          </div>
+        </section>
+
+        <section class="section testimonials-section" aria-labelledby="testimonials-heading">
+          <div class="detail-copy">
+            <p class="eyebrow">What people say</p>
+            <h2 id="testimonials-heading">Kind words from early users.</h2>
+          </div>
+          <div class="testimonial-grid">
+            {testimonials.map((testimonial) => (
+              <figure class="testimonial">
+                <blockquote>“{testimonial.quote}”</blockquote>
+                <figcaption><a href={testimonial.href}>{testimonial.author}</a> <span>on {testimonial.source}</span></figcaption>
+              </figure>
+            ))}
           </div>
         </section>
 
