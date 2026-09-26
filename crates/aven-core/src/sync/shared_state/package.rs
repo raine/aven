@@ -13,6 +13,7 @@ use zeroize::{Zeroize, Zeroizing};
 use super::NeverDispatchedLocalSharedCapture;
 use crate::data_safety::export_types::AvenExport;
 use crate::db::{self, Database};
+use crate::sync::codec;
 
 const CHUNK_PLAINTEXT_BYTES: usize = 1_048_576;
 const CHUNK_HEADER_BYTES: usize = 198;
@@ -320,8 +321,8 @@ fn derive_bootstrap_class_key(
     class: u8,
 ) -> Result<Zeroizing<[u8; 32]>> {
     let hkdf = Hkdf::<Sha256>::new(Some(b"aven-e2ee/v1/generation"), key.expose().as_slice());
-    let info = cce(
-        b"aven-e2ee/v1/key/bootstrap-artifact",
+    let info = codec::cce(
+        "aven-e2ee/v1/key/bootstrap-artifact",
         &[
             &context.vault_id,
             &context.generation_id,
@@ -329,7 +330,7 @@ fn derive_bootstrap_class_key(
             &candidate,
             &[class],
         ],
-    )?;
+    );
     let mut output = [0_u8; 32];
     hkdf.expand(&info, &mut output)
         .map_err(|_| anyhow::anyhow!("error encrypted-local-shared-package-key-derivation"))?;
@@ -342,23 +343,14 @@ pub(crate) fn derive_image_key(
     object_id: [u8; 32],
 ) -> Result<Zeroizing<[u8; 32]>> {
     let hkdf = Hkdf::<Sha256>::new(Some(b"aven-e2ee/v1/generation"), key.expose().as_slice());
-    let info = cce(
-        b"aven-e2ee/v1/key/image-object",
+    let info = codec::cce(
+        "aven-e2ee/v1/key/image-object",
         &[&context.vault_id, &context.generation_id, &object_id],
-    )?;
+    );
     let mut output = [0_u8; 32];
     hkdf.expand(&info, &mut output)
         .map_err(|_| anyhow::anyhow!("error encrypted-local-shared-package-key-derivation"))?;
     Ok(Zeroizing::new(output))
-}
-
-fn cce(label: &[u8], fields: &[&[u8]]) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
-    push_bytes(&mut output, label)?;
-    for field in fields {
-        push_bytes(&mut output, field)?;
-    }
-    Ok(output)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -412,10 +404,10 @@ pub(crate) fn encrypt_artifact(
             )
             .map_err(|_| anyhow::anyhow!("error encrypted-local-shared-package-encryption"))?;
         let mut record = Vec::with_capacity(CHUNK_RECORD_OVERHEAD + chunk_plaintext.len());
-        push_bytes(&mut record, &header)?;
-        push_bytes(&mut record, &ciphertext)?;
+        codec::bytes(&mut record, &header);
+        codec::bytes(&mut record, &ciphertext);
         chunks.push(EncryptedChunk {
-            record_commitment: sha256(&record),
+            record_commitment: codec::hash(&record),
             record,
         });
     }
@@ -449,7 +441,7 @@ pub(crate) fn decrypt_artifact(
             && artifact
                 .chunks
                 .iter()
-                .all(|chunk| sha256(&chunk.record) == chunk.record_commitment),
+                .all(|chunk| codec::hash(&chunk.record) == chunk.record_commitment),
         "error encrypted-local-shared-package-aggregate-mismatch"
     );
     let chunk_count = u32::try_from(artifact.chunks.len())?;
@@ -458,7 +450,7 @@ pub(crate) fn decrypt_artifact(
     let mut plaintext = Vec::with_capacity(usize::try_from(artifact.total_plaintext_bytes)?);
     for (index, chunk) in artifact.chunks.iter().enumerate() {
         ensure!(
-            sha256(&chunk.record) == chunk.record_commitment,
+            codec::hash(&chunk.record) == chunk.record_commitment,
             "error encrypted-local-shared-package-record-commitment-mismatch"
         );
         let (header, ciphertext) = split_record(&chunk.record)?;
@@ -530,16 +522,16 @@ pub(crate) fn chunk_header(
     header.push(2);
     header.extend_from_slice(&1_u16.to_be_bytes());
     header.push(1);
-    push_bytes(&mut header, &context.vault_id)?;
-    push_bytes(&mut header, &stream_id)?;
-    push_bytes(&mut header, &context.generation_id)?;
-    push_bytes(&mut header, &artifact_id)?;
+    codec::bytes(&mut header, &context.vault_id);
+    codec::bytes(&mut header, &stream_id);
+    codec::bytes(&mut header, &context.generation_id);
+    codec::bytes(&mut header, &artifact_id);
     header.push(family);
     header.push(class);
     header.extend_from_slice(&index.to_be_bytes());
     header.extend_from_slice(&count.to_be_bytes());
     header.extend_from_slice(&total.to_be_bytes());
-    push_bytes(&mut header, &nonce)?;
+    codec::bytes(&mut header, &nonce);
     ensure!(header.len() == CHUNK_HEADER_BYTES, "invalid chunk header");
     Ok(header)
 }
@@ -612,16 +604,6 @@ fn split_record(record: &[u8]) -> Result<(&[u8], &[u8])> {
         "error encrypted-local-shared-package-record-length"
     );
     Ok((&record[4..body_len_offset], &record[body_start..]))
-}
-
-fn push_bytes(output: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
-    output.extend_from_slice(&u32::try_from(bytes.len())?.to_be_bytes());
-    output.extend_from_slice(bytes);
-    Ok(())
-}
-
-fn sha256(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
 }
 
 fn aggregate_commitment(chunks: &[EncryptedChunk]) -> [u8; 32] {
@@ -858,7 +840,7 @@ async fn persist_package(
         "UPDATE local_shared_capture_journal SET frozen_descriptor_commitment = ?
          WHERE candidate_id = ? AND frozen_descriptor_commitment IS NULL",
     )
-    .bind(sha256(&upload.descriptor).as_slice())
+    .bind(codec::hash(&upload.descriptor).as_slice())
     .bind(&package.candidate_id)
     .execute(&mut *conn)
     .await?;
@@ -899,7 +881,7 @@ pub(super) async fn load_package(
         return Ok(None);
     };
     ensure!(
-        frozen.as_deref() == Some(sha256(&descriptor).as_slice()),
+        frozen.as_deref() == Some(codec::hash(&descriptor).as_slice()),
         "error encrypted-local-shared-package-frozen-descriptor-mismatch"
     );
     let rows: Vec<(String, Vec<u8>, i64, Vec<u8>)> = sqlx::query_as(

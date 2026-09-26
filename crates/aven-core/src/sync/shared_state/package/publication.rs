@@ -459,7 +459,7 @@ fn decrypt_domain_images(
             )
             .map_err(|_| Error::Authentication)?,
         );
-        valid(hex::encode(crypto::sha256(&bytes)) == mapping.sha256)?;
+        valid(hex::encode(crate::sync::codec::hash(&bytes)) == mapping.sha256)?;
         accept_image(&mapping.sha256, bytes);
     }
     Ok((capture, mappings))

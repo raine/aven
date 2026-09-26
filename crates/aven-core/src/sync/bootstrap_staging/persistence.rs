@@ -3,12 +3,12 @@ mod publication;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, ensure};
-use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
 
 use super::*;
 use crate::db::{Database, begin_immediate};
 use crate::sync::bootstrap_format::staging::{ArtifactView, DeclarationView};
+use crate::sync::codec::hash;
 use crate::sync::seed_claim::Genesis;
 
 const CATALOGS: [Component; 3] = [
@@ -48,10 +48,6 @@ impl Candidate {
         );
         Ok(())
     }
-}
-
-fn hash(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
 }
 
 fn now() -> Result<i64> {

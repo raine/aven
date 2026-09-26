@@ -8,10 +8,7 @@ use chacha20poly1305::{
 };
 use zeroize::Zeroizing;
 
-fn bytes(out: &mut Vec<u8>, value: &[u8]) {
-    out.extend((value.len() as u32).to_be_bytes());
-    out.extend(value);
-}
+use crate::sync::codec::bytes;
 struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {

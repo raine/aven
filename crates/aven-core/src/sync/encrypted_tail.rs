@@ -12,7 +12,7 @@ mod server;
 use super::{LocalSharedStatePackageKey, seed_claim::peer};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 pub const RECORD_LIMIT: usize = 135640;
 /// Bodies without a record; also the framing allowance around records.
@@ -184,9 +184,7 @@ pub enum Reply {
     Bootstrap,
     Page(Page),
 }
-pub(crate) fn hash(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
-}
+pub(crate) use crate::sync::codec::hash;
 pub(crate) fn valid(ok: bool) -> Result<()> {
     ensure!(ok, "error encrypted-tail-invalid");
     Ok(())

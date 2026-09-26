@@ -1,35 +1,13 @@
 use anyhow::{Result, ensure};
 use ed25519_dalek::{Signature, VerifyingKey};
-use sha2::{Digest, Sha256};
+
+pub(super) use crate::sync::codec::{bytes, cce, hash};
 
 use super::{CLAIM_BYTES, GENESIS_BYTES, Genesis, LocalSharedStatePackageContext};
 
 pub(super) fn valid(condition: bool) -> Result<()> {
     ensure!(condition, "error seed-claim-invalid");
     Ok(())
-}
-
-pub(super) fn bytes(out: &mut Vec<u8>, value: &[u8]) {
-    // All callers encode bounded fixed-profile fields.
-    out.extend_from_slice(
-        &u32::try_from(value.len())
-            .expect("bounded seed profile")
-            .to_be_bytes(),
-    );
-    out.extend_from_slice(value);
-}
-
-pub(super) fn cce(label: &str, fields: &[&[u8]]) -> Vec<u8> {
-    let mut out = Vec::new();
-    bytes(&mut out, label.as_bytes());
-    for field in fields {
-        bytes(&mut out, field);
-    }
-    out
-}
-
-pub(super) fn hash(value: &[u8]) -> [u8; 32] {
-    Sha256::digest(value).into()
 }
 
 pub(super) struct Reader<'a>(pub &'a [u8]);

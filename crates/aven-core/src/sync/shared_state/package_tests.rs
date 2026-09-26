@@ -742,7 +742,7 @@ fn chunk_authentication_rejects_tampering_truncation_and_reordering() {
 
     let mut tampered = artifact.clone();
     tampered.chunks[0].record[CHUNK_RECORD_OVERHEAD] ^= 1;
-    tampered.chunks[0].record_commitment = sha256(&tampered.chunks[0].record);
+    tampered.chunks[0].record_commitment = crate::sync::codec::hash(&tampered.chunks[0].record);
     tampered.aggregate_commitment = aggregate_commitment(&tampered.chunks);
     assert!(
         decrypt_artifact(
@@ -760,7 +760,7 @@ fn chunk_authentication_rejects_tampering_truncation_and_reordering() {
 
     let mut truncated = artifact.clone();
     truncated.chunks[1].record.pop();
-    truncated.chunks[1].record_commitment = sha256(&truncated.chunks[1].record);
+    truncated.chunks[1].record_commitment = crate::sync::codec::hash(&truncated.chunks[1].record);
     truncated.aggregate_commitment = aggregate_commitment(&truncated.chunks);
     assert!(
         decrypt_artifact(

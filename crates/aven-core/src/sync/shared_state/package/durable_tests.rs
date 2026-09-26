@@ -305,7 +305,11 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(commitment, sha256(frozen.descriptor()), "{name}");
+        assert_eq!(
+            commitment,
+            crate::sync::codec::hash(frozen.descriptor()),
+            "{name}"
+        );
         let pins: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_pins")
             .fetch_one(&mut *conn)
             .await

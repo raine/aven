@@ -120,7 +120,9 @@ impl Artifact {
         class: u8,
     ) -> Result<()> {
         let chunk = self.chunks.get(index).ok_or(Error::Invalid)?;
-        valid(number(record.len())? == chunk.length && crypto::sha256(record) == chunk.hash)?;
+        valid(
+            number(record.len())? == chunk.length && crate::sync::codec::hash(record) == chunk.hash,
+        )?;
         let (header, _) = crypto::split_record(record).map_err(|_| Error::Invalid)?;
         let nonce = crypto::validate_chunk_header(
             header,
@@ -165,8 +167,11 @@ impl Declaration {
         Ok(Self {
             count: number(read_stream(bytes, class)?.len())?,
             length: number(bytes.len())?,
-            hash: crypto::sha256(bytes),
-            slices: bytes.chunks(size(CHUNK)?).map(crypto::sha256).collect(),
+            hash: crate::sync::codec::hash(bytes),
+            slices: bytes
+                .chunks(size(CHUNK)?)
+                .map(crate::sync::codec::hash)
+                .collect(),
         })
     }
     pub fn write(&self, out: &mut Vec<u8>) {
@@ -203,12 +208,12 @@ impl Declaration {
     pub fn verify_slice(&self, index: usize, bytes: &[u8]) -> Result<()> {
         valid(
             self.slice_lengths().get(index) == Some(&number(bytes.len())?)
-                && self.slices.get(index) == Some(&crypto::sha256(bytes)),
+                && self.slices.get(index) == Some(&crate::sync::codec::hash(bytes)),
         )
     }
     /// Checks the complete catalog: slices, aggregate, length, framing and count.
     pub fn verify(&self, bytes: &[u8], class: u8) -> Result<()> {
-        valid(number(bytes.len())? == self.length && crypto::sha256(bytes) == self.hash)?;
+        valid(number(bytes.len())? == self.length && crate::sync::codec::hash(bytes) == self.hash)?;
         valid(Self::new(bytes, class)? == *self)
     }
 }

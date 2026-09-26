@@ -654,7 +654,7 @@ async fn keyless_checks_header_context_even_with_recommitted_records() {
     let (_, _, _, _, mut package) = specimen().await;
     package.state[0][52] ^= 1;
     let mut state = decode_state_catalog(&package.catalogs[0]).unwrap();
-    state.chunks[0].hash = crypto::sha256(&package.state[0]);
+    state.chunks[0].hash = crate::sync::codec::hash(&package.state[0]);
     use sha2::Digest;
     let mut digest = sha2::Sha256::new();
     for record in &package.state {
