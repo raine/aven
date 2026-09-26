@@ -3,7 +3,7 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.43 (2026-09-26)
 
 - Fix: Moving tasks or recurring schedules to a project now requires that project to exist in the selected workspace, preventing accidental duplicate projects. ([#29](https://github.com/raine/aven/issues/29))
 
