@@ -662,3 +662,24 @@ async fn sync_automatically_without_a_service_manager_points_to_the_daemon() {
     let message = toast_message(&app).unwrap();
     assert!(message.contains("`aven daemon`"), "{message}");
 }
+
+#[tokio::test]
+async fn sync_automatically_asks_before_changing_anything() {
+    let (mut app, _dir) = set_up_app_offering_automatic_sync().await;
+
+    // Choosing the action only opens the confirmation; the real target
+    // would panic under test if anything were written or installed.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(
+        sync_page(&app),
+        crate::tui::overlay::SyncPage::ConfirmAutomaticSync {
+            service: crate::tui::overlay::AutomaticSyncService::OtherDatabase(_)
+        }
+    ));
+    assert!(!app.intake.config().sync.enabled);
+
+    // Focus starts on Back.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
+    assert!(!app.intake.config().sync.enabled);
+}

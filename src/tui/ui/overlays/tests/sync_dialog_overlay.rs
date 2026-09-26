@@ -1,6 +1,6 @@
 use super::*;
 use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
-use crate::tui::overlay::{InvitationKind, SecretText, SyncPage};
+use crate::tui::overlay::{AutomaticSyncService, InvitationKind, SecretText, SyncPage};
 use crate::tui::sync_operations::{
     DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
 };
@@ -1170,4 +1170,36 @@ fn no_sync_page_renders_its_title_inside_the_box() {
             None => assert!(!border.contains('›'), "{border}"),
         }
     }
+}
+
+#[test]
+fn automatic_sync_confirmation_explains_each_outcome() {
+    let page = |service| {
+        let state = borrow_value(SyncDialogState::page(SyncPage::ConfirmAutomaticSync {
+            service,
+        }));
+        let status = TuiSyncStatus {
+            enabled: false,
+            ..sync_status()
+        };
+        render_overlay_view(OverlayView::Sync(Box::new(sync_view(state, status))))
+    };
+
+    let install = page(AutomaticSyncService::Install);
+    assert!(install.contains("Sync automatically"), "{install}");
+    assert!(install.contains("installs"), "{install}");
+    assert!(install.contains("60 seconds"), "{install}");
+    assert!(install.contains("aven daemon uninstall"), "{install}");
+    assert!(install.contains("Back"), "{install}");
+    assert!(install.contains("Turn on"), "{install}");
+
+    let other = page(AutomaticSyncService::OtherDatabase(
+        "/tmp/other.sqlite".into(),
+    ));
+    assert!(other.contains("nothing"), "{other}");
+    assert!(other.contains("/tmp/other.sqlite"), "{other}");
+
+    let unsupported = page(AutomaticSyncService::Unsupported);
+    assert!(unsupported.contains("nothing"), "{unsupported}");
+    assert!(unsupported.contains("aven daemon"), "{unsupported}");
 }

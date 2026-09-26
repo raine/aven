@@ -5,8 +5,9 @@ use ratatui::layout::Size;
 use crate::sync::encrypted::{self, InvitationCheck, LocalPhase};
 use crate::tui::app::App;
 use crate::tui::overlay::{
-    InvitationKind, OverlayState, SecretText, SyncAction, SyncDialogOutcome, SyncDialogState,
-    SyncDialogView, SyncPage, handle_sync_dialog_key, paste_into_sync_dialog, sync_actions,
+    AutomaticSyncService, InvitationKind, OverlayState, SecretText, SyncAction, SyncDialogOutcome,
+    SyncDialogState, SyncDialogView, SyncPage, handle_sync_dialog_key, paste_into_sync_dialog,
+    sync_actions,
 };
 use crate::tui::sync_operations::{OperationEvent, OperationKind, OperationResult};
 
@@ -109,6 +110,13 @@ impl App {
                 state
             }
             SyncAction::SyncAutomatically => {
+                let service = automatic_sync_service(
+                    user_service_db(self.intake.config()).as_deref(),
+                    self.store.database_path(),
+                );
+                SyncDialogState::page(SyncPage::ConfirmAutomaticSync { service })
+            }
+            SyncAction::ConfirmAutomaticSync => {
                 Box::pin(self.turn_on_automatic_sync()).await?;
                 home
             }
@@ -230,16 +238,21 @@ impl App {
         self.store.refresh_sync_status().await?;
 
         let db_path = self.store.database_path().to_path_buf();
-        let Some(service_db) = target.service_db else {
-            self.set_warning("automatic sync is on; run `aven daemon` to sync in the background");
-            return Ok(());
-        };
-        if !same_path(&service_db, &db_path) {
-            self.set_warning(format!(
-                "automatic sync is on; run `aven --db {} daemon install` to sync this database",
-                db_path.display()
-            ));
-            return Ok(());
+        match automatic_sync_service(target.service_db.as_deref(), &db_path) {
+            AutomaticSyncService::Install => {}
+            AutomaticSyncService::OtherDatabase(path) => {
+                self.set_warning(format!(
+                    "automatic sync is on; run `aven --db {} daemon install` to sync this database",
+                    path.display()
+                ));
+                return Ok(());
+            }
+            AutomaticSyncService::Unsupported => {
+                self.set_warning(
+                    "automatic sync is on; run `aven daemon` to sync in the background",
+                );
+                return Ok(());
+            }
         }
         let install = target.install;
         let installed = tokio::task::spawn_blocking(move || {
@@ -489,9 +502,7 @@ impl AutomaticSyncTarget {
     fn for_user(config: &crate::config::AppConfig) -> Result<Self> {
         Ok(Self {
             config_path: crate::config::config_file_path()?,
-            service_db: cfg!(any(target_os = "macos", target_os = "linux"))
-                .then(|| crate::config::resolve_db_path(None, config).ok())
-                .flatten(),
+            service_db: user_service_db(config),
             install: crate::daemon::install,
         })
     }
@@ -500,6 +511,26 @@ impl AutomaticSyncTarget {
     #[cfg(test)]
     fn for_user(_config: &crate::config::AppConfig) -> Result<Self> {
         panic!("tests call turn_on_automatic_sync_at with a temporary target");
+    }
+}
+
+/// The database `aven daemon install` would serve, where a service can be
+/// installed.
+fn user_service_db(config: &crate::config::AppConfig) -> Option<std::path::PathBuf> {
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return None;
+    }
+    crate::config::resolve_db_path(None, config).ok()
+}
+
+fn automatic_sync_service(
+    service_db: Option<&std::path::Path>,
+    db_path: &std::path::Path,
+) -> AutomaticSyncService {
+    match service_db {
+        None => AutomaticSyncService::Unsupported,
+        Some(service_db) if same_path(service_db, db_path) => AutomaticSyncService::Install,
+        Some(_) => AutomaticSyncService::OtherDatabase(db_path.to_path_buf()),
     }
 }
 

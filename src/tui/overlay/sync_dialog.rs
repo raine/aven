@@ -65,6 +65,20 @@ pub(crate) enum SyncPage {
     ConfirmRemove {
         device: [u8; 32],
     },
+    ConfirmAutomaticSync {
+        service: AutomaticSyncService,
+    },
+}
+
+/// What turning on automatic sync does besides enabling the setting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AutomaticSyncService {
+    /// Installs the background service for this database.
+    Install,
+    /// The service would serve another database, so none is installed.
+    OtherDatabase(std::path::PathBuf),
+    /// No supported service manager exists on this platform.
+    Unsupported,
 }
 
 impl SyncPage {
@@ -73,9 +87,11 @@ impl SyncPage {
     fn default_focus(&self) -> usize {
         match self {
             Self::Invitation { .. } | Self::ConfirmJoin { .. } => 1,
-            Self::Home | Self::ConfirmSetup { .. } | Self::Devices | Self::ConfirmRemove { .. } => {
-                0
-            }
+            Self::Home
+            | Self::ConfirmSetup { .. }
+            | Self::Devices
+            | Self::ConfirmRemove { .. }
+            | Self::ConfirmAutomaticSync { .. } => 0,
         }
     }
 
@@ -150,6 +166,7 @@ pub(crate) enum SyncAction {
     Continue,
     ConfirmSetup,
     ConfirmJoin,
+    ConfirmAutomaticSync,
     ManageDevices,
     /// A device row on the device page, by listing index.
     Device(usize),
@@ -177,6 +194,7 @@ impl SyncAction {
             Self::Continue => "Continue",
             Self::ConfirmSetup => "Set up sync",
             Self::ConfirmJoin => "Join",
+            Self::ConfirmAutomaticSync => "Turn on",
             Self::ManageDevices => "Manage devices",
             Self::Device(_) => "Device",
             Self::RefreshDevices => "Refresh",
@@ -243,6 +261,9 @@ pub(crate) fn sync_actions(
         SyncPage::ConfirmJoin { .. } => vec![SyncAction::Back, SyncAction::ConfirmJoin],
         SyncPage::Devices => device_actions(activity),
         SyncPage::ConfirmRemove { .. } => vec![SyncAction::Cancel, SyncAction::ConfirmRemove],
+        SyncPage::ConfirmAutomaticSync { .. } => {
+            vec![SyncAction::Back, SyncAction::ConfirmAutomaticSync]
+        }
     }
 }
 
@@ -325,7 +346,8 @@ pub(crate) fn handle_sync_dialog_key(
         SyncPage::Devices => handle_devices_key(state, key, actions),
         SyncPage::ConfirmSetup { .. }
         | SyncPage::ConfirmJoin { .. }
-        | SyncPage::ConfirmRemove { .. } => handle_buttons_key(state, key, actions),
+        | SyncPage::ConfirmRemove { .. }
+        | SyncPage::ConfirmAutomaticSync { .. } => handle_buttons_key(state, key, actions),
     }
 }
 

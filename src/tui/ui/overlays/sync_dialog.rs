@@ -16,7 +16,8 @@ use super::super::sync_status_model::{SyncHealth, sync_status_summary};
 use crate::sync::encrypted::Removal;
 use crate::sync::encrypted::{InvitationCheck, LocalPhase, SetupPreview, Stage};
 use crate::tui::overlay::{
-    InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage, dialog_area, sync_actions,
+    AutomaticSyncService, InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage,
+    dialog_area, sync_actions,
 };
 use crate::tui::store::TuiSyncStatus;
 use crate::tui::sync_errors::JOIN_TIMEOUT_EXPIRED;
@@ -216,6 +217,7 @@ fn page_title(view: &SyncDialogView<'_>) -> Option<&'static str> {
         SyncPage::Invitation { .. } | SyncPage::ConfirmJoin { .. } => "Join existing sync",
         SyncPage::Devices => "Manage devices",
         SyncPage::ConfirmRemove { .. } => "Remove device",
+        SyncPage::ConfirmAutomaticSync { .. } => "Sync automatically",
     })
 }
 
@@ -237,6 +239,9 @@ fn body(view: &SyncDialogView<'_>, width: usize) -> Body {
         } => confirm_join_lines(&mut body, server, *replace, width),
         SyncPage::ConfirmRemove { device } => {
             confirm_remove_lines(&mut body, view.activity, device, width)
+        }
+        SyncPage::ConfirmAutomaticSync { service } => {
+            confirm_automatic_sync_lines(&mut body, service, view.status.interval_seconds, width)
         }
         SyncPage::Devices => {
             devices_lines(&mut body, view, width);
@@ -1059,6 +1064,74 @@ fn confirm_join_lines(body: &mut Body, server: &str, replace: bool, width: usize
     ));
 }
 
+fn confirm_automatic_sync_lines(
+    body: &mut Body,
+    service: &AutomaticSyncService,
+    interval_seconds: u64,
+    width: usize,
+) {
+    let lines = &mut body.lines;
+    let muted = Style::new().fg(FG_MUTED);
+    match service {
+        AutomaticSyncService::Install => {
+            let service_kind = if cfg!(target_os = "linux") {
+                "a systemd user service, aven-daemon.service"
+            } else {
+                "a LaunchAgent in ~/Library/LaunchAgents"
+            };
+            lines.extend(paragraph(
+                &format!(
+                    "This turns on sync.enabled in your config and installs {service_kind}. \
+                     It starts when you log in and syncs this database after each change \
+                     and every {interval_seconds} seconds."
+                ),
+                Style::new().fg(FG),
+                width,
+            ));
+            lines.push(Line::from(""));
+            lines.extend(paragraph(
+                "To undo it, run `aven daemon uninstall` and \
+                 `aven config set sync.enabled false`.",
+                muted,
+                width,
+            ));
+        }
+        AutomaticSyncService::OtherDatabase(path) => {
+            lines.extend(paragraph(
+                "This turns on sync.enabled in your config. It installs nothing, because \
+                 the background service syncs your default database and this is another \
+                 one.",
+                Style::new().fg(FG),
+                width,
+            ));
+            lines.push(Line::from(""));
+            lines.extend(paragraph(
+                &format!(
+                    "To sync this database in the background instead, run \
+                     `aven --db {} daemon install`.",
+                    path.display()
+                ),
+                muted,
+                width,
+            ));
+        }
+        AutomaticSyncService::Unsupported => {
+            lines.extend(paragraph(
+                "This turns on sync.enabled in your config. It installs nothing, because \
+                 background services aren't supported on this platform.",
+                Style::new().fg(FG),
+                width,
+            ));
+            lines.push(Line::from(""));
+            lines.extend(paragraph(
+                "Keep `aven daemon` running to sync in the background.",
+                muted,
+                width,
+            ));
+        }
+    }
+}
+
 fn plural(count: u64, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
@@ -1280,7 +1353,8 @@ fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
         }
         SyncPage::ConfirmSetup { .. }
         | SyncPage::ConfirmJoin { .. }
-        | SyncPage::ConfirmRemove { .. } => {
+        | SyncPage::ConfirmRemove { .. }
+        | SyncPage::ConfirmAutomaticSync { .. } => {
             hints.push(("←→", "select"));
             hints.push(("Enter", "choose"));
             hints.push(("Esc", "back"));
