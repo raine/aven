@@ -102,6 +102,11 @@ impl Client {
                     Some("membership-stale") => {
                         crate::sync::seed_claim::membership::StaleContext.into()
                     }
+                    // The server authenticated the credential but refused
+                    // this device, as enrollment does for a removed device.
+                    Some("encrypted-tail-unauthorized") => {
+                        crate::sync::seed_claim::membership::Unauthorized.into()
+                    }
                     Some("encrypted-tail-prefix-identity-collision") => {
                         tail::PrefixIdentityCollision.into()
                     }

@@ -581,6 +581,16 @@ mod tests {
     }
 
     #[test]
+    fn tail_access_refusal_explains_possible_removal() {
+        let error = anyhow::Error::from(aven_core::sync::seed_claim::membership::Unauthorized)
+            .context("error sync-server-refused hint=\"raw\"");
+        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(explanation.code, "sync-server-refused");
+        assert!(explanation.combined().contains("may have been removed"));
+        assert!(explanation.combined().contains("another device"));
+    }
+
+    #[test]
     fn disabled_sync_names_its_cause() {
         let mut config = crate::config::AppConfig::default();
         config.sync.disable_override = true;

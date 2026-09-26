@@ -1748,6 +1748,59 @@ async fn client_retries_busy_but_not_dispatch_timeout() {
 }
 
 #[tokio::test]
+async fn client_reads_only_an_unauthorized_refusal_as_access_refusal() {
+    use aven_core::sync::client::errors::{code, is_access_refusal};
+
+    for (status, refusal, expected, refused) in [
+        (
+            StatusCode::FORBIDDEN,
+            "encrypted-tail-unauthorized",
+            "enrollment-unauthorized",
+            true,
+        ),
+        (
+            StatusCode::UNAUTHORIZED,
+            "encrypted-tail-credential",
+            "encrypted-tail-refused",
+            false,
+        ),
+    ] {
+        let app = Router::new().route(
+            PATH,
+            post(move || async move { crate::http_admission::refusal(status, refusal) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = Client::new(&origin)
+            .unwrap()
+            .exchange(
+                &Context {
+                    vault: [0; 32],
+                    genesis: [0; 32],
+                    device: [0; 32],
+                    head: [0; 32],
+                    stream: [0; 32],
+                    descriptor: [0; 32],
+                },
+                &Secret::new([0; 32]),
+                Operation::Pull {
+                    after: 0,
+                    limit: 1,
+                    watermark: None,
+                },
+            )
+            .await;
+        let Err(error) = result else {
+            panic!("{refusal} was accepted")
+        };
+        assert_eq!(code(&error).as_deref(), Some(expected), "{refusal}");
+        assert_eq!(is_access_refusal(&error), refused, "{refusal}");
+        task.abort();
+    }
+}
+
+#[tokio::test]
 async fn concurrent_clients_exceeding_tail_permits_complete_drains() {
     let f = fixture().await;
     converge(&f).await;
