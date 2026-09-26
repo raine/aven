@@ -507,7 +507,7 @@ impl Client {
         store.install_peer_snapshot(db, self, &self.locator).await
     }
 
-    pub(crate) async fn download(
+    async fn download_snapshot(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
@@ -918,6 +918,21 @@ impl Client {
         let evidence = self.membership(&context, peer.bearer()).await?;
         store.finish_peer(db, mail, &evidence).await?;
         Ok(true)
+    }
+}
+impl crate::protected_local_keys::peer::SnapshotDownload for Client {
+    fn download(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        identity: [u8; 32],
+        peer: &membership::Joiner,
+        verified: &membership::VerifiedEnrollment,
+        descriptor: &[u8],
+    ) -> impl std::future::Future<
+        Output = Result<aven_core::sync::bootstrap_format::download::Metadata>,
+    > + Send {
+        self.download_snapshot(store, db, identity, peer, verified, descriptor)
     }
 }
 fn busy_retry_delay(attempt: usize, retry_after: u64) -> std::time::Duration {

@@ -1,9 +1,9 @@
 //! Bounded append-only removal intents and exact management dispatch ownership.
 use super::{membership::EvidenceRef, peer::ActiveInputs, *};
-use anyhow::{Context, Result, ensure};
-use aven_core::sync::seed_claim::membership::{
+use crate::sync::seed_claim::membership::{
     Evidence, MAX_CANDIDATES, MAX_RECORD_BYTES, MAX_TRANSITIONS, RotationMaterial,
 };
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 type Hash = [u8; 32];
 const INTENT_BYTES: usize = 1024;
@@ -13,7 +13,7 @@ const MATERIAL_BYTES: usize = 256;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Intent {
+pub struct Intent {
     index: usize,
     target: Option<Hash>,
     /// Outbound invitation handle whose possibly sent grant this freeze and
@@ -39,7 +39,7 @@ impl Intent {
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum Action {
+pub enum Action {
     Revoke,
     Rotate,
 }
@@ -50,7 +50,7 @@ struct Plan {
     action: Action,
     cutoff: u64,
 }
-pub(crate) struct Dispatch {
+pub struct Dispatch {
     pub record: Vec<u8>,
     pub evidence: Evidence,
     pub action: Action,
@@ -212,7 +212,7 @@ impl ProtectedLocalKeyStore {
     }
     /// `target` requests removal, `withdraw` an invitation withdrawal, and
     /// neither resumes unfinished work or finishes a pending rotation.
-    pub(crate) async fn management_intent(
+    pub async fn management_intent(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -302,7 +302,7 @@ impl ProtectedLocalKeyStore {
         .await?;
         Ok(Some(intent))
     }
-    pub(crate) async fn management_dispatch(
+    pub async fn management_dispatch(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -413,7 +413,7 @@ impl ProtectedLocalKeyStore {
         let mut evidence = self.load_evidence(&plan.before)?;
         evidence
             .transitions
-            .push(aven_core::sync::seed_claim::membership::EvidenceRecord {
+            .push(crate::sync::seed_claim::membership::EvidenceRecord {
                 declaration: vec![],
                 request: vec![],
                 record: record.clone(),

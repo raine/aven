@@ -1,10 +1,10 @@
 //! Append-only protected floors bind separately stored public chain evidence.
 use super::*;
-use anyhow::{Context, Result, ensure};
-use aven_core::sync::seed_claim::membership::{
+use crate::sync::seed_claim::membership::{
     Device, Evidence, MAX_COVERAGE_BYTES, MAX_EVIDENCE_JSON_BYTES, MAX_TRANSITIONS, Membership,
     VerifiedKeys,
 };
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 type Hash = [u8; 32];
 pub(super) const FLOOR_LIMIT: usize = 1024;
@@ -53,11 +53,9 @@ impl ProtectedLocalKeyStore {
         if let Some(Some(known)) = known {
             return known;
         }
-        let marker_path = self
-            .directory
-            .join(format!("{}.{}-authority", self.account, kind));
-        let marker = read_restricted_file(&marker_path, 32)?;
-        let Some(frame) = self.adoption_backend(kind).load_bounded(limit)? else {
+        let marker_name = format!("{kind}-authority");
+        let marker = self.read_record(&marker_name, 32)?;
+        let Some(frame) = self.load_secret(kind, limit)? else {
             ensure!(
                 !required && marker.is_none(),
                 "error enrollment-protected-missing"
@@ -84,7 +82,7 @@ impl ProtectedLocalKeyStore {
             "error enrollment-protected-corrupt"
         );
         if marker.is_none() {
-            write_restricted_new(&marker_path, &digest)?;
+            self.write_record(&marker_name, &digest)?;
         }
         let value = Zeroizing::new(frame[44..44 + len].to_vec());
         self.with_index(|index| {
@@ -113,7 +111,7 @@ impl ProtectedLocalKeyStore {
         frame[8..40].copy_from_slice(&hex::decode(&self.account)?);
         frame[40..44].copy_from_slice(&(bytes.len() as u32).to_be_bytes());
         frame[44..44 + bytes.len()].copy_from_slice(bytes);
-        self.adoption_backend(kind).create(&frame)?;
+        self.create_secret(kind, &frame)?;
         self.with_index(|index| {
             if let Some(listing) = &mut index.listing {
                 listing.items.insert(kind.to_string());
@@ -126,7 +124,7 @@ impl ProtectedLocalKeyStore {
                 == Some(bytes),
             "error enrollment-protected-write"
         );
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if let Ok(requested) = std::env::var("AVEN_PEER_CRASH_KIND") {
             let matches = requested == kind
                 || (kind.starts_with("invite-")
@@ -143,12 +141,8 @@ impl ProtectedLocalKeyStore {
         }
         Ok(())
     }
-    fn evidence_path(&self, digest: &Hash) -> PathBuf {
-        self.directory.join(format!(
-            "{}.membership-evidence-{}",
-            self.account,
-            hex::encode(digest)
-        ))
+    fn evidence_record(digest: &Hash) -> String {
+        format!("membership-evidence-{}", hex::encode(digest))
     }
     pub(super) fn save_evidence(&self, evidence: &Evidence) -> Result<EvidenceRef> {
         evidence.verify()?;
@@ -161,14 +155,14 @@ impl ProtectedLocalKeyStore {
             digest: Sha256::digest(&bytes).into(),
             length: bytes.len(),
         };
-        let path = self.evidence_path(&reference.digest);
-        if let Some(saved) = read_restricted_file(&path, bytes.len())? {
+        let name = Self::evidence_record(&reference.digest);
+        if let Some(saved) = self.read_record(&name, bytes.len())? {
             ensure!(saved == bytes, "error membership-evidence-corrupt");
         } else {
-            write_restricted_new(&path, &bytes)?;
+            self.write_record(&name, &bytes)?;
         }
         self.load_evidence(&reference)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if std::env::var("AVEN_PEER_CRASH_KIND").as_deref() == Ok("membership-evidence") {
             std::process::exit(79);
         }
@@ -179,7 +173,8 @@ impl ProtectedLocalKeyStore {
             reference.length <= MAX_EVIDENCE_JSON_BYTES,
             "error membership-limit"
         );
-        let bytes = read_restricted_file(&self.evidence_path(&reference.digest), reference.length)?
+        let bytes = self
+            .read_record(&Self::evidence_record(&reference.digest), reference.length)?
             .context("error membership-evidence-missing")?;
         ensure!(
             Sha256::digest(&bytes).as_slice() == reference.digest,

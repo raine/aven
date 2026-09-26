@@ -1,18 +1,16 @@
-use super::super::tests::{account_store, captured_database, isolated_store, raw_account};
+use super::super::test_support::{Fault, account_store, faulty_store, isolated_store, raw_account};
+use super::super::tests::captured_database;
 use super::*;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::PathBuf;
 
 fn seed_path(store: &ProtectedLocalKeyStore) -> PathBuf {
-    let Backend::File(file) = store.seed_backend() else {
-        panic!("isolated file backend required")
-    };
-    file.path
+    store.file_path(SEED_ITEM)
 }
 
 fn package_path(store: &ProtectedLocalKeyStore) -> PathBuf {
-    let Backend::File(file) = &store.backend else {
-        panic!("isolated file backend required")
-    };
-    file.path.clone()
+    store.file_path(KEYRING_ITEM)
 }
 
 #[tokio::test]
@@ -55,7 +53,7 @@ async fn seed_reopens_reuses_authority_and_repairs_absent_database_pin() {
     drop(db);
     let db = Database::open(&path).await.unwrap();
     {
-        let mut conn = aven_core::test_support::acquire(&db).await.unwrap();
+        let mut conn = crate::test_support::acquire(&db).await.unwrap();
         sqlx::query("DELETE FROM local_seed_genesis_pin")
             .execute(&mut *conn)
             .await
@@ -85,7 +83,7 @@ async fn missing_seed_or_package_authority_never_regenerates() {
         store.prepare_seed_source(&db).await.unwrap();
         fs::remove_file(seed_path(&store)).unwrap();
         if remove_marker {
-            fs::remove_file(store.seed_marker_path()).unwrap();
+            fs::remove_file(store.file_path(SEED_MARKER_RECORD)).unwrap();
         }
         assert!(store.prepare_seed_claim(&db, [9; 32]).await.is_err());
         assert!(!seed_path(&store).exists());
@@ -115,7 +113,7 @@ async fn rollback_interrupted_after_key_deletion_recovers_on_next_setup() {
         // database step failed, leaving the pin.
         fs::remove_file(seed_path(&store)).unwrap();
         if remove_marker {
-            fs::remove_file(store.seed_marker_path()).unwrap();
+            fs::remove_file(store.file_path(SEED_MARKER_RECORD)).unwrap();
         }
         assert_eq!(
             Some(seed.genesis().commitment()),
@@ -142,18 +140,17 @@ async fn orphan_seed_repairs_marker_and_db_pin_without_replacement() {
     let package = store.load_or_create().unwrap();
     let seed = SeedAuthority::generate(package.context(), package.package_key(), [9; 32]).unwrap();
     store
-        .seed_backend()
-        .create(&store.encode_seed(&seed).unwrap())
+        .create_secret(SEED_ITEM, &store.encode_seed(&seed).unwrap())
         .unwrap();
-    assert!(!store.seed_marker_path().exists());
+    assert!(!store.file_path(SEED_MARKER_RECORD).exists());
     assert!(db.local_seed_genesis_commitment().await.unwrap().is_none());
     let retry = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     assert_eq!(
         seed.protected_storage_bytes(),
         retry.protected_storage_bytes()
     );
-    assert!(store.seed_marker_path().exists());
-    fs::remove_file(store.seed_marker_path()).unwrap();
+    assert!(store.file_path(SEED_MARKER_RECORD).exists());
+    fs::remove_file(store.file_path(SEED_MARKER_RECORD)).unwrap();
     assert_eq!(
         seed.protected_storage_bytes(),
         store
@@ -174,22 +171,21 @@ async fn marker_and_database_write_failures_resume_saved_seed() {
     let package = store.load_or_create().unwrap();
     let seed = SeedAuthority::generate(package.context(), package.package_key(), [9; 32]).unwrap();
     store
-        .seed_backend()
-        .create(&store.encode_seed(&seed).unwrap())
+        .create_secret(SEED_ITEM, &store.encode_seed(&seed).unwrap())
         .unwrap();
-    fs::create_dir(store.seed_marker_path()).unwrap();
+    fs::create_dir(store.file_path(SEED_MARKER_RECORD)).unwrap();
     assert!(store.prepare_seed_claim(&db, [9; 32]).await.is_err());
-    fs::remove_dir(store.seed_marker_path()).unwrap();
+    fs::remove_dir(store.file_path(SEED_MARKER_RECORD)).unwrap();
     {
-        let mut conn = aven_core::test_support::acquire(&db).await.unwrap();
+        let mut conn = crate::test_support::acquire(&db).await.unwrap();
         sqlx::query("CREATE TRIGGER fail_pin AFTER INSERT ON local_seed_genesis_pin BEGIN SELECT RAISE(ABORT, 'injected pin failure'); END")
             .execute(&mut *conn).await.unwrap();
     }
     assert!(store.prepare_seed_claim(&db, [9; 32]).await.is_err());
     assert!(db.local_seed_genesis_commitment().await.unwrap().is_none());
-    assert!(store.seed_marker_path().exists());
+    assert!(store.file_path(SEED_MARKER_RECORD).exists());
     {
-        let mut conn = aven_core::test_support::acquire(&db).await.unwrap();
+        let mut conn = crate::test_support::acquire(&db).await.unwrap();
         sqlx::query("DROP TRIGGER fail_pin")
             .execute(&mut *conn)
             .await
@@ -216,14 +212,14 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
         .unwrap();
     let store = isolated_store(&db, &root.path().join("keys")).await;
     assert!(store.prepare_seed_claim(&other, [9; 32]).await.is_err());
-    assert!(!store.directory.exists());
+    assert!(!store.directory().exists());
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     let mut raw = store.encode_seed(&seed).unwrap();
     raw[0] ^= 1;
     fs::write(seed_path(&store), &raw).unwrap();
     assert!(store.prepare_seed_claim(&db, [9; 32]).await.is_err());
     assert_eq!(raw.as_slice(), fs::read(seed_path(&store)).unwrap());
-    let other_store = isolated_store(&other, &store.directory).await;
+    let other_store = isolated_store(&other, store.directory()).await;
     assert!(
         other_store
             .decode_seed(
@@ -232,21 +228,17 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
             )
             .is_err()
     );
-    let unavailable = ProtectedLocalKeyStore {
-        account: store.account.clone(),
-        directory: store.directory.clone(),
-        backend: Backend::Unavailable,
-        index: Arc::default(),
-        enrollment_clock: None,
-    };
+    let unavailable = faulty_store(
+        store.account().to_string(),
+        store.directory(),
+        Fault::Unavailable,
+    );
     assert!(unavailable.prepare_seed_claim(&db, [9; 32]).await.is_err());
-    let failed = ProtectedLocalKeyStore {
-        account: store.account.clone(),
-        directory: store.directory.clone(),
-        backend: Backend::FailWrite,
-        index: Arc::default(),
-        enrollment_clock: None,
-    };
+    let failed = faulty_store(
+        store.account().to_string(),
+        store.directory(),
+        Fault::FailWrite,
+    );
     assert!(
         failed
             .load_or_create_seed(&store.load_required().unwrap(), [9; 32], None)
@@ -361,7 +353,7 @@ async fn seed_survives_process_exit_but_not_same_path_database_replacement() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "protected_local_keys::seed::tests::seed_exit_worker",
+                "sync::client::keys::seed::tests::seed_exit_worker",
                 "--ignored",
             ])
             .env("AVEN_SEED_AUTHORITY_TEST_ROOT", root.path())
@@ -396,10 +388,10 @@ async fn seed_survives_process_exit_but_not_same_path_database_replacement() {
         let recorded = fs::read(root.path().join("public-genesis")).unwrap();
         if replace_database {
             // A new database owns a new namespace; the old one stays intact.
-            assert_ne!(store.account, original.account);
+            assert_ne!(store.account(), original.account());
             assert_ne!(seed.genesis().record().as_slice(), recorded);
         } else {
-            assert_eq!(store.account, original.account);
+            assert_eq!(store.account(), original.account());
             assert_eq!(seed.genesis().record().as_slice(), recorded);
         }
         assert_eq!(before, fs::read(package_path(&original)).unwrap());
@@ -428,13 +420,11 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
     File::create(&path).unwrap();
     let store = account_store(raw_account(&path), &root.path().join("keys"));
     let package = store.load_or_create().unwrap();
-    let failed = ProtectedLocalKeyStore {
-        account: store.account.clone(),
-        directory: root.path().join("failed"),
-        backend: Backend::FailWrite,
-        index: Arc::default(),
-        enrollment_clock: None,
-    };
+    let failed = faulty_store(
+        store.account().to_string(),
+        &root.path().join("failed"),
+        Fault::FailWrite,
+    );
     assert_eq!(
         failed
             .load_or_create_seed(&package, [9; 32], None)
@@ -442,7 +432,7 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
             .kind(),
         ProtectedLocalKeyStoreErrorKind::WriteFailed
     );
-    assert!(!failed.seed_marker_path().exists());
+    assert!(!failed.file_path(SEED_MARKER_RECORD).exists());
     let seed = store.load_or_create_seed(&package, [9; 32], None).unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(seed_path(&store), fs::Permissions::from_mode(0o644)).unwrap();
@@ -470,51 +460,9 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
     assert!(!package_path(&store).exists());
 }
 
-#[cfg(target_os = "macos")]
-#[tokio::test]
-#[ignore = "uses two unique test-only macOS Keychain items and temporary markers"]
-async fn isolated_seed_keychain_reopen() {
-    struct Cleanup(ProtectedLocalKeyStore);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            if let Backend::Keychain(backend) = &self.0.backend {
-                let _ = backend.delete();
-            }
-            if let Backend::Keychain(backend) = self.0.seed_backend() {
-                let _ = backend.delete();
-            }
-        }
-    }
-    let root = tempfile::tempdir().unwrap();
-    let db = Database::open(&root.path().join("db.sqlite"))
-        .await
-        .unwrap();
-    let account = database_account(&db).await.unwrap();
-    let cleanup = Cleanup(ProtectedLocalKeyStore {
-        backend: Backend::Keychain(KeychainBackend {
-            service: format!("fi.zendit.Aven.tests.seed.{account}"),
-            account: account.clone(),
-        }),
-        account,
-        directory: root.path().join("markers"),
-        index: Arc::default(),
-        enrollment_clock: None,
-    });
-    let first = cleanup.0.prepare_seed_claim(&db, [9; 32]).await.unwrap();
-    let reopened = cleanup.0.prepare_seed_claim(&db, [9; 32]).await.unwrap();
-    assert_eq!(
-        first.protected_storage_bytes(),
-        reopened.protected_storage_bytes()
-    );
-    if let Backend::Keychain(backend) = cleanup.0.seed_backend() {
-        let _ = backend.delete();
-    }
-    assert!(cleanup.0.prepare_seed_claim(&db, [9; 32]).await.is_err());
-}
-
 #[tokio::test]
 async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
-    use aven_core::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
     use std::sync::{Arc, Mutex};
     use tracing::instrument::WithSubscriber;
 

@@ -51,3 +51,4 @@ sqlx = { workspace = true, features = ["sqlite"] }
 [dev-dependencies]
 aven-core = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
+tracing-subscriber = "0.3"

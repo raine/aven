@@ -1,12 +1,14 @@
 use super::*;
-use crate::protected_local_keys::tests::isolated_store;
+use crate::sync::client::keys::test_support::isolated_store;
+use std::fs;
+use std::path::PathBuf;
 
 #[tokio::test]
 async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress() {
-    use aven_core::sync::bootstrap_staging::{
+    use crate::sync::bootstrap_staging::{
         Authentication, Budget, Component, PublishBootstrap, PutChunk, Status,
     };
-    use aven_core::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
 
     let root = tempfile::tempdir().unwrap();
     let client = Database::open(&root.path().join("client.sqlite"))
@@ -16,13 +18,13 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let task = client
         .create_task(
             &workspace,
-            aven_core::operations::TaskDraft {
+            crate::operations::TaskDraft {
                 title: "PRIVATE-PUBLICATION-TITLE".into(),
                 description: String::new(),
                 project: Some("app".into()),
                 status: "todo".into(),
                 priority: "none".into(),
-                source: aven_core::choices::TaskSource::Cli,
+                source: crate::choices::TaskSource::Cli,
                 labels: vec![],
                 metadata: vec![],
                 available_at: None,
@@ -44,12 +46,12 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
                 root.path(),
                 Default::default(),
                 &task.id,
-                aven_core::operations::AttachmentAddInput {
+                crate::operations::AttachmentAddInput {
                     filename: Some("PRIVATE-PUBLICATION-IMAGE.png".into()),
                     alt_text: None,
                     declared_media_type: None,
                     bytes: bytes.into_inner(),
-                    optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
+                    optimization_policy: crate::attachments::ImageOptimizationPolicy::Preserve,
                     dedupe_existing: false,
                 },
             )
@@ -64,20 +66,20 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
                 .unwrap();
         }
         if width == 4 {
-            let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+            let mut conn = crate::test_support::acquire(&client).await.unwrap();
             sqlx::query("UPDATE blob_inventory SET available = 0 WHERE sha256 = ?")
                 .bind(&attachment.sha256)
                 .execute(&mut *conn)
                 .await
                 .unwrap();
             fs::remove_file(
-                aven_core::attachments::object_path(root.path(), &attachment.sha256).unwrap(),
+                crate::attachments::object_path(root.path(), &attachment.sha256).unwrap(),
             )
             .unwrap();
         }
     }
-    use aven_core::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
-    use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule};
+    use crate::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
+    use crate::recurrence::{RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule};
     use chrono::TimeZone;
     let at = chrono::Utc.with_ymd_and_hms(2100, 9, 21, 12, 0, 0).unwrap();
     let series = client
@@ -90,7 +92,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
                 priority: "none".into(),
                 initial_status: "todo".into(),
                 labels: vec![],
-                metadata: vec![aven_core::metadata::TaskMetadataInput {
+                metadata: vec![crate::metadata::TaskMetadataInput {
                     expected_field_id: None,
                     key: "ticket".into(),
                     value: "42".into(),
@@ -109,7 +111,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         .unwrap();
     let store = isolated_store(&client, &root.path().join("keys")).await;
     {
-        let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+        let mut conn = crate::test_support::acquire(&client).await.unwrap();
         sqlx::query("UPDATE changes SET server_seq = local_seq * 3 WHERE change_id IN (SELECT change_id FROM changes ORDER BY local_seq LIMIT 3)").execute(&mut *conn).await.unwrap();
         sqlx::query("INSERT INTO shared_history_provenance(change_id, source_server_seq, source_pending_rank) SELECT change_id, 999, NULL FROM changes ORDER BY local_seq LIMIT 1").execute(&mut *conn).await.unwrap();
     }
@@ -160,7 +162,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         .update_task(
             &workspace,
             &task.id,
-            aven_core::operations::TaskUpdate {
+            crate::operations::TaskUpdate {
                 title: Some("AFTER-CAPTURE".into()),
                 ..Default::default()
             },
@@ -178,13 +180,13 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let related = client
         .create_task(
             &workspace,
-            aven_core::operations::TaskDraft {
+            crate::operations::TaskDraft {
                 title: "later related".into(),
                 description: String::new(),
                 project: Some("app".into()),
                 status: "todo".into(),
                 priority: "none".into(),
-                source: aven_core::choices::TaskSource::Cli,
+                source: crate::choices::TaskSource::Cli,
                 labels: vec![],
                 metadata: vec![],
                 available_at: None,
@@ -221,19 +223,19 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             root.path(),
             Default::default(),
             &task.id,
-            aven_core::operations::AttachmentAddInput {
+            crate::operations::AttachmentAddInput {
                 filename: None,
                 alt_text: None,
                 declared_media_type: None,
                 bytes: image.into_inner(),
-                optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
+                optimization_policy: crate::attachments::ImageOptimizationPolicy::Preserve,
                 dedupe_existing: false,
             },
         )
         .await
         .unwrap();
     {
-        let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+        let mut conn = crate::test_support::acquire(&client).await.unwrap();
         sqlx::query("INSERT INTO conflicts(workspace_id, entity_type, entity_id, task_id, field, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at) VALUES (?, 'task', ?, ?, 'description', 'local', 'remote', NULL, 'fixture-conflict', 'vlocal', 'vremote', '2100-09-21T12:00:00Z')")
             .bind(&workspace.id).bind(&task.id).bind(&task.id).execute(&mut *conn).await.unwrap();
         let baseline =
@@ -360,7 +362,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     accepted
         .validate_expected(seed.genesis(), &package.descriptor)
         .unwrap();
-    let mut conn = aven_core::test_support::acquire(&server).await.unwrap();
+    let mut conn = crate::test_support::acquire(&server).await.unwrap();
     let unmapped: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM server_e2ee_image_references WHERE object IS NULL",
     )
@@ -398,7 +400,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             "UPDATE shared_history_provenance SET source_server_seq = 999",
         ),
     ] {
-        let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+        let mut conn = crate::test_support::acquire(&client).await.unwrap();
         sqlx::query(sql).execute(&mut *conn).await.unwrap();
         drop(conn);
         assert!(
@@ -407,10 +409,10 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
                 .await
                 .is_err()
         );
-        let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+        let mut conn = crate::test_support::acquire(&client).await.unwrap();
         sqlx::query(undo).execute(&mut *conn).await.unwrap();
     }
-    let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let mut conn = crate::test_support::acquire(&client).await.unwrap();
     sqlx::query("UPDATE changes SET created_at = '2100-01-01T00:00:00Z' WHERE change_id = ?")
         .bind(&captured_row.change_id)
         .execute(&mut *conn)
@@ -423,7 +425,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .await
             .is_err()
     );
-    let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let mut conn = crate::test_support::acquire(&client).await.unwrap();
     sqlx::query("UPDATE changes SET created_at = ? WHERE change_id = ?")
         .bind(&captured_row.created_at)
         .bind(&captured_row.change_id)
@@ -449,7 +451,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .unwrap(),
         Status::Published(accepted.clone())
     );
-    let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let mut conn = crate::test_support::acquire(&client).await.unwrap();
     let baseline_rows: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM local_e2ee_dependency_baseline) + (SELECT count(*) FROM local_e2ee_dependency_edges)")
         .fetch_one(&mut *conn).await.unwrap();
     assert_eq!(baseline_rows, 0);
@@ -474,7 +476,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .1,
         "adopted"
     );
-    let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let mut conn = crate::test_support::acquire(&client).await.unwrap();
     let pins: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_pins")
         .fetch_one(&mut *conn)
         .await
@@ -608,7 +610,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         assert!(retained.server_seq.is_none());
         assert_eq!(retained.payload, row.payload);
     }
-    let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let mut conn = crate::test_support::acquire(&client).await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM local_shared_capture_pins")
         .fetch_one(&mut *conn)
         .await
@@ -630,15 +632,15 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .await
             .unwrap()
     );
-    let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+    let mut conn = crate::test_support::acquire(&client).await.unwrap();
     let cursor: String = sqlx::query_scalar("SELECT value FROM meta WHERE key = 'sync_cursor'")
         .fetch_one(&mut *conn)
         .await
         .unwrap();
     assert_eq!(cursor, (binding.prefix_count + 12).to_string());
     drop(conn);
-    let response = aven_core::sync::wire::SyncResponse {
-        protocol_version: aven_core::sync::wire::SYNC_PROTOCOL_VERSION,
+    let response = crate::sync::wire::SyncResponse {
+        protocol_version: crate::sync::wire::SYNC_PROTOCOL_VERSION,
         changes: vec![],
         push_acks: vec![],
         cursor: stale_page.request.after,
@@ -646,7 +648,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     };
     assert!(
         client
-            .apply_client_sync_page(aven_core::sync::ApplySyncPage {
+            .apply_client_sync_page(crate::sync::ApplySyncPage {
                 request: stale_page.request,
                 sync_generation: stale_page.sync_generation,
                 response,
@@ -664,7 +666,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
             .is_err()
     );
     assert!(client.import_data(&before).await.is_err());
-    aven_core::db::backup_database(client.path(), &root.path().join("backup.sqlite"))
+    crate::db::backup_database(client.path(), &root.path().join("backup.sqlite"))
         .await
         .unwrap();
     let other = Database::open(&root.path().join("other.sqlite"))
@@ -693,10 +695,7 @@ async fn local_intent_fixture() -> (tempfile::TempDir, Database, ProtectedLocalK
 }
 
 fn protected_path(store: &ProtectedLocalKeyStore, kind: &str) -> PathBuf {
-    let Backend::File(backend) = store.adoption_backend(kind) else {
-        panic!("file fixture")
-    };
-    backend.path
+    store.file_path(kind)
 }
 
 #[tokio::test]
@@ -735,7 +734,7 @@ async fn preparing_intent_resumes_exact_bytes_and_missing_sealed_authority_fails
     );
     fs::remove_file(protected_path(&store, "intent")).unwrap();
     assert!(store.prepare_seed_adoption_intent(&database).await.is_err());
-    fs::remove_file(store.adoption_marker("intent")).unwrap();
+    fs::remove_file(store.file_path("intent-authority")).unwrap();
     assert!(store.prepare_seed_adoption_intent(&database).await.is_err());
     assert!(
         database
@@ -836,7 +835,7 @@ async fn copied_database_and_missing_database_cannot_reacquire_source_authority(
     // A raw SQLite snapshot copies no host authority. This is a fixture, not a
     // supported backup API, which refuses the bound installation.
     let copied_path = root.path().join("copied.sqlite");
-    let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+    let mut conn = crate::test_support::acquire(&database).await.unwrap();
     sqlx::query("VACUUM INTO ?")
         .bind(copied_path.to_str().unwrap())
         .execute(&mut *conn)
@@ -856,7 +855,7 @@ async fn copied_database_and_missing_database_cannot_reacquire_source_authority(
         .await
         .unwrap();
     assert!(
-        aven_core::db::restore_database_file(database.path(), source.path())
+        crate::db::restore_database_file(database.path(), source.path())
             .await
             .is_err()
     );
@@ -865,7 +864,7 @@ async fn copied_database_and_missing_database_cannot_reacquire_source_authority(
     // No live writer is retained; deletion simulates missing replaceable state.
     fs::remove_file(&path).unwrap();
     assert!(
-        aven_core::db::restore_database_file(&path, source.path())
+        crate::db::restore_database_file(&path, source.path())
             .await
             .is_err()
     );
@@ -874,13 +873,13 @@ async fn copied_database_and_missing_database_cannot_reacquire_source_authority(
 async fn publish_empty_package(
     server: &Database,
     seed: &SeedAuthority,
-    package: &aven_core::sync::bootstrap_format::Package,
-    key: &aven_core::sync::LocalSharedStatePackageKey,
+    package: &crate::sync::bootstrap_format::Package,
+    key: &crate::sync::LocalSharedStatePackageKey,
 ) -> PublicationOutcome {
-    use aven_core::sync::bootstrap_staging::{
+    use crate::sync::bootstrap_staging::{
         Authentication, Budget, Component, PublishBootstrap, PutChunk,
     };
-    use aven_core::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
     let secret = Secret::generate().unwrap();
     let setup = SetupAuthority::from_verifier(
         seed.genesis().setup_id(),
@@ -1046,14 +1045,14 @@ async fn actual_source_preparation_excludes_sqlite_and_archive_restore_at_bounda
     let preparing = tokio::spawn(async move { store.prepare_seed_source(&database).await });
     waiting.await.unwrap();
     assert!(
-        aven_core::db::restore_database_file(&path, source.path())
+        crate::db::restore_database_file(&path, source.path())
             .await
             .unwrap_err()
             .to_string()
             .contains("installation-busy")
     );
     assert!(
-        aven_core::data_safety::restore_backup_archive(
+        crate::data_safety::restore_backup_archive(
             &path,
             &root.path().join("target-blobs"),
             &archive
@@ -1066,14 +1065,14 @@ async fn actual_source_preparation_excludes_sqlite_and_archive_restore_at_bounda
     release.send(()).unwrap();
     preparing.await.unwrap().unwrap();
     assert!(
-        aven_core::db::restore_database_file(&path, source.path())
+        crate::db::restore_database_file(&path, source.path())
             .await
             .unwrap_err()
             .to_string()
             .contains("takes part in sync")
     );
     assert!(
-        aven_core::data_safety::restore_backup_archive(
+        crate::data_safety::restore_backup_archive(
             &path,
             &root.path().join("target-blobs"),
             &archive
@@ -1094,7 +1093,7 @@ async fn process_exit_reopens_preparing_sealed_and_adopted_before_cleanup() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "protected_local_keys::adoption::tests::adoption_process_worker",
+                "sync::client::keys::adoption::tests::adoption_process_worker",
                 "--ignored",
             ])
             .env("AVEN_ADOPTION_TEST_ROOT", root.path())
@@ -1131,12 +1130,12 @@ async fn process_exit_reopens_preparing_sealed_and_adopted_before_cleanup() {
             let server = Database::open(&root.path().join("server.sqlite"))
                 .await
                 .unwrap();
-            let auth = aven_core::sync::bootstrap_staging::Authentication {
+            let auth = crate::sync::bootstrap_staging::Authentication {
                 vault_id: publication.binding().vault_id,
                 genesis_commitment: publication.binding().genesis_commitment,
                 bearer: seed.bearer(),
             };
-            let aven_core::sync::bootstrap_staging::Status::Published(outcome) = server
+            let crate::sync::bootstrap_staging::Status::Published(outcome) = server
                 .bootstrap_staging_status(&auth, publication.binding().bootstrap_id)
                 .await
                 .unwrap()
@@ -1155,7 +1154,7 @@ async fn process_exit_reopens_preparing_sealed_and_adopted_before_cleanup() {
                     .await
                     .unwrap()
             );
-            let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+            let mut conn = crate::test_support::acquire(&database).await.unwrap();
             assert_eq!(
                 sqlx::query_scalar::<_, i64>("SELECT count(*) FROM local_shared_capture_journal")
                     .fetch_one(&mut *conn)
@@ -1224,7 +1223,7 @@ async fn adoption_process_worker() {
 #[tokio::test]
 async fn seal_failure_reuses_protected_intent_and_corrupt_authority_never_resets() {
     let (_root, database, store) = local_intent_fixture().await;
-    let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+    let mut conn = crate::test_support::acquire(&database).await.unwrap();
     sqlx::query("CREATE TRIGGER fail_seal BEFORE UPDATE OF state ON local_seed_publication_intent WHEN NEW.state = 'sealed' BEGIN SELECT RAISE(ABORT, 'injected seal failure'); END").execute(&mut *conn).await.unwrap();
     drop(conn);
     assert!(store.prepare_seed_adoption_intent(&database).await.is_err());
@@ -1247,7 +1246,7 @@ async fn seal_failure_reuses_protected_intent_and_corrupt_authority_never_resets
             .await
             .is_err()
     );
-    let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+    let mut conn = crate::test_support::acquire(&database).await.unwrap();
     sqlx::query("DROP TRIGGER fail_seal")
         .execute(&mut *conn)
         .await
@@ -1280,15 +1279,15 @@ async fn seal_failure_reuses_protected_intent_and_corrupt_authority_never_resets
 
 #[tokio::test]
 async fn recurrence_generation_form_follows_seed_opt_in_through_capture_cancel() {
-    use aven_core::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
-    use aven_core::recurrence::{
+    use crate::operations::{CreateRecurrenceSeriesParams, RecurrenceSeriesDraft};
+    use crate::recurrence::{
         RecurrenceDuePolicy, RecurrenceRule, RecurrenceSchedule, derive_occurrence_identity,
         derive_proposal_ids,
     };
     use chrono::TimeZone;
 
     async fn generation(database: &Database, slot: &str) -> (String, serde_json::Value) {
-        let mut conn = aven_core::test_support::acquire(database).await.unwrap();
+        let mut conn = crate::test_support::acquire(database).await.unwrap();
         let (id, payload): (String, String) = sqlx::query_as(
             "SELECT change_id, payload FROM changes
              WHERE op_type = 'create_task' AND json_extract(payload, '$.slot_on') = ?",

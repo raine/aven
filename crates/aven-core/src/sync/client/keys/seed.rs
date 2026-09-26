@@ -1,10 +1,14 @@
 use super::*;
-use aven_core::sync::seed_claim::{SEED_STORAGE_BYTES, SeedAuthority};
+use crate::sync::seed_claim::{SEED_STORAGE_BYTES, SeedAuthority};
+use std::path::Path;
 
 const SEED_MAGIC: &[u8; 8] = b"AVENSED1";
 const SEED_MARKER: &[u8; 8] = b"AVENSPN1";
 pub(super) const SEED_BYTES: usize = 8 + 32 + SEED_STORAGE_BYTES + 32;
 const SEED_MARKER_BYTES: usize = 8 + 32;
+pub(super) const SEED_ITEM: &str = "seed";
+/// Nonsecret record that detects loss of the seed item.
+const SEED_MARKER_RECORD: &str = "seed-authority";
 
 impl ProtectedLocalKeyStore {
     /// Persists private seed keys, bearer and exact validated genesis before use.
@@ -98,15 +102,14 @@ impl ProtectedLocalKeyStore {
         {
             let _guard = self.lock()?;
             let package = self.load_required_locked()?;
-            let backend = self.seed_backend();
-            if let Some(bytes) = backend.load_bounded(SEED_BYTES)? {
+            if let Some(bytes) = self.load_secret(SEED_ITEM, SEED_BYTES)? {
                 let stored = self.decode_seed(&bytes, &package)?;
                 if stored.genesis().commitment() != commitment {
                     anyhow::bail!("error seed-claim-rollback-conflict");
                 }
             }
-            backend.delete()?;
-            self.remove_seed_marker()?;
+            self.delete_secret(SEED_ITEM)?;
+            self.remove_record(SEED_MARKER_RECORD)?;
         }
         database.rollback_local_seed_genesis(commitment).await
     }
@@ -129,54 +132,20 @@ impl ProtectedLocalKeyStore {
         }
         {
             let _guard = self.lock()?;
-            if self.seed_backend().load_bounded(SEED_BYTES)?.is_some() {
+            if self.load_secret(SEED_ITEM, SEED_BYTES)?.is_some() {
                 return Ok(false);
             }
-            self.remove_seed_marker()?;
+            self.remove_record(SEED_MARKER_RECORD)?;
         }
         database.rollback_local_seed_genesis(commitment).await?;
         Ok(true)
     }
 
-    fn remove_seed_marker(&self) -> anyhow::Result<()> {
-        match fs::remove_file(self.seed_marker_path()) {
-            Ok(()) => sync_parent(&self.seed_marker_path())?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => {
-                return Err(super::error(ProtectedLocalKeyStoreErrorKind::WriteFailed).into());
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn seed_backend(&self) -> Backend {
-        match &self.backend {
-            #[cfg(target_os = "macos")]
-            Backend::Keychain(backend) => Backend::Keychain(KeychainBackend {
-                service: format!("{}.seed", backend.service),
-                account: backend.account.clone(),
-            }),
-            #[cfg(any(target_os = "linux", test))]
-            Backend::File(_) => Backend::File(FileBackend {
-                path: self.directory.join(format!("{}.seed", self.account)),
-            }),
-            #[cfg(test)]
-            Backend::FailWrite => Backend::FailWrite,
-            #[cfg(test)]
-            Backend::Unavailable => Backend::Unavailable,
-        }
-    }
-
-    fn seed_marker_path(&self) -> PathBuf {
-        self.directory
-            .join(format!("{}.seed-authority", self.account))
-    }
-
     pub(super) fn seed_authority_exists(&self) -> StoreResult<bool> {
-        Ok(
-            read_restricted_file(&self.seed_marker_path(), SEED_MARKER_BYTES)?.is_some()
-                || self.seed_backend().load_bounded(SEED_BYTES)?.is_some(),
-        )
+        Ok(self
+            .read_record(SEED_MARKER_RECORD, SEED_MARKER_BYTES)?
+            .is_some()
+            || self.load_secret(SEED_ITEM, SEED_BYTES)?.is_some())
     }
 
     fn load_or_create_seed(
@@ -185,11 +154,10 @@ impl ProtectedLocalKeyStore {
         setup: [u8; 32],
         pin: Option<[u8; 32]>,
     ) -> StoreResult<SeedAuthority> {
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let _guard = self.lock()?;
-        let marker = read_restricted_file(&self.seed_marker_path(), SEED_MARKER_BYTES)?;
-        let backend = self.seed_backend();
-        let seed = match backend.load_bounded(SEED_BYTES)? {
+        let marker = self.read_record(SEED_MARKER_RECORD, SEED_MARKER_BYTES)?;
+        let seed = match self.load_secret(SEED_ITEM, SEED_BYTES)? {
             Some(bytes) => self.decode_seed(&bytes, package)?,
             None if marker.is_some() || pin.is_some() => {
                 return Err(error(ProtectedLocalKeyStoreErrorKind::MissingAuthority));
@@ -198,9 +166,9 @@ impl ProtectedLocalKeyStore {
                 let seed = SeedAuthority::generate(package.context(), package.package_key(), setup)
                     .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
                 let encoded = self.encode_seed(&seed)?;
-                backend.create(&encoded)?;
-                let saved = backend
-                    .load_bounded(SEED_BYTES)?
+                self.create_secret(SEED_ITEM, &encoded)?;
+                let saved = self
+                    .load_secret(SEED_ITEM, SEED_BYTES)?
                     .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
                 if saved.as_slice() != encoded.as_slice() {
                     return Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed));
@@ -222,7 +190,7 @@ impl ProtectedLocalKeyStore {
                 return Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt));
             }
             Some(_) => {}
-            None => write_restricted_new(&self.seed_marker_path(), &expected)?,
+            None => self.write_record(SEED_MARKER_RECORD, &expected)?,
         }
         Ok(seed)
     }

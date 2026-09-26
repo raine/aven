@@ -1,19 +1,19 @@
 //! Protected host ownership for original-seed publication and adoption.
 use super::*;
+use crate::db::installation::InstallationGuard;
+use crate::sync::seed_claim::{PublicationOutcome, SeedAuthority};
+use crate::sync::{SeedPublicationIntent, SeedSourceAuthority};
 use anyhow::Context;
-use aven_core::db::installation::InstallationGuard;
-use aven_core::sync::seed_claim::{PublicationOutcome, SeedAuthority};
-use aven_core::sync::{SeedPublicationIntent, SeedSourceAuthority};
 
 impl ProtectedLocalKeyStore {
     /// Resumes sealed ownership before exposing any publication transport input.
-    pub(crate) async fn seed_http_inputs(
+    pub async fn seed_http_inputs(
         &self,
         database: &Database,
     ) -> anyhow::Result<(
         SeedAuthority,
         SeedPublicationIntent,
-        Option<aven_core::sync::bootstrap_format::Package>,
+        Option<crate::sync::bootstrap_format::Package>,
     )> {
         let intent = self.prepare_seed_adoption_intent(database).await?;
         let _installation = InstallationGuard::acquire(database.path())?;
@@ -33,27 +33,9 @@ impl ProtectedLocalKeyStore {
         Ok((seed, intent, upload))
     }
 
-    pub(super) fn adoption_backend(&self, kind: &str) -> Backend {
-        match &self.backend {
-            #[cfg(target_os = "macos")]
-            Backend::Keychain(backend) => Backend::Keychain(KeychainBackend {
-                service: format!("{}.{}", backend.service, kind),
-                account: backend.account.clone(),
-            }),
-            #[cfg(any(target_os = "linux", test))]
-            Backend::File(_) => Backend::File(FileBackend {
-                path: self.directory.join(format!("{}.{}", self.account, kind)),
-            }),
-            #[cfg(test)]
-            Backend::FailWrite => Backend::FailWrite,
-            #[cfg(test)]
-            Backend::Unavailable => Backend::Unavailable,
-        }
-    }
-
-    fn adoption_marker(&self, kind: &str) -> PathBuf {
-        self.directory
-            .join(format!("{}.{}-authority", self.account, kind))
+    /// Nonsecret digest record that detects loss of secret item `kind`.
+    fn adoption_marker(kind: &str) -> String {
+        format!("{kind}-authority")
     }
 
     pub(super) fn load_adoption_record(
@@ -62,8 +44,8 @@ impl ProtectedLocalKeyStore {
         limit: usize,
         required: bool,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let marker = read_restricted_file(&self.adoption_marker(kind), 32)?;
-        let bytes = self.adoption_backend(kind).load_bounded(limit)?;
+        let marker = self.read_record(&Self::adoption_marker(kind), 32)?;
+        let bytes = self.load_secret(kind, limit)?;
         match bytes {
             Some(bytes) => {
                 let digest = Sha256::digest(&bytes);
@@ -72,7 +54,7 @@ impl ProtectedLocalKeyStore {
                     "error seed-protected-record-corrupt"
                 );
                 if marker.is_none() {
-                    write_restricted_new(&self.adoption_marker(kind), &digest)?;
+                    self.write_record(&Self::adoption_marker(kind), &digest)?;
                 }
                 if kind == "intent" {
                     let length = u32::from_be_bytes(bytes[..4].try_into()?) as usize;
@@ -106,7 +88,7 @@ impl ProtectedLocalKeyStore {
         } else {
             bytes
         };
-        self.adoption_backend(kind).create(storage)?;
+        self.create_secret(kind, storage)?;
         let stored = self
             .load_adoption_record(kind, limit, true)?
             .context("error seed-protected-write-missing")?;
@@ -114,13 +96,12 @@ impl ProtectedLocalKeyStore {
         Ok(())
     }
 
-    pub(super) fn required_seed(
+    pub fn required_seed(
         &self,
         package: &ProtectedLocalPackageKey,
     ) -> anyhow::Result<SeedAuthority> {
         let bytes = self
-            .seed_backend()
-            .load_bounded(seed::SEED_BYTES)?
+            .load_secret(seed::SEED_ITEM, seed::SEED_BYTES)?
             .context("error seed-protected-authority-missing")?;
         Ok(self.decode_seed(&bytes, package)?)
     }
@@ -151,7 +132,7 @@ impl ProtectedLocalKeyStore {
         wait_source_boundary(database.path()).await;
         let was_unbound = installation.ensure_unbound().is_ok();
         let package = self.load_required()?;
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let _guard = self.lock()?;
         let seed = self.required_seed(&package)?;
         let pin = database.seed_source_pin().await?;
@@ -289,7 +270,7 @@ mod tests;
 
 #[cfg(test)]
 type SourceBarrier = (
-    PathBuf,
+    std::path::PathBuf,
     tokio::sync::oneshot::Sender<()>,
     tokio::sync::oneshot::Receiver<()>,
 );

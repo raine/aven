@@ -131,7 +131,7 @@ pub(crate) enum Stage {
 }
 
 async fn key_store(database: &Database) -> Result<ProtectedLocalKeyStore> {
-    Ok(ProtectedLocalKeyStore::for_database(database).await?)
+    Ok(crate::protected_local_keys::for_database(database).await?)
 }
 
 pub(crate) fn unix_now() -> Result<u64> {

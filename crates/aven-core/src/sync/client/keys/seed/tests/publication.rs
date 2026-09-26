@@ -2,10 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_reply() {
-    use aven_core::sync::bootstrap_staging::{
+    use crate::sync::bootstrap_staging::{
         Authentication, Budget, Component, PublishBootstrap, PutChunk, Status,
     };
-    use aven_core::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
 
     let root = tempfile::tempdir().unwrap();
     let client = Database::open(&root.path().join("client.sqlite"))
@@ -15,13 +15,13 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     let task = client
         .create_task(
             &workspace,
-            aven_core::operations::TaskDraft {
+            crate::operations::TaskDraft {
                 title: "PRIVATE-PUBLICATION-TITLE".into(),
                 description: String::new(),
                 project: Some("app".into()),
                 status: "todo".into(),
                 priority: "none".into(),
-                source: aven_core::choices::TaskSource::Cli,
+                source: crate::choices::TaskSource::Cli,
                 labels: vec![],
                 metadata: vec![],
                 available_at: None,
@@ -43,12 +43,12 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
                 root.path(),
                 Default::default(),
                 &task.id,
-                aven_core::operations::AttachmentAddInput {
+                crate::operations::AttachmentAddInput {
                     filename: Some("PRIVATE-PUBLICATION-IMAGE.png".into()),
                     alt_text: None,
                     declared_media_type: None,
                     bytes: bytes.into_inner(),
-                    optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
+                    optimization_policy: crate::attachments::ImageOptimizationPolicy::Preserve,
                     dedupe_existing: false,
                 },
             )
@@ -63,14 +63,14 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
                 .unwrap();
         }
         if width == 4 {
-            let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
+            let mut conn = crate::test_support::acquire(&client).await.unwrap();
             sqlx::query("UPDATE blob_inventory SET available = 0 WHERE sha256 = ?")
                 .bind(&attachment.sha256)
                 .execute(&mut *conn)
                 .await
                 .unwrap();
             fs::remove_file(
-                aven_core::attachments::object_path(root.path(), &attachment.sha256).unwrap(),
+                crate::attachments::object_path(root.path(), &attachment.sha256).unwrap(),
             )
             .unwrap();
         }
@@ -217,7 +217,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     accepted
         .validate_expected(seed.genesis(), &package.descriptor)
         .unwrap();
-    let mut conn = aven_core::test_support::acquire(&server).await.unwrap();
+    let mut conn = crate::test_support::acquire(&server).await.unwrap();
     let unmapped: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM server_e2ee_image_references WHERE object IS NULL",
     )

@@ -1,9 +1,8 @@
 //! Independent installation identity, inbound enrollment and outbound journals.
 use super::membership::{COVERAGE_LIMIT, EvidenceRef, FLOOR_LIMIT};
 use super::*;
-use anyhow::{Context, Result, ensure};
-use aven_core::db::installation::InstallationGuard;
-use aven_core::sync::{
+use crate::db::installation::InstallationGuard;
+use crate::sync::{
     SeedPublicationIntent,
     seed_claim::{
         Secret, SeedAuthority,
@@ -13,8 +12,9 @@ use aven_core::sync::{
         },
     },
 };
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::atomic::Ordering;
 type Hash = [u8; 32];
 const IDENTITY_LIMIT: usize = 8192;
@@ -25,7 +25,7 @@ const CANDIDATE_LIMIT: usize = 4 * membership::MAX_RECORD_BYTES + 1024;
 const RESPONSE_LIMIT: usize = CANDIDATE_LIMIT + 4096;
 const ATTEMPT_LIMIT: usize = 512;
 /// Retained join attempts per installation, including the original request.
-pub(crate) const MAX_JOIN_ATTEMPTS: usize = 16;
+pub const MAX_JOIN_ATTEMPTS: usize = 16;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
@@ -42,7 +42,7 @@ impl Drop for Identity {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Outbound {
+pub struct Outbound {
     pub handle: Hash,
     invitation: Vec<u8>,
     pub declaration: Vec<u8>,
@@ -80,24 +80,24 @@ pub enum EnrollmentReadiness {
 }
 /// Secret-free state of an issued invitation that is neither admitted nor closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct OpenInvitation {
-    pub(crate) handle: Hash,
-    pub(crate) expires_at: u64,
-    pub(crate) keys_may_have_been_sent: bool,
+pub struct OpenInvitation {
+    pub handle: Hash,
+    pub expires_at: u64,
+    pub keys_may_have_been_sent: bool,
 }
 
 /// Where one issued invitation stands, as recorded on this device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InvitationProgress {
+pub enum InvitationProgress {
     Open,
     Admitted,
     Closed,
 }
 
 /// An issued invitation that is neither admitted nor closed.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum OutboundInvitation {
+pub enum OutboundInvitation {
     /// No grant was prepared for sending.
     Pending,
     /// A grant may have been sent.
@@ -106,7 +106,7 @@ pub(crate) enum OutboundInvitation {
 /// New encrypted content waits for the withdrawal rotation of an expired
 /// invitation whose grant may have been sent. Pulls and downloads continue.
 #[derive(Debug)]
-pub(crate) struct PublishingBlocked;
+pub struct PublishingBlocked;
 impl std::fmt::Display for PublishingBlocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("error withdrawal-rotation-required")
@@ -137,7 +137,7 @@ impl Keys {
         }
     }
 }
-pub(crate) struct ActiveInputs {
+pub struct ActiveInputs {
     id: Identity,
     keys: Keys,
     pub membership: Membership,
@@ -163,17 +163,8 @@ impl ActiveInputs {
 }
 impl ProtectedLocalKeyStore {
     pub(super) fn peer_authority_exists(&self) -> StoreResult<bool> {
-        Ok(read_restricted_file(
-            &self
-                .directory
-                .join(format!("{}.peer-identity-authority", self.account)),
-            32,
-        )?
-        .is_some()
-            || self
-                .adoption_backend("peer-identity")
-                .load_bounded(IDENTITY_LIMIT)?
-                .is_some())
+        Ok(self.read_record("peer-identity-authority", 32)?.is_some()
+            || self.load_secret("peer-identity", IDENTITY_LIMIT)?.is_some())
     }
     pub(super) async fn phase(
         &self,
@@ -354,11 +345,11 @@ impl ProtectedLocalKeyStore {
             LocalSharedStatePackageKey::new(*package.package_key().protected_storage_bytes()),
         ))
     }
-    pub(crate) async fn active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
+    pub async fn active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
         let installation = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let lock = self.lock()?;
         let id = match self.identity(db, &installation).await? {
             Some(id) => id,
@@ -463,7 +454,7 @@ impl ProtectedLocalKeyStore {
             _lock: lock,
         })
     }
-    pub(crate) async fn adopt_refresh(
+    pub async fn adopt_refresh(
         &self,
         db: &Database,
         inputs: &mut ActiveInputs,
@@ -596,7 +587,7 @@ impl ProtectedLocalKeyStore {
         }
         Ok(unresolved)
     }
-    pub(crate) async fn open_invitation(
+    pub async fn open_invitation(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -619,7 +610,7 @@ impl ProtectedLocalKeyStore {
 
     /// Reads only this invitation's terminal phases, so waiting for a join can
     /// check it often without loading every journal.
-    pub(crate) async fn invitation_progress(
+    pub async fn invitation_progress(
         &self,
         db: &Database,
         handle: &Hash,
@@ -642,7 +633,7 @@ impl ProtectedLocalKeyStore {
 
     /// Retires the open invitation if no grant has been sent. The returned
     /// journal remains available for best-effort server cancellation.
-    pub(crate) async fn retire_open_invitation(
+    pub async fn retire_open_invitation(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -670,7 +661,7 @@ impl ProtectedLocalKeyStore {
         Ok((Some(journal), Some(state)))
     }
 
-    pub(crate) async fn prepare_invitation(
+    pub async fn prepare_invitation(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -728,7 +719,7 @@ impl ProtectedLocalKeyStore {
         .await?;
         Ok(journal)
     }
-    pub(crate) async fn registered_invitation(
+    pub async fn registered_invitation(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -744,7 +735,7 @@ impl ProtectedLocalKeyStore {
         .await?;
         Invitation::from_protected_storage(&journal.invitation)
     }
-    pub(crate) async fn prepare_admission(
+    pub async fn prepare_admission(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -867,7 +858,7 @@ impl ProtectedLocalKeyStore {
     }
     /// The unresolved journal whose grant may have been sent, once its
     /// declared expiry has passed. Expiry only starts withdrawal work.
-    pub(crate) async fn expired_disclosure(
+    pub async fn expired_disclosure(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -881,7 +872,7 @@ impl ProtectedLocalKeyStore {
             .map(|(journal, _)| journal))
     }
     /// Fences local candidate creation and resends before remote cancellation.
-    pub(crate) async fn mark_withdrawing(
+    pub async fn mark_withdrawing(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -901,7 +892,7 @@ impl ProtectedLocalKeyStore {
     /// `withdrawn` requires every stored candidate to have lost its slot, no
     /// candidate recipient ever becoming a member, and a later non-pending
     /// generation absent from every candidate predecessor.
-    pub(crate) async fn reconcile_disclosure(
+    pub async fn reconcile_disclosure(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -990,7 +981,7 @@ impl ProtectedLocalKeyStore {
             .await?;
         Ok(Disclosure::Withdrawn)
     }
-    pub(crate) async fn finish_inviter(
+    pub async fn finish_inviter(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
@@ -1031,7 +1022,7 @@ impl ProtectedLocalKeyStore {
     }
     /// The request to post: a known invitation's exact attempt, otherwise the
     /// latest attempt, or the one a pinned response answers.
-    pub(crate) async fn prepare_peer(
+    pub async fn prepare_peer(
         &self,
         db: &Database,
         locator: &str,
@@ -1042,7 +1033,7 @@ impl ProtectedLocalKeyStore {
     /// Like `prepare_peer`, but an unknown invitation becomes a new attempt
     /// while joining is unfinished. The installation keys, enrollment pin and
     /// fence stay unchanged, and every earlier attempt is retained.
-    pub(crate) async fn replace_peer(
+    pub async fn replace_peer(
         &self,
         db: &Database,
         locator: &str,
@@ -1060,7 +1051,7 @@ impl ProtectedLocalKeyStore {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let _lock = self.lock()?;
         let id = match self.identity(db, &guard).await? {
             Some(id) => id,
@@ -1068,8 +1059,8 @@ impl ProtectedLocalKeyStore {
                 let client = db.peer_target_preflight().await?;
                 guard.ensure_unbound()?;
                 ensure!(
-                    self.backend.load()?.is_none()
-                        && read_marker(&self.marker_path())?.is_none()
+                    self.load_secret(KEYRING_ITEM, KEYRING_BYTES)?.is_none()
+                        && self.read_marker()?.is_none()
                         && !self.seed_authority_exists()?,
                     "error enrollment-existing-authority"
                 );
@@ -1129,7 +1120,7 @@ impl ProtectedLocalKeyStore {
     }
     /// Every retained attempt, oldest first, or only the one a pinned
     /// response answers. Attempts are never removed.
-    pub(crate) async fn peer_attempts(&self, db: &Database, locator: &str) -> Result<Vec<Joiner>> {
+    pub async fn peer_attempts(&self, db: &Database, locator: &str) -> Result<Vec<Joiner>> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
         let _lock = self.lock()?;
@@ -1222,7 +1213,7 @@ impl ProtectedLocalKeyStore {
     }
     /// Opens a mailbox admission without retaining it. The signature and
     /// membership binding are unchecked here, so only `finish_peer` pins it.
-    pub(crate) async fn open_peer_response(
+    pub async fn open_peer_response(
         &self,
         db: &Database,
         mail: &membership::Mailbox,
@@ -1244,7 +1235,7 @@ impl ProtectedLocalKeyStore {
     }
     /// Pins `mail` only after `evidence` proves its exact outcome, so an
     /// unverified response never blocks a correct one.
-    pub(crate) async fn finish_peer(
+    pub async fn finish_peer(
         &self,
         db: &Database,
         mail: &membership::Mailbox,
@@ -1343,12 +1334,12 @@ impl ProtectedLocalKeyStore {
         );
         Ok((peer, verified, record))
     }
-    pub(crate) async fn install_peer_snapshot(
+    pub async fn install_peer_snapshot(
         &self,
         db: &Database,
-        transport: &crate::peer_enrollment_http::Client,
+        transport: &impl SnapshotDownload,
         locator: &str,
-    ) -> Result<aven_core::sync::SharedStateInstallReport> {
+    ) -> Result<crate::sync::SharedStateInstallReport> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
         let _lock = self.lock()?;
@@ -1401,7 +1392,7 @@ impl ProtectedLocalKeyStore {
             .await?;
         Ok(report)
     }
-    pub(crate) async fn adopt_download_refresh(
+    pub async fn adopt_download_refresh(
         &self,
         db: &Database,
         identity: Hash,
@@ -1423,7 +1414,7 @@ impl ProtectedLocalKeyStore {
     }
     /// Validated tail material for one drain. It stays current until the
     /// enrollment marker changes or the server reports a stale context.
-    pub(crate) async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
+    pub async fn tail_inputs(&self, db: &Database, locator: &str) -> Result<TailSnapshot> {
         let inputs = self.active_inputs(db, locator).await?;
         let withdrawal_deadline = self
             .unresolved_disclosures(db, &inputs)
@@ -1442,8 +1433,8 @@ impl ProtectedLocalKeyStore {
             db.meta("e2ee_association").await?.as_deref() == Some(association.as_str()),
             "error encrypted-tail-association"
         );
-        let authority = aven_core::sync::encrypted_tail::Authority {
-            context: aven_core::sync::encrypted_tail::Context {
+        let authority = crate::sync::encrypted_tail::Authority {
+            context: crate::sync::encrypted_tail::Context {
                 vault: b.vault_id,
                 genesis: inputs.membership.genesis().commitment(),
                 device: inputs.device(),
@@ -1467,7 +1458,7 @@ impl ProtectedLocalKeyStore {
             bearer: Secret::new(*inputs.bearer().expose()),
             withdrawal_deadline,
             enrollment_marker: db.enrollment_artifact_marker().await?,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             enrollment_clock: self.enrollment_clock.clone(),
         };
         drop(inputs);
@@ -1475,24 +1466,21 @@ impl ProtectedLocalKeyStore {
     }
     /// Whether this installation joined as a peer, and the server locator its
     /// enrollment identity is bound to.
-    pub(crate) async fn association(&self, db: &Database) -> Result<Option<(bool, String)>> {
+    pub async fn association(&self, db: &Database) -> Result<Option<(bool, String)>> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let _lock = self.lock()?;
         Ok(self
             .identity(db, &guard)
             .await?
             .map(|id| (id.role == "peer", id.locator.clone())))
     }
-    #[cfg(test)]
-    pub(crate) async fn outbound_invitation(
-        &self,
-        db: &Database,
-    ) -> Result<Option<OutboundInvitation>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn outbound_invitation(&self, db: &Database) -> Result<Option<OutboundInvitation>> {
         let _guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let _lock = self.lock()?;
         for journal in self.journals(db).await? {
             if self.phase(db, &journal.name("ready"), 128).await?.is_none()
@@ -1510,7 +1498,7 @@ impl ProtectedLocalKeyStore {
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
-        prepare_directory(&self.directory)?;
+        self.prepare()?;
         let _lock = self.lock()?;
         let Some(id) = self.identity(db, &guard).await? else {
             return Ok(EnrollmentReadiness::NotSelected);
@@ -1533,6 +1521,19 @@ impl ProtectedLocalKeyStore {
         Ok(EnrollmentReadiness::Enrolled { head: m.head() })
     }
 }
+/// Downloads the published snapshot a verified peer enrollment installs.
+pub trait SnapshotDownload {
+    fn download(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        identity: Hash,
+        peer: &Joiner,
+        verified: &VerifiedEnrollment,
+        descriptor: &[u8],
+    ) -> impl std::future::Future<Output = Result<crate::sync::bootstrap_format::download::Metadata>>
+    + Send;
+}
 /// The attempt whose exact request a mailbox response answers. Its grant
 /// binds that attempt's invitation, handle and request hash.
 fn responding(attempts: Vec<Joiner>, mail: &membership::Mailbox) -> Result<Joiner> {
@@ -1550,51 +1551,51 @@ fn invitation_phase_name(handle: &Hash, phase: &str) -> String {
     format!("invite-{}-{phase}", hex::encode(handle))
 }
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Disclosure {
+pub enum Disclosure {
     Admitted,
     Withdrawn,
     Unresolved,
 }
-pub(crate) struct TailSnapshot {
-    pub authority: aven_core::sync::encrypted_tail::Authority,
+pub struct TailSnapshot {
+    pub authority: crate::sync::encrypted_tail::Authority,
     pub bearer: Secret,
     /// Earliest expiry of an invitation whose grant may have been sent. From
     /// then on, publishing waits for its withdrawal rotation.
     withdrawal_deadline: Option<u64>,
     enrollment_marker: i64,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     enrollment_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 impl TailSnapshot {
     /// Checked before every step that publishes new encrypted content.
-    pub(crate) fn require_publishing_ready(&self) -> Result<()> {
+    pub fn require_publishing_ready(&self) -> Result<()> {
         if self.publishing_blocked()? {
             return Err(PublishingBlocked.into());
         }
         Ok(())
     }
 
-    pub(crate) fn publishing_blocked(&self) -> Result<bool> {
-        #[cfg(test)]
+    pub fn publishing_blocked(&self) -> Result<bool> {
+        #[cfg(any(test, feature = "test-support"))]
         let now = match &self.enrollment_clock {
             Some(clock) => clock.load(Ordering::SeqCst),
             None => unix_now()?,
         };
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let now = unix_now()?;
         Ok(self
             .withdrawal_deadline
             .is_some_and(|deadline| now >= deadline))
     }
 
-    pub(crate) async fn is_current(&self, db: &Database) -> Result<bool> {
+    pub async fn is_current(&self, db: &Database) -> Result<bool> {
         Ok(self.enrollment_marker == db.enrollment_artifact_marker().await?)
     }
 }
 
 impl ProtectedLocalKeyStore {
     fn enrollment_now(&self) -> Result<u64> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(clock) = &self.enrollment_clock {
             return Ok(clock.load(Ordering::SeqCst));
         }
