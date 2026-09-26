@@ -280,10 +280,7 @@ impl Client {
                     "error snapshot-limit"
                 );
                 package.catalogs[i].extend(bytes);
-                #[cfg(any(test, feature = "test-support"))]
-                if std::env::var("AVEN_SNAPSHOT_CRASH").as_deref() == Ok("download") {
-                    std::process::exit(83);
-                }
+                crate::sync::crash::Crash::Snapshot.at("download");
             }
         }
         for recipe in bootstrap_format::download::artifacts(descriptor, &package.catalogs)? {

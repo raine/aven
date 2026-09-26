@@ -4,6 +4,7 @@ mod blob;
 pub mod bootstrap_staging;
 pub mod client;
 mod codec;
+mod crash;
 mod device_labels;
 pub mod encrypted_tail;
 pub mod invitation_text;

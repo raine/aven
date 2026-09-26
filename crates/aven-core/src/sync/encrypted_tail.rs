@@ -217,10 +217,3 @@ pub(crate) fn reseal(
         record,
     })
 }
-
-#[cfg(any(test, feature = "test-support"))]
-fn crash_at(stage: &str) {
-    if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok(stage) {
-        std::process::exit(84);
-    }
-}

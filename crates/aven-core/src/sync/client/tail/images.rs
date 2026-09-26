@@ -269,10 +269,7 @@ impl Client {
                 "error encrypted-image-reply"
             );
         }
-        #[cfg(any(test, feature = "test-support"))]
-        if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok("image-put") {
-            std::process::exit(84);
-        }
+        crate::sync::crash::Crash::Tail.at("image-put");
         inputs.require_publishing_ready()?;
         ensure!(
             matches!(

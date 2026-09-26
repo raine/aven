@@ -114,8 +114,7 @@ impl Database {
         let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_source) OR EXISTS(SELECT 1 FROM local_seed_publication_intent) OR EXISTS(SELECT 1 FROM local_seed_genesis_pin) OR EXISTS(SELECT 1 FROM server_seed_claim) OR EXISTS(SELECT 1 FROM meta WHERE key IN ('sync_server_url','e2ee_association'))").fetch_one(&mut *tx).await?;
         ensure!(!occupied, "error snapshot-target-not-fresh");
         let report = install_in_transaction(&mut tx, &capture).await?;
-        #[cfg(any(test, feature = "test-support"))]
-        crash_at("metadata");
+        crate::sync::crash::Crash::Snapshot.at("metadata");
         let hashes = capture
             .snapshot
             .tables
@@ -159,11 +158,9 @@ impl Database {
         db::set_meta(&mut tx, "e2ee_association", &association).await?;
         sqlx::query("INSERT INTO local_peer_snapshot_install(singleton,enrollment,checkpoint,descriptor,stream,prefix_count,client_id,association,sync_generation,attachment_count) VALUES(1,?,?,?,?,?,?,?,?,?)")
             .bind(enrollment.as_slice()).bind(verified.checkpoint().as_slice()).bind(binding.descriptor_commitment.as_slice()).bind(binding.stream_id.as_slice()).bind(i64::try_from(binding.prefix_count)?).bind(client).bind(association).bind(generation).bind(i64::try_from(report.attachment_count)?).execute(&mut *tx).await?;
-        #[cfg(any(test, feature = "test-support"))]
-        crash_at("before-commit");
+        crate::sync::crash::Crash::Snapshot.at("before-commit");
         tx.commit().await?;
-        #[cfg(any(test, feature = "test-support"))]
-        crash_at("after-commit");
+        crate::sync::crash::Crash::Snapshot.at("after-commit");
         Ok(report)
     }
 }
@@ -219,11 +216,4 @@ async fn receipt(
         prefix_count: b.prefix_count,
         attachment_count: u64::try_from(count.context("error snapshot-receipt-mismatch")?)?,
     }))
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn crash_at(stage: &str) {
-    if std::env::var("AVEN_SNAPSHOT_CRASH").as_deref() == Ok(stage) {
-        std::process::exit(83);
-    }
 }

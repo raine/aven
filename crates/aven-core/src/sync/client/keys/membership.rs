@@ -1,5 +1,6 @@
 //! Append-only protected floors bind separately stored public chain evidence.
 use super::*;
+use crate::sync::crash::Crash;
 use crate::sync::seed_claim::membership::{
     Device, Evidence, MAX_COVERAGE_BYTES, MAX_EVIDENCE_JSON_BYTES, MAX_TRANSITIONS, Membership,
     VerifiedKeys,
@@ -126,21 +127,17 @@ impl ProtectedLocalKeyStore {
                 == Some(bytes),
             "error enrollment-protected-write"
         );
-        #[cfg(any(test, feature = "test-support"))]
-        if let Ok(requested) = std::env::var("AVEN_PEER_CRASH_KIND") {
-            let matches = requested == kind
+        Crash::Peer.when(|requested| {
+            requested == kind
                 || (kind.starts_with("invite-")
-                    && match requested.as_str() {
+                    && match requested {
                         "peer-bound" => kind.ends_with("-bound"),
                         "peer-candidate" => kind.ends_with("-candidate-0"),
                         "peer-sent" => kind.ends_with("-sent-0"),
                         "peer-ready" => kind.ends_with("-ready"),
                         _ => false,
-                    });
-            if matches {
-                std::process::exit(79);
-            }
-        }
+                    })
+        });
         Ok(())
     }
     fn evidence_record(digest: &Hash) -> String {
@@ -168,10 +165,7 @@ impl ProtectedLocalKeyStore {
             }
         };
         ensure!(saved == bytes, "error membership-evidence-corrupt");
-        #[cfg(any(test, feature = "test-support"))]
-        if std::env::var("AVEN_PEER_CRASH_KIND").as_deref() == Ok("membership-evidence") {
-            std::process::exit(79);
-        }
+        Crash::Peer.at("membership-evidence");
         Ok(reference)
     }
     pub(super) fn load_evidence(&self, reference: &EvidenceRef) -> Result<(Evidence, Membership)> {

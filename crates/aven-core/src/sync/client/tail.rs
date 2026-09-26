@@ -215,10 +215,7 @@ impl Client {
         else {
             anyhow::bail!("error encrypted-tail-reply")
         };
-        #[cfg(any(test, feature = "test-support"))]
-        if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok("after-append") {
-            std::process::exit(84);
-        }
+        crate::sync::crash::Crash::Tail.at("after-append");
         let frozen = db.observe_encrypted_tail(a, &mapping).await?;
         use sha2::{Digest, Sha256};
         let accepted = if Sha256::digest(&frozen).as_slice() == mapping.commitment {

@@ -393,8 +393,7 @@ impl Database {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        #[cfg(any(test, feature = "test-support"))]
-        super::crash_at(if upload.is_some() {
+        crate::sync::crash::Crash::Tail.at(if upload.is_some() {
             "image-frozen"
         } else {
             "frozen"
@@ -453,11 +452,9 @@ impl Database {
         let n = sqlx::query("UPDATE local_e2ee_outbox SET record=? WHERE singleton=1 AND record=? AND observed_sequence IS NULL AND observed_commitment IS NULL AND blocked=0")
             .bind(&replacement).bind(&record).execute(&mut *tx).await?.rows_affected();
         valid(n == 1)?;
-        #[cfg(any(test, feature = "test-support"))]
-        super::crash_at("before-supersede-commit");
+        crate::sync::crash::Crash::Tail.at("before-supersede-commit");
         tx.commit().await?;
-        #[cfg(any(test, feature = "test-support"))]
-        super::crash_at("after-supersede-commit");
+        crate::sync::crash::Crash::Tail.at("after-supersede-commit");
         Ok(true)
     }
     /// Retain an observed immutable outcome before fetching a different representation.
@@ -700,12 +697,9 @@ impl Database {
             };
             db::set_meta(&mut tx, INITIAL_IMAGE_WATERMARK, &state).await?;
         }
-
-        #[cfg(any(test, feature = "test-support"))]
-        super::crash_at("before-page-commit");
+        crate::sync::crash::Crash::Tail.at("before-page-commit");
         tx.commit().await?;
-        #[cfg(any(test, feature = "test-support"))]
-        super::crash_at("after-page-commit");
+        crate::sync::crash::Crash::Tail.at("after-page-commit");
         Ok(())
     }
 }
