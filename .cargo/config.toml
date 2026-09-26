@@ -1,0 +1,3 @@
+# Repository tooling expects build outputs at worktree-local target paths.
+[build]
+target-dir = "target"
