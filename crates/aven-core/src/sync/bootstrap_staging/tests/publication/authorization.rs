@@ -323,8 +323,8 @@ async fn concurrent_unsupported_authority_change_never_reactivates_genesis() {
     let second = Database::open(&f.dir.path().join("server.sqlite"))
         .await
         .unwrap();
-    // This is storage fault/successor-fence injection, not a supported membership
-    // transition or a model of the future removal protocol.
+    // Writes the membership head directly from a second pool, as a successor
+    // fence racing publication. No supported operation produces this state.
     let advance = async {
         let mut conn = second.acquire_writer().await.unwrap();
         let mut tx = crate::db::begin_immediate(&mut conn).await.unwrap();
