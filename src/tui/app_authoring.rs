@@ -11,7 +11,7 @@ use crate::tui::authoring::{
 use crate::tui::natural_add_runtime::task_intake_log_path;
 use crate::tui::overlay::{
     AddTaskMode, AddTaskState, LineEdit, MultilineInputState, MultilineIntent, OverlayState,
-    PickerIntent, PickerState, ScheduleEditorField, ScheduleEditorMode, TagComboboxIntent,
+    PickerIntent, PickerState, ScheduleEditorField, TagComboboxIntent,
 };
 use crate::tui::platform::{edit_text_externally, is_editor_prefix_key};
 use crate::tui::store::TaskScope;
@@ -805,22 +805,6 @@ impl App {
                     self.pending_shortcut.begin_editor_prefix();
                 }
                 self.overlay = Some(overlay);
-                return Ok(None);
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                && key.code == KeyCode::Char('u')
-                && state.mode == AddTaskMode::Compose
-            {
-                self.overlay = Some(overlay);
-                if let Some(crate::tui::overlay::OverlayState::AddTask(state)) =
-                    self.overlay.as_mut()
-                {
-                    let mut editor = state.schedule_editor(ScheduleEditorField::Due);
-                    editor.mode = ScheduleEditorMode::Once;
-                    editor.focus = ScheduleEditorField::Due;
-                    editor.refresh();
-                    state.mode = AddTaskMode::Schedule(editor);
-                }
                 return Ok(None);
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {

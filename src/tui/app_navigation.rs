@@ -21,12 +21,26 @@ impl App {
     }
 
     pub(super) async fn move_selection(&mut self, delta: isize) -> Result<()> {
+        self.move_selection_with_wrap(delta, true)
+    }
+
+    pub(super) async fn move_selection_bounded(&mut self, delta: isize) -> Result<()> {
+        self.move_selection_with_wrap(delta, false)
+    }
+
+    fn move_selection_with_wrap(&mut self, delta: isize, wrap: bool) -> Result<()> {
         match self.list.focus() {
             Focus::Tasks => {
                 let next = if self.store.view_state.is_columns() {
-                    self.store
-                        .column_board()
-                        .move_vertical(self.list.selected_task(), delta)
+                    if wrap {
+                        self.store
+                            .column_board()
+                            .move_vertical(self.list.selected_task(), delta)
+                    } else {
+                        self.store
+                            .column_board()
+                            .move_vertical_bounded(self.list.selected_task(), delta)
+                    }
                 } else if self.store.view_state.query == crate::tui::store::TaskQuery::Epics {
                     let current = self
                         .list
@@ -36,7 +50,7 @@ impl App {
                         current,
                         crate::tui::ui::task_visual_row_count(&self.store),
                         delta,
-                        true,
+                        wrap,
                     )
                     .and_then(|row| crate::tui::ui::task_index_at_visual_row(&self.store, row))
                 } else {
@@ -44,7 +58,7 @@ impl App {
                         self.list.selected_task(),
                         self.store.main_row_count(),
                         delta,
-                        true,
+                        wrap,
                     )
                 };
                 self.list.select_task(next);
@@ -54,7 +68,7 @@ impl App {
                     self.list.selected_sidebar(),
                     self.list.sidebar_entries(),
                     delta,
-                    true,
+                    wrap,
                 );
                 self.list.select_sidebar(next);
             }

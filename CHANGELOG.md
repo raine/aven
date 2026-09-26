@@ -3,67 +3,18 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.44 (2026-09-26)
 
-- The TUI **Sync** dialog offers **Sync automatically** once sync is set up, which turns on automatic sync and installs the background service. `aven sync setup` and `aven sync join` print how to turn it on.
+- Fix: Opening a [search](https://aventasks.dev/tui/#search-filter-and-order) result with `Enter` keeps the typed query as the committed search view, so closing the task detail returns to the full result list instead of a single-task view scoped to that task's reference. ([#21](https://github.com/raine/aven/pull/21))
 
-- `aven daemon install`, `uninstall`, `restart`, `repair`, and `status` now work on Linux, managing a systemd user service. See [Sync across devices](https://aventasks.dev/sync/).
+## v0.1.43 (2026-09-26)
 
-- Fix: Encrypted sync setup no longer discards its setup keys when a server storage error follows an accepted claim, and recovers from an interrupted cancellation of a refused setup. Server timeouts and failures no longer mark a device's access as refused, any accepted request clears the refusal, and the TUI keeps invitation cancellation available while access is refused.
+- Fix: Moving tasks or recurring schedules to a project now requires that project to exist in the selected workspace, preventing accidental duplicate projects. ([#29](https://github.com/raine/aven/issues/29))
 
-- Sync now reports sent and received changes plus open and newly created conflicts. Conflict values in the TUI are labeled current and incoming without exposing variant IDs. Setup and join hide pasted invitations, join confirms the server and resumes without another invitation, and `aven sync invite` keeps standard output script-safe by writing **Device added** to standard error.
+## v0.1.42 (2026-09-24)
 
-- Sync on the inviting device keeps running while a device invitation is open. If an invitation expires after keys may have been sent to a device that never joined, the next sync changes keys before uploading new changes; until then it still downloads changes from other devices, and `aven sync status` reports `key-change-pending`. See [Sync across devices](https://aventasks.dev/sync/).
-
-- An encrypted sync allows 256 device changes over its lifetime, up to 63 of them key rotations. Adding a device is one change, and removing one is two. Once a limit is reached, start a new sync to keep adding or removing devices. `aven server` now checks its stored device membership before it starts serving, and refuses to start if the check fails. See [Sync across devices](https://aventasks.dev/sync/).
-
-- Perf: Encrypted sync transfers about half as much data, and images take up to a third of their former size in transit. A device catching up on many changes downloads up to 256 per request instead of 16.
-
-- Perf: `aven sync` uploads large offline editing backlogs in one run instead of stopping after the first 1,000 changes.
-
-- Fix: Encrypted sync clients wait and retry when the server is busy, reducing failures when several devices sync at once.
-
-- A join whose invitation expired before the inviting device added it can continue with more replacement invitations from that same device: `aven sync join --new-invitation`, or **Use a new invitation** in the TUI Sync dialog. The database keeps its device identity and earlier invitations, so an admission that already happened still completes the join. Resuming completes the join with any retained invitation. See [Sync across devices](https://aventasks.dev/sync/).
-
-- The TUI has a **Sync** dialog for setting up sync, joining existing sync on an empty database, resuming an interrupted setup or join, adding a device (press `c` to copy the invitation for another computer), and listing or removing other devices. Open it with `:sync`, `C s`, or a click on the header sync indicator; `S` still syncs immediately, and `:config-status` remains an alias. Work continues after the dialog closes. See [Sync across devices](https://aventasks.dev/sync/).
-
-- `aven sync device list` shows the devices in sync and marks the current one, and `aven sync device remove` removes another device and rotates keys for future changes. Both support `--json`, and an interrupted removal resumes when rerun. A removed device keeps the tasks and images it already downloaded. See [Sync across devices](https://aventasks.dev/sync/).
-
-- Sync is now always end-to-end encrypted, and the unencrypted sync mode is removed. `aven server` serves only encrypted sync and refuses storage from the previous unencrypted server, so set up a new server path and run `aven sync setup` from one device. `aven sync pair`, `aven sync --server`, `aven update --allow-sync-incompatibility`, and the `sync.server_url` and `sync.auth_token` settings are gone. The daemon and the TUI sync action use encrypted sync, and `aven sync invite` and the TUI `:add-device` command show the device invitation as a QR code. See [Sync across devices](https://aventasks.dev/sync/).
-
-- Encrypted sync can be set up from the command line: `aven server setup` and `aven server` prepare and serve a server, `aven sync setup` starts syncing from an existing database, and `aven sync invite` with `aven sync join` adds an empty database on another device. `aven sync` and `aven sync status` then report task and image progress separately.
-
-- Encrypted sync removes a device’s server access and automatically rotates keys for remaining devices, preserving existing tasks, images and offline edits.
-
-- Encrypted sync lets any enrolled device invite another device and keeps existing devices syncing after it joins.
-
-- Encrypted sync supports recurring tasks, including template edits, lifecycle changes and completion, without creating conflicting occurrences while catching up.
-
-- Fix: Editing a recurring task's template, available time or due policy on two offline devices and then completing the current task on both no longer stops encrypted sync. The next task uses the template values synced first, and edits made to it on either device are kept or shown as conflicts. Recurring tasks already stuck this way by earlier encrypted sync builds still stop sync and are not repaired automatically.
-
-- Fix: Changing a recurring task's status on one device while another device completes or skips it no longer stops encrypted sync. The completion or skip is kept, and the other status change is shown as a conflict on every device.
-
-- Fix: Encrypted peer installation preserves task metadata when older attachment bytes have been pruned. Image downloads follow initial metadata catch-up.
-
-- Fix: Concurrent metadata additions no longer stall task sync when their combined count or size exceeds local editing limits. All values are retained, and over-limit tasks can be reduced incrementally.
-
-- Fix: Concurrent dependency changes converge in encrypted sync while preserving cycle protection and later pending edits.
-
-- Fix: Concurrent task label changes converge in encrypted sync without overwriting later pending changes.
-
-- Fix: Renaming or deleting projects and labels, restoring a deleted label, and creating or renaming workspaces no longer stop encrypted sync, so later edits keep syncing.
-
-- Fix: Encrypted enrollment busy responses consistently disable caching.
-
-- Fix: Finishing an encrypted sync round leaves later queued creations undoable until their own upload is prepared.
-
-- Fix: Concurrent note edits converge in encrypted sync without overwriting later pending edits.
-
-- Fix: Metadata conflict resolution rejects values that exceed metadata limits without changing the conflict or blocking later sync.
-
-- Fix: Concurrent plaintext sync and image requests no longer fail with `installation-busy`.
-
-- Protect installations explicitly opted into experimental encrypted sync from plaintext sync and backup replacement.
+- Navigate TUI task lists by page with Page Up/Page Down and by half-page with Ctrl-U/Ctrl-D.
+- Fix: Ctrl-U clears the current line in task inputs instead of opening the schedule editor.
 
 ## v0.1.41 (2026-09-22)
 

@@ -66,6 +66,61 @@ fn search_project_resolution_uses_selected_workspace() {
 }
 
 #[test]
+fn edit_project_requires_an_existing_project_in_the_selected_workspace() {
+    let env = TestEnv::new();
+    let db = env.db("edit-project-workspace.sqlite");
+
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(&db, ["--workspace", "alpha", "project", "create", "inboxp"]));
+    ok(env.aven(&db, ["--workspace", "beta", "project", "create", "homelab"]));
+    let task_ref = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "alpha",
+            "add",
+            "workspace move",
+            "--project",
+            "inboxp",
+        ],
+    )));
+
+    for project in ["homelab", "missing"] {
+        let error = fail(env.aven(
+            &db,
+            [
+                "--workspace",
+                "alpha",
+                "edit",
+                &task_ref,
+                "--project",
+                project,
+            ],
+        ));
+        contains_all(&error, &[&format!("error unknown-project input={project}")]);
+    }
+    let bulk_error = fail(env.aven(
+        &db,
+        [
+            "--workspace",
+            "alpha",
+            "bulk-update",
+            "--all",
+            "--set-project",
+            "homelab",
+        ],
+    ));
+    contains_all(&bulk_error, &["error unknown-project input=homelab"]);
+
+    let alpha_projects = ok(env.aven(&db, ["--workspace", "alpha", "project", "list"]));
+    contains_all(&alpha_projects, &["inboxp"]);
+    contains_none(&alpha_projects, &["homelab", "missing"]);
+    let task = ok(env.aven(&db, ["--workspace", "alpha", "show", &task_ref, "--full"]));
+    contains_all(&task, &["workspace move", "project=inboxp"]);
+}
+
+#[test]
 fn workspace_commands_manage_names_and_ambiguity() {
     let env = TestEnv::new();
     let db = env.db("workspaces.sqlite");

@@ -17,6 +17,7 @@ pub(crate) enum KeyInput {
     CancelShortcut,
     ToggleHelp,
     ScrollPrefix(isize),
+    ListPage { direction: isize, half: bool },
     Overlay(KeyEvent),
     Normal(KeyCode),
     Ignore,
@@ -30,6 +31,7 @@ pub(crate) struct KeyRouteState {
     pub(crate) overlay_captures: bool,
     pub(crate) detail_overlay: bool,
     pub(crate) add_task_image_target: bool,
+    pub(crate) task_list_navigation: bool,
 }
 
 pub(crate) fn route_key(key: KeyEvent, state: KeyRouteState, terminal_height: u16) -> KeyInput {
@@ -69,6 +71,22 @@ pub(crate) fn route_key(key: KeyEvent, state: KeyRouteState, terminal_height: u1
     }
     if let Some(delta) = prefix_scroll_delta(key, terminal_height, state.prefix_hints) {
         return KeyInput::ScrollPrefix(delta);
+    }
+    if state.task_list_navigation {
+        let page = match (key.code, key.modifiers) {
+            (KeyCode::PageDown, KeyModifiers::NONE) => Some((1, false)),
+            (KeyCode::PageUp, KeyModifiers::NONE) => Some((-1, false)),
+            (KeyCode::Char('d'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+                Some((1, true))
+            }
+            (KeyCode::Char('u'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+                Some((-1, true))
+            }
+            _ => None,
+        };
+        if let Some((direction, half)) = page {
+            return KeyInput::ListPage { direction, half };
+        }
     }
     if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
         return KeyInput::Normal(key.code);
@@ -214,6 +232,50 @@ mod tests {
             18,
         );
         assert_eq!(input, KeyInput::ScrollPrefix(14));
+    }
+
+    #[test]
+    fn task_list_routes_page_and_control_navigation() {
+        let state = KeyRouteState {
+            task_list_navigation: true,
+            ..KeyRouteState::default()
+        };
+        assert_eq!(
+            route_key(key(KeyCode::PageUp), state, 24),
+            KeyInput::ListPage {
+                direction: -1,
+                half: false,
+            }
+        );
+        assert_eq!(
+            route_key(
+                KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+                state,
+                24,
+            ),
+            KeyInput::ListPage {
+                direction: 1,
+                half: true,
+            }
+        );
+    }
+
+    #[test]
+    fn task_list_control_navigation_does_not_escape_input_contexts() {
+        let control_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        let overlay = route_key(
+            control_u,
+            KeyRouteState {
+                overlay_captures: true,
+                task_list_navigation: true,
+                ..KeyRouteState::default()
+            },
+            24,
+        );
+        assert_eq!(overlay, KeyInput::Overlay(control_u));
+
+        let outside_list = route_key(control_u, KeyRouteState::default(), 24);
+        assert_eq!(outside_list, KeyInput::Ignore);
     }
 
     #[test]

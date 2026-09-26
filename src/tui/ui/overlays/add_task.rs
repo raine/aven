@@ -583,7 +583,6 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
         "Schedule examples",
         "tomorrow · due Friday · every Friday at 09:00",
     ),
-    ("Ctrl-u", "edit one-off Due"),
     (
         "Schedule editor",
         "↑/↓ move · ←/→ choose · Enter apply · Esc cancel",
@@ -1194,8 +1193,6 @@ pub(in crate::tui::ui) fn add_task_hint_line(
         AddTaskStep::Schedule => dialog_hint_line(&[
             ("type", "schedule"),
             ("Enter", "details"),
-            ("^A", "available"),
-            ("^U", "due"),
             ("Tab", "next"),
             ("F1", "help"),
             ("Esc", "cancel"),

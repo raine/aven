@@ -34,6 +34,15 @@ pub(crate) fn task_visual_row_count(store: &TuiStore) -> usize {
     store.task_list_view().row_count()
 }
 
+pub(super) fn task_list_page_rows(area: Rect, has_tasks: bool) -> usize {
+    let table_area = if has_tasks {
+        task_list_areas(area).table_area
+    } else {
+        area
+    };
+    usize::from(table_area.height.saturating_sub(1).max(1))
+}
+
 pub(super) fn render_tasks(
     frame: &mut Frame,
     store: &TuiStore,

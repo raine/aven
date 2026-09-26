@@ -25,6 +25,16 @@ const CARD_CONTENT_HEIGHT: u16 = 4;
 const CARD_HEIGHT: u16 = CARD_CONTENT_HEIGHT + 1;
 const HEADER_HEIGHT: u16 = 2;
 
+pub(super) fn column_page_rows(area: Rect) -> usize {
+    usize::from(
+        area.height
+            .saturating_sub(HEADER_HEIGHT)
+            .checked_div(CARD_HEIGHT)
+            .unwrap_or(0)
+            .max(1),
+    )
+}
+
 #[derive(Debug, Clone)]
 struct LaneLayout {
     area: Rect,

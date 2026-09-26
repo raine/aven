@@ -416,6 +416,19 @@ fn render_surface(
     }
 }
 
+pub(crate) fn main_list_page_rows(store: &TuiStore, area: ratatui::layout::Rect) -> usize {
+    if matches!(
+        store.view_state.query,
+        TaskQuery::RecentActions | TaskQuery::Recurring
+    ) {
+        usize::from(area.height.saturating_sub(1).max(1))
+    } else if store.view_state.is_columns() {
+        columns::column_page_rows(area)
+    } else {
+        task_list::task_list_page_rows(area, !store.tasks.is_empty())
+    }
+}
+
 fn render_main_surface(
     frame: &mut Frame,
     store: &TuiStore,

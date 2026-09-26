@@ -145,6 +145,63 @@ async fn sidebar_click_uses_scroll_offset_in_wide_layout() {
 }
 
 #[tokio::test]
+async fn task_list_page_keys_move_by_visible_page_and_half_page() {
+    let mut app = test_app().await;
+    for index in 0..30 {
+        app.store
+            .create_task(test_task_draft(&format!("Task {index:02}")), None)
+            .await
+            .unwrap();
+    }
+    app.refresh().await.unwrap();
+    app.list.select_task(Some(0));
+    let terminal_size = (80, 24).into();
+
+    app.dispatch_key(key(KeyCode::PageDown), terminal_size)
+        .await
+        .unwrap();
+    assert_eq!(app.list.selected_task(), Some(19));
+
+    app.dispatch_key(ctrl_u(), terminal_size).await.unwrap();
+    assert_eq!(app.list.selected_task(), Some(9));
+
+    app.dispatch_key(ctrl_d(), terminal_size).await.unwrap();
+    assert_eq!(app.list.selected_task(), Some(19));
+
+    app.dispatch_key(key(KeyCode::PageUp), terminal_size)
+        .await
+        .unwrap();
+    assert_eq!(app.list.selected_task(), Some(0));
+}
+
+#[tokio::test]
+async fn task_list_page_navigation_clamps_at_boundaries() {
+    let mut app = test_app().await;
+    for index in 0..5 {
+        app.store
+            .create_task(test_task_draft(&format!("Task {index}")), None)
+            .await
+            .unwrap();
+    }
+    app.refresh().await.unwrap();
+    app.list.select_task(Some(0));
+    let terminal_size = (80, 24).into();
+
+    app.dispatch_key(key(KeyCode::PageUp), terminal_size)
+        .await
+        .unwrap();
+    assert_eq!(app.list.selected_task(), Some(0));
+
+    app.dispatch_key(key(KeyCode::PageDown), terminal_size)
+        .await
+        .unwrap();
+    assert_eq!(app.list.selected_task(), Some(4));
+
+    app.dispatch_key(ctrl_d(), terminal_size).await.unwrap();
+    assert_eq!(app.list.selected_task(), Some(4));
+}
+
+#[tokio::test]
 async fn compatible_query_transitions_follow_selected_task_identity() {
     let mut app = test_app().await;
     for title in ["Zulu task", "Alpha task", "Middle task"] {

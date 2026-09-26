@@ -111,10 +111,10 @@ pub(crate) fn next_index(
     let next = current as isize + delta;
     if (0..len as isize).contains(&next) {
         Some(next as usize)
-    } else if wrap && delta > 0 {
-        Some(0)
-    } else if wrap && delta < 0 {
-        Some(len - 1)
+    } else if delta > 0 {
+        Some(if wrap { 0 } else { len - 1 })
+    } else if delta < 0 {
+        Some(if wrap { len - 1 } else { 0 })
     } else {
         Some(current)
     }
@@ -202,6 +202,12 @@ mod tests {
     #[test]
     fn wraps_up_from_first_task_to_last_task() {
         assert_eq!(next_index(Some(0), 3, -1, true), Some(2));
+    }
+
+    #[test]
+    fn bounded_navigation_clamps_large_deltas_to_edges() {
+        assert_eq!(next_index(Some(1), 5, 20, false), Some(4));
+        assert_eq!(next_index(Some(3), 5, -20, false), Some(0));
     }
 
     #[test]

@@ -308,19 +308,6 @@ fn schedule_hit_testing_uses_the_summary_row() {
 }
 
 #[test]
-fn schedule_focus_footer_explains_direct_input_and_details() {
-    let rendered = render_overlay_view(add_task_overlay(AddTaskView {
-        focus: AddTaskStep::Schedule,
-        ..add_task_view()
-    }));
-
-    assert!(rendered.contains("type schedule"));
-    assert!(rendered.contains("Enter details"));
-    assert!(rendered.contains("^A available"));
-    assert!(rendered.contains("^U due"));
-}
-
-#[test]
 fn focused_schedule_field_teaches_natural_input() {
     let rendered = render_overlay_view(add_task_overlay(AddTaskView {
         focus: AddTaskStep::Schedule,
@@ -504,7 +491,7 @@ fn add_task_validation_and_help_are_visible() {
     assert!(help.contains("Composer help"));
     assert!(help.contains("Shift+Tab"));
     assert!(help.contains("Ctrl-g"));
-    assert!(help.contains("one-off Due"));
+    assert!(help.contains("One-off Due"));
     assert!(help.contains("Schedule editor"));
     assert!(help.contains("↑/↓ move"));
     assert!(help.contains("aven.raine.dev/tui/#capture-tasks"));
@@ -571,10 +558,10 @@ fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
 
 #[test]
 fn composer_help_scroll_cap_matches_add_task_layout() {
-    assert_eq!(composer_help_scroll_cap(20, false, false), 10);
-    assert_eq!(composer_help_scroll_cap(20, false, true), 8);
-    assert_eq!(composer_help_scroll_cap(20, true, false), 6);
-    assert_eq!(composer_help_scroll_cap(30, false, false), 5);
+    assert_eq!(composer_help_scroll_cap(20, false, false), 9);
+    assert_eq!(composer_help_scroll_cap(20, false, true), 7);
+    assert_eq!(composer_help_scroll_cap(20, true, false), 5);
+    assert_eq!(composer_help_scroll_cap(30, false, false), 4);
 }
 
 #[test]

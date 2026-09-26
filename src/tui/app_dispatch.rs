@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Size;
 
-use crate::tui::app::App;
+use crate::tui::app::{App, Focus};
 use crate::tui::event::Action;
 use crate::tui::input::key::{
     ImagePasteTarget, KeyInput, KeyRouteState, NormalKeyInput, route_key,
@@ -61,6 +61,9 @@ impl App {
                             }
                         ))
                 ),
+                task_list_navigation: self.overlay.is_none()
+                    && self.detail.is_inactive()
+                    && self.list.focus() == Focus::Tasks,
             },
             terminal_size.height,
         );
@@ -85,6 +88,13 @@ impl App {
             KeyInput::ScrollPrefix(delta) => {
                 self.dispatch_prefix_hint_scroll(delta, terminal_size);
                 Ok(())
+            }
+            KeyInput::ListPage { direction, half } => {
+                let task_area = self.task_area_for_mouse(terminal_size);
+                let page = crate::tui::ui::main_list_page_rows(&self.store, task_area);
+                let distance = if half { page.div_ceil(2) } else { page };
+                self.move_selection_bounded(direction * distance as isize)
+                    .await
             }
             KeyInput::Overlay(key) => self.handle_overlay_key_at_size(key, terminal_size).await,
             KeyInput::Normal(code) => self.handle_normal_key(code).await,

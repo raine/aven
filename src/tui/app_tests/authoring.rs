@@ -1935,21 +1935,41 @@ async fn add_task_ctrl_a_moves_title_cursor_to_start() {
 }
 
 #[tokio::test]
-async fn add_task_ctrl_u_opens_once_schedule_at_due() {
+async fn add_task_ctrl_u_clears_title_before_cursor() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
 
-    app.handle_overlay_key(ctrl_u()).await.unwrap();
+    app.dispatch_key(ctrl_u(), (80, 24).into()).await.unwrap();
 
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::AddTask(state))
-            if matches!(
-                &state.mode,
-                crate::tui::overlay::AddTaskMode::Schedule(editor)
-                    if editor.mode == crate::tui::overlay::ScheduleEditorMode::Once
-                        && editor.focus == crate::tui::overlay::ScheduleEditorField::Due
-            )
+            if state.mode == crate::tui::overlay::AddTaskMode::Compose
+                && state.title.text.is_empty()
+                && state.title.cursor == 0
+    ));
+}
+
+#[tokio::test]
+async fn add_task_ctrl_w_deletes_previous_title_word() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    type_chars(&mut app, "Write docs").await;
+
+    app.dispatch_key(
+        KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+        (80, 24).into(),
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::AddTask(state))
+            if state.mode == crate::tui::overlay::AddTaskMode::Compose
+                && state.title.text == "Write "
+                && state.title.cursor == "Write ".len()
     ));
 }
 

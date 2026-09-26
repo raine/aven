@@ -1,10 +1,15 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import { unified } from '@astrojs/markdown-remark';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
+import omitUnreleasedChangelog from './plugins/omit-unreleased-changelog.mjs';
 
 export default defineConfig({
   site: 'https://aventasks.dev',
+  markdown: {
+    processor: unified({ remarkPlugins: [omitUnreleasedChangelog] }),
+  },
   redirects: {
     '/workflows': '/getting-started/#next-steps',
   },
