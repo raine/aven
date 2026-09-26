@@ -147,9 +147,12 @@ pub(crate) struct DaemonRepairArgs {
 pub(crate) struct ServerArgs {
     #[command(subcommand)]
     pub(crate) command: Option<ServerSubcommand>,
-    /// Listen address; its port must match the port in the setup URL
+    /// Listen address; loopback unless --allow-non-loopback
     #[arg(long, default_value = "127.0.0.1:3746")]
     pub(crate) bind: SocketAddr,
+    /// Allow a non-loopback bind; TLS must terminate in front of the server
+    #[arg(long)]
+    pub(crate) allow_non_loopback: bool,
     /// SQLite path of storage prepared by `server setup`
     #[arg(long, required = true)]
     pub(crate) data: Option<PathBuf>,
@@ -176,9 +179,10 @@ pub(super) const SERVER_SETUP_HELP: &str = r#"The setup invitation lets one devi
 its database. It expires after one hour; until a device has claimed the
 server, running setup again replaces it. The replacement keeps the server's
 setup identity, so a device whose setup was interrupted resumes with the new
-invitation. Serve the storage with `aven server --data PATH --bind ADDRESS`.
-The bind port must match the port in the setup URL. The server binds only
-loopback addresses; put a TLS reverse proxy in front of it for other devices."#;
+invitation. Serve the storage with `aven server --data PATH --bind ADDRESS`;
+setup prints a suggested command. The server binds only loopback addresses
+unless given --allow-non-loopback; put a TLS reverse proxy in front of it for
+other devices."#;
 
 const SERVER_COMMAND_HELP: &str = r#"Run the sync server
 
@@ -190,13 +194,16 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-      --bind <BIND>  Listen address; its port must match the port in the setup URL [default: 127.0.0.1:3746]
-      --data <DATA>  SQLite path of storage prepared by `server setup`
-  -h, --help         Print help
+      --bind <BIND>             Listen address; loopback unless --allow-non-loopback [default: 127.0.0.1:3746]
+      --allow-non-loopback      Allow a non-loopback bind; TLS must terminate in front of the server
+      --data <DATA>             SQLite path of storage prepared by `server setup`
+  -h, --help                    Print help
 
-Prepare storage with `aven server setup` first. The server binds only
-loopback addresses and does not terminate TLS; put a TLS reverse proxy in front
-of it for other devices.
+Prepare storage with `aven server setup` first. The server does not terminate
+TLS; put a TLS reverse proxy in front of it for other devices. It binds only
+loopback addresses unless given --allow-non-loopback, for proxies on another
+host or container networks; device credentials and setup invitations cross
+that hop, so it must stay private or carry TLS.
 "#;
 
 #[derive(Args)]

@@ -18,6 +18,8 @@ use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::config;
 use crate::signals::shutdown_signal;
 
+const DEFAULT_PORT: u16 = 3746;
+
 /// Setup invitations stay usable for one hour, or until a device claims storage.
 const SETUP_INVITATION_SECONDS: u64 = 3600;
 
@@ -39,7 +41,7 @@ pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> R
         return setup_server(setup).await;
     }
     let data = args.data.context("error server-data-required")?;
-    serve(args.bind, &data, &config).await
+    serve(args.bind, args.allow_non_loopback, &data, &config).await
 }
 
 async fn setup_server(args: ServerSetupArgs) -> Result<()> {
@@ -67,23 +69,51 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
     println!("{}", invitation.encode()?.as_str());
     eprintln!("Anyone with this invitation can claim this server. It expires in one hour.");
     eprintln!("Run `aven sync setup` on the device whose data should start the sync.");
-    let port = url::Url::parse(&args.url)
-        .ok()
-        .and_then(|url| url.port_or_known_default())
-        .unwrap_or(3746);
     eprintln!(
-        "Then start the server: aven server --data {} --bind 127.0.0.1:{port}",
-        args.data.display()
+        "Then start the server: aven server --data {} --bind 127.0.0.1:{}",
+        args.data.display(),
+        suggested_port(&args.url)
     );
     Ok(())
 }
 
+/// The port for the suggested loopback bind: the URL's own port when devices
+/// reach the server directly on loopback, otherwise the default port behind
+/// a reverse proxy.
+fn suggested_port(url: &str) -> u16 {
+    let Ok(url) = url::Url::parse(url) else {
+        return DEFAULT_PORT;
+    };
+    let loopback = match url.host() {
+        Some(url::Host::Domain(domain)) => domain == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    match url.port_or_known_default() {
+        Some(port) if loopback => port,
+        _ => DEFAULT_PORT,
+    }
+}
+
 /// Serves the seed, enrollment and tail/image routers. Each operation
-/// authenticates against the stored vault; TLS belongs in a reverse proxy, so
-/// only loopback binds are accepted.
-async fn serve(bind: SocketAddr, data: &Path, config: &config::AppConfig) -> Result<()> {
+/// authenticates against the stored vault. The server does not terminate
+/// TLS, so other binds need explicit consent.
+async fn serve(
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    data: &Path,
+    config: &config::AppConfig,
+) -> Result<()> {
     if !bind.ip().is_loopback() {
-        bail!("error server-bind-loopback hint=\"bind 127.0.0.1 behind a TLS reverse proxy\"");
+        if !allow_non_loopback {
+            bail!(
+                "error server-bind-loopback hint=\"bind 127.0.0.1 behind a TLS reverse proxy, or pass --allow-non-loopback when TLS terminates elsewhere\""
+            );
+        }
+        eprintln!(
+            "Warning: listening on {bind} without TLS. Device credentials and setup invitations cross this connection; terminate TLS in front of it."
+        );
     }
     if !data.exists() {
         bail!(UNPREPARED_STORAGE);
@@ -155,6 +185,17 @@ async fn serve_connections(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn setup_suggests_the_default_port_unless_devices_reach_loopback() {
+        use super::suggested_port;
+        assert_eq!(suggested_port("https://sync.example.com"), 3746);
+        assert_eq!(suggested_port("https://sync.example.com:8443"), 3746);
+        assert_eq!(suggested_port("http://127.0.0.1:4000"), 4000);
+        assert_eq!(suggested_port("http://localhost:4001"), 4001);
+        assert_eq!(suggested_port("http://[::1]:4002"), 4002);
+        assert_eq!(suggested_port("http://localhost"), 80);
+    }
+
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;

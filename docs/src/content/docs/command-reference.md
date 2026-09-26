@@ -960,21 +960,23 @@ than repeated on standard error.
 Serve end-to-end encrypted sync from storage prepared by `aven server setup`.
 
 ```sh
-aven server --data <path> [--bind <address>]
+aven server --data <path> [--bind <address>] [--allow-non-loopback]
 aven server setup --data <path> --url <url>
 ```
 
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Required server SQLite database path. |
-| `--bind <ip:port>` | Loopback listen address. Defaults to `127.0.0.1:3746`; its port must match the setup URL. |
+| `--bind <ip:port>` | Listen address. Defaults to `127.0.0.1:3746`. Must be loopback unless `--allow-non-loopback` is given. |
+| `--allow-non-loopback` | Allow binding a non-loopback address, for a TLS proxy on another host or a container network. Prints a warning, since credentials and setup invitations reach the server without TLS. |
 | `--url <url>` | For `setup`: the origin devices reach, HTTPS or loopback HTTP. |
 
 `server setup` stores an expiring setup verifier, prints a setup invitation for
 `aven sync setup`, and prints the matching `aven server --data ... --bind ...`
-command to standard error. Running setup again before a device claims the
-server replaces the invitation. The server binds only loopback addresses and does not
-terminate TLS; put a TLS reverse proxy in front of it. Both commands refuse
+command to standard error. The suggested bind uses port 3746, or the URL's port
+when the URL is a loopback address. Running setup again before a device claims
+the server replaces the invitation. The server does not terminate TLS; put a TLS
+reverse proxy in front of it. Both commands refuse
 storage that holds change history, including storage from the unencrypted sync
 of earlier releases. The server shuts down gracefully on an operating-system
 termination signal.
