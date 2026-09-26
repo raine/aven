@@ -402,6 +402,65 @@ fn files(path: &Path) -> Vec<Vec<u8>> {
 }
 
 #[tokio::test]
+async fn restored_then_deleted_task_images_get_a_fresh_grace_period() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let export = f.seed.export_data("now".into()).await.unwrap();
+    let image_task = export.tables.task_attachments[0].task_id.clone();
+    let set_deleted = async |deleted: bool| {
+        f.seed
+            .update_task(
+                &w,
+                &image_task,
+                TaskUpdate {
+                    deleted: Some(deleted),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        converge(&f).await;
+    };
+    let stale = "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at=0";
+    set_deleted(true).await;
+    assert_eq!(
+        scalar_after_prune_pass(
+            &f.server,
+            "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    // Age the stamp far past any grace period.
+    let mut c = aven_core::test_support::acquire(&f.server).await.unwrap();
+    sqlx::query(
+        "UPDATE server_e2ee_images SET unreferenced_at=0 WHERE unreferenced_at IS NOT NULL",
+    )
+    .execute(&mut *c)
+    .await
+    .unwrap();
+    drop(c);
+    assert_eq!(scalar(&f.server, stale).await, 1);
+    // Restoring clears the stamp without waiting for a prune pass.
+    set_deleted(false).await;
+    assert_eq!(scalar(&f.server, stale).await, 0);
+    set_deleted(true).await;
+    let chunks = "SELECT count(*) FROM server_e2ee_image_chunks";
+    let before = scalar(&f.server, chunks).await;
+    assert!(before > 0);
+    assert_eq!(
+        f.server
+            .prune_encrypted_images(std::time::Duration::from_secs(86400), 128)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(scalar(&f.server, stale).await, 0);
+    assert_eq!(scalar(&f.server, chunks).await, before);
+}
+
+#[tokio::test]
 async fn independent_clients_create_conflict_resolve_delete_restore_and_keep_images() {
     let f = fixture().await;
     converge(&f).await;
