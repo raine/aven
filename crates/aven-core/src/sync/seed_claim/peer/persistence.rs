@@ -2,6 +2,7 @@ use super::*;
 use crate::db::{self, Database, begin_immediate, installation::InstallationGuard};
 use anyhow::Context;
 use sqlx::SqliteConnection;
+use std::collections::HashMap;
 
 /// Explicit current-head request context. Historical outcomes cannot authenticate it.
 pub struct Authentication<'a> {
@@ -105,6 +106,14 @@ impl Database {
         .bind(kind)
         .fetch_optional(&mut *conn)
         .await?)
+    }
+    pub async fn enrollment_artifacts(&self) -> Result<HashMap<String, Vec<u8>>> {
+        let mut conn = self.acquire_reader().await?;
+        let rows: Vec<(String, Vec<u8>)> =
+            sqlx::query_as("SELECT kind, commitment FROM local_peer_enrollment_artifacts")
+                .fetch_all(&mut *conn)
+                .await?;
+        Ok(rows.into_iter().collect())
     }
     /// Monotonic, nonsecret marker for write-once enrollment state changes.
     pub async fn enrollment_artifact_marker(&self) -> Result<i64> {

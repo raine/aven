@@ -236,6 +236,7 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
         account: store.account.clone(),
         directory: store.directory.clone(),
         backend: Backend::Unavailable,
+        index: Arc::default(),
         enrollment_clock: None,
     };
     assert!(unavailable.prepare_seed_claim(&db, [9; 32]).await.is_err());
@@ -243,6 +244,7 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
         account: store.account.clone(),
         directory: store.directory.clone(),
         backend: Backend::FailWrite,
+        index: Arc::default(),
         enrollment_clock: None,
     };
     assert!(
@@ -430,6 +432,7 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
         account: store.account.clone(),
         directory: root.path().join("failed"),
         backend: Backend::FailWrite,
+        index: Arc::default(),
         enrollment_clock: None,
     };
     assert_eq!(
@@ -494,6 +497,7 @@ async fn isolated_seed_keychain_reopen() {
         }),
         account,
         directory: root.path().join("markers"),
+        index: Arc::default(),
         enrollment_clock: None,
     });
     let first = cleanup.0.prepare_seed_claim(&db, [9; 32]).await.unwrap();

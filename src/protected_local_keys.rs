@@ -5,12 +5,14 @@ pub(crate) mod rotation;
 mod seed;
 pub use peer::EnrollmentReadiness;
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 
 use aven_core::db::Database;
 use aven_core::sync::{
@@ -127,8 +129,39 @@ pub struct ProtectedLocalKeyStore {
     account: String,
     directory: PathBuf,
     backend: Backend,
+    index: Arc<Mutex<Option<Index>>>,
     #[cfg(test)]
     enrollment_clock: Option<Arc<AtomicU64>>,
+}
+
+/// What this instance has observed of its protected namespace while it holds
+/// the store lock. `Some` only between `lock()` and release of that lock.
+/// Protected items, their markers and enrollment pins are write-once, so an
+/// observation stays true until the lock is released. External tampering
+/// during the lock is indistinguishable from tampering right after it.
+#[derive(Default)]
+struct Index {
+    listing: Option<Listing>,
+    pins: Option<HashMap<String, Vec<u8>>>,
+    values: HashMap<String, Zeroizing<Vec<u8>>>,
+}
+
+/// Protected item kinds and `{kind}-authority` markers that exist.
+struct Listing {
+    items: HashSet<String>,
+    markers: HashSet<String>,
+}
+
+/// Exclusive store lock. Dropping it discards the index.
+pub(crate) struct StoreLock {
+    _file: File,
+    index: Arc<Mutex<Option<Index>>>,
+}
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        *self.index.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +195,7 @@ impl ProtectedLocalKeyStore {
             account,
             directory,
             backend,
+            index: Arc::default(),
             #[cfg(test)]
             enrollment_clock: None,
         })
@@ -275,7 +309,7 @@ impl ProtectedLocalKeyStore {
         self.directory.join(format!("{}.authority", self.account))
     }
 
-    fn lock(&self) -> StoreResult<File> {
+    fn lock(&self) -> StoreResult<StoreLock> {
         let path = self.directory.join(format!("{}.lock", self.account));
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
@@ -289,7 +323,63 @@ impl ProtectedLocalKeyStore {
             .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
         file.lock()
             .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
-        Ok(file)
+        *self.index.lock().unwrap_or_else(|e| e.into_inner()) = Some(Index::default());
+        Ok(StoreLock {
+            _file: file,
+            index: self.index.clone(),
+        })
+    }
+
+    /// Runs `f` on the index while the store lock is held, or returns `None`.
+    fn with_index<T>(&self, f: impl FnOnce(&mut Index) -> T) -> Option<T> {
+        self.index
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+            .map(f)
+    }
+
+    /// Kinds with a protected item, and kinds with a `-authority` marker.
+    fn list_kinds(&self) -> StoreResult<Listing> {
+        let prefix = format!("{}.", self.account);
+        let mut names = HashSet::new();
+        match fs::read_dir(&self.directory) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry =
+                        entry.map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
+                    if let Some(kind) = entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|n| n.strip_prefix(&prefix))
+                    {
+                        names.insert(kind.to_string());
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable)),
+        }
+        let markers = names
+            .iter()
+            .filter_map(|n| n.strip_suffix("-authority").map(str::to_string))
+            .collect();
+        let items = match &self.backend {
+            #[cfg(target_os = "macos")]
+            Backend::Keychain(backend) => backend.list_kinds()?,
+            #[cfg(any(target_os = "linux", test))]
+            Backend::File(_) => names
+                .into_iter()
+                .filter(|n| !n.ends_with("-authority"))
+                .collect(),
+            #[cfg(test)]
+            Backend::FailWrite => HashSet::new(),
+            #[cfg(test)]
+            Backend::Unavailable => {
+                return Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable));
+            }
+        };
+        Ok(Listing { items, markers })
     }
 }
 
@@ -653,6 +743,40 @@ impl KeychainBackend {
         }
     }
 
+    /// Kind suffixes of every item under this account. The query scope matches
+    /// `options()` except for the service, which is filtered by prefix here.
+    fn list_kinds(&self) -> StoreResult<HashSet<String>> {
+        use security_framework::item::{CloudSync, ItemClass, ItemSearchOptions, Limit};
+        use security_framework_sys::base::errSecItemNotFound;
+
+        let results = match ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .account(&self.account)
+            .cloud_sync(CloudSync::MatchSyncNo)
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search()
+        {
+            Ok(results) => results,
+            Err(source) if source.code() == errSecItemNotFound => return Ok(HashSet::new()),
+            Err(_) => return Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable)),
+        };
+        let prefix = format!("{}.", self.service);
+        let mut kinds = HashSet::new();
+        for result in results {
+            let attributes = result
+                .simplify_dict()
+                .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
+            if attributes.get("acct") != Some(&self.account) {
+                return Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable));
+            }
+            if let Some(kind) = attributes.get("svce").and_then(|s| s.strip_prefix(&prefix)) {
+                kinds.insert(kind.to_string());
+            }
+        }
+        Ok(kinds)
+    }
+
     fn delete(&self) -> StoreResult<()> {
         use security_framework::passwords::delete_generic_password_options;
         use security_framework_sys::base::errSecItemNotFound;
@@ -751,6 +875,7 @@ pub(crate) mod tests {
             }),
             account,
             directory: root.to_path_buf(),
+            index: Arc::default(),
             enrollment_clock: None,
         }
     }
@@ -1052,6 +1177,7 @@ pub(crate) mod tests {
                 account: raw_account(&database_path),
                 directory: root,
                 backend,
+                index: Arc::default(),
                 enrollment_clock: None,
             };
             let error = store.load_or_create().unwrap_err();
@@ -1117,6 +1243,7 @@ pub(crate) mod tests {
             account,
             directory,
             backend: Backend::Keychain(backend),
+            index: Arc::default(),
             enrollment_clock: None,
         };
         let first = store.load_or_create().unwrap().context();
@@ -1124,6 +1251,25 @@ pub(crate) mod tests {
         let Backend::Keychain(backend) = &store.backend else {
             unreachable!();
         };
+        let kinds = ["listed-a", "listed-b"];
+        for kind in kinds {
+            store.adoption_backend(kind).create(b"x").unwrap();
+        }
+        let other = KeychainBackend {
+            service: format!("{}.listed-other", backend.service),
+            account: format!("{}-other", backend.account),
+        };
+        other.create(b"x").unwrap();
+        let listed = backend.list_kinds();
+        store.adoption_backend("listed-a").delete().unwrap();
+        let after_delete = backend.list_kinds();
+        store.adoption_backend("listed-b").delete().unwrap();
+        other.delete().unwrap();
         let _ = backend.delete();
+        assert_eq!(listed.unwrap(), HashSet::from(kinds.map(String::from)));
+        assert_eq!(
+            after_delete.unwrap(),
+            HashSet::from(["listed-b".to_string()])
+        );
     }
 }

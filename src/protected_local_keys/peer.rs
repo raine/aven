@@ -144,7 +144,7 @@ pub(crate) struct ActiveInputs {
     pub evidence: Evidence,
     coverage: VerifiedKeys,
     _installation: InstallationGuard,
-    _lock: File,
+    _lock: StoreLock,
 }
 impl ActiveInputs {
     pub(super) fn authority(&self) -> Device<'_> {
@@ -181,7 +181,7 @@ impl ProtectedLocalKeyStore {
         name: &str,
         size: usize,
     ) -> Result<Option<Zeroizing<Vec<u8>>>> {
-        let pin = db.enrollment_artifact(name).await?;
+        let pin = self.enrollment_pin(db, name).await?;
         let bytes = self.read_owned(name, size, pin.is_some())?;
         if let (Some(pin), Some(bytes)) = (pin, &bytes) {
             ensure!(
@@ -201,8 +201,29 @@ impl ProtectedLocalKeyStore {
     ) -> Result<()> {
         self.phase(db, name, size).await?;
         self.write_owned(name, size, bytes)?;
-        db.pin_enrollment_artifact(id.incarnation, name, Sha256::digest(bytes).into())
-            .await
+        let digest: Hash = Sha256::digest(bytes).into();
+        db.pin_enrollment_artifact(id.incarnation, name, digest)
+            .await?;
+        self.with_index(|index| {
+            if let Some(pins) = &mut index.pins {
+                pins.insert(name.to_string(), digest.to_vec());
+            }
+        });
+        Ok(())
+    }
+    /// Pins are only ever added, by `save_phase`, so one bulk load serves the
+    /// whole lock.
+    async fn enrollment_pin(&self, db: &Database, name: &str) -> Result<Option<Vec<u8>>> {
+        match self.with_index(|index| index.pins.as_ref().map(|pins| pins.get(name).cloned())) {
+            None => db.enrollment_artifact(name).await,
+            Some(Some(pin)) => Ok(pin),
+            Some(None) => {
+                let pins = db.enrollment_artifacts().await?;
+                let pin = pins.get(name).cloned();
+                self.with_index(|index| index.pins = Some(pins));
+                Ok(pin)
+            }
+        }
     }
     pub(super) async fn save_management_phase(
         &self,

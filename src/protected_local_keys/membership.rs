@@ -32,6 +32,27 @@ impl ProtectedLocalKeyStore {
         limit: usize,
         required: bool,
     ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        if self.with_index(|index| index.listing.is_none()) == Some(true) {
+            let listing = self.list_kinds()?;
+            self.with_index(|index| index.listing = Some(listing));
+        }
+        let known = self.with_index(|index| {
+            let listing = index.listing.as_ref()?;
+            if let Some(value) = index.values.get(kind) {
+                return Some(Ok(Some(value.clone())));
+            }
+            if listing.items.contains(kind) {
+                return None;
+            }
+            Some(if required || listing.markers.contains(kind) {
+                Err(anyhow::anyhow!("error enrollment-protected-missing"))
+            } else {
+                Ok(None)
+            })
+        });
+        if let Some(Some(known)) = known {
+            return known;
+        }
         let marker_path = self
             .directory
             .join(format!("{}.{}-authority", self.account, kind));
@@ -65,7 +86,15 @@ impl ProtectedLocalKeyStore {
         if marker.is_none() {
             write_restricted_new(&marker_path, &digest)?;
         }
-        Ok(Some(Zeroizing::new(frame[44..44 + len].to_vec())))
+        let value = Zeroizing::new(frame[44..44 + len].to_vec());
+        self.with_index(|index| {
+            if let Some(listing) = &mut index.listing {
+                listing.items.insert(kind.to_string());
+                listing.markers.insert(kind.to_string());
+            }
+            index.values.insert(kind.to_string(), value.clone());
+        });
+        Ok(Some(value))
     }
     pub(super) fn write_owned(&self, kind: &str, limit: usize, bytes: &[u8]) -> Result<()> {
         ensure!(
@@ -85,6 +114,11 @@ impl ProtectedLocalKeyStore {
         frame[40..44].copy_from_slice(&(bytes.len() as u32).to_be_bytes());
         frame[44..44 + bytes.len()].copy_from_slice(bytes);
         self.adoption_backend(kind).create(&frame)?;
+        self.with_index(|index| {
+            if let Some(listing) = &mut index.listing {
+                listing.items.insert(kind.to_string());
+            }
+        });
         ensure!(
             self.read_owned(kind, limit, true)?
                 .as_ref()

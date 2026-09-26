@@ -247,10 +247,28 @@ async fn journal_scan_loads_bound_and_ready_once() {
 
     let (invitation, loads) = BACKEND_LOADS.measure(store.outbound_invitation(&db)).await;
     assert_eq!(invitation.unwrap(), Some(OutboundInvitation::Pending));
-    // One journal walk uses 128 outbound probes, three phase reads, and eight
-    // candidate/sent pairs. Invitation status then performs eleven targeted
-    // reads. Bound and ready must not be loaded a second time during the walk.
-    assert_eq!(loads, 158);
+    // The store lock lists existing items once, so absent slots and phases
+    // cost no loads. Only outbound-0 and registered exist, each loaded once.
+    assert_eq!(loads, 2);
+    task.abort();
+}
+
+#[tokio::test]
+async fn invitation_loads_scale_with_existing_items() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, _, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    let mut loads = Vec::new();
+    for _ in 0..3 {
+        let (invitation, count) = BACKEND_LOADS
+            .measure(client.invite(&store, &db, expiry()))
+            .await;
+        invitation.unwrap();
+        loads.push(count);
+    }
+    // Loads follow existing items, not slot capacity (257 membership floors,
+    // 128 outbound journals), which used to cost thousands of loads.
+    assert_eq!(loads, [15, 10, 10]);
     task.abort();
 }
 
