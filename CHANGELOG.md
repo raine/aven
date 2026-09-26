@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: Opening a [search](https://aventasks.dev/tui/#search-filter-and-order) result with `Enter` keeps the typed query as the committed search view, so closing the task detail returns to the full result list instead of a single-task view scoped to that task's reference.
+
 ## v0.1.43 (2026-09-26)
 
 - Fix: Moving tasks or recurring schedules to a project now requires that project to exist in the selected workspace, preventing accidental duplicate projects. ([#29](https://github.com/raine/aven/issues/29))
