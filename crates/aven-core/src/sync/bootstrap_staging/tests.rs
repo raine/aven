@@ -52,18 +52,6 @@ impl Fixture {
             .await
             .unwrap()
             .task;
-        if large {
-            let updates = (0..27_000)
-                .map(|i| {
-                    (
-                        task.id.clone(),
-                        "description".into(),
-                        format!("PRIVATE-HISTORY-{i}"),
-                    )
-                })
-                .collect::<Vec<_>>();
-            source.set_task_fields(&workspace, &updates).await.unwrap();
-        }
         let mut image_hash = String::new();
         for width in [2, 3] {
             let mut encoded = std::io::Cursor::new(Vec::new());
@@ -110,7 +98,7 @@ impl Fixture {
             .unwrap()
             .try_into()
             .unwrap();
-        let package = source
+        let mut package = source
             .package_local_shared_state_never_dispatched(
                 dir.path(),
                 context,
@@ -120,6 +108,11 @@ impl Fixture {
             .await
             .unwrap()
             .upload_package();
+        if large {
+            // Server staging checks catalogs keylessly, so synthetic prefix
+            // rows produce a two-slice catalog without real history.
+            bootstrap_format::replace_prefix_catalog(&mut package, 30_000);
+        }
         assert_eq!(
             bootstrap_format::validate_keyless(&package)
                 .unwrap()

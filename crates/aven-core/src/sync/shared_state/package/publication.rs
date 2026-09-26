@@ -608,6 +608,21 @@ pub(crate) fn recommit_catalog(package: &mut Package, index: usize) {
     package.descriptor = d.encode().unwrap();
 }
 
+/// Replaces the prefix catalog with `count` synthetic rows and recommits the
+/// descriptor. Keyless checks pass; keyed validation against the snapshot
+/// does not.
+#[cfg(test)]
+pub(crate) fn replace_prefix_catalog(package: &mut Package, count: u64) {
+    let rows = (1..=count)
+        .map(|rank| (rank, format!("{rank:026}")))
+        .collect::<Vec<_>>();
+    package.catalogs[1] = catalog::prefix_encode(&rows).unwrap();
+    let mut d = Descriptor::decode(&package.descriptor).unwrap();
+    d.prefix = count;
+    package.descriptor = d.encode().unwrap();
+    recommit_catalog(package, 1);
+}
+
 pub(crate) struct AttachmentIndex {
     pub context: crypto::LocalSharedStatePackageContext,
     pub stream: [u8; 32],

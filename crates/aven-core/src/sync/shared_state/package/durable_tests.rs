@@ -234,22 +234,35 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
             .to_vec(),
         ),
     ];
+    // Package once, then give every case its own copy of the frozen state.
+    let (template, source, task) = source_with_history().await;
+    add_selected_images(template.path(), &source, &task).await;
+    source
+        .capture_local_shared_state_never_dispatched()
+        .await
+        .unwrap();
+    let frozen = source
+        .package_local_shared_state_never_dispatched(
+            template.path(),
+            package_context(),
+            &package_key(),
+            [7; 32],
+        )
+        .await
+        .unwrap();
     for (name, statements) in mutations {
-        let (dir, database, task) = source_with_history().await;
-        add_selected_images(dir.path(), &database, &task).await;
-        database
-            .capture_local_shared_state_never_dispatched()
+        let dir = tempfile::tempdir().unwrap();
+        copy_objects(
+            &template.path().join("objects"),
+            &dir.path().join("objects"),
+        );
+        let copy = dir.path().join("source.sqlite");
+        sqlx::query("VACUUM INTO ?")
+            .bind(copy.to_str().unwrap())
+            .execute(&mut *source.acquire_writer().await.unwrap())
             .await
             .unwrap();
-        let frozen = database
-            .package_local_shared_state_never_dispatched(
-                dir.path(),
-                package_context(),
-                &package_key(),
-                [7; 32],
-            )
-            .await
-            .unwrap();
+        let database = Database::open(&copy).await.unwrap();
         let mut conn = database.acquire_writer().await.unwrap();
         for statement in &statements {
             sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
@@ -303,6 +316,19 @@ async fn corrupt_or_missing_frozen_components_never_trigger_replacement() {
             .cancel_local_shared_state_never_dispatched(frozen.candidate_id())
             .await
             .unwrap();
+    }
+}
+
+fn copy_objects(source: &std::path::Path, target: &std::path::Path) {
+    std::fs::create_dir_all(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let path = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_objects(&entry.path(), &path);
+        } else {
+            std::fs::copy(entry.path(), path).unwrap();
+        }
     }
 }
 
