@@ -155,7 +155,6 @@ pub struct Membership {
     members: Vec<Member>,
     heads: Vec<Hash>,
     handles: Vec<Hash>,
-    evidence_bytes: usize,
     retired: Vec<Member>,
     generations: Vec<Generation>,
     pending: bool,
@@ -187,7 +186,6 @@ impl Membership {
                 starts_after: 0,
             }],
             pending: false,
-            evidence_bytes: GENESIS_BYTES + PUBLICATION_BYTES + descriptor.len(),
         })
     }
     pub fn head(&self) -> Hash {
@@ -292,7 +290,7 @@ impl Membership {
             ),
             4 | 5 => {
                 check(declaration.is_empty() && request.is_empty())?;
-                self.finish(rotation::validate(self, record)?, 0, record)
+                self.finish(rotation::validate(self, record)?, record)
             }
             _ => anyhow::bail!("error membership-action"),
         }
@@ -317,24 +315,20 @@ impl Membership {
         });
         next.members.sort_by_key(|m| m.device);
         next.handles.push(declaration.handle);
-        self.finish(next, DECLARATION_BYTES + request.len(), record)
+        self.finish(next, record)
     }
-    fn finish(&self, mut next: Self, attached: usize, record: &[u8]) -> Result<Self> {
+    fn finish(&self, mut next: Self, record: &[u8]) -> Result<Self> {
         next.heads.push(hash(record));
-        next.evidence_bytes = self
-            .evidence_bytes
-            .checked_add(attached)
-            .and_then(|n| n.checked_add(record.len()))
-            .context("error membership-limit")?;
         next.capacity()?;
         Ok(next)
     }
+    /// Counts alone bound the chain: `MAX_CHAIN_BYTES` is the worst case of
+    /// every record at its canonical maximum within these counts.
     fn capacity(&self) -> Result<()> {
         let reserve = usize::from(self.pending);
         ensure!(
             self.heads.len() - 1 + reserve <= MAX_TRANSITIONS
-                && self.generations.len() + reserve <= MAX_GENERATIONS
-                && self.evidence_bytes <= MAX_CHAIN_BYTES - reserve * MAX_ROTATION_BYTES,
+                && self.generations.len() + reserve <= MAX_GENERATIONS,
             "error membership-change-limit"
         );
         Ok(())

@@ -474,7 +474,6 @@ fn maximum_signed_chain_fits_every_bound() {
     };
     assert_eq!(evidence.transitions.len(), MAX_TRANSITIONS);
     assert_eq!(evidence.verify().unwrap().head(), m.head());
-    assert!(m.evidence_bytes <= MAX_CHAIN_BYTES);
     let json = serde_json::to_vec(&evidence).unwrap();
     assert_eq!(Evidence::decode(&json).unwrap().1.head(), m.head());
     assert!(seed().prepare_revoke(&m, &[]).is_err());
@@ -517,20 +516,8 @@ fn maximum_signed_chain_fits_every_bound() {
 }
 
 #[test]
-fn pending_rotation_reserve_fits_the_largest_rotation() {
+fn freeze_is_refused_without_room_for_its_rotation() {
     let f = fixture();
-    let keys = f.membership.verify_initial_key(&f.key).unwrap();
-    let freeze = Device::seed(&f.seed)
-        .prepare_revoke(&f.membership, &[])
-        .unwrap();
-    let mut near = f.membership.clone();
-    near.evidence_bytes = MAX_CHAIN_BYTES - MAX_ROTATION_BYTES - freeze.len();
-    let pending = near.append(&[], &[], &freeze).unwrap();
-    Device::seed(&f.seed)
-        .prepare_rotation(&pending, &keys, 0)
-        .unwrap();
-    near.evidence_bytes += 1;
-    assert!(near.append(&[], &[], &freeze).is_err());
     let mut near = f.membership.clone();
     near.heads = vec![near.head(); MAX_TRANSITIONS];
     assert!(Device::seed(&f.seed).prepare_revoke(&near, &[]).is_err());

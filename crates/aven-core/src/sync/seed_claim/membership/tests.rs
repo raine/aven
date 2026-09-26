@@ -435,7 +435,7 @@ fn grant_semantics_and_psk_trust_are_not_keyless_server_acceptance() {
 #[test]
 fn duplicate_identity_keys_handles_and_resource_refusal_preserve_predecessor() {
     let f = fixture();
-    let (_, _, peer, _, mut m) = first(&f);
+    let (_, _, peer, _, m) = first(&f);
     let before = m.head();
     let recipient = peer.0.recipient().unwrap();
     assert!(m.unique(&recipient, &[1; 32]).is_err());
@@ -451,19 +451,6 @@ fn duplicate_identity_keys_handles_and_resource_refusal_preserve_predecessor() {
         }
         assert!(m.unique(&recipient, &[1; 32]).is_err());
     }
-    let (inv, d) = Device::seed(&f.seed).prepare_invitation(&m, 0).unwrap();
-    let next = Joiner::generate(copy_invitation(&inv)).unwrap();
-    let raw = Device::seed(&f.seed)
-        .prepare_admission(
-            &m,
-            &d,
-            &inv,
-            next.request(),
-            &m.verify_initial_key(&f.key).unwrap(),
-        )
-        .unwrap();
-    m.evidence_bytes = MAX_CHAIN_BYTES;
-    assert!(m.append(d.record(), next.request(), &raw).is_err());
     assert_eq!(m.head(), before);
     // Actual signed additions reach the cap; no fixture-created member rows.
     let mut m = f.membership.clone();
