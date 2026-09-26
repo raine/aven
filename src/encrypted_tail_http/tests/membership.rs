@@ -56,14 +56,13 @@ async fn converge_three(f: &Fixture, third: &Joined) {
         }
     }
 }
-async fn exercise_equal_peers(peer_invites: bool) {
+// A seed-issued invitation is the default path in every other membership
+// test, so only the peer-issued case runs with content and images.
+#[tokio::test]
+async fn third_invited_by_peer_continues_real_content_and_images() {
     let f = fixture().await;
     let original_peer = floor(&f.peer_store, &f.peer, &f.origin).await;
-    let third = if peer_invites {
-        join(&f, "third", &f.peer, &f.peer_store).await
-    } else {
-        join(&f, "third", &f.seed, &f.seed_store).await
-    };
+    let third = join(&f, "third", &f.peer, &f.peer_store).await;
     assert_eq!(
         floor(&third.store, &third.db, &f.origin).await.sequence(),
         3
@@ -211,14 +210,6 @@ async fn exercise_equal_peers(peer_invites: bool) {
         third.store.outbound_invitation(&third.db).await.unwrap(),
         Some(crate::protected_local_keys::peer::OutboundInvitation::Pending)
     );
-}
-#[tokio::test]
-async fn third_invited_by_seed_continues_real_content_and_images() {
-    exercise_equal_peers(false).await;
-}
-#[tokio::test]
-async fn third_invited_by_peer_continues_real_content_and_images() {
-    exercise_equal_peers(true).await;
 }
 
 #[tokio::test]
