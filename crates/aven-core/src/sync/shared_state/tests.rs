@@ -5,8 +5,8 @@ use chrono::{Duration, TimeZone, Utc};
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde_json::Value;
 
-use crate::sync::ApplySyncPage;
-use crate::sync::wire::{ChangeWire, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse};
+use crate::sync::wire::ChangeWire;
+use crate::test_support::encrypted_sync::EncryptedSyncServer;
 
 use super::*;
 use crate::choices::TaskSource;
@@ -118,93 +118,29 @@ async fn apply_remote_attachment_change(
             "created_at": "2026-09-21T12:00:00Z"
         })
     };
-    let after = database
-        .meta("sync_cursor")
-        .await
-        .unwrap()
-        .unwrap()
-        .parse::<i64>()
-        .unwrap();
-    change.server_seq = Some(after + 1);
-    database
-        .apply_client_sync_page(ApplySyncPage {
-            sync_generation: 0,
-            request: SyncRequest {
-                protocol_version: Some(SYNC_PROTOCOL_VERSION),
-                client_id: "remote".into(),
-                after,
-                pull_limit: Some(512),
-                changes: vec![],
-            },
-            response: SyncResponse {
-                protocol_version: SYNC_PROTOCOL_VERSION,
-                changes: vec![change],
-                push_acks: vec![],
-                cursor: after + 1,
-                has_more: false,
-            },
-            attempted_at: "2026-09-21T12:00:00Z".into(),
-        })
+    let mut conn = database.acquire_writer().await.unwrap();
+    let mut tx = db::begin_immediate(&mut conn).await.unwrap();
+    crate::sync::apply::apply_remote_change(&mut tx, &change)
         .await
         .unwrap();
+    crate::sync::persistence::insert_wire_change(&mut tx, &change)
+        .await
+        .unwrap();
+    crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+        &mut tx,
+        &[sha256.to_string()],
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
 }
 
-struct TestStream {
-    next: i64,
-}
-
-impl TestStream {
-    async fn send(&mut self, from: &Database, replicas: &[&Database], attempted_at: &str) {
-        let export = from.export_data(attempted_at.into()).await.unwrap();
-        let mut pending = export
-            .tables
-            .changes
-            .iter()
-            .filter(|row| row.server_seq.is_none())
-            .collect::<Vec<_>>();
-        pending.sort_by_key(|row| (row.local_seq, &row.created_at, &row.change_id));
-        let changes = pending
-            .into_iter()
-            .map(|row| {
-                self.next += 1;
-                let mut change = wire(row);
-                change.server_seq = Some(self.next);
-                change
-            })
-            .collect::<Vec<_>>();
-        if changes.is_empty() {
-            return;
-        }
-        for replica in replicas {
-            let after = replica
-                .meta("sync_cursor")
-                .await
-                .unwrap()
-                .unwrap()
-                .parse()
-                .unwrap();
-            replica
-                .apply_client_sync_page(ApplySyncPage {
-                    sync_generation: 0,
-                    request: SyncRequest {
-                        protocol_version: Some(SYNC_PROTOCOL_VERSION),
-                        client_id: "ZZZZZZZZZZZZZZZZ".into(),
-                        after,
-                        pull_limit: Some(512),
-                        changes: vec![],
-                    },
-                    response: SyncResponse {
-                        protocol_version: SYNC_PROTOCOL_VERSION,
-                        changes: changes.clone(),
-                        push_acks: vec![],
-                        cursor: self.next,
-                        has_more: false,
-                    },
-                    attempted_at: attempted_at.into(),
-                })
-                .await
-                .unwrap();
-        }
+/// Pushes `from`'s pending history, then brings every replica up to date.
+async fn send(server: &EncryptedSyncServer, from: &Database, replicas: &[&Database]) {
+    server.sync(from).await.unwrap();
+    for replica in replicas {
+        server.sync(replica).await.unwrap();
     }
 }
 
@@ -212,8 +148,11 @@ async fn establish_test_prefix(
     source: &Database,
     installed: &Database,
     capture: &SharedStateCapture,
-) -> TestStream {
+) -> EncryptedSyncServer {
+    let blobs = tempfile::tempdir().unwrap();
+    let server = EncryptedSyncServer::publishing(source, blobs.path()).await;
     let count = i64::try_from(capture.snapshot.tables.changes.len()).unwrap();
+    assert_eq!(server.prefix(), count);
     let mut conn = source.acquire_writer().await.unwrap();
     let mut tx = db::begin_immediate(&mut conn).await.unwrap();
     sqlx::query("UPDATE changes SET server_seq = NULL")
@@ -245,11 +184,10 @@ async fn establish_test_prefix(
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let mut conn = installed.acquire_writer().await.unwrap();
-    db::set_meta(&mut conn, "sync_cursor", &count.to_string())
-        .await
-        .unwrap();
-    TestStream { next: count }
+    drop(conn);
+    server.bind(source).await.unwrap();
+    server.bind(installed).await.unwrap();
+    server
 }
 
 fn normalized_shared(capture: SharedStateCapture) -> Value {
@@ -645,36 +583,28 @@ async fn imported_baseline_and_subsequent_operations_converge_after_install() {
     let capture = source.capture_shared_state().await.unwrap();
     let (_installed_dir, installed, _) = fresh().await;
     installed.install_shared_state(&capture).await.unwrap();
-    let mut stream = establish_test_prefix(&source, &installed, &capture).await;
+    let server = establish_test_prefix(&source, &installed, &capture).await;
 
     installed
         .resolve_conflict(&workspace, &child, "title", "resolved")
         .await
         .unwrap();
-    stream
-        .send(&installed, &[&source, &installed], "2026-09-21T13:00:00Z")
-        .await;
+    send(&server, &installed, &[&source, &installed]).await;
     source
         .remove_task_from_epic(&workspace, &child, &epic)
         .await
         .unwrap();
-    stream
-        .send(&source, &[&source, &installed], "2026-09-21T13:01:00Z")
-        .await;
+    send(&server, &source, &[&source, &installed]).await;
     installed
         .remove_task_related_link(&workspace, &child, &other)
         .await
         .unwrap();
-    stream
-        .send(&installed, &[&source, &installed], "2026-09-21T13:02:00Z")
-        .await;
+    send(&server, &installed, &[&source, &installed]).await;
     source
         .delete_task_attachment(&workspace, &attachment_id)
         .await
         .unwrap();
-    stream
-        .send(&source, &[&source, &installed], "2026-09-21T13:03:00Z")
-        .await;
+    send(&server, &source, &[&source, &installed]).await;
     // Both replicas generate the same deterministic recurrence identities at the
     // same clock.
     source
@@ -685,9 +615,7 @@ async fn imported_baseline_and_subsequent_operations_converge_after_install() {
         .reconcile_recurrence_series(&workspace, &series.series.id, at + Duration::days(1))
         .await
         .unwrap();
-    stream
-        .send(&source, &[&source, &installed], "2026-09-22T12:00:00Z")
-        .await;
+    send(&server, &source, &[&source, &installed]).await;
 
     let source_capture = source.capture_shared_state().await.unwrap();
     let installed_capture = installed.capture_shared_state().await.unwrap();
@@ -1133,15 +1061,9 @@ async fn durable_pin_survives_cleanup_until_idempotent_local_cancellation() {
 }
 
 #[tokio::test]
-async fn active_local_capture_fences_sync_import_and_restore_but_allows_local_backups() {
+async fn active_local_capture_fences_import_and_restore_but_allows_local_backups() {
     let (temp, database, workspace) = fresh().await;
     task(&database, &workspace, "fenced").await;
-    let prepared = database
-        .prepare_client_sync_page("https://sync.test".into(), 0, 10)
-        .await
-        .unwrap();
-    let stale_request = prepared.request.clone();
-    let stale_generation = prepared.sync_generation;
     let portable = database
         .export_data("2026-09-21T12:00:00Z".into())
         .await
@@ -1152,31 +1074,6 @@ async fn active_local_capture_fences_sync_import_and_restore_but_allows_local_ba
         .unwrap();
     let candidate_id = capture.candidate_id().to_string();
 
-    let response = SyncResponse {
-        protocol_version: SYNC_PROTOCOL_VERSION,
-        changes: vec![],
-        push_acks: vec![],
-        cursor: prepared.request.after,
-        has_more: false,
-    };
-    let error = database
-        .apply_client_sync_page(ApplySyncPage {
-            request: prepared.request,
-            sync_generation: prepared.sync_generation,
-            response,
-            attempted_at: "2026-09-21T12:01:00Z".into(),
-        })
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("local-shared-capture-active"));
-    assert!(
-        database
-            .prepare_client_sync_page("https://sync.test".into(), 1, 10)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("local-shared-capture-active")
-    );
     assert!(
         database
             .import_data(&portable)
@@ -1225,23 +1122,6 @@ async fn active_local_capture_fences_sync_import_and_restore_but_allows_local_ba
         .cancel_local_shared_state_never_dispatched(&candidate_id)
         .await
         .unwrap();
-    let stale_response = SyncResponse {
-        protocol_version: SYNC_PROTOCOL_VERSION,
-        changes: vec![],
-        push_acks: vec![],
-        cursor: stale_request.after,
-        has_more: false,
-    };
-    let error = database
-        .apply_client_sync_page(ApplySyncPage {
-            request: stale_request,
-            sync_generation: stale_generation,
-            response: stale_response,
-            attempted_at: "2026-09-21T12:02:00Z".into(),
-        })
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("sync-generation-changed"));
 }
 
 #[tokio::test]
@@ -1352,14 +1232,6 @@ async fn malformed_persisted_capture_fails_closed() {
             .to_string()
             .contains("malformed")
     );
-    assert!(
-        database
-            .prepare_client_sync_page("https://sync.test".into(), 1, 10)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("local-shared-capture-active")
-    );
 }
 
 #[tokio::test]
@@ -1420,7 +1292,7 @@ async fn recurrence_continuation(with_metadata: bool) {
     let snapshot = a.capture_shared_state().await.unwrap();
     b.install_shared_state(&snapshot).await.unwrap();
     assert_recurrence_replicas_equal(&a, &b).await;
-    let mut stream = establish_test_prefix(&a, &b, &snapshot).await;
+    let server = establish_test_prefix(&a, &b, &snapshot).await;
     let tomorrow = at + chrono::Duration::days(1);
     // Both replicas independently generate the same deterministic projection.
     a.reconcile_recurrence_series(&ws, &series.series.id, tomorrow)
@@ -1429,8 +1301,8 @@ async fn recurrence_continuation(with_metadata: bool) {
     b.reconcile_recurrence_series(&ws, &series.series.id, tomorrow)
         .await
         .unwrap();
-    stream.send(&a, &[&a, &b], "2100-09-22T12:00:00Z").await;
-    stream.send(&b, &[&a, &b], "2100-09-22T12:00:00Z").await;
+    send(&server, &a, &[&a, &b]).await;
+    send(&server, &b, &[&a, &b]).await;
     assert_recurrence_replicas_equal(&a, &b).await;
     let current = b
         .reconcile_recurrence_series(&ws, &series.series.id, tomorrow)
@@ -1452,7 +1324,7 @@ async fn recurrence_continuation(with_metadata: bool) {
         .unwrap();
         tx.commit().await.unwrap();
     }
-    stream.send(&b, &[&a, &b], "2100-09-22T13:00:00Z").await;
+    send(&server, &b, &[&a, &b]).await;
     assert_recurrence_replicas_equal(&a, &b).await;
     if with_metadata {
         let successor: TaskId = b
@@ -1481,7 +1353,7 @@ async fn recurrence_continuation(with_metadata: bool) {
         )
         .await
         .unwrap();
-        stream.send(&b, &[&a, &b], "2100-09-22T14:00:00Z").await;
+        send(&server, &b, &[&a, &b]).await;
         assert_recurrence_replicas_equal(&a, &b).await;
     }
     let data = b.export_data("2100-09-22T14:00:00Z".into()).await.unwrap();

@@ -504,12 +504,6 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
             .unwrap()
             .contains(&hex::encode(peer.bearer().expose()))
     );
-    assert!(
-        peer_db
-            .prepare_client_sync_page("http://localhost:9999".into(), 1, 1)
-            .await
-            .is_err()
-    );
     let backup_path = root.path().join("detached-peer-backup.sqlite");
     aven_core::db::backup_database(peer_db.path(), &backup_path)
         .await

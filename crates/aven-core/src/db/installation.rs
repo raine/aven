@@ -206,9 +206,16 @@ mod concurrency_tests {
         let database = Database::open(&path).await.unwrap();
         let independent = Database::open(&path).await.unwrap();
         let clone = database.clone();
+        let source = Database::open(&root.path().join("source.sqlite"))
+            .await
+            .unwrap();
+        let capture = source
+            .capture_local_shared_state_never_dispatched()
+            .await
+            .unwrap();
+        let capture = capture.shared_state();
         let writer = database.acquire_writer().await.unwrap();
-        let mut page =
-            Box::pin(database.prepare_client_sync_page("https://sync.test".into(), 0, 1));
+        let mut page = Box::pin(database.install_shared_state(capture));
         let mut context = TaskContext::from_waker(Waker::noop());
         // Polling stops at the held writer gate, after installation acquisition.
         assert!(page.as_mut().poll(&mut context).is_pending());
@@ -222,20 +229,23 @@ mod concurrency_tests {
         let nested = InstallationGuard::acquire_plaintext(&path).unwrap();
         assert!(nested.fence().is_err());
         drop(nested);
-        let mut second = Box::pin(clone.prepare_client_sync_page("https://sync.test".into(), 0, 1));
+        let mut second = Box::pin(clone.install_shared_state(capture));
         assert!(second.as_mut().poll(&mut context).is_pending());
         // Both ordinary calls coexist, but exclusive setup/replacement cannot.
         assert!(InstallationGuard::acquire(&path).is_err());
         drop(writer);
         page.await.unwrap();
         assert!(InstallationGuard::acquire(&path).is_err());
-        second.await.unwrap();
+        // Only installation exclusion is under test, not the target's contents.
+        let _ = second.await;
         let exclusive = InstallationGuard::acquire(&path).unwrap();
         assert!(
             independent
-                .prepare_client_sync_page("https://sync.test".into(), 0, 1)
+                .install_shared_state(capture)
                 .await
-                .is_err()
+                .unwrap_err()
+                .to_string()
+                .contains("installation")
         );
         exclusive.fence().unwrap();
         drop(exclusive);

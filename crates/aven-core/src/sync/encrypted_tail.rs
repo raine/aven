@@ -196,6 +196,31 @@ pub(crate) fn valid(ok: bool) -> Result<()> {
 mod tests;
 
 #[cfg(any(test, feature = "test-support"))]
+pub(crate) fn open_record(authority: &Authority, record: &[u8]) -> Result<super::wire::ChangeWire> {
+    codec::open(authority, record)
+}
+
+/// Re-seals an accepted record after `edit`, keeping its sequence.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn reseal(
+    authority: &Authority,
+    accepted: &Accepted,
+    edit: impl FnOnce(&mut super::wire::ChangeWire),
+) -> Result<Accepted> {
+    let mut change = codec::open(authority, &accepted.record)?;
+    edit(&mut change);
+    let record = codec::seal(authority, &change)?;
+    Ok(Accepted {
+        mapping: Mapping {
+            operation_id: change.change_id,
+            sequence: accepted.mapping.sequence,
+            commitment: hash(&record),
+        },
+        record,
+    })
+}
+
+#[cfg(any(test, feature = "test-support"))]
 fn crash_at(stage: &str) {
     if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok(stage) {
         std::process::exit(84);

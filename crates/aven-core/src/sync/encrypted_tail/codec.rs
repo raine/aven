@@ -82,7 +82,7 @@ fn key(a: &Authority, generation: [u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
         .expect("fixed HKDF length");
     Ok(result)
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn seal(a: &Authority, change: &ChangeWire) -> Result<Vec<u8>> {
     let projection = domain::validate(change)?;
     seal_projection(a, change, &projection)

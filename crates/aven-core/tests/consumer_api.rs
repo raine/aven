@@ -12,10 +12,7 @@ use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::{TaskId, WorkspaceId};
 use aven_core::recurrence::RecurrenceSeriesId;
-use aven_core::sync::wire::{
-    MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncRequest, SyncResponse,
-};
-use aven_core::sync::{ApplySyncPage, ServerSyncPage};
+use aven_core::test_support::encrypted_sync::EncryptedSyncServer;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, SqliteConnection};
 
@@ -534,49 +531,9 @@ async fn task_source(path: &Path, task_id: &TaskId) -> String {
         .unwrap()
 }
 
-async fn exchange(client_path: &Path, server: &Database) {
-    exchange_bounded(client_path, server, MAX_PULL_BATCH).await;
-}
-
-async fn exchange_bounded(client_path: &Path, server: &Database, pull_limit: u32) {
+async fn exchange(client_path: &Path, server: &EncryptedSyncServer) {
     let client = Database::open(client_path).await.unwrap();
-    let page = client
-        .prepare_client_sync_page("https://sync.test".to_string(), MAX_PUSH_BATCH, pull_limit)
-        .await
-        .unwrap();
-    let server_request = SyncRequest {
-        protocol_version: page.request.protocol_version,
-        client_id: page.request.client_id.clone(),
-        after: page.request.after,
-        pull_limit: page.request.pull_limit,
-        changes: page.request.changes.clone(),
-    };
-    let persisted = server
-        .persist_server_sync_page(ServerSyncPage {
-            request: server_request,
-        })
-        .await
-        .unwrap();
-    let cursor = persisted
-        .changes
-        .last()
-        .and_then(|change| change.server_seq)
-        .unwrap_or(page.request.after);
-    client
-        .apply_client_sync_page(ApplySyncPage {
-            request: page.request,
-            sync_generation: 0,
-            response: SyncResponse {
-                protocol_version: SYNC_PROTOCOL_VERSION,
-                cursor,
-                has_more: persisted.has_more,
-                push_acks: persisted.push_acks,
-                changes: persisted.changes,
-            },
-            attempted_at: "2026-07-18T00:00:00Z".to_string(),
-        })
-        .await
-        .unwrap();
+    server.sync(&client).await.unwrap();
 }
 
 #[tokio::test]
@@ -584,9 +541,7 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("source-first.sqlite");
     let second_path = directory.path().join("source-second.sqlite");
-    let server = Database::open(&directory.path().join("source-server.sqlite"))
-        .await
-        .unwrap();
+    let server = EncryptedSyncServer::new().await;
     let first = Store::open(&first_path).await.unwrap();
     let workspace = first.resolve_workspace("default").await.unwrap();
     let created = first
@@ -701,20 +656,29 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
         assert_eq!(task_source(&second_path, task_id).await, *source);
     }
 
+    // Associated replicas export data only; the synced rows keep their sources.
     let replica = Database::open(&second_path).await.unwrap();
-    let export = replica
-        .export_data("2026-09-13T00:00:00Z".to_string())
-        .await
-        .unwrap();
-    let export = serde_json::from_slice(&serde_json::to_vec(&export).unwrap()).unwrap();
-    let imported_path = directory.path().join("source-imported.sqlite");
-    let imported = Database::open(&imported_path).await.unwrap();
-    imported.validate_import_data(&export).await.unwrap();
-    imported.import_data(&export).await.unwrap();
-    drop(imported);
-    assert_eq!(task_source(&imported_path, &created.id).await, "api");
+    let export = serde_json::to_value(
+        replica
+            .export_data("2026-09-13T00:00:00Z".to_string())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let exported_source = |task_id: &TaskId| {
+        export["tables"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|task| task["id"] == task_id.to_string())
+            .unwrap()["source"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(exported_source(&created.id), "api");
     for (task_id, source) in sources {
-        assert_eq!(task_source(&imported_path, &task_id).await, source);
+        assert_eq!(exported_source(&task_id), source);
     }
 }
 
@@ -1124,9 +1088,7 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("first.sqlite");
     let second_path = directory.path().join("second.sqlite");
-    let server = Database::open(&directory.path().join("server.sqlite"))
-        .await
-        .unwrap();
+    let server = EncryptedSyncServer::new().await;
 
     let first = Store::open(&first_path).await.unwrap();
     let storage = first.initialize_storage().unwrap();
@@ -1669,9 +1631,7 @@ async fn consumer_recurrence_changes_survive_sync_round_trips() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("recurrence-first.sqlite");
     let second_path = directory.path().join("recurrence-second.sqlite");
-    let server = Database::open(&directory.path().join("recurrence-server.sqlite"))
-        .await
-        .unwrap();
+    let server = EncryptedSyncServer::new().await;
     let first = Store::open(&first_path).await.unwrap();
     let workspace = first.resolve_workspace("default").await.unwrap();
     let created = first
@@ -1752,9 +1712,7 @@ async fn related_links_converge_across_remove_and_offline_remove_add_race() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("related-race-first.sqlite");
     let second_path = directory.path().join("related-race-second.sqlite");
-    let server = Database::open(&directory.path().join("related-race-server.sqlite"))
-        .await
-        .unwrap();
+    let server = EncryptedSyncServer::new().await;
     let first = Store::open(&first_path).await.unwrap();
     let workspace = first.resolve_workspace("default").await.unwrap();
     let create = |title: &str| CreateTask {
@@ -2492,9 +2450,7 @@ async fn task_deletion_syncs_delete_and_restore() {
     let directory = tempfile::tempdir().unwrap();
     let first_path = directory.path().join("deletion-first.sqlite");
     let second_path = directory.path().join("deletion-second.sqlite");
-    let server = Database::open(&directory.path().join("deletion-server.sqlite"))
-        .await
-        .unwrap();
+    let server = EncryptedSyncServer::new().await;
     let first = Store::open(&first_path).await.unwrap();
     let workspace = first.resolve_workspace("default").await.unwrap();
     let task = first

@@ -118,10 +118,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let original = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     let protected = original.protected_storage_bytes();
     drop(original);
-    let stale_page = client
-        .prepare_client_sync_page("https://legacy.test".into(), 0, 10)
-        .await
-        .unwrap();
     store.prepare_seed_source(&client).await.unwrap();
     client
         .capture_local_shared_state_never_dispatched()
@@ -640,32 +636,6 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         .unwrap();
     assert_eq!(cursor, (binding.prefix_count + 12).to_string());
     drop(conn);
-    let response = crate::sync::wire::SyncResponse {
-        protocol_version: crate::sync::wire::SYNC_PROTOCOL_VERSION,
-        changes: vec![],
-        push_acks: vec![],
-        cursor: stale_page.request.after,
-        has_more: false,
-    };
-    assert!(
-        client
-            .apply_client_sync_page(crate::sync::ApplySyncPage {
-                request: stale_page.request,
-                sync_generation: stale_page.sync_generation,
-                response,
-                attempted_at: "2100-09-21T12:00:00Z".into(),
-            })
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("e2ee-installation-fenced")
-    );
-    assert!(
-        client
-            .prepare_client_sync_page("http://localhost:9999".into(), 1, 1)
-            .await
-            .is_err()
-    );
     assert!(client.import_data(&before).await.is_err());
     crate::db::backup_database(client.path(), &root.path().join("backup.sqlite"))
         .await

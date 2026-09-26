@@ -14,7 +14,7 @@ pub use keys::{MAX_COVERAGE_BYTES, VerifiedKeys};
 pub use rotation::{Generation, RotationMaterial};
 pub(crate) mod persistence;
 pub use persistence::{CancelStatus, MAX_CANDIDATES, MAX_INVITATIONS, ManagementPreparation};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;

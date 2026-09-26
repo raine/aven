@@ -22,6 +22,28 @@ fn draft(description: String) -> TaskDraft {
     }
 }
 
+/// Unacknowledged history in push order, as it would be sealed for sync.
+async fn pending_changes(database: &Database) -> Vec<crate::sync::wire::ChangeWire> {
+    let export = database
+        .export_data("2026-09-26T00:00:00Z".into())
+        .await
+        .unwrap();
+    let mut rows: Vec<_> = export
+        .tables
+        .changes
+        .into_iter()
+        .filter(|row| row.server_seq.is_none())
+        .collect();
+    rows.sort_by_key(|row| row.local_seq);
+    rows.iter()
+        .map(|row| {
+            let mut value = serde_json::to_value(row).unwrap();
+            value["payload"] = serde_json::from_str(&row.payload).unwrap();
+            serde_json::from_value(value).unwrap()
+        })
+        .collect()
+}
+
 async fn snapshot(database: &Database) -> Vec<(String, Vec<String>)> {
     let mut conn = database.acquire_reader().await.unwrap();
     let mut snapshot = Vec::new();
@@ -159,13 +181,8 @@ async fn payload_boundaries_match_wire_for_both_local_insertions() {
         .add_note(&workspace, &task.id, String::new())
         .await
         .unwrap();
-    let page = database
-        .prepare_client_sync_page("http://localhost:3000".into(), 256, 512)
+    let template = pending_changes(&database)
         .await
-        .unwrap();
-    let template = page
-        .request
-        .changes
         .into_iter()
         .find(|change| change.change_id == note.change_id)
         .unwrap();
@@ -225,11 +242,8 @@ async fn payload_boundaries_match_wire_for_both_local_insertions() {
                         assert_eq!(snapshot(&database).await, before);
                     } else {
                         result.unwrap();
-                        let page = database
-                            .prepare_client_sync_page("http://localhost:3000".into(), 256, 512)
-                            .await
-                            .unwrap();
-                        let stored = page.request.changes.last().unwrap();
+                        let pending = pending_changes(&database).await;
+                        let stored = pending.last().unwrap();
                         assert_eq!(stored.payload, change.payload);
                         validate_pushed_change(stored).unwrap();
                     }
@@ -280,20 +294,15 @@ async fn shortening_legacy_oversized_notes_preserves_pending_history() {
         .edit_note(&workspace, &task.id, &note.note_id, "short".into())
         .await
         .unwrap();
-    let page = database
-        .prepare_client_sync_page("http://localhost:3000".into(), 256, 512)
-        .await
-        .unwrap();
-    let legacy = page
-        .request
-        .changes
+    let pending = pending_changes(&database).await;
+    let legacy = pending
         .iter()
         .find(|change| change.change_id == note.change_id)
         .unwrap();
     assert_eq!(legacy.payload.to_string(), payload);
     assert!(legacy.server_seq.is_none());
     assert!(crate::sync::wire::validate_pushed_change(legacy).is_err());
-    let shortened = page.request.changes.last().unwrap();
+    let shortened = pending.last().unwrap();
     assert_eq!(shortened.payload["body"], "short");
     crate::sync::wire::validate_pushed_change(shortened).unwrap();
 }

@@ -21,7 +21,7 @@ use crate::sync::wire::{AttachmentAddPayload, AttachmentDeletePayload, ChangeWir
 
 pub(crate) use task::adopt_generated_defaults;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 pub async fn apply_remote_change(conn: &mut SqliteConnection, change: &ChangeWire) -> Result<()> {
     tracing::debug!(
         change_id = %change.change_id,

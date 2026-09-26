@@ -2,8 +2,7 @@ use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::metadata::TaskMetadataInput;
 use aven_core::operations::{TaskDraft, TaskUpdate};
-use aven_core::sync::wire::{MAX_PULL_BATCH, MAX_PUSH_BATCH, SYNC_PROTOCOL_VERSION, SyncResponse};
-use aven_core::sync::{ApplySyncPage, ServerSyncPage};
+use aven_core::test_support::encrypted_sync::EncryptedSyncServer;
 
 fn input(key: impl Into<String>, value: impl Into<String>) -> TaskMetadataInput {
     TaskMetadataInput {
@@ -82,55 +81,18 @@ async fn local_creation_and_addition_limits_are_atomic() {
     }
 }
 
-async fn drain(db: &Database, server: &Database) {
-    for _ in 0..16 {
-        let page = db
-            .prepare_client_sync_page("https://sync.test".into(), MAX_PUSH_BATCH, MAX_PULL_BATCH)
-            .await
-            .unwrap();
-        let result = server
-            .persist_server_sync_page(ServerSyncPage {
-                request: page.request.clone(),
-            })
-            .await
-            .unwrap();
-        let response = SyncResponse {
-            protocol_version: SYNC_PROTOCOL_VERSION,
-            cursor: result
-                .changes
-                .last()
-                .and_then(|change| change.server_seq)
-                .unwrap_or(page.request.after),
-            has_more: result.has_more,
-            push_acks: result.push_acks,
-            changes: result.changes,
-        };
-        let has_more = response.has_more;
-        db.apply_client_sync_page(ApplySyncPage {
-            request: page.request,
-            sync_generation: page.sync_generation,
-            response,
-            attempted_at: "2026-09-22T00:00:00Z".into(),
-        })
-        .await
-        .unwrap();
-        if !has_more && db.sync_persistence_status().await.unwrap().pending_changes == 0 {
-            return;
-        }
-    }
-    panic!("plaintext sync did not drain");
+async fn drain(db: &Database, server: &EncryptedSyncServer) {
+    server.sync(db).await.unwrap();
 }
 
 #[tokio::test]
-async fn plaintext_merge_conflicts_and_capture_preserve_over_limit_metadata() {
+async fn encrypted_merge_conflicts_and_replay_preserve_over_limit_metadata() {
     for (base_count, value) in [(127, "x".into()), (7, "x".repeat(4096))] {
         for reverse in [false, true] {
             let root = tempfile::tempdir().unwrap();
             let a = Database::open(&root.path().join("a.sqlite")).await.unwrap();
             let b = Database::open(&root.path().join("b.sqlite")).await.unwrap();
-            let server = Database::open(&root.path().join("server.sqlite"))
-                .await
-                .unwrap();
+            let server = EncryptedSyncServer::new().await;
             let w = a.list_workspaces().await.unwrap().remove(0);
             let task = a
                 .create_task(&w, draft(base_count, &value))
@@ -180,31 +142,13 @@ async fn plaintext_merge_conflicts_and_capture_preserve_over_limit_metadata() {
                     "metadata-values-too-large"
                 }));
                 assert_eq!(snapshot(db).await, before);
-                let export = db.export_data("2026-09-22T00:00:00Z".into()).await.unwrap();
-                db.validate_import_data(&export).await.unwrap();
             }
-            // Durable capture/resume/install of real plaintext merged state.
-            let capture = a
-                .capture_local_shared_state_never_dispatched()
+            // A late replica replays the merged over-limit history from the tail.
+            let late = Database::open(&root.path().join("late.sqlite"))
                 .await
                 .unwrap();
-            let target = Database::open(&root.path().join("target.sqlite"))
-                .await
-                .unwrap();
-            target
-                .install_shared_state(capture.shared_state())
-                .await
-                .unwrap();
-            let resumed = a
-                .resume_local_shared_state_never_dispatched()
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(capture.candidate_id(), resumed.candidate_id());
-            assert_eq!(merged, target.task_metadata(&w.id, &task.id).await.unwrap());
-            a.cancel_local_shared_state_never_dispatched(capture.candidate_id())
-                .await
-                .unwrap();
+            drain(&late, &server).await;
+            assert_eq!(merged, late.task_metadata(&w.id, &task.id).await.unwrap());
 
             // Concurrent bounded replacements produce real conflicts while over-limit.
             for (db, letter) in [(&a, "a"), (&b, "b")] {

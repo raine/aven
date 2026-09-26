@@ -9,10 +9,10 @@ required to change it.
 Scope: this workspace ships only end-to-end encrypted sync. Its encrypted tail
 validates retained and new operations against replica protocol 18 through the
 operation contracts and persisted replica behavior below, so those sections
-govern every shared operation change. The unencrypted request and response
-envelope survives only behind `aven-core`'s `test-support` feature as an
-in-process page simulator for fixtures; discovery, server admission and
-release protocol markers no longer exist. Changing an
+govern every shared operation change. Merge tests sync replicas in process
+through the encrypted tail with `aven-core`'s `test-support` feature;
+discovery, server admission and release protocol markers no longer exist.
+Changing an
 encrypted operation contract also requires an encrypted tail codec change and
 its own security review.
 
@@ -74,24 +74,11 @@ For example, a future baseline of 18 and latest version of 20 would promise real
 support for 18, 19, and 20. Changing the constants alone cannot fulfill that
 promise.
 
-### Request and response envelopes
-
-`SyncRequest.protocol_version` carries the selected protocol as a JSON integer.
-It is optional in the Rust decoding type so missing versions can be rejected;
-absence does not negotiate a default. `SyncResponse.protocol_version` identifies
-the response contract. Server admission checks exact equality with the active
-server protocol on every metadata request.
+### Server sequences
 
 Across acknowledgements, pulled changes, and retained local history, one server
 sequence belongs to only one operation identity. An unexpected collision must
 reject the page transactionally, not silently omit a history row.
-
-A session discovers compatibility with an authenticated empty `/sync` request
-using a maximal cursor, before ordinary metadata or attachment transfer. A
-supported version learned from a mismatch requires an exact confirmation probe.
-Discovery is advisory: its cursor is not applied and it does not establish local
-replica behavior. A server cutover after discovery must still reject a stale
-metadata request without accepting any of its changes.
 
 ### Operation contracts
 

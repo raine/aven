@@ -16,6 +16,17 @@ impl Fixture {
     pub(crate) async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let source = Database::open(&dir.path().join("source.db")).await.unwrap();
+        let blob_dir = dir.path().to_path_buf();
+        Self::publishing(dir, &source, &blob_dir).await
+    }
+
+    /// Publishes `source`'s current shared state as the bootstrap. The
+    /// source's durable capture is released once packaged.
+    pub(crate) async fn publishing(
+        dir: tempfile::TempDir,
+        source: &Database,
+        blob_dir: &std::path::Path,
+    ) -> Self {
         let context = LocalSharedStatePackageContext {
             vault_id: [1; 32],
             generation_id: [2; 32],
@@ -28,7 +39,7 @@ impl Fixture {
             .unwrap();
         let package = source
             .package_local_shared_state_never_dispatched(
-                dir.path(),
+                blob_dir,
                 context,
                 &key,
                 seed.genesis().commitment(),
@@ -36,6 +47,15 @@ impl Fixture {
             .await
             .unwrap()
             .upload_package();
+        let candidate = source
+            .resume_local_shared_state_never_dispatched()
+            .await
+            .unwrap()
+            .unwrap();
+        source
+            .cancel_local_shared_state_never_dispatched(candidate.candidate_id())
+            .await
+            .unwrap();
         let p = seed.prepare_bootstrap_publication(&package, &key).unwrap();
         let db = Database::open(&dir.path().join("server.db")).await.unwrap();
         let setup_secret = Secret::new([5; 32]);

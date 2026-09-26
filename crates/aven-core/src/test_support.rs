@@ -11,6 +11,7 @@ use crate::types::Project;
 use crate::workspaces::Workspace;
 
 mod blank_database;
+pub mod encrypted_sync;
 
 pub use blank_database::{blank_database_template, open_blank_database};
 
