@@ -15,7 +15,7 @@ impl ProtectedLocalKeyStore {
         database: &Database,
         setup_id: [u8; 32],
     ) -> anyhow::Result<SeedAuthority> {
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         anyhow::ensure!(
             database
                 .enrollment_pin()
@@ -75,7 +75,7 @@ impl ProtectedLocalKeyStore {
         database: &Database,
         seed: &SeedAuthority,
     ) -> anyhow::Result<()> {
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         self.rollback_seed_commitment(database, seed.genesis().commitment())
             .await
     }

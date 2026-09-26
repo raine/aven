@@ -86,7 +86,7 @@ async fn join_peer(root: &tempfile::TempDir, origin: &str, name: &str, inviter: 
     let db = Database::open(&root.path().join(format!("journey-{name}.sqlite")))
         .await
         .unwrap();
-    let keys = isolated_store(db.path(), &root.path().join(format!("journey-{name}-keys")));
+    let keys = isolated_store(&db, &root.path().join(format!("journey-{name}-keys"))).await;
     let blobs = root.path().join(format!("journey-{name}-blobs"));
     let enrollment = peer_enrollment_http::Client::new(origin).unwrap();
     enrollment
@@ -776,7 +776,7 @@ async fn restart_server(journey: &mut Journey) {
 
 async fn run_client_worker(origin: &str, db: &Path, keys: &Path, blobs: &Path) {
     let database = Database::open(db).await.unwrap();
-    let store = isolated_store(database.path(), keys);
+    let store = isolated_store(&database, keys).await;
     let client = Client::new(origin).unwrap();
     for _ in 0..100 {
         let round = client.round(&store, &database, blobs).await.unwrap();
@@ -1006,7 +1006,7 @@ async fn normal_whole_engine_e2ee_journey() {
     let d_db = Database::open(&journey.root.path().join("journey-d.sqlite"))
         .await
         .unwrap();
-    let d_store = isolated_store(d_db.path(), &journey.root.path().join("journey-d-keys"));
+    let d_store = isolated_store(&d_db, &journey.root.path().join("journey-d-keys")).await;
     let d_blobs = journey.root.path().join("journey-d-blobs");
     let invitation = enrollment
         .invite(&journey.b.store, &journey.b.db, expiry())
@@ -1079,9 +1079,10 @@ async fn normal_whole_engine_e2ee_journey() {
             .unwrap_or_else(|error| format!("worker log unavailable: {error}"))
         );
     }
+    let d_db = Database::open(&d_db_path).await.unwrap();
     let d = Node {
-        db: Database::open(&d_db_path).await.unwrap(),
-        store: isolated_store(&d_db_path, &d_keys_path),
+        store: isolated_store(&d_db, &d_keys_path).await,
+        db: d_db,
         blobs: d_blobs_path,
     };
     assert_shared_state(&[&journey.a, &journey.b, &d], &state).await;

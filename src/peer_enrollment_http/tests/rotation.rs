@@ -17,7 +17,7 @@ async fn join(
     let db = Database::open(&root.join(format!("{name}.sqlite")))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.join(format!("{name}-keys")));
+    let store = isolated_store(&db, &root.join(format!("{name}-keys"))).await;
     let invitation = client
         .invite(inviter_store, inviter, expiry())
         .await
@@ -267,7 +267,7 @@ async fn three_installations_offline_two_rotations_and_fresh_historical_bootstra
     .await;
     let snapshot = fresh.db.export_data("test".into()).await.unwrap();
     let reopened = Database::open(fresh.db.path()).await.unwrap();
-    let reopened_store = isolated_store(reopened.path(), &root.path().join("fresh-keys"));
+    let reopened_store = isolated_store(&reopened, &root.path().join("fresh-keys")).await;
     client.install(&reopened_store, &reopened).await.unwrap();
     assert_eq!(
         serde_json::to_value(reopened.export_data("test".into()).await.unwrap().tables).unwrap(),
@@ -357,7 +357,7 @@ async fn protected_coverage_precedes_mirror_and_missing_or_corrupt_established_k
     assert!(owned_file(root.path(), "third", "membership-floor-7").exists());
     execute(&third.db, "DROP TRIGGER mirror_fault").await;
     let reopened = Database::open(third.db.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &root.path().join("third-keys"));
+    let store = isolated_store(&reopened, &root.path().join("third-keys")).await;
     // Local reopen repairs only the public mirror after validating protected coverage.
     let (recovered, actual) = checkpoint(&store, &reopened, &client).await;
     assert_eq!(recovered.head(), m.head());
@@ -405,7 +405,7 @@ async fn coverage_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_ROTATION_ROOT").unwrap());
     let origin = std::env::var("AVEN_ROTATION_ORIGIN").unwrap();
     let db = Database::open(&root.join("third.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("third-keys"));
+    let store = isolated_store(&db, &root.join("third-keys")).await;
     Client::new(&origin)
         .unwrap()
         .refresh(&store, &db)
@@ -458,7 +458,7 @@ async fn crash_after_coverage_and_floor_before_sqlite_mirror_recovers_without_re
         assert_eq!(third.db.meta("sync_cursor").await.unwrap(), cursor);
     }
     let reopened = Database::open(third.db.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &root.path().join("third-keys"));
+    let store = isolated_store(&reopened, &root.path().join("third-keys")).await;
     assert_keys(&m, &checkpoint(&store, &reopened, &client).await.1, &keys);
     assert_eq!(
         reopened
@@ -510,7 +510,7 @@ async fn signed_head_33_refresh_and_reopen_preserve_complete_coverage_and_receip
         33
     );
     let reopened = Database::open(third.db.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &root.path().join("third-keys"));
+    let store = isolated_store(&reopened, &root.path().join("third-keys")).await;
     let (recovered, actual) = checkpoint(&store, &reopened, &client).await;
     assert_eq!(recovered.head(), m.head());
     assert_keys(&m, &actual, &keys);

@@ -17,7 +17,7 @@ impl ProtectedLocalKeyStore {
     )> {
         let intent = self.prepare_seed_adoption_intent(database).await?;
         let _installation = InstallationGuard::acquire(database.path())?;
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         let package = self.load_required()?;
         let _guard = self.lock()?;
         let seed = self.required_seed(&package)?;
@@ -146,7 +146,7 @@ impl ProtectedLocalKeyStore {
         database: &Database,
     ) -> anyhow::Result<SeedSourceAuthority> {
         let installation = InstallationGuard::acquire(database.path())?;
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         #[cfg(test)]
         wait_source_boundary(database.path()).await;
         let was_unbound = installation.ensure_unbound().is_ok();
@@ -200,7 +200,7 @@ impl ProtectedLocalKeyStore {
         database: &Database,
     ) -> anyhow::Result<SeedPublicationIntent> {
         let _installation = InstallationGuard::acquire(database.path())?;
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         let package = self.load_required()?;
         let _guard = self.lock()?;
         let seed = self.required_seed(&package)?;
@@ -257,7 +257,7 @@ impl ProtectedLocalKeyStore {
         outcome: &PublicationOutcome,
     ) -> anyhow::Result<bool> {
         let _installation = InstallationGuard::acquire(database.path())?;
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         let package = self.load_required()?;
         let _guard = self.lock()?;
         let seed = self.required_seed(&package)?;

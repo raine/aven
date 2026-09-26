@@ -335,7 +335,7 @@ impl ProtectedLocalKeyStore {
     }
     pub(crate) async fn active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
         let installation = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
         prepare_directory(&self.directory)?;
         let lock = self.lock()?;
@@ -1037,7 +1037,7 @@ impl ProtectedLocalKeyStore {
         replace: bool,
     ) -> Result<Joiner> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
@@ -1110,7 +1110,7 @@ impl ProtectedLocalKeyStore {
     /// response answers. Attempts are never removed.
     pub(crate) async fn peer_attempts(&self, db: &Database, locator: &str) -> Result<Vec<Joiner>> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
             .identity(db, &guard)
@@ -1207,7 +1207,7 @@ impl ProtectedLocalKeyStore {
         mail: &membership::Mailbox,
     ) -> Result<membership::ProvisionalGrant> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
             .identity(db, &guard)
@@ -1230,7 +1230,7 @@ impl ProtectedLocalKeyStore {
         evidence: &Evidence,
     ) -> Result<()> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
             .identity(db, &guard)
@@ -1329,7 +1329,7 @@ impl ProtectedLocalKeyStore {
         locator: &str,
     ) -> Result<aven_core::sync::SharedStateInstallReport> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
             .identity(db, &guard)
@@ -1456,7 +1456,7 @@ impl ProtectedLocalKeyStore {
     /// enrollment identity is bound to.
     pub(crate) async fn association(&self, db: &Database) -> Result<Option<(bool, String)>> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
         Ok(self
@@ -1470,7 +1470,7 @@ impl ProtectedLocalKeyStore {
         db: &Database,
     ) -> Result<Option<OutboundInvitation>> {
         let _guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
         for journal in self.journals(db).await? {
@@ -1488,7 +1488,7 @@ impl ProtectedLocalKeyStore {
     }
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
         let guard = InstallationGuard::acquire(db.path())?;
-        self.validate_database(db)?;
+        self.validate_database(db).await?;
         prepare_directory(&self.directory)?;
         let _lock = self.lock()?;
         let Some(id) = self.identity(db, &guard).await? else {

@@ -107,7 +107,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         )
         .await
         .unwrap();
-    let store = isolated_store(client.path(), &root.path().join("keys"));
+    let store = isolated_store(&client, &root.path().join("keys")).await;
     {
         let mut conn = aven_core::test_support::acquire(&client).await.unwrap();
         sqlx::query("UPDATE changes SET server_seq = local_seq * 3 WHERE change_id IN (SELECT change_id FROM changes ORDER BY local_seq LIMIT 3)").execute(&mut *conn).await.unwrap();
@@ -136,7 +136,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let client = Database::open(&root.path().join("client.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(client.path(), &root.path().join("keys"));
+    let store = isolated_store(&client, &root.path().join("keys")).await;
     let seed = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     assert_eq!(protected, seed.protected_storage_bytes());
     let reopened = store
@@ -678,7 +678,7 @@ async fn local_intent_fixture() -> (tempfile::TempDir, Database, ProtectedLocalK
     let database = Database::open(&root.path().join("client.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(database.path(), &root.path().join("keys"));
+    let store = isolated_store(&database, &root.path().join("keys")).await;
     store.prepare_seed_claim(&database, [9; 32]).await.unwrap();
     store.prepare_seed_source(&database).await.unwrap();
     database
@@ -844,7 +844,7 @@ async fn copied_database_and_missing_database_cannot_reacquire_source_authority(
         .unwrap();
     drop(conn);
     let copied = Database::open(&copied_path).await.unwrap();
-    let copied_store = isolated_store(&copied_path, &root.path().join("keys"));
+    let copied_store = isolated_store(&copied, &root.path().join("keys")).await;
     assert!(copied_store.prepare_seed_source(&copied).await.is_err());
     assert!(
         copied_store
@@ -1030,7 +1030,7 @@ async fn actual_source_preparation_excludes_sqlite_and_archive_restore_at_bounda
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("target.sqlite");
     let database = Database::open(&path).await.unwrap();
-    let store = isolated_store(&path, &root.path().join("keys"));
+    let store = isolated_store(&database, &root.path().join("keys")).await;
     store.prepare_seed_claim(&database, [9; 32]).await.unwrap();
     let source = Database::open(&root.path().join("source.sqlite"))
         .await
@@ -1175,7 +1175,7 @@ async fn adoption_process_worker() {
     };
     let root = PathBuf::from(root);
     let database = Database::open(&root.join("client.sqlite")).await.unwrap();
-    let store = isolated_store(database.path(), &root.join("keys"));
+    let store = isolated_store(&database, &root.join("keys")).await;
     let package = store.load_required().unwrap();
     let seed = store.required_seed(&package).unwrap();
     let source = store
@@ -1337,7 +1337,7 @@ async fn recurrence_generation_form_follows_seed_opt_in_through_capture_cancel()
             .unwrap();
     assert_eq!(id, identity.task_change_id);
 
-    let store = isolated_store(database.path(), &root.path().join("keys"));
+    let store = isolated_store(&database, &root.path().join("keys")).await;
     store.prepare_seed_claim(&database, [9; 32]).await.unwrap();
     store.prepare_seed_source(&database).await.unwrap();
     let capture = database

@@ -117,7 +117,7 @@ impl fmt::Debug for ProtectedLocalPackageKey {
     }
 }
 
-/// Host-owned protected storage scoped to one canonical database installation.
+/// Host-owned protected storage scoped to one database at one canonical path.
 ///
 /// On macOS the keyring is a non-synchronizing login Keychain item. On Linux
 /// it is an owner-only file below the application state directory. A
@@ -139,7 +139,7 @@ impl ProtectedLocalKeyStore {
 }
 
 impl ProtectedLocalKeyStore {
-    pub fn for_database(database_path: &Path) -> StoreResult<Self> {
+    pub async fn for_database(database: &Database) -> StoreResult<Self> {
         #[cfg(not(test))]
         let directory = protected_store_directory()?;
         // Tests never reach the login Keychain; CLI test workers name isolated files.
@@ -147,14 +147,11 @@ impl ProtectedLocalKeyStore {
         let directory = std::env::var_os("AVEN_TEST_PROTECTED_KEYS")
             .map(PathBuf::from)
             .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
-        Self::with_directory(database_path, directory)
+        Self::with_directory(database, directory).await
     }
 
-    fn with_directory(database_path: &Path, directory: PathBuf) -> StoreResult<Self> {
-        let canonical = database_path
-            .canonicalize()
-            .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
-        let account = database_account(&canonical);
+    async fn with_directory(database: &Database, directory: PathBuf) -> StoreResult<Self> {
+        let account = database_account(database).await?;
         #[cfg(not(test))]
         let backend = Backend::production(&directory, &account)?;
         #[cfg(test)]
@@ -247,7 +244,7 @@ impl ProtectedLocalKeyStore {
         blob_dir: &Path,
         membership_predecessor: [u8; 32],
     ) -> Result<EncryptedLocalSharedStatePackage, anyhow::Error> {
-        self.validate_database(database)?;
+        self.validate_database(database).await?;
         let protected = if database
             .has_local_shared_state_package_never_dispatched()
             .await?
@@ -267,12 +264,8 @@ impl ProtectedLocalKeyStore {
             .await
     }
 
-    fn validate_database(&self, database: &Database) -> StoreResult<()> {
-        let canonical = database
-            .path()
-            .canonicalize()
-            .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
-        if database_account(&canonical) != self.account {
+    async fn validate_database(&self, database: &Database) -> StoreResult<()> {
+        if database_account(database).await? != self.account {
             return Err(error(ProtectedLocalKeyStoreErrorKind::WrongDatabase));
         }
         Ok(())
@@ -314,15 +307,37 @@ fn protected_store_directory() -> StoreResult<PathBuf> {
     Ok(state.join("aven").join(STORE_DIRECTORY))
 }
 
-fn database_account(canonical_path: &Path) -> String {
+/// Names one database's protected items by its canonical path and random
+/// `client_id`. A new database at a reused path gets an empty namespace, while
+/// rollbacks of the same database keep theirs and its markers.
+async fn database_account(database: &Database) -> StoreResult<String> {
+    let unavailable = || error(ProtectedLocalKeyStoreErrorKind::Unavailable);
+    let canonical = database.path().canonicalize().map_err(|_| unavailable())?;
+    let client_id = database
+        .meta("client_id")
+        .await
+        .map_err(|_| unavailable())?
+        .filter(|id| !id.is_empty())
+        .ok_or_else(unavailable)?;
+    Ok(account_for(&canonical, &client_id))
+}
+
+fn account_for(canonical_path: &Path, client_id: &str) -> String {
     #[cfg(unix)]
-    let bytes = {
+    let path = {
         use std::os::unix::ffi::OsStrExt;
         canonical_path.as_os_str().as_bytes()
     };
     #[cfg(not(unix))]
-    let bytes = canonical_path.to_string_lossy().as_bytes();
-    hex::encode(Sha256::digest(bytes))
+    let path = canonical_path.to_string_lossy();
+    #[cfg(not(unix))]
+    let path = path.as_bytes();
+    let mut digest = Sha256::new();
+    digest.update(b"aven-protected-keys-v2\0");
+    digest.update(path);
+    digest.update(b"\0");
+    digest.update(client_id.as_bytes());
+    hex::encode(digest.finalize())
 }
 
 fn generate_keyring() -> StoreResult<ProtectedLocalPackageKey> {
@@ -719,9 +734,17 @@ pub(crate) mod tests {
         database
     }
 
-    pub(crate) fn isolated_store(database_path: &Path, root: &Path) -> ProtectedLocalKeyStore {
-        let canonical = database_path.canonicalize().unwrap();
-        let account = database_account(&canonical);
+    pub(crate) async fn isolated_store(database: &Database, root: &Path) -> ProtectedLocalKeyStore {
+        account_store(database_account(database).await.unwrap(), root)
+    }
+
+    /// Account for a placeholder file that is never opened as a database.
+    pub(crate) fn raw_account(path: &Path) -> String {
+        account_for(&path.canonicalize().unwrap(), "raw-file")
+    }
+
+    /// A store for a path that need not hold an opened database.
+    pub(crate) fn account_store(account: String, root: &Path) -> ProtectedLocalKeyStore {
         ProtectedLocalKeyStore {
             backend: Backend::File(FileBackend {
                 path: root.join(format!("{account}.keyring")),
@@ -737,7 +760,7 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().unwrap();
         let database = captured_database(temp.path()).await;
         let key_root = temp.path().join("authority");
-        let store = isolated_store(database.path(), &key_root);
+        let store = isolated_store(&database, &key_root).await;
         let first = store
             .package_local_capture(&database, temp.path(), [0x64; 32])
             .await
@@ -748,7 +771,7 @@ pub(crate) mod tests {
         let database = Database::open(&temp.path().join("source.sqlite"))
             .await
             .unwrap();
-        let reopened = isolated_store(database.path(), &key_root);
+        let reopened = isolated_store(&database, &key_root).await;
         fs::remove_file(reopened.marker_path()).unwrap();
         let retry = reopened
             .package_local_capture(&database, temp.path(), [0x64; 32])
@@ -829,7 +852,7 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().unwrap();
         let database = captured_database(temp.path()).await;
         let key_root = temp.path().join("authority");
-        let store = isolated_store(database.path(), &key_root);
+        let store = isolated_store(&database, &key_root).await;
         store
             .package_local_capture(&database, temp.path(), [0x64; 32])
             .await
@@ -865,7 +888,7 @@ pub(crate) mod tests {
         let second_root = tempfile::tempdir().unwrap();
         let second = captured_database(second_root.path()).await;
         let key_root = first_root.path().join("authority");
-        let store = isolated_store(first.path(), &key_root);
+        let store = isolated_store(&first, &key_root).await;
 
         let error = store
             .package_local_capture(&second, second_root.path(), [0x64; 32])
@@ -881,13 +904,105 @@ pub(crate) mod tests {
         assert!(!key_root.exists());
     }
 
+    /// Deletes a stopped database and its SQLite sidecars.
+    fn remove_database(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[tokio::test]
+    async fn new_database_at_reused_path_ignores_stale_markers() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("db.sqlite");
+        let key_root = temp.path().join("keys");
+        let database = Database::open(&path).await.unwrap();
+        let old = isolated_store(&database, &key_root).await;
+        old.prepare_seed_claim(&database, [9; 32]).await.unwrap();
+        drop(database);
+        remove_database(&path);
+        // The keys are gone but the nonsecret markers remain.
+        fs::remove_file(key_root.join(format!("{}.keyring", old.account))).unwrap();
+        old.seed_backend().delete().unwrap();
+        assert_eq!(
+            old.load_or_create().unwrap_err().kind(),
+            ProtectedLocalKeyStoreErrorKind::MissingAuthority
+        );
+
+        let database = Database::open(&path).await.unwrap();
+        let store = isolated_store(&database, &key_root).await;
+        assert_ne!(store.account, old.account);
+        store.prepare_seed_claim(&database, [7; 32]).await.unwrap();
+        assert!(old.marker_path().exists());
+    }
+
+    #[tokio::test]
+    async fn new_database_at_reused_path_never_inherits_old_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("db.sqlite");
+        let key_root = temp.path().join("keys");
+        let database = Database::open(&path).await.unwrap();
+        let old = isolated_store(&database, &key_root).await;
+        let old_seed = old.prepare_seed_claim(&database, [9; 32]).await.unwrap();
+        drop(database);
+        remove_database(&path);
+
+        let database = Database::open(&path).await.unwrap();
+        let store = isolated_store(&database, &key_root).await;
+        let seed = store.prepare_seed_claim(&database, [7; 32]).await.unwrap();
+        assert_ne!(seed.genesis().context(), old_seed.genesis().context());
+        assert_ne!(seed.genesis().commitment(), old_seed.genesis().commitment());
+        // The old namespace is left untouched.
+        assert_eq!(
+            old.load_required().unwrap().context(),
+            old_seed.genesis().context()
+        );
+    }
+
+    #[tokio::test]
+    async fn rolled_back_copy_of_the_same_database_keeps_missing_authority_detection() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("db.sqlite");
+        let before_setup = temp.path().join("before-setup.sqlite");
+        let key_root = temp.path().join("keys");
+        let database = Database::open(&path).await.unwrap();
+        let mut conn = aven_core::test_support::acquire(&database).await.unwrap();
+        sqlx::query("VACUUM INTO ?")
+            .bind(before_setup.to_str().unwrap())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        let store = isolated_store(&database, &key_root).await;
+        store.prepare_seed_claim(&database, [9; 32]).await.unwrap();
+        drop(database);
+        remove_database(&path);
+        fs::copy(&before_setup, &path).unwrap();
+        fs::remove_file(key_root.join(format!("{}.keyring", store.account))).unwrap();
+
+        let database = Database::open(&path).await.unwrap();
+        let rolled_back = isolated_store(&database, &key_root).await;
+        assert_eq!(rolled_back.account, store.account);
+        let error = rolled_back
+            .prepare_seed_claim(&database, [9; 32])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<ProtectedLocalKeyStoreError>()
+                .unwrap()
+                .kind(),
+            ProtectedLocalKeyStoreErrorKind::MissingAuthority
+        );
+    }
+
     #[test]
     fn missing_and_corrupt_authority_never_regenerate() {
         let temp = tempfile::tempdir().unwrap();
         let database_path = temp.path().join("database.sqlite");
         File::create(&database_path).unwrap();
         let root = temp.path().join("authority");
-        let store = isolated_store(&database_path, &root);
+        let store = account_store(raw_account(&database_path), &root);
         let original = store.load_or_create().unwrap().context();
         let key_path = match &store.backend {
             Backend::File(backend) => backend.path.clone(),
@@ -934,7 +1049,7 @@ pub(crate) mod tests {
         ] {
             let root = temp.path().join(format!("authority-{expected:?}"));
             let store = ProtectedLocalKeyStore {
-                account: database_account(&database_path.canonicalize().unwrap()),
+                account: raw_account(&database_path),
                 directory: root,
                 backend,
                 enrollment_clock: None,
@@ -951,7 +1066,7 @@ pub(crate) mod tests {
         let database_path = temp.path().join("database.sqlite");
         File::create(&database_path).unwrap();
         let root = temp.path().join("authority");
-        let store = isolated_store(&database_path, &root);
+        let store = account_store(raw_account(&database_path), &root);
         prepare_directory(&root).unwrap();
         let key = generate_keyring().unwrap();
         let encoded = encode_keyring(&key);
@@ -968,7 +1083,7 @@ pub(crate) mod tests {
         let database_path = temp.path().join("database.sqlite");
         File::create(&database_path).unwrap();
         let root = temp.path().join("authority");
-        let store = isolated_store(&database_path, &root);
+        let store = account_store(raw_account(&database_path), &root);
         let protected = store.load_or_create().unwrap();
         let key_path = match &store.backend {
             Backend::File(backend) => backend.path.clone(),

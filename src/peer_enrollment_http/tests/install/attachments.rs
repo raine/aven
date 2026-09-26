@@ -4,7 +4,7 @@ use super::*;
 async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and_tail() {
     use aven_core::sync::encrypted_tail::{self as tail, attachments as images};
     let f = enrolled().await;
-    let seed_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let seed_store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let workspace = f.source.list_workspaces().await.unwrap().remove(0);
     let reference: String = sqlx::query_scalar("SELECT attachment_id FROM task_attachments")
         .fetch_one(&mut *aven_core::test_support::acquire(&f.source).await.unwrap())
@@ -111,7 +111,7 @@ async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and
 
 async fn publish_source(f: &Fixture) {
     use aven_core::sync::encrypted_tail::{Accepted, Operation, Reply};
-    let store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let inputs = store
         .tail_inputs(&f.source, &f.client.locator)
         .await
@@ -181,7 +181,7 @@ async fn initial_tail_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_SNAPSHOT_ROOT").unwrap());
     let origin = std::env::var("AVEN_SNAPSHOT_ORIGIN").unwrap();
     let peer = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let store = isolated_store(peer.path(), &root.join("peer-keys"));
+    let store = isolated_store(&peer, &root.join("peer-keys")).await;
     crate::encrypted_tail_http::Client::new(&origin)
         .unwrap()
         .round(&store, &peer, &root.join("peer-blobs"))
@@ -344,7 +344,7 @@ async fn live_bootstrap_mapping_survives_missing_bytes_and_later_exact_repair() 
             .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
             .await
             .unwrap();
-    let seed_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let seed_store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     client
         .repair_attachment(
             &seed_store,
@@ -462,11 +462,11 @@ async fn pull_only_refreshes_old_head_without_uploading_or_extending_initial_wat
     );
     edit_source_descriptions(&f, page + 1, page + 4).await;
 
-    let seed_keys = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let seed_keys = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let third = Database::open(&f.root.path().join("third.sqlite"))
         .await
         .unwrap();
-    let third_keys = isolated_store(third.path(), &f.root.path().join("third-keys"));
+    let third_keys = isolated_store(&third, &f.root.path().join("third-keys")).await;
     let invitation = f
         .client
         .invite(&seed_keys, &f.source, expiry())

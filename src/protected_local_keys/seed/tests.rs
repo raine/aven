@@ -1,4 +1,4 @@
-use super::super::tests::{captured_database, isolated_store};
+use super::super::tests::{account_store, captured_database, isolated_store, raw_account};
 use super::*;
 
 fn seed_path(store: &ProtectedLocalKeyStore) -> PathBuf {
@@ -20,7 +20,7 @@ async fn seed_reopens_reuses_authority_and_repairs_absent_database_pin() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("db.sqlite");
     let db = Database::open(&path).await.unwrap();
-    let store = isolated_store(&path, &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let package = store.load_or_create().unwrap();
     let original_package = fs::read(package_path(&store)).unwrap();
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
@@ -79,7 +79,7 @@ async fn missing_seed_or_package_authority_never_regenerates() {
         let db = Database::open(&root.path().join("db.sqlite"))
             .await
             .unwrap();
-        let store = isolated_store(db.path(), &root.path().join("keys"));
+        let store = isolated_store(&db, &root.path().join("keys")).await;
         store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
         // A fenced source depends on this exact seed.
         store.prepare_seed_source(&db).await.unwrap();
@@ -109,7 +109,7 @@ async fn rollback_interrupted_after_key_deletion_recovers_on_next_setup() {
         let db = Database::open(&root.path().join("db.sqlite"))
             .await
             .unwrap();
-        let store = isolated_store(db.path(), &root.path().join("keys"));
+        let store = isolated_store(&db, &root.path().join("keys")).await;
         let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
         // The claim was refused; rollback deleted protected authority but the
         // database step failed, leaving the pin.
@@ -138,7 +138,7 @@ async fn orphan_seed_repairs_marker_and_db_pin_without_replacement() {
     let db = Database::open(&root.path().join("db.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let package = store.load_or_create().unwrap();
     let seed = SeedAuthority::generate(package.context(), package.package_key(), [9; 32]).unwrap();
     store
@@ -170,7 +170,7 @@ async fn marker_and_database_write_failures_resume_saved_seed() {
     let db = Database::open(&root.path().join("db.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let package = store.load_or_create().unwrap();
     let seed = SeedAuthority::generate(package.context(), package.package_key(), [9; 32]).unwrap();
     store
@@ -214,7 +214,7 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
     let other = Database::open(&root.path().join("other.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     assert!(store.prepare_seed_claim(&other, [9; 32]).await.is_err());
     assert!(!store.directory.exists());
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
@@ -223,7 +223,7 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
     fs::write(seed_path(&store), &raw).unwrap();
     assert!(store.prepare_seed_claim(&db, [9; 32]).await.is_err());
     assert_eq!(raw.as_slice(), fs::read(seed_path(&store)).unwrap());
-    let other_store = isolated_store(other.path(), &store.directory);
+    let other_store = isolated_store(&other, &store.directory).await;
     assert!(
         other_store
             .decode_seed(
@@ -258,7 +258,7 @@ async fn corrupt_unavailable_and_wrong_installation_refuse_without_replacement()
 async fn frozen_incompatible_package_refuses_and_explicit_recapture_preserves_keys() {
     let root = tempfile::tempdir().unwrap();
     let db = captured_database(root.path()).await;
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let frozen = store
         .package_local_capture(&db, root.path(), [1; 32])
         .await
@@ -320,7 +320,7 @@ async fn seed_secrets_stay_outside_database_export_and_backup() {
     let db = Database::open(&root.path().join("db.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     let secrets = seed.protected_storage_bytes();
     let export =
@@ -353,7 +353,7 @@ async fn seed_secrets_stay_outside_database_export_and_backup() {
 }
 
 #[tokio::test]
-async fn seed_survives_process_exit_and_stopped_same_path_database_replacement() {
+async fn seed_survives_process_exit_but_not_same_path_database_replacement() {
     for replace_database in [false, true] {
         let root = tempfile::tempdir().unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -372,6 +372,12 @@ async fn seed_survives_process_exit_and_stopped_same_path_database_replacement()
             String::from_utf8_lossy(&output.stderr)
         );
         let path = root.path().join("db.sqlite");
+        let keys = root.path().join("keys");
+        let original = {
+            let db = Database::open(&path).await.unwrap();
+            isolated_store(&db, &keys).await
+        };
+        let before = fs::read(package_path(&original)).unwrap();
         if replace_database {
             for suffix in ["", "-wal", "-shm"] {
                 let path = PathBuf::from(format!("{}{suffix}", path.display()));
@@ -383,14 +389,19 @@ async fn seed_survives_process_exit_and_stopped_same_path_database_replacement()
             }
         }
         let db = Database::open(&path).await.unwrap();
-        let store = isolated_store(&path, &root.path().join("keys"));
-        let before = fs::read(package_path(&store)).unwrap();
+        let store = isolated_store(&db, &keys).await;
         let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
-        assert_eq!(
-            seed.genesis().record().as_slice(),
-            fs::read(root.path().join("public-genesis")).unwrap()
-        );
-        assert_eq!(before, fs::read(package_path(&store)).unwrap());
+        let recorded = fs::read(root.path().join("public-genesis")).unwrap();
+        if replace_database {
+            // A new database owns a new namespace; the old one stays intact.
+            assert_ne!(store.account, original.account);
+            assert_ne!(seed.genesis().record().as_slice(), recorded);
+        } else {
+            assert_eq!(store.account, original.account);
+            assert_eq!(seed.genesis().record().as_slice(), recorded);
+        }
+        assert_eq!(before, fs::read(package_path(&original)).unwrap());
+        assert!(seed_path(&original).exists());
     }
 }
 
@@ -402,7 +413,7 @@ async fn seed_exit_worker() {
     };
     let root = PathBuf::from(root);
     let db = Database::open(&root.join("db.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("keys"));
+    let store = isolated_store(&db, &root.join("keys")).await;
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     fs::write(root.join("public-genesis"), seed.genesis().record()).unwrap();
     std::process::exit(23);
@@ -413,7 +424,7 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("db.sqlite");
     File::create(&path).unwrap();
-    let store = isolated_store(&path, &root.path().join("keys"));
+    let store = account_store(raw_account(&path), &root.path().join("keys"));
     let package = store.load_or_create().unwrap();
     let failed = ProtectedLocalKeyStore {
         account: store.account.clone(),
@@ -475,7 +486,7 @@ async fn isolated_seed_keychain_reopen() {
     let db = Database::open(&root.path().join("db.sqlite"))
         .await
         .unwrap();
-    let account = database_account(&db.path().canonicalize().unwrap());
+    let account = database_account(&db).await.unwrap();
     let cleanup = Cleanup(ProtectedLocalKeyStore {
         backend: Backend::Keychain(KeychainBackend {
             service: format!("fi.zendit.Aven.tests.seed.{account}"),
@@ -522,7 +533,7 @@ async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
     let server = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(client.path(), &root.path().join("keys"));
+    let store = isolated_store(&client, &root.path().join("keys")).await;
     let seed = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     let setup_secret = Secret::generate().unwrap();
     let setup =
@@ -597,7 +608,7 @@ async fn refused_claim_keeps_authority_until_another_invitation_replaces_it() {
     let db = Database::open(&root.path().join("db.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     db.mark_local_seed_claim_refused("error bootstrap-setup-invitation-rejected")
         .await

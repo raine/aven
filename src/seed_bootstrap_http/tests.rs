@@ -491,7 +491,7 @@ async fn loopback_process_restart_recovers_exact_upload_and_remote_commit_before
     let db = Database::open(&root.path().join("client.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let intent = store.prepare_seed_adoption_intent(&db).await.unwrap();
     let exact_intent = intent.protected_storage_bytes().to_vec();
     let signed = intent.publication(seed.genesis()).unwrap();
@@ -541,7 +541,7 @@ async fn loopback_process_restart_recovers_exact_upload_and_remote_commit_before
     let db = Database::open(&root.path().join("client.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     assert_eq!(
         store
             .prepare_seed_adoption_intent(&db)
@@ -692,7 +692,7 @@ async fn server_worker() {
 async fn client_worker() {
     let root = PathBuf::from(std::env::var_os("AVEN_HTTP_TEST_ROOT").unwrap());
     let db = Database::open(&root.join("client.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("keys"));
+    let store = isolated_store(&db, &root.join("keys")).await;
     let result = Client::new(&std::env::var("AVEN_HTTP_TEST_ORIGIN").unwrap())
         .unwrap()
         .resume(&store, &db)

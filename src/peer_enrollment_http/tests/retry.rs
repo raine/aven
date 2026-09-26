@@ -15,7 +15,7 @@ struct Peer {
 async fn peer(root: &Path) -> Peer {
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
     let keys = root.join("peer-keys");
-    let store = isolated_store(db.path(), &keys);
+    let store = isolated_store(&db, &keys).await;
     Peer { db, store, keys }
 }
 

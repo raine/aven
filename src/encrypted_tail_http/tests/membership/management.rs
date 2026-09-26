@@ -260,7 +260,7 @@ async fn lost_revoke_and_rotate_replies_reopen_and_resolve_before_replacement() 
         );
         assert_eq!(fault.records.lock().unwrap().len(), ordinal);
         let db = Database::open(f.peer.path()).await.unwrap();
-        let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
+        let store = isolated_store(&db, &f.root.path().join("peer-keys")).await;
         Client::new(&f.origin)
             .unwrap()
             .round(&store, &db, &f.root.path().join("peer-blobs"))
@@ -506,7 +506,7 @@ async fn management_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_MANAGEMENT_ROOT").unwrap());
     let origin = std::env::var("AVEN_MANAGEMENT_ORIGIN").unwrap();
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("peer-keys"));
+    let store = isolated_store(&db, &root.join("peer-keys")).await;
     Client::new(&origin)
         .unwrap()
         .round(&store, &db, &root.join("peer-blobs"))
@@ -552,7 +552,7 @@ async fn protected_phase_crashes_resume_exact_material_and_candidate_without_sql
         }
     }
     let db = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&db, &f.root.path().join("peer-keys")).await;
     Client::new(&f.origin)
         .unwrap()
         .round(&store, &db, &f.root.path().join("peer-blobs"))
@@ -632,7 +632,7 @@ async fn second_stale_race_stops_and_next_round_resolves_before_fresh_candidate(
     let retained = std::fs::read(owned(&f, "management-0-candidate-1")).unwrap();
     install_fault(&mut f, usize::MAX, false, None).await;
     let db = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&db, &f.root.path().join("peer-keys")).await;
     client
         .round(&store, &db, &f.root.path().join("peer-blobs"))
         .await
@@ -663,7 +663,7 @@ async fn unknown_undelivered_candidate_retries_exact_bytes_after_reopen() {
                 .is_err()
         );
         let db = Database::open(f.peer.path()).await.unwrap();
-        let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
+        let store = isolated_store(&db, &f.root.path().join("peer-keys")).await;
         Client::new(&f.origin)
             .unwrap()
             .round(&store, &db, &f.root.path().join("peer-blobs"))

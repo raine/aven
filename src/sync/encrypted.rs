@@ -131,8 +131,8 @@ pub(crate) enum Stage {
     DownloadingImages,
 }
 
-fn key_store(database: &Database) -> Result<ProtectedLocalKeyStore> {
-    Ok(ProtectedLocalKeyStore::for_database(database.path())?)
+async fn key_store(database: &Database) -> Result<ProtectedLocalKeyStore> {
+    Ok(ProtectedLocalKeyStore::for_database(database).await?)
 }
 
 pub(crate) fn unix_now() -> Result<u64> {
@@ -324,7 +324,7 @@ pub(crate) async fn run_setup(
 ) -> Result<Outcome> {
     ensure_setup_available(database, config).await?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let _guard = super::coordination::acquire(database).await?;
     let bootstrap = seed_bootstrap_http::Client::new(&invitation.server)?;
     // A sealed publication intent means the claim and capture are complete.
@@ -453,7 +453,7 @@ pub(crate) async fn create_invitation(
 ) -> Result<PendingInvitation> {
     config.ensure_sync_allowed()?;
     ensure!(is_set_up(database).await?, NOT_SET_UP);
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let _guard = super::coordination::acquire(database).await?;
     let Some((_, server)) = store.association(database).await? else {
         bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
@@ -501,7 +501,7 @@ pub(crate) async fn association_status(database: &Database) -> Result<Associatio
     if !is_set_up(database).await? {
         return Ok(AssociationStatus::default());
     }
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let _guard = super::coordination::acquire(database).await?;
     let Some((_, server)) = store.association(database).await? else {
         return Ok(AssociationStatus::default());
@@ -530,7 +530,7 @@ pub(crate) async fn cancel_invitation(
 ) -> Result<Cancellation> {
     config.ensure_sync_allowed()?;
     ensure!(is_set_up(database).await?, NOT_SET_UP);
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let _guard = super::coordination::acquire(database).await?;
     let Some((_, server)) = store.association(database).await? else {
         bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
@@ -571,7 +571,7 @@ async fn poll_admission(
     client: &peer_enrollment_http::Client,
     invitation: &PendingInvitation,
 ) -> Result<Option<Admission>> {
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let _guard = super::coordination::acquire(database).await?;
     match store
         .invitation_progress(database, &invitation.handle)
@@ -809,7 +809,7 @@ pub(crate) async fn run_join(
     progress: &(dyn Fn(Stage) + Sync),
 ) -> Result<(String, Outcome)> {
     config.ensure_sync_allowed()?;
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let _guard = super::coordination::acquire(database).await?;
     let server = match store.association(database).await? {
@@ -1059,7 +1059,7 @@ async fn drain_associated(
     config: &AppConfig,
     round_limit: usize,
 ) -> Result<Outcome> {
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let blob_dir = config::resolve_blob_dir(database.path(), config)?;
     let server = associated_server(&store, database).await?;
     let client = tail_http::Client::new(&server)?;
@@ -1332,7 +1332,7 @@ pub(crate) async fn status_report(database: &Database) -> Result<StatusReport> {
         LocalPhase::SetupRecoveryRequired => "setup-recovery-required",
         _ => "setup-incomplete",
     };
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let _guard = super::coordination::acquire(database).await?;
     if report.state != "setup-recovery-required"
         && let Some((peer, server)) = store.association(database).await?

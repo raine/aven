@@ -63,7 +63,7 @@ struct Session {
 async fn open(database: &Database, config: &AppConfig) -> Result<Session> {
     config.ensure_sync_allowed()?;
     ensure!(is_set_up(database).await?, NOT_SET_UP);
-    let store = key_store(database)?;
+    let store = key_store(database).await?;
     let guard = crate::sync::coordination::acquire(database).await?;
     let server = associated_server(&store, database).await?;
     Ok(Session {

@@ -671,7 +671,7 @@ async fn image_process_exit_retries_exact_preparation_put_and_admission() {
             .await
             .unwrap();
         let db = Database::open(f.peer.path()).await.unwrap();
-        let store = isolated_store(db.path(), &f.root.path().join("peer-keys"));
+        let store = isolated_store(&db, &f.root.path().join("peer-keys")).await;
         let client = Client::new(&f.origin).unwrap();
         let resumed = client
             .round(&store, &db, &f.root.path().join("peer-blobs"))

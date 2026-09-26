@@ -87,7 +87,7 @@ pub(crate) async fn fixture_with_domain(
     if representative {
         representative_domain(&db, &workspace, &task.id).await;
     }
-    let store = isolated_store(db.path(), &root.join("keys"));
+    let store = isolated_store(&db, &root.join("keys")).await;
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     store.prepare_seed_source(&db).await.unwrap();
     db.capture_local_shared_state_never_dispatched()

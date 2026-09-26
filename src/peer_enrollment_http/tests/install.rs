@@ -32,7 +32,7 @@ async fn enrolled() -> Fixture {
     let peer = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(peer.path(), &root.path().join("peer-keys"));
+    let store = isolated_store(&peer, &root.path().join("peer-keys")).await;
     let client = Client::new(&origin).unwrap();
     let invitation = client.invite(&seed_store, &source, expiry()).await.unwrap();
     client
@@ -64,7 +64,7 @@ async fn pending_peer(
     fixture: &Fixture,
     name: &str,
 ) -> (Database, ProtectedLocalKeyStore, [u8; 32]) {
-    let seed_store = isolated_store(fixture.source.path(), &fixture.root.path().join("keys"));
+    let seed_store = isolated_store(&fixture.source, &fixture.root.path().join("keys")).await;
     let invitation = fixture
         .client
         .invite(&seed_store, &fixture.source, expiry())
@@ -73,10 +73,7 @@ async fn pending_peer(
     let database = Database::open(&fixture.root.path().join(format!("{name}.sqlite")))
         .await
         .unwrap();
-    let store = isolated_store(
-        database.path(),
-        &fixture.root.path().join(format!("{name}-keys")),
-    );
+    let store = isolated_store(&database, &fixture.root.path().join(format!("{name}-keys"))).await;
     fixture
         .client
         .request(&store, &database, Some(invitation))
@@ -142,7 +139,7 @@ async fn snapshot_download_refreshes_after_stale_and_keeps_one_retry_budget() {
     f.counts.reset();
     let gate = f.counts.add_stale_gate();
     let source = f.source.clone();
-    let source_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let source_store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let client = Client::new(&f.client.locator).unwrap();
     let admission = tokio::spawn(async move {
         gate.started.notified().await;
@@ -170,7 +167,7 @@ async fn snapshot_download_removal_fails_closed_without_stale_retry() {
     f.counts.reset();
     let gate = f.counts.add_stale_gate();
     let source = f.source.clone();
-    let source_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let source_store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let client = Client::new(&f.client.locator).unwrap();
     let removal = tokio::spawn(async move {
         gate.started.notified().await;
@@ -202,11 +199,10 @@ async fn snapshot_download_bounds_exhausted_stale_retry() {
     f.counts.reset();
     let first_gate = f.counts.add_stale_gate();
     let second_gate = f.counts.add_stale_gate();
-    let source_path = f.source.path().to_path_buf();
     let keys_path = f.root.path().join("keys");
     let origin = f.client.locator.clone();
     let first_source = f.source.clone();
-    let first_store = isolated_store(&source_path, &keys_path);
+    let first_store = isolated_store(&f.source, &keys_path).await;
     let first_client = Client::new(&origin).unwrap();
     let third_root = f.root.path().to_path_buf();
     let first_admission = tokio::spawn(async move {
@@ -219,7 +215,7 @@ async fn snapshot_download_bounds_exhausted_stale_retry() {
                     .await?;
                 let third_database = Database::open(&third_root.join("third.sqlite")).await?;
                 let third_store =
-                    isolated_store(third_database.path(), &third_root.join("third-keys"));
+                    isolated_store(&third_database, &third_root.join("third-keys")).await;
                 first_client
                     .request(&third_store, &third_database, Some(invitation))
                     .await?;
@@ -231,7 +227,7 @@ async fn snapshot_download_bounds_exhausted_stale_retry() {
         result
     });
     let second_source = f.source.clone();
-    let second_store = isolated_store(&source_path, &keys_path);
+    let second_store = isolated_store(&f.source, &keys_path).await;
     let second_client = Client::new(&origin).unwrap();
     let second_admission = tokio::spawn(async move {
         second_gate.started.notified().await;
@@ -317,7 +313,7 @@ async fn independent_http_install_preserves_shared_domain_history_images_and_lat
     let after = shared(&f.peer).await;
     f.task.abort();
     let reopened = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
     assert_eq!(f.client.install(&store, &reopened).await.unwrap(), result);
     assert_eq!(shared(&reopened).await, after);
     assert!(
@@ -384,7 +380,7 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
                 .is_err()
         );
     }
-    let seed_store = isolated_store(f.source.path(), &f.root.path().join("keys"));
+    let seed_store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let seed = seed_store
         .active_inputs(&f.source, &f.client.locator)
         .await
@@ -569,7 +565,7 @@ async fn process_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_SNAPSHOT_ROOT").unwrap());
     let origin = std::env::var("AVEN_SNAPSHOT_ORIGIN").unwrap();
     let peer = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let store = isolated_store(peer.path(), &root.join("peer-keys"));
+    let store = isolated_store(&peer, &root.join("peer-keys")).await;
     Client::new(&origin)
         .unwrap()
         .install(&store, &peer)
@@ -630,7 +626,7 @@ async fn process_restart_download_metadata_and_atomic_commit_boundaries() {
     }
     f.task.abort();
     let peer = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(peer.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&peer, &f.root.path().join("peer-keys")).await;
     f.client.install(&store, &peer).await.unwrap();
     assert_eq!(count(&peer, "local_peer_snapshot_install").await, 1);
     assert_eq!(shared(&peer).await, shared(&f.source).await);
@@ -674,7 +670,7 @@ async fn local_edit_after_enrollment_blocks_install_and_protected_loss_blocks_re
         .unwrap();
     drop(conn);
     let copied = Database::open(&copy_path).await.unwrap();
-    let copied_store = isolated_store(copied.path(), &f.root.path().join("peer-keys"));
+    let copied_store = isolated_store(&copied, &f.root.path().join("peer-keys")).await;
     assert!(f.client.install(&copied_store, &copied).await.is_err());
     assert_eq!(shared(&copied).await, before);
     let path = std::fs::read_dir(f.root.path().join("peer-keys"))

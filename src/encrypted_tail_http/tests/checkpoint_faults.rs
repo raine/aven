@@ -35,7 +35,7 @@ async fn join(
     let db = Database::open(&f.root.path().join(format!("{name}.sqlite")))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &f.root.path().join(format!("{name}-keys")));
+    let store = isolated_store(&db, &f.root.path().join(format!("{name}-keys"))).await;
     let invitation = enrollment
         .invite(inviter_store, inviter, expiry())
         .await
@@ -323,7 +323,7 @@ async fn run_task_checkpoint(accepted: bool) {
     rotate_twice_while_peer_is_offline(&f, &driver, driver_id).await;
 
     let reopened = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
     let client = Client::new(&f.origin).unwrap();
     drain(&client, &store, &reopened).await;
     assert_eq!(
@@ -370,7 +370,7 @@ async fn accepted_image_ref_survives_two_rotations_and_reopen_without_corruption
     rotate_twice_while_peer_is_offline(&f, &driver, driver_id).await;
 
     let reopened = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
     let client = Client::new(&f.origin).unwrap();
     for _ in 0..8 {
         client
@@ -440,7 +440,7 @@ async fn frozen_unaccepted_image_ref_is_replaced_after_two_rotations() {
     rotate_twice_while_peer_is_offline(&f, &driver, removed_id).await;
 
     let reopened = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
     let client = Client::new(&f.origin).unwrap();
     for _ in 0..8 {
         client
@@ -559,7 +559,7 @@ async fn lost_append_put_complete_and_manage_replies_resume_in_new_process() {
             String::from_utf8_lossy(&output.stderr)
         );
         let reopened = Database::open(f.peer.path()).await.unwrap();
-        let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+        let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
         if stage == "Manage" {
             let target = device(&third.store, &third.db, &f.origin).await;
             let m = store
@@ -664,7 +664,7 @@ async fn recovery_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_CHECKPOINT_ROOT").unwrap());
     let origin = std::env::var("AVEN_CHECKPOINT_ORIGIN").unwrap();
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("peer-keys"));
+    let store = isolated_store(&db, &root.join("peer-keys")).await;
     let client = Client::new(&origin).unwrap();
     client
         .round(&store, &db, &root.join("peer-blobs"))

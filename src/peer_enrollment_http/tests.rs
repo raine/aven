@@ -263,7 +263,7 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
     let peer_db = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(peer_db.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&peer_db, &root.path().join("peer-keys")).await;
     assert_eq!(
         peer_store.enrollment_readiness(&peer_db).await.unwrap(),
         EnrollmentReadiness::NotSelected
@@ -385,11 +385,11 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
     let db = Database::open(&root.path().join("client.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &root.path().join("keys"));
+    let store = isolated_store(&db, &root.path().join("keys")).await;
     let peer_db = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(peer_db.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&peer_db, &root.path().join("peer-keys")).await;
     assert!(client.admit(&store, &db).await.unwrap());
     assert!(client.complete(&peer_store, &peer_db).await.unwrap());
     assert_eq!(
@@ -552,7 +552,7 @@ async fn occupied_target_preflight_does_not_fence_plaintext_or_erase_data() {
         )
         .await
         .unwrap();
-    let target = isolated_store(occupied.path(), &root.path().join("occupied-keys"));
+    let target = isolated_store(&occupied, &root.path().join("occupied-keys")).await;
     assert!(
         client
             .request(&target, &occupied, Some(invitation))
@@ -585,7 +585,7 @@ async fn tampered_grant_and_protected_loss_cannot_complete_or_regenerate() {
         .await
         .unwrap();
     let keys = root.path().join("peer-keys");
-    let peer_store = isolated_store(target.path(), &keys);
+    let peer_store = isolated_store(&target, &keys).await;
     client
         .request(&peer_store, &target, Some(invitation))
         .await
@@ -714,7 +714,7 @@ async fn process_exit_at_protected_dispatch_and_completion_boundaries() {
     let peer_db = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(peer_db.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&peer_db, &root.path().join("peer-keys")).await;
     client
         .request(&peer_store, &peer_db, Some(invitation))
         .await
@@ -751,7 +751,7 @@ async fn process_worker() {
         ("peer.sqlite", "peer-keys")
     };
     let db = Database::open(&root.join(name)).await.unwrap();
-    let store = isolated_store(db.path(), &root.join(keys));
+    let store = isolated_store(&db, &root.join(keys)).await;
     let client = Client::new(&origin).unwrap();
     if role == "inviter" {
         client.admit(&store, &db).await.unwrap();
@@ -816,7 +816,7 @@ async fn edit_after_protected_identity_before_pin_survives_refused_completion() 
         .await
         .unwrap();
     let keys = root.path().join("peer-keys");
-    let peer_store = isolated_store(target.path(), &keys);
+    let peer_store = isolated_store(&target, &keys).await;
     assert!(client.request(&peer_store, &target, None).await.is_err());
     assert!(
         server
@@ -1132,7 +1132,7 @@ async fn expired_unsent_invitation_retires_but_sent_candidate_stays_blocked() {
             let db = Database::open(&root.join(format!("{name}.sqlite")))
                 .await
                 .unwrap();
-            let keys = isolated_store(db.path(), &root.join(format!("{name}-keys")));
+            let keys = isolated_store(&db, &root.join(format!("{name}-keys"))).await;
             (db, keys)
         }
     };
@@ -1281,7 +1281,7 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
             let db = Database::open(&root.join(format!("{name}.sqlite")))
                 .await
                 .unwrap();
-            let keys = isolated_store(db.path(), &root.join(format!("{name}-keys")));
+            let keys = isolated_store(&db, &root.join(format!("{name}-keys"))).await;
             (db, keys)
         }
     };
@@ -1361,7 +1361,7 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
     drop(store);
     drop(db);
     let db = Database::open(&path).await.unwrap();
-    let mut store = isolated_store(db.path(), &root.path().join("keys"));
+    let mut store = isolated_store(&db, &root.path().join("keys")).await;
     store.set_enrollment_clock(clock.clone());
     let rounds = crate::encrypted_tail_http::Client::new(&origin).unwrap();
     for _ in 0..2 {
@@ -1542,7 +1542,7 @@ async fn late_or_invalid_mailbox_requests_never_become_candidates() {
     let target = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(target.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&target, &root.path().join("peer-keys")).await;
     let expires = soon();
     let invitation = client.invite(&store, &db, expires).await.unwrap();
     client
@@ -1603,7 +1603,7 @@ async fn sent_candidate_resends_exactly_after_expiry() {
     let target = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(target.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&target, &root.path().join("peer-keys")).await;
     let expires = soon();
     let invitation = client.invite(&store, &db, expires).await.unwrap();
     client
@@ -1659,7 +1659,7 @@ async fn forged_admission_signature_is_not_pinned_and_correct_response_completes
     let target = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(target.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&target, &root.path().join("peer-keys")).await;
     client
         .request(&peer_store, &target, Some(invitation))
         .await

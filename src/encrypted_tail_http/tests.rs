@@ -267,7 +267,7 @@ async fn fixture_with_recurrence_snapshot(
     let peer = Database::open(&root.path().join("peer.sqlite"))
         .await
         .unwrap();
-    let peer_store = isolated_store(peer.path(), &root.path().join("peer-keys"));
+    let peer_store = isolated_store(&peer, &root.path().join("peer-keys")).await;
     let enrollment = crate::peer_enrollment_http::Client::new(&origin).unwrap();
     let expiry = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -538,7 +538,7 @@ async fn frozen_restart_lost_ack_and_server_restart_keep_exact_identity() {
         )
     };
     let reopened = Database::open(f.peer.path()).await.unwrap();
-    let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
     {
         let inputs = store.tail_inputs(&reopened, &f.origin).await.unwrap();
         assert_eq!(head_record(&reopened, &inputs.authority).await, record);
@@ -880,7 +880,7 @@ async fn current_auth_prefix_tamper_and_whole_page_rollback() {
 async fn process_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_TAIL_ROOT").unwrap());
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("peer-keys"));
+    let store = isolated_store(&db, &root.join("peer-keys")).await;
     let client = Client::new(&std::env::var("AVEN_TAIL_ORIGIN").unwrap()).unwrap();
     client
         .round(&store, &db, &root.join("peer-blobs"))
@@ -932,7 +932,7 @@ async fn process_exit_before_dispatch_after_acceptance_and_during_page_commit() 
                 .unwrap()
         };
         let reopened = Database::open(f.peer.path()).await.unwrap();
-        let store = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+        let store = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
         if let Some(bytes) = frozen {
             let inputs = store.tail_inputs(&reopened, &f.origin).await.unwrap();
             assert_eq!(head_record(&reopened, &inputs.authority).await, bytes);

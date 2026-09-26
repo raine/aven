@@ -30,7 +30,7 @@ async fn invite(f: &Fixture, name: &str) -> u64 {
     let db = Database::open(&f.root.path().join(format!("{name}.sqlite")))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &f.root.path().join(format!("{name}-keys")));
+    let store = isolated_store(&db, &f.root.path().join(format!("{name}-keys"))).await;
     enrollment
         .request(&store, &db, Some(invitation))
         .await

@@ -75,7 +75,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
             .unwrap();
         }
     }
-    let store = isolated_store(client.path(), &root.path().join("keys"));
+    let store = isolated_store(&client, &root.path().join("keys")).await;
     let original = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     let protected = original.protected_storage_bytes();
     drop(original);
@@ -94,7 +94,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     let client = Database::open(&root.path().join("client.sqlite"))
         .await
         .unwrap();
-    let store = isolated_store(client.path(), &root.path().join("keys"));
+    let store = isolated_store(&client, &root.path().join("keys")).await;
     let seed = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     assert_eq!(protected, seed.protected_storage_bytes());
     let reopened = store

@@ -394,7 +394,7 @@ async fn supersession_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_SUPER_ROOT").unwrap());
     let origin = std::env::var("AVEN_SUPER_ORIGIN").unwrap();
     let db = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let store = isolated_store(db.path(), &root.join("peer-keys"));
+    let store = isolated_store(&db, &root.join("peer-keys")).await;
     let client = Client::new(&origin).unwrap();
     client
         .round(&store, &db, &root.join("peer-blobs"))
@@ -490,7 +490,7 @@ async fn process_restart_before_and_after_task_and_image_supersession_preserves_
         }
         let new = frozen(&f.peer).await;
         let reopen = Database::open(f.peer.path()).await.unwrap();
-        let store = isolated_store(reopen.path(), &f.root.path().join("peer-keys"));
+        let store = isolated_store(&reopen, &f.root.path().join("peer-keys")).await;
         let inputs = store.tail_inputs(&reopen, &f.origin).await.unwrap();
         let (id, record) = reopen
             .encrypted_tail_frozen_record(&inputs.authority)
@@ -639,7 +639,7 @@ async fn rotation_during_historical_image_read_keeps_the_selected_download() {
     let third = join(&f, "third", &f.seed, &f.seed_store).await;
     let driver = Joined {
         db: f.peer.clone(),
-        store: isolated_store(f.peer.path(), &f.root.path().join("peer-keys")),
+        store: isolated_store(&f.peer, &f.root.path().join("peer-keys")).await,
         blobs: f.root.path().join("peer-blobs"),
     };
     let (send, mut events) = tokio::sync::mpsc::channel(1);

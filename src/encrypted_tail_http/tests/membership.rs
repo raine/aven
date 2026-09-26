@@ -24,7 +24,7 @@ pub(super) async fn join(
     let db = Database::open(&f.root.path().join(format!("{name}.sqlite")))
         .await
         .unwrap();
-    let store = isolated_store(db.path(), &f.root.path().join(format!("{name}-keys")));
+    let store = isolated_store(&db, &f.root.path().join(format!("{name}-keys"))).await;
     let invitation = client.invite(keys, inviter, expiry()).await.unwrap();
     client.request(&store, &db, Some(invitation)).await.unwrap();
     assert!(client.admit(keys, inviter).await.unwrap());
@@ -710,11 +710,11 @@ async fn competing_host_candidates_retain_same_recipient_and_complete_after_late
     let third = Database::open(&f.root.path().join("third.sqlite"))
         .await
         .unwrap();
-    let third_keys = isolated_store(third.path(), &f.root.path().join("third-keys"));
+    let third_keys = isolated_store(&third, &f.root.path().join("third-keys")).await;
     let fourth = Database::open(&f.root.path().join("fourth.sqlite"))
         .await
         .unwrap();
-    let fourth_keys = isolated_store(fourth.path(), &f.root.path().join("fourth-keys"));
+    let fourth_keys = isolated_store(&fourth, &f.root.path().join("fourth-keys")).await;
     let seed_invitation = client
         .invite(&f.seed_store, &f.seed, expiry())
         .await
@@ -895,7 +895,7 @@ async fn protected_ahead_sqlite_failure_recovers_forward_and_missing_evidence_re
     );
     execute_local(&f.peer, "DROP TRIGGER mirror_fault").await;
     let reopened = Database::open(f.peer.path()).await.unwrap();
-    let keys = isolated_store(reopened.path(), &f.root.path().join("peer-keys"));
+    let keys = isolated_store(&reopened, &f.root.path().join("peer-keys")).await;
     client.refresh(&keys, &reopened).await.unwrap();
     assert_eq!(
         reopened
@@ -1003,7 +1003,7 @@ async fn floor_worker() {
     let root = std::path::PathBuf::from(std::env::var_os("AVEN_MEMBERSHIP_ROOT").unwrap());
     let origin = std::env::var("AVEN_MEMBERSHIP_ORIGIN").unwrap();
     let peer = Database::open(&root.join("peer.sqlite")).await.unwrap();
-    let keys = isolated_store(peer.path(), &root.join("peer-keys"));
+    let keys = isolated_store(&peer, &root.join("peer-keys")).await;
     peer_enrollment_http::Client::new(&origin)
         .unwrap()
         .refresh(&keys, &peer)
@@ -1098,7 +1098,7 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
     let third = Database::open(&f.root.path().join("third.sqlite"))
         .await
         .unwrap();
-    let keys = isolated_store(third.path(), &f.root.path().join("third-keys"));
+    let keys = isolated_store(&third, &f.root.path().join("third-keys")).await;
     let invitation = client
         .invite(&f.seed_store, &f.seed, expiry())
         .await
