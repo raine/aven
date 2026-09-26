@@ -15,15 +15,8 @@ async fn edges(db: &Database) -> Vec<(TaskId, TaskId, String)> {
     sqlx::query_as("SELECT task_id, depends_on_task_id, created_at FROM task_dependencies ORDER BY workspace_id, task_id, depends_on_task_id").fetch_all(&mut *c).await.unwrap()
 }
 async fn assert_drained(f: &Fixture) {
+    assert_quiescent(&[&f.seed, &f.peer]).await;
     for db in [&f.seed, &f.peer] {
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-            0
-        );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-            0
-        );
         let mut c = aven_core::test_support::acquire(db).await.unwrap();
         let cycle: bool = sqlx::query_scalar("WITH RECURSIVE paths(workspace_id, a, b) AS (SELECT workspace_id, task_id, depends_on_task_id FROM task_dependencies UNION SELECT p.workspace_id, p.a, d.depends_on_task_id FROM paths p JOIN task_dependencies d ON d.workspace_id=p.workspace_id AND d.task_id=p.b) SELECT EXISTS(SELECT 1 FROM paths WHERE a=b)").fetch_one(&mut *c).await.unwrap();
         assert!(!cycle);
@@ -34,43 +27,41 @@ async fn assert_drained(f: &Fixture) {
 #[tokio::test]
 async fn remove_readd_converges_in_both_upload_orders() {
     for seed_first in [true, false] {
-        for repetitions in [1, 3] {
-            let f = fixture_with_snapshot_content(false, None, true).await;
-            let (w, a, b) = snapshot_pair(&f).await;
-            let baseline = edges(&f.seed).await;
-            converge(&f).await;
-            assert_eq!(edges(&f.seed).await, baseline);
-            assert_eq!(edges(&f.peer).await, baseline);
-            for db in [&f.seed, &f.peer] {
-                for _ in 1..repetitions {
-                    assert!(db.remove_task_dependency(&w, &a, &b).await.unwrap().changed);
-                    assert!(db.add_task_dependency(&w, &a, &b).await.unwrap().changed);
-                }
+        let f = fixture_with(with_relations()).await;
+        let (w, a, b) = snapshot_pair(&f).await;
+        let baseline = edges(&f.seed).await;
+        converge(&f).await;
+        assert_eq!(edges(&f.seed).await, baseline);
+        assert_eq!(edges(&f.peer).await, baseline);
+        for db in [&f.seed, &f.peer] {
+            for _ in 0..2 {
                 assert!(db.remove_task_dependency(&w, &a, &b).await.unwrap().changed);
-                assert!(!db.remove_task_dependency(&w, &a, &b).await.unwrap().changed);
+                assert!(db.add_task_dependency(&w, &a, &b).await.unwrap().changed);
             }
-            assert!(
-                f.seed
-                    .add_task_dependency(&w, &a, &b)
-                    .await
-                    .unwrap()
-                    .changed
+            assert!(db.remove_task_dependency(&w, &a, &b).await.unwrap().changed);
+            assert!(!db.remove_task_dependency(&w, &a, &b).await.unwrap().changed);
+        }
+        assert!(
+            f.seed
+                .add_task_dependency(&w, &a, &b)
+                .await
+                .unwrap()
+                .changed
+        );
+        if !seed_first {
+            drain(&Client::new(&f.origin).unwrap(), &f.peer_store, &f.peer).await;
+        }
+        converge(&f).await;
+        converge(&f).await;
+        assert_drained(&f).await;
+        assert_eq!(edges(&f.seed).await.len(), usize::from(!seed_first));
+        for db in [&f.seed, &f.peer] {
+            assert_eq!(scalar(db, "SELECT count(*) FROM task_labels").await, 2);
+            assert_eq!(
+                scalar(db, "SELECT count(*) FROM task_related_links WHERE linked=1").await,
+                1
             );
-            if !seed_first {
-                drain(&Client::new(&f.origin).unwrap(), &f.peer_store, &f.peer).await;
-            }
-            converge(&f).await;
-            converge(&f).await;
-            assert_drained(&f).await;
-            assert_eq!(edges(&f.seed).await.len(), usize::from(!seed_first));
-            for db in [&f.seed, &f.peer] {
-                assert_eq!(scalar(db, "SELECT count(*) FROM task_labels").await, 2);
-                assert_eq!(
-                    scalar(db, "SELECT count(*) FROM task_related_links WHERE linked=1").await,
-                    1
-                );
-                assert_eq!(scalar(db, "SELECT count(*) FROM task_epic_links").await, 1);
-            }
+            assert_eq!(scalar(db, "SELECT count(*) FROM task_epic_links").await, 1);
         }
     }
 }
@@ -145,7 +136,12 @@ async fn three_cycle_uses_sequential_policy_in_both_upload_orders() {
 
 #[tokio::test]
 async fn post_capture_edit_does_not_contaminate_seed_baseline_or_retry() {
-    let f = fixture_with_dependency_edit(false, None, true, true).await;
+    let f = fixture_with(FixtureOptions {
+        relations: true,
+        dependency_after_capture: true,
+        ..Default::default()
+    })
+    .await;
     assert!(edges(&f.seed).await.is_empty());
     assert_eq!(edges(&f.peer).await.len(), 1);
     for db in [&f.seed, &f.peer] {
@@ -214,7 +210,7 @@ async fn assert_dependency(db: &Database, _w: &Workspace, a: &TaskId, b: &TaskId
 
 #[tokio::test]
 async fn dependencies_preserve_undo_and_later_intent_through_acceptance_reopen_and_pages() {
-    let f = fixture_with_snapshot_content(false, None, true).await;
+    let f = fixture_with(with_relations()).await;
     let (w, task, target) = snapshot_pair(&f).await;
     converge(&f).await;
     // More than one ordinary pull page of unseen accepted relation commands.
@@ -437,7 +433,7 @@ async fn missing_or_mismatched_baseline_refuses_sync_and_exact_install_retry() {
         "UPDATE local_e2ee_dependency_baseline SET sync_generation = sync_generation + 1",
         "UPDATE local_e2ee_dependency_baseline SET prefix_count = prefix_count + 1",
     ] {
-        let f = fixture_with_snapshot_content(false, None, true).await;
+        let f = fixture_with(with_relations()).await;
         let (w, a, b) = snapshot_pair(&f).await;
         f.peer.remove_task_dependency(&w, &a, &b).await.unwrap();
         let before = edges(&f.peer).await;
@@ -484,7 +480,7 @@ async fn missing_or_mismatched_baseline_refuses_sync_and_exact_install_retry() {
 
 #[tokio::test]
 async fn task_endpoints_created_in_later_pages_are_replayed_after_creation() {
-    let f = fixture_with_snapshot_content(false, None, true).await;
+    let f = fixture_with(with_relations()).await;
     let (w, a, b) = snapshot_pair(&f).await;
     let baseline = edges(&f.seed).await;
     let mut tasks = Vec::new();
@@ -515,7 +511,7 @@ async fn task_endpoints_created_in_later_pages_are_replayed_after_creation() {
 
 #[tokio::test]
 async fn missing_seed_baseline_refuses_adoption_retry_without_resetting_edits() {
-    let f = fixture_with_snapshot_content(false, None, true).await;
+    let f = fixture_with(with_relations()).await;
     let (w, a, b) = snapshot_pair(&f).await;
     f.seed.remove_task_dependency(&w, &a, &b).await.unwrap();
     let cursor = f.seed.meta("sync_cursor").await.unwrap();

@@ -9,26 +9,16 @@ fn input(key: impl Into<String>, value: impl Into<String>) -> TaskMetadataInput 
     }
 }
 
-async fn drain_metadata(c: &Client, store: &ProtectedLocalKeyStore, db: &Database) {
-    for _ in 0..512 {
-        if c.round(store, db, &blobs(db))
-            .await
-            .unwrap()
-            .metadata_caught_up
-        {
-            return;
-        }
-    }
-    panic!("metadata round budget");
-}
-
 async fn assert_integrity(db: &Database) {
     let report = db.database_integrity_report().await.unwrap();
     assert!(report.quick_check_ok);
     assert!(report.checks.iter().all(|check| check.ok), "{report:?}");
 }
 
-async fn concurrent_additions(bytes: bool, peer_first: bool) {
+// The byte-limit variant and seed-first order are covered by core
+// `encrypted_merge_conflicts_and_replay_preserve_over_limit_metadata`.
+#[tokio::test]
+async fn count_peer_first() {
     let f = fixture().await;
     converge(&f).await;
     let c = Client::new(&f.origin).unwrap();
@@ -38,17 +28,13 @@ async fn concurrent_additions(bytes: bool, peer_first: bool) {
     definitions.metadata = vec![input("seed-key", "x"), input("peer-key", "x")];
     f.seed.create_task(&w, definitions).await.unwrap();
     let mut d = draft("concurrent metadata");
-    let (base_count, value) = if bytes {
-        (7, "x".repeat(4096))
-    } else {
-        (127, "x".into())
-    };
+    let (base_count, value) = (127, String::from("x"));
     d.metadata = (0..base_count)
         .map(|i| input(format!("base-{i}"), value.clone()))
         .collect();
     let task = f.seed.create_task(&w, d).await.unwrap().task;
-    drain_metadata(&c, &f.seed_store, &f.seed).await;
-    drain_metadata(&c, &f.peer_store, &f.peer).await;
+    drain(&c, &f.seed_store, &f.seed).await;
+    drain(&c, &f.peer_store, &f.peer).await;
     let baseline = f.seed.task_metadata(&w.id, &task.id).await.unwrap();
     assert_eq!(
         baseline,
@@ -66,13 +52,9 @@ async fn concurrent_additions(bytes: bool, peer_first: bool) {
         .await
         .unwrap();
     }
-    let devices = if peer_first {
-        [(&f.peer, &f.peer_store), (&f.seed, &f.seed_store)]
-    } else {
-        [(&f.seed, &f.seed_store), (&f.peer, &f.peer_store)]
-    };
+    let devices = [(&f.peer, &f.peer_store), (&f.seed, &f.seed_store)];
     for (db, store) in devices {
-        drain_metadata(&c, store, db).await;
+        drain(&c, store, db).await;
     }
     converge(&f).await;
     let merged = f.seed.task_metadata(&w.id, &task.id).await.unwrap();
@@ -103,14 +85,7 @@ async fn concurrent_additions(bytes: bool, peer_first: bool) {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-            0
-        );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-            0
-        );
+        assert_quiescent(&[db]).await;
         let integrity = db.database_integrity_report().await.unwrap();
         assert!(integrity.quick_check_ok);
         // Live replicas have independent local_seq counters; check the metadata
@@ -202,37 +177,10 @@ async fn concurrent_additions(bytes: bool, peer_first: bool) {
                 .unwrap()
                 .metadata_caught_up
         );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-            0
-        );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-            0
-        );
+        assert_quiescent(&[db]).await;
     }
     assert_eq!(
         f.seed.meta("sync_cursor").await.unwrap(),
         f.peer.meta("sync_cursor").await.unwrap()
     );
-}
-
-#[tokio::test]
-async fn count_seed_first() {
-    concurrent_additions(false, false).await;
-}
-
-#[tokio::test]
-async fn count_peer_first() {
-    concurrent_additions(false, true).await;
-}
-
-#[tokio::test]
-async fn bytes_seed_first() {
-    concurrent_additions(true, false).await;
-}
-
-#[tokio::test]
-async fn bytes_peer_first() {
-    concurrent_additions(true, true).await;
 }

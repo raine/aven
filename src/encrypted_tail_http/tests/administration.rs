@@ -42,7 +42,7 @@ async fn task_labels_by_title(db: &Database, title: &str) -> Vec<String> {
 
 #[tokio::test]
 async fn project_label_and_workspace_administration_crosses_http_and_converges() {
-    let f = fixture_with_snapshot_content(false, None, true).await;
+    let f = fixture_with(with_relations()).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     converge(&f).await;
 
@@ -196,7 +196,7 @@ async fn project_label_and_workspace_administration_crosses_http_and_converges()
 
 #[tokio::test]
 async fn remote_label_commands_ordered_before_pending_deletion_or_rename_follow_it() {
-    let f = fixture_with_snapshot_content(false, None, true).await;
+    let f = fixture_with(with_relations()).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     converge(&f).await;
     let mut ids = Vec::new();

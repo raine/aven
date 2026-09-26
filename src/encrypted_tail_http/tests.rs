@@ -23,12 +23,14 @@ impl Drop for Fixture {
         self.task.abort();
     }
 }
-/// Requests served by `serve` in this process, read by the ignored benchmark.
-static HTTP_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// Request and response body bytes served by `serve`, read by the benchmark.
-static HTTP_REQUEST_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static HTTP_RESPONSE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHandle<()>) {
+    serve_with(server, address, false).await
+}
+async fn serve_with(
+    server: Database,
+    address: &str,
+    count_http: bool,
+) -> (String, tokio::task::JoinHandle<()>) {
     let tail = Router::new()
         .route(PATH, post(handle))
         .route(images::PATH, post(images::handle))
@@ -37,74 +39,49 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
             gate: crate::http_admission::Admission::new(1),
             image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
         }));
-    let app = e2ee_http::router_with_tail(server, tail)
-        .await
-        .layer(axum::middleware::from_fn(
-            |request: Request, next: axum::middleware::Next| async move {
-                use axum::body::HttpBody;
-                use std::sync::atomic::Ordering::Relaxed;
-                HTTP_REQUESTS.fetch_add(1, Relaxed);
-                HTTP_REQUEST_BYTES.fetch_add(request.body().size_hint().lower(), Relaxed);
-                let response = next.run(request).await;
-                HTTP_RESPONSE_BYTES.fetch_add(response.body().size_hint().lower(), Relaxed);
-                response
-            },
-        ));
+    let mut app = e2ee_http::router_with_tail(server, tail).await;
+    if count_http {
+        app = app.layer(axum::middleware::from_fn(bench::count_http));
+    }
     e2ee_http::serve(app, address).await
 }
-async fn fixture() -> Fixture {
-    fixture_with_shared_images(false).await
-}
-async fn fixture_with_shared_images(shared: bool) -> Fixture {
-    fixture_with_snapshot_content(shared, None, false).await
-}
-async fn fixture_with_snapshot_content(
-    shared: bool,
+/// Seed content captured into the shared-state snapshot before the peer joins.
+#[derive(Default)]
+struct FixtureOptions {
+    /// A second task references the seed's existing image bytes.
+    shared_image: bool,
+    /// A snapshot note; `Some(true)` also edits it after capture.
     note_after_capture: Option<bool>,
+    /// A task with labels, a dependency, a related link and an epic parent.
     relations: bool,
-) -> Fixture {
-    fixture_with_dependency_edit(shared, note_after_capture, relations, false).await
-}
-async fn fixture_with_dependency_edit(
-    shared: bool,
-    note_after_capture: Option<bool>,
-    relations: bool,
+    /// Removes the snapshot dependency after capture. Needs `relations`.
     dependency_after_capture: bool,
-) -> Fixture {
-    fixture_with_image_availability(
-        shared,
-        note_after_capture,
-        relations,
-        dependency_after_capture,
-        false,
-    )
-    .await
-}
-async fn fixture_with_image_availability(
-    shared: bool,
-    note_after_capture: Option<bool>,
-    relations: bool,
-    dependency_after_capture: bool,
-    unavailable: bool,
-) -> Fixture {
-    fixture_with_recurrence_snapshot(
-        shared,
-        note_after_capture,
-        relations,
-        dependency_after_capture,
-        unavailable,
-        false,
-    )
-    .await
-}
-async fn fixture_with_recurrence_snapshot(
-    shared: bool,
-    note_after_capture: Option<bool>,
-    relations: bool,
-    dependency_after_capture: bool,
-    unavailable: bool,
+    /// The snapshot image's task and bytes are deleted before capture.
+    unavailable_image: bool,
+    /// A recurring task with an edited occurrence.
     recurrence: bool,
-) -> Fixture {
+    /// Counts HTTP requests and body bytes for the benchmark.
+    count_http: bool,
+}
+async fn fixture() -> Fixture {
+    fixture_with(FixtureOptions::default()).await
+}
+fn with_relations() -> FixtureOptions {
+    FixtureOptions {
+        relations: true,
+        ..Default::default()
+    }
+}
+async fn fixture_with(options: FixtureOptions) -> Fixture {
+    let FixtureOptions {
+        shared_image: shared,
+        note_after_capture,
+        relations,
+        dependency_after_capture,
+        unavailable_image: unavailable,
+        recurrence,
+        count_http,
+    } = options;
     let root = tempfile::tempdir().unwrap();
     let (seed, seed_store, authority, _) = e2ee_http::fixture(root.path()).await;
     if unavailable {
@@ -266,7 +243,7 @@ async fn fixture_with_recurrence_snapshot(
     let server = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
-    let (origin, task) = serve(server.clone(), "127.0.0.1:0").await;
+    let (origin, task) = serve_with(server.clone(), "127.0.0.1:0", count_http).await;
     e2ee_http::adopt(&origin, &seed, &seed_store, &authority).await;
     let peer = Database::open(&root.path().join("peer.sqlite"))
         .await
@@ -345,6 +322,19 @@ async fn drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Database) {
         }
     }
     panic!("round budget");
+}
+/// Asserts every change is accepted and no push is in flight.
+async fn assert_quiescent(dbs: &[&Database]) {
+    for db in dbs {
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
+            0
+        );
+        assert_eq!(
+            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
+            0
+        );
+    }
 }
 async fn converge(f: &Fixture) {
     let c = Client::new(&f.origin).unwrap();
@@ -2167,7 +2157,11 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
 
 #[tokio::test]
 async fn checkpoint_snapshot_shared_image_survives_parent_delete_restore() {
-    let f = fixture_with_shared_images(true).await;
+    let f = fixture_with(FixtureOptions {
+        shared_image: true,
+        ..Default::default()
+    })
+    .await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     let export = f.seed.export_data("checkpoint".into()).await.unwrap();
@@ -2375,43 +2369,33 @@ async fn drain_note_order(f: &Fixture, seed_first: bool) {
         drain(&c, &f.peer_store, &f.peer).await;
     }
     converge(f).await;
-    for db in [&f.seed, &f.peer] {
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-            0
-        );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-            0
-        );
-    }
+    assert_quiescent(&[&f.seed, &f.peer]).await;
 }
 
 #[tokio::test]
 async fn checkpoint_concurrent_note_edits_follow_accepted_order() {
     for seed_first in [true, false] {
-        for edits in [1, 3] {
-            let f = fixture().await;
-            let (w, task, note) = shared_note(&f).await;
-            for i in 0..edits {
-                f.seed
-                    .edit_note(&w, &task, &note, format!("seed offline edit {i}"))
-                    .await
-                    .unwrap();
-                f.peer
-                    .edit_note(&w, &task, &note, format!("peer offline edit {i}"))
-                    .await
-                    .unwrap();
-            }
-            drain_note_order(&f, seed_first).await;
-            let last = if seed_first { "peer" } else { "seed" };
-            let expected = format!("{last} offline edit {}", edits - 1);
-            for db in [&f.seed, &f.peer] {
-                assert_eq!(
-                    note_body(db, &note).await.as_deref(),
-                    Some(expected.as_str())
-                );
-            }
+        let edits = 3;
+        let f = fixture().await;
+        let (w, task, note) = shared_note(&f).await;
+        for i in 0..edits {
+            f.seed
+                .edit_note(&w, &task, &note, format!("seed offline edit {i}"))
+                .await
+                .unwrap();
+            f.peer
+                .edit_note(&w, &task, &note, format!("peer offline edit {i}"))
+                .await
+                .unwrap();
+        }
+        drain_note_order(&f, seed_first).await;
+        let last = if seed_first { "peer" } else { "seed" };
+        let expected = format!("{last} offline edit {}", edits - 1);
+        for db in [&f.seed, &f.peer] {
+            assert_eq!(
+                note_body(db, &note).await.as_deref(),
+                Some(expected.as_str())
+            );
         }
     }
 }
@@ -2764,7 +2748,11 @@ async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
 
 async fn assert_snapshot_note_edits_converge(edit_after_capture: bool) {
     for seed_first in [true, false] {
-        let f = fixture_with_snapshot_content(false, Some(edit_after_capture), false).await;
+        let f = fixture_with(FixtureOptions {
+            note_after_capture: Some(edit_after_capture),
+            ..Default::default()
+        })
+        .await;
         let w = f.seed.list_workspaces().await.unwrap().remove(0);
         let (task, note, created_at, add_change): (aven_core::ids::TaskId, String, String, String) = {
             let mut conn = aven_core::test_support::acquire(&f.seed).await.unwrap();
@@ -2853,6 +2841,133 @@ async fn checkpoint_snapshot_note_concurrent_edits_follow_accepted_order() {
 #[tokio::test]
 async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption() {
     assert_snapshot_note_edits_converge(true).await;
+}
+
+#[tokio::test]
+async fn drain_reuses_protected_tail_snapshot() {
+    let f = fixture().await;
+    converge(&f).await;
+    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+    for index in 0..5 {
+        f.seed
+            .create_task(&workspace, draft(&format!("snapshot task {index}")))
+            .await
+            .unwrap();
+    }
+    let client = Client::new(&f.origin).unwrap();
+    let (drain, setup_loads) = crate::protected_local_keys::tests::BACKEND_LOADS
+        .measure(client.start_drain(&f.seed_store, &f.seed))
+        .await;
+    let mut drain = drain.unwrap();
+    let (rounds, round_loads) = crate::protected_local_keys::tests::BACKEND_LOADS
+        .measure(async {
+            for round_number in 1..=16 {
+                let round = client
+                    .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
+                    .await
+                    .unwrap();
+                if round.metadata_caught_up && round.images == ImageTransfer::Complete {
+                    return round_number;
+                }
+            }
+            panic!("round budget")
+        })
+        .await;
+    assert!(setup_loads > 0);
+    assert_eq!(rounds, 1);
+    assert_eq!(round_loads, 0);
+}
+
+#[tokio::test]
+async fn one_round_pushes_an_offline_edit_backlog_and_peer_converges() {
+    let f = fixture().await;
+    converge(&f).await;
+    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+    let task = f
+        .seed
+        .create_task(&workspace, draft("offline edit target"))
+        .await
+        .unwrap()
+        .task;
+    // Each change is one append, so the backlog spans many appends.
+    const OFFLINE_EDITS: usize = 40;
+    // Publish the task first so the measured backlog consists only of edits.
+    let client = Client::new(&f.origin).unwrap();
+    crate::sync::encrypted::drain(
+        &client,
+        &f.seed_store,
+        &f.seed,
+        &blobs(&f.seed),
+        crate::sync::encrypted::ROUND_LIMIT,
+    )
+    .await
+    .unwrap();
+    crate::sync::encrypted::drain(
+        &client,
+        &f.peer_store,
+        &f.peer,
+        &blobs(&f.peer),
+        crate::sync::encrypted::ROUND_LIMIT,
+    )
+    .await
+    .unwrap();
+
+    let before = scalar(&f.seed, "SELECT count(*) FROM changes").await;
+    for index in 0..OFFLINE_EDITS {
+        f.seed
+            .update_task(
+                &workspace,
+                &task.id,
+                TaskUpdate {
+                    title: Some(format!("offline edit {index}")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        scalar(&f.seed, "SELECT count(*) FROM changes").await - before,
+        OFFLINE_EDITS as i64
+    );
+
+    let mut seed_drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
+    let mut seed_rounds = 1;
+    let mut round = client
+        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar(
+            &f.seed,
+            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
+        )
+        .await,
+        0,
+        "the first round must empty the offline-edit outbox"
+    );
+    while !round.metadata_caught_up || round.images != ImageTransfer::Complete {
+        assert!(seed_rounds < crate::sync::encrypted::ROUND_LIMIT);
+        round = client
+            .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
+            .await
+            .unwrap();
+        seed_rounds += 1;
+    }
+    let peer = crate::sync::encrypted::drain(
+        &client,
+        &f.peer_store,
+        &f.peer,
+        &blobs(&f.peer),
+        crate::sync::encrypted::ROUND_LIMIT,
+    )
+    .await
+    .unwrap();
+    assert!(peer.metadata_caught_up);
+    assert_eq!(
+        title(&f.peer, &task.id).await,
+        format!("offline edit {}", OFFLINE_EDITS - 1)
+    );
 }
 
 mod administration;

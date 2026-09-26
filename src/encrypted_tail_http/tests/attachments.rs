@@ -722,7 +722,11 @@ async fn ref_hint_disagreement_is_sticky_and_explicit_unref_releases() {
 
 #[tokio::test]
 async fn explicitly_unmapped_bootstrap_reference_is_initialized_and_deletable() {
-    let f = fixture_with_image_availability(false, None, false, false, true).await;
+    let f = fixture_with(FixtureOptions {
+        unavailable_image: true,
+        ..Default::default()
+    })
+    .await;
     let (reference, task): (String, aven_core::ids::TaskId) =
         sqlx::query_as("SELECT attachment_id,task_id FROM task_attachments")
             .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())

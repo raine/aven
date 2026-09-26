@@ -6,8 +6,25 @@
 //! Sizes: AVEN_BENCH_TASKS (default 2000), AVEN_BENCH_IMAGES (default 500).
 use super::*;
 use crate::protected_local_keys::tests::BACKEND_LOADS;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Instant;
+
+static HTTP_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static HTTP_REQUEST_BYTES: AtomicU64 = AtomicU64::new(0);
+static HTTP_RESPONSE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Middleware for `FixtureOptions::count_http`.
+pub(super) async fn count_http(
+    request: Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::body::HttpBody;
+    HTTP_REQUESTS.fetch_add(1, Relaxed);
+    HTTP_REQUEST_BYTES.fetch_add(request.body().size_hint().lower(), Relaxed);
+    let response = next.run(request).await;
+    HTTP_RESPONSE_BYTES.fetch_add(response.body().size_hint().lower(), Relaxed);
+    response
+}
 
 fn size(name: &str, default: usize) -> usize {
     std::env::var(name)
@@ -85,128 +102,6 @@ async fn measure_drain(client: &Client, store: &ProtectedLocalKeyStore, db: &Dat
     }
 }
 
-#[tokio::test]
-async fn drain_reuses_protected_tail_snapshot() {
-    let f = fixture().await;
-    converge(&f).await;
-    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
-    for index in 0..5 {
-        f.seed
-            .create_task(&workspace, draft(&format!("snapshot task {index}")))
-            .await
-            .unwrap();
-    }
-    let client = Client::new(&f.origin).unwrap();
-    let (drain, setup_loads) = BACKEND_LOADS
-        .measure(client.start_drain(&f.seed_store, &f.seed))
-        .await;
-    let mut drain = drain.unwrap();
-    let (rounds, round_loads) = BACKEND_LOADS
-        .measure(async {
-            for round_number in 1..=16 {
-                let round = client
-                    .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
-                    .await
-                    .unwrap();
-                if round.metadata_caught_up && round.images == ImageTransfer::Complete {
-                    return round_number;
-                }
-            }
-            panic!("round budget")
-        })
-        .await;
-    assert!(setup_loads > 0);
-    assert_eq!(rounds, 1);
-    assert_eq!(round_loads, 0);
-}
-
-#[tokio::test]
-async fn one_sync_drains_1500_offline_edits_and_peer_converges() {
-    let f = fixture().await;
-    converge(&f).await;
-    let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
-    let task = f
-        .seed
-        .create_task(&workspace, draft("offline edit target"))
-        .await
-        .unwrap()
-        .task;
-    // Publish the task first so the measured backlog consists only of edits.
-    let client = Client::new(&f.origin).unwrap();
-    crate::sync::encrypted::drain(
-        &client,
-        &f.seed_store,
-        &f.seed,
-        &blobs(&f.seed),
-        crate::sync::encrypted::ROUND_LIMIT,
-    )
-    .await
-    .unwrap();
-    crate::sync::encrypted::drain(
-        &client,
-        &f.peer_store,
-        &f.peer,
-        &blobs(&f.peer),
-        crate::sync::encrypted::ROUND_LIMIT,
-    )
-    .await
-    .unwrap();
-
-    let before = scalar(&f.seed, "SELECT count(*) FROM changes").await;
-    for index in 0..1500 {
-        f.seed
-            .update_task(
-                &workspace,
-                &task.id,
-                TaskUpdate {
-                    title: Some(format!("offline edit {index}")),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-    }
-    assert_eq!(
-        scalar(&f.seed, "SELECT count(*) FROM changes").await - before,
-        1500
-    );
-
-    let mut seed_drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
-    let mut seed_rounds = 1;
-    let mut round = client
-        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
-        .await
-        .unwrap();
-    assert_eq!(
-        scalar(
-            &f.seed,
-            "SELECT count(*) FROM changes WHERE server_seq IS NULL"
-        )
-        .await,
-        0,
-        "the first round must empty the 1500-edit outbox"
-    );
-    while !round.metadata_caught_up || round.images != ImageTransfer::Complete {
-        assert!(seed_rounds < crate::sync::encrypted::ROUND_LIMIT);
-        round = client
-            .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
-            .await
-            .unwrap();
-        seed_rounds += 1;
-    }
-    let peer = crate::sync::encrypted::drain(
-        &client,
-        &f.peer_store,
-        &f.peer,
-        &blobs(&f.peer),
-        crate::sync::encrypted::ROUND_LIMIT,
-    )
-    .await
-    .unwrap();
-    assert!(peer.metadata_caught_up);
-    assert_eq!(title(&f.peer, &task.id).await, "offline edit 1499");
-}
-
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "benchmark"]
 async fn bench_push_and_pull_many_changes_and_images() {
@@ -214,7 +109,11 @@ async fn bench_push_and_pull_many_changes_and_images() {
         size("AVEN_BENCH_TASKS", 2000),
         size("AVEN_BENCH_IMAGES", 500),
     );
-    let f = fixture().await;
+    let f = fixture_with(FixtureOptions {
+        count_http: true,
+        ..Default::default()
+    })
+    .await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     let before = scalar(&f.seed, "SELECT count(*) FROM changes").await;

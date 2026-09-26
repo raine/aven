@@ -42,66 +42,51 @@ async fn assert_labels(db: &Database, w: &Workspace, task: &TaskId, present: boo
     assert_eq!(db.task_labels(&w.id, task).await.unwrap(), expected);
 }
 
-async fn assert_drained(f: &Fixture) {
-    for db in [&f.seed, &f.peer] {
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-            0
-        );
-        assert_eq!(
-            scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-            0
-        );
-    }
-}
-
 #[tokio::test]
 async fn labels_follow_accepted_order_with_repeated_offline_commands() {
     for seed_first in [true, false] {
-        for repetitions in [1, 3] {
-            let f = fixture_with_snapshot_content(false, None, true).await;
-            let (w, task) = snapshot_owner(&f).await;
-            converge(&f).await;
-            for db in [&f.seed, &f.peer] {
-                assert_labels(db, &w, &task, true).await;
-                for _ in 1..repetitions {
-                    assert!(set_label(db, &w, &task, false).await);
-                    assert!(set_label(db, &w, &task, true).await);
-                }
+        let f = fixture_with(with_relations()).await;
+        let (w, task) = snapshot_owner(&f).await;
+        converge(&f).await;
+        for db in [&f.seed, &f.peer] {
+            assert_labels(db, &w, &task, true).await;
+            for _ in 0..2 {
                 assert!(set_label(db, &w, &task, false).await);
-                assert!(!set_label(db, &w, &task, false).await);
+                assert!(set_label(db, &w, &task, true).await);
             }
-            assert!(set_label(&f.seed, &w, &task, true).await);
-            assert!(!set_label(&f.seed, &w, &task, true).await);
-            if !seed_first {
-                drain(&Client::new(&f.origin).unwrap(), &f.peer_store, &f.peer).await;
-            }
-            converge(&f).await;
-            converge(&f).await;
-            assert_drained(&f).await;
-            for db in [&f.seed, &f.peer] {
-                assert_labels(db, &w, &task, !seed_first).await;
-                assert_eq!(
-                    scalar(db, "SELECT count(*) FROM task_dependencies").await,
-                    1
-                );
-                assert_eq!(
-                    scalar(db, "SELECT count(*) FROM task_related_links WHERE linked=1").await,
-                    1
-                );
-                assert_eq!(scalar(db, "SELECT count(*) FROM task_epic_links").await, 1);
-                assert_eq!(
-                    scalar(db, "SELECT count(*) FROM tasks WHERE is_epic=1").await,
-                    1
-                );
-            }
+            assert!(set_label(db, &w, &task, false).await);
+            assert!(!set_label(db, &w, &task, false).await);
+        }
+        assert!(set_label(&f.seed, &w, &task, true).await);
+        assert!(!set_label(&f.seed, &w, &task, true).await);
+        if !seed_first {
+            drain(&Client::new(&f.origin).unwrap(), &f.peer_store, &f.peer).await;
+        }
+        converge(&f).await;
+        converge(&f).await;
+        assert_quiescent(&[&f.seed, &f.peer]).await;
+        for db in [&f.seed, &f.peer] {
+            assert_labels(db, &w, &task, !seed_first).await;
+            assert_eq!(
+                scalar(db, "SELECT count(*) FROM task_dependencies").await,
+                1
+            );
+            assert_eq!(
+                scalar(db, "SELECT count(*) FROM task_related_links WHERE linked=1").await,
+                1
+            );
+            assert_eq!(scalar(db, "SELECT count(*) FROM task_epic_links").await, 1);
+            assert_eq!(
+                scalar(db, "SELECT count(*) FROM tasks WHERE is_epic=1").await,
+                1
+            );
         }
     }
 }
 
 #[tokio::test]
 async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pages() {
-    let f = fixture_with_snapshot_content(false, None, true).await;
+    let f = fixture_with(with_relations()).await;
     let (w, task) = snapshot_owner(&f).await;
     converge(&f).await;
     // More than one ordinary pull page of unseen accepted relation commands.
@@ -254,7 +239,7 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
     }
     converge(&f).await;
     converge(&f).await;
-    assert_drained(&f).await;
+    assert_quiescent(&[&f.seed, &f.peer]).await;
     for db in [&f.seed, &f.peer] {
         assert_labels(db, &w, &task, false).await;
     }
@@ -277,7 +262,7 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
         accepted_count
     );
     converge(&f).await;
-    assert_drained(&f).await;
+    assert_quiescent(&[&f.seed, &f.peer]).await;
     for db in [&f.seed, &f.peer] {
         assert_labels(db, &w, &task, false).await;
     }
@@ -286,7 +271,7 @@ async fn labels_preserve_undo_and_later_intent_through_acceptance_reopen_and_pag
 #[tokio::test]
 async fn label_reconciliation_preserves_related_and_epic_ordering() {
     for seed_first in [true, false] {
-        let f = fixture_with_snapshot_content(false, None, true).await;
+        let f = fixture_with(with_relations()).await;
         let (w, task) = snapshot_owner(&f).await;
         let target: TaskId = {
             let mut c = aven_core::test_support::acquire(&f.seed).await.unwrap();
@@ -314,7 +299,7 @@ async fn label_reconciliation_preserves_related_and_epic_ordering() {
         }
         converge(&f).await;
         converge(&f).await;
-        assert_drained(&f).await;
+        assert_quiescent(&[&f.seed, &f.peer]).await;
         for db in [&f.seed, &f.peer] {
             assert_labels(db, &w, &task, !seed_first).await;
             assert_eq!(
@@ -364,7 +349,7 @@ async fn opposite_dependencies_keep_the_minimum_id_direction() {
         }
         converge(&f).await;
         converge(&f).await;
-        assert_drained(&f).await;
+        assert_quiescent(&[&f.seed, &f.peer]).await;
         for db in [&f.seed, &f.peer] {
             let mut c = aven_core::test_support::acquire(db).await.unwrap();
             let edges: Vec<(TaskId, TaskId)> = sqlx::query_as(

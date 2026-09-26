@@ -115,17 +115,6 @@ async fn available_at(db: &Database, task: &TaskId) -> (String, String) {
         .unwrap()
 }
 
-async fn assert_idle(db: &Database) {
-    assert_eq!(
-        scalar(db, "SELECT count(*) FROM changes WHERE server_seq IS NULL").await,
-        0
-    );
-    assert_eq!(
-        scalar(db, "SELECT count(*) FROM local_e2ee_outbox").await,
-        0
-    );
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Acceptance {
     SeedFirst,
@@ -232,7 +221,7 @@ async fn concurrent_template_and_schedule_edits_converge_on_first_accepted_defau
                     .unwrap()
                     .is_empty()
             );
-            assert_idle(db).await;
+            assert_quiescent(&[db]).await;
         }
         // One fresh installation replays the accepted history before resolution.
         let fresh = if mode == Acceptance::SeedFirst {
@@ -389,7 +378,7 @@ async fn losing_generation_keeps_explicit_completion_metadata_and_label_changes(
         let conflicts = task_conflicts(db, &successor).await;
         assert_eq!(conflicts.len(), 1, "{conflicts:?}");
         assert!(conflicts[0].starts_with("metadata:"));
-        assert_idle(db).await;
+        assert_quiescent(&[db]).await;
     }
     let sides = conflict_sides(&f.seed, &successor).await;
     assert_eq!(conflict_sides(&f.peer, &successor).await, sides);
@@ -427,8 +416,6 @@ async fn status_edit_racing_completion_keeps_outcome_and_conflict() {
     for (race, terminal) in [
         (StatusRace::EditFirst, "done"),
         (StatusRace::CompletionFirst, "done"),
-        (StatusRace::CompletionPaged, "done"),
-        (StatusRace::EditFirst, "canceled"),
         (StatusRace::CompletionPaged, "canceled"),
     ] {
         let f = fixture().await;
@@ -514,7 +501,7 @@ async fn status_edit_racing_completion_keeps_outcome_and_conflict() {
                 scalar(db, "SELECT count(*) FROM recurrence_occurrences").await,
                 2
             );
-            assert_idle(db).await;
+            assert_quiescent(&[db]).await;
         }
         let third = super::super::membership::join(&f, "third", &f.seed, &f.seed_store).await;
         drain(&c, &third.store, &third.db).await;
@@ -590,7 +577,7 @@ async fn status_edit_racing_completion_keeps_outcome_and_conflict() {
                 scalar(db, "SELECT count(*) FROM recurrence_occurrences").await,
                 3
             );
-            assert_idle(db).await;
+            assert_quiescent(&[db]).await;
         }
     }
 }

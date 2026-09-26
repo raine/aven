@@ -232,7 +232,11 @@ async fn concurrent_completion_preserves_deterministic_successor_identity() {
 
 #[tokio::test]
 async fn snapshot_baseline_continues_without_replaying_prefix() {
-    let f = fixture_with_recurrence_snapshot(false, None, false, false, false, true).await;
+    let f = fixture_with(FixtureOptions {
+        recurrence: true,
+        ..Default::default()
+    })
+    .await;
     converge(&f).await;
     let w = f.peer.list_workspaces().await.unwrap().remove(0);
     let task: aven_core::ids::TaskId =

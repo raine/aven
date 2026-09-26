@@ -94,13 +94,13 @@ async fn invitations_opened_during_a_drain_block_publishing_only_after_expiry() 
     let f = fixture().await;
     converge(&f).await;
     let client = Client::new(&f.origin).unwrap();
-    let mut drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
+    let mut seed_drain = client.start_drain(&f.seed_store, &f.seed).await.unwrap();
 
     // An invitation with no grant sent never blocks.
     let expires = invite(&f, "joiner").await;
     let pending = create(&f.seed, "while invitation pending").await;
     let round = client
-        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
+        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
         .await
         .unwrap();
     assert!(!round.publishing_blocked);
@@ -114,12 +114,12 @@ async fn invitations_opened_during_a_drain_block_publishing_only_after_expiry() 
     );
     let disclosed = create(&f.seed, "while grant unresolved").await;
     let round = client
-        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
+        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
         .await
         .unwrap();
     assert!(!round.publishing_blocked);
     assert!(round.metadata_caught_up);
-    drain_peer(&f, &client).await;
+    drain(&client, &f.peer_store, &f.peer).await;
     assert!(exists(&f.peer, &pending).await);
     assert!(exists(&f.peer, &disclosed).await);
 
@@ -127,11 +127,11 @@ async fn invitations_opened_during_a_drain_block_publishing_only_after_expiry() 
     past(expires).await;
     let after = create(&f.seed, "after expiry").await;
     let round = client
-        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut drain)
+        .round_in_drain(&f.seed_store, &f.seed, &blobs(&f.seed), &mut seed_drain)
         .await
         .unwrap();
     assert!(round.publishing_blocked);
-    drain_peer(&f, &client).await;
+    drain(&client, &f.peer_store, &f.peer).await;
     assert!(!exists(&f.peer, &after).await);
 
     // The next drain rotates first, then publishes.
@@ -142,12 +142,8 @@ async fn invitations_opened_during_a_drain_block_publishing_only_after_expiry() 
         f.seed_store.outbound_invitation(&f.seed).await.unwrap(),
         None
     );
-    drain_peer(&f, &client).await;
+    drain(&client, &f.peer_store, &f.peer).await;
     assert!(exists(&f.peer, &after).await);
-}
-
-async fn drain_peer(f: &Fixture, client: &Client) {
-    drain(client, &f.peer_store, &f.peer).await;
 }
 
 #[tokio::test]
