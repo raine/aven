@@ -273,14 +273,7 @@ async fn stale_image_uploaders_are_rejected_across_prune_expiry_and_reactivation
     let prune = async || {
         let mut p = policy();
         p.grace = std::time::Duration::ZERO;
-        let ImageReply::Pruned(count) = f
-            .server
-            .encrypted_image_exchange(&a.context, &peer.bearer, Op::Prune { limit: 128 }, p)
-            .await
-            .unwrap()
-        else {
-            panic!("prune")
-        };
+        let count = f.server.prune_encrypted_images(p.grace, 128).await.unwrap();
         count
     };
     let chunks = async || {
@@ -366,19 +359,7 @@ async fn pruning_retains_mapping_and_exact_targeted_repair() {
         let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
         let mut p = policy();
         p.grace = std::time::Duration::ZERO;
-        let ImageReply::Pruned(count) = f
-            .server
-            .encrypted_image_exchange(
-                &inputs.authority.context,
-                &inputs.bearer,
-                Op::Prune { limit: 128 },
-                p,
-            )
-            .await
-            .unwrap()
-        else {
-            panic!("prune")
-        };
+        let count = f.server.prune_encrypted_images(p.grace, 128).await.unwrap();
         assert_eq!(count, 1);
         let mut changed = descriptor.clone();
         let last = changed.len() - 1;
@@ -519,23 +500,13 @@ async fn lost_ref_ack_after_unref_and_prune_needs_no_upload_source() {
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
     f.seed.delete_task_attachment(&w, &reference).await.unwrap();
     drain(&c, &f.seed_store, &f.seed).await;
-    {
-        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-        let mut p = policy();
-        p.grace = std::time::Duration::ZERO;
-        assert!(matches!(
-            f.server
-                .encrypted_image_exchange(
-                    &inputs.authority.context,
-                    &inputs.bearer,
-                    Op::Prune { limit: 128 },
-                    p
-                )
-                .await
-                .unwrap(),
-            ImageReply::Pruned(1)
-        ));
-    }
+    assert_eq!(
+        f.server
+            .prune_encrypted_images(std::time::Duration::ZERO, 128)
+            .await
+            .unwrap(),
+        1
+    );
     exec(&f.peer, "DELETE FROM local_e2ee_image_staging").await;
     let sha: String = sqlx::query_scalar("SELECT sha256 FROM local_e2ee_image_preparation")
         .fetch_one(&mut *aven_core::test_support::acquire(&f.peer).await.unwrap())
@@ -626,13 +597,13 @@ async fn reservation_promises_shared_accounting_and_put_rollback() {
         .unwrap();
     let mut prune = over;
     prune.grace = std::time::Duration::ZERO;
-    assert!(matches!(
+    assert_eq!(
         f.server
-            .encrypted_image_exchange(&a.context, &inputs.bearer, Op::Prune { limit: 128 }, prune)
+            .prune_encrypted_images(prune.grace, 128)
             .await
             .unwrap(),
-        ImageReply::Pruned(0)
-    ));
+        0
+    );
     let record = head_record(&f.peer, a).await;
     f.server
         .encrypted_tail_exchange(
@@ -729,43 +700,25 @@ async fn ref_hint_disagreement_is_sticky_and_explicit_unref_releases() {
         .await,
         1
     );
-    {
-        let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-        let mut p = policy();
-        p.grace = std::time::Duration::ZERO;
-        assert!(matches!(
-            f.server
-                .encrypted_image_exchange(
-                    &inputs.authority.context,
-                    &inputs.bearer,
-                    Op::Prune { limit: 128 },
-                    p
-                )
-                .await
-                .unwrap(),
-            ImageReply::Pruned(0)
-        ));
-    }
+    assert_eq!(
+        f.server
+            .prune_encrypted_images(std::time::Duration::ZERO, 128)
+            .await
+            .unwrap(),
+        0
+    );
     f.peer.delete_task_attachment(&w, &reference).await.unwrap();
     client
         .round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
-    let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let mut p = policy();
-    p.grace = std::time::Duration::ZERO;
-    assert!(matches!(
+    assert_eq!(
         f.server
-            .encrypted_image_exchange(
-                &inputs.authority.context,
-                &inputs.bearer,
-                Op::Prune { limit: 128 },
-                p
-            )
+            .prune_encrypted_images(std::time::Duration::ZERO, 128)
             .await
             .unwrap(),
-        ImageReply::Pruned(1)
-    ));
+        1
+    );
 }
 
 #[tokio::test]
@@ -967,12 +920,12 @@ async fn shared_refs_count_once_and_last_unref_starts_grace() {
     c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
-    assert_eq!(scalar(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NULL").await,1);
+    assert_eq!(scalar_after_prune_pass(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NULL").await,1);
     f.peer.delete_task_attachment(&w, &second).await.unwrap();
     c.round(&f.peer_store, &f.peer, &f.root.path().join("peer-blobs"))
         .await
         .unwrap();
-    assert_eq!(scalar(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NOT NULL").await,1);
+    assert_eq!(scalar_after_prune_pass(&f.server,"SELECT count(*) FROM server_e2ee_images WHERE bootstrap IS NULL AND unreferenced_at IS NOT NULL").await,1);
 }
 
 #[tokio::test]

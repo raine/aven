@@ -25,8 +25,22 @@ async fn load(
     valid(d.object == *object)?;
     Ok((d, complete))
 }
-pub(crate) async fn refresh(conn: &mut SqliteConnection, now: i64) -> Result<()> {
+/// Stamps newly unreferenced images and clears the stamp from images that are
+/// referenced or ticketed again. Only the background prune runs this full
+/// scan, so an image's grace period starts at the first prune pass that
+/// observes it unreferenced.
+async fn refresh(conn: &mut SqliteConnection, now: i64) -> Result<()> {
     sqlx::query("UPDATE server_e2ee_images SET unreferenced_at=CASE WHEN EXISTS(SELECT 1 FROM server_e2ee_image_references r JOIN server_e2ee_image_parents p ON p.workspace=r.workspace AND p.parent=r.parent WHERE r.object=server_e2ee_images.object AND r.deleted=0 AND (p.deleted=0 OR p.protected=1 OR p.version IS NULL)) OR EXISTS(SELECT 1 FROM server_e2ee_image_tickets t WHERE t.object=server_e2ee_images.object AND t.expires_at>?) THEN NULL ELSE COALESCE(unreferenced_at,?) END").bind(now).bind(now).execute(conn).await?;
+    Ok(())
+}
+/// Clears the unreferenced stamp of images a live parent references, so a
+/// parent that is deleted again later gets a full grace period.
+pub(in crate::sync::encrypted_tail) async fn retain_parent(
+    conn: &mut SqliteConnection,
+    workspace: &str,
+    parent: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE server_e2ee_images SET unreferenced_at=NULL WHERE unreferenced_at IS NOT NULL AND object IN (SELECT r.object FROM server_e2ee_image_references r JOIN server_e2ee_image_parents p ON p.workspace=r.workspace AND p.parent=r.parent WHERE r.workspace=? AND r.parent=? AND r.deleted=0 AND (p.deleted=0 OR p.protected=1 OR p.version IS NULL))").bind(workspace).bind(parent).execute(conn).await?;
     Ok(())
 }
 async fn protected(
@@ -159,6 +173,37 @@ async fn eligible_object(
     Ok(())
 }
 impl Database {
+    /// Deletes the stored bytes of at most `limit` images that have been
+    /// unreferenced and unticketed for at least `grace`, keeping their
+    /// descriptors. Returns how many images were pruned.
+    pub async fn prune_encrypted_images(
+        &self,
+        grace: std::time::Duration,
+        limit: usize,
+    ) -> Result<usize> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let now = chrono::Utc::now().timestamp();
+        refresh(&mut tx, now).await?;
+        let cutoff = now
+            .checked_sub(i64::try_from(grace.as_secs())?)
+            .context("error encrypted-image-clock")?;
+        let objects:Vec<Vec<u8>>=sqlx::query_scalar("SELECT object FROM server_e2ee_images WHERE unreferenced_at<=? AND (complete=1 OR EXISTS(SELECT 1 FROM server_e2ee_image_chunks c WHERE c.object=server_e2ee_images.object)) ORDER BY object LIMIT ?").bind(cutoff).bind(i64::try_from(limit)?).fetch_all(&mut *tx).await?;
+        // Objects with live tickets were excluded by `refresh`, so no
+        // uploader can still write to a pruned object.
+        for object in &objects {
+            sqlx::query("UPDATE server_e2ee_images SET complete=0 WHERE object=?")
+                .bind(object)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM server_e2ee_image_chunks WHERE object=?")
+                .bind(object)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(objects.len())
+    }
     pub async fn encrypted_image_exchange(
         &self,
         context: &Context,
@@ -233,27 +278,6 @@ impl Database {
                 )
                 .await?;
                 status(&mut tx, &d, &workspace, &context.device, now).await?
-            }
-            Operation::Prune { limit } => {
-                valid((1..=128).contains(&limit))?;
-                refresh(&mut tx, now).await?;
-                let cutoff = now
-                    .checked_sub(i64::try_from(policy.grace.as_secs())?)
-                    .context("error encrypted-image-clock")?;
-                let objects:Vec<Vec<u8>>=sqlx::query_scalar("SELECT object FROM server_e2ee_images WHERE unreferenced_at<=? AND (complete=1 OR EXISTS(SELECT 1 FROM server_e2ee_image_chunks c WHERE c.object=server_e2ee_images.object)) ORDER BY object LIMIT ?").bind(cutoff).bind(limit as i64).fetch_all(&mut *tx).await?;
-                // Objects with live tickets were excluded by `refresh`, so no
-                // uploader can still write to a pruned object.
-                for object in &objects {
-                    sqlx::query("UPDATE server_e2ee_images SET complete=0 WHERE object=?")
-                        .bind(object)
-                        .execute(&mut *tx)
-                        .await?;
-                    sqlx::query("DELETE FROM server_e2ee_image_chunks WHERE object=?")
-                        .bind(object)
-                        .execute(&mut *tx)
-                        .await?;
-                }
-                Reply::Pruned(objects.len())
             }
             other => dispatch_existing(&mut tx, context, &current.membership, other, now).await?,
         };
@@ -365,7 +389,6 @@ async fn dispatch_existing(
                         .bind(reservation.as_slice())
                         .execute(&mut *conn)
                         .await?;
-                    refresh(conn, now).await?;
                 }
                 _ => unreachable!(),
             }
@@ -448,7 +471,7 @@ pub(in crate::sync::encrypted_tail) async fn admit(
             if let Some(t) = t {
                 sqlx::query("DELETE FROM server_e2ee_image_tickets WHERE reservation=? AND device=? AND workspace=? AND object=?").bind(t.reservation.as_slice()).bind(context.device.as_slice()).bind(workspace).bind(d.object.as_slice()).execute(&mut *conn).await?;
             }
-            refresh(conn, now).await?;
+            retain_parent(conn, workspace, task).await?;
         }
         Projection::Unref {
             workspace,
@@ -457,7 +480,6 @@ pub(in crate::sync::encrypted_tail) async fn admit(
         } => {
             let changed=sqlx::query("UPDATE server_e2ee_image_references SET deleted=1 WHERE workspace=? AND reference=? AND parent=?").bind(workspace).bind(reference).bind(task).execute(&mut *conn).await?.rows_affected();
             valid(changed == 1)?;
-            refresh(conn, now).await?;
         }
         _ => valid(t.is_none())?,
     }

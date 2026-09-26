@@ -51,9 +51,6 @@ pub enum Operation {
         descriptor_commitment: [u8; 32],
         reservation: [u8; 32],
     },
-    Prune {
-        limit: usize,
-    },
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,5 +67,4 @@ pub enum Reply {
     Chunk(#[serde(with = "crate::sync::base64_bytes")] Vec<u8>),
     Unavailable,
     Done,
-    Pruned(usize),
 }

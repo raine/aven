@@ -217,7 +217,7 @@ async fn apply_parent(conn: &mut SqliteConnection, id: &str, p: &domain::Project
     state.apply(*action, id, *deleted, version.as_deref());
     sqlx::query("INSERT INTO server_e2ee_image_parents(workspace,parent,version,deleted,protected) VALUES(?,?,?,?,?) ON CONFLICT(workspace,parent) DO UPDATE SET version=excluded.version,deleted=excluded.deleted,protected=excluded.protected")
         .bind(workspace).bind(task).bind(state.version).bind(state.deleted).bind(state.protected).execute(&mut *conn).await?;
-    super::attachments::server::refresh(conn, chrono::Utc::now().timestamp()).await?;
+    super::attachments::server::retain_parent(conn, workspace, task).await?;
     Ok(())
 }
 

@@ -12,7 +12,7 @@ use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::config;
@@ -26,6 +26,8 @@ const SETUP_INVITATION_SECONDS: u64 = 3600;
 /// Open connections, including idle keep-alive ones. Further clients wait in
 /// the listen backlog.
 const MAX_CONNECTIONS: usize = 256;
+/// How often the server prunes unreferenced encrypted images.
+const IMAGE_PRUNE_INTERVAL: Duration = Duration::from_secs(600);
 /// Longest a connection may take to send one request's headers.
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Longest graceful shutdown waits for in-flight requests.
@@ -132,17 +134,39 @@ async fn serve(
         .verify_membership_history()
         .await
         .map_err(|error| error.context(INVALID_MEMBERSHIP))?;
+    let image_policy = config.local.attachment_lifecycle.server_policy();
+    tokio::spawn(prune_images(database.clone(), image_policy.grace));
     let app = crate::seed_bootstrap_http::router(database.clone(), Default::default())
         .merge(crate::peer_enrollment_http::router(database.clone()))
         .merge(crate::encrypted_tail_http::router_with_policy(
             database,
-            config.local.attachment_lifecycle.server_policy(),
+            image_policy,
         ));
     let listener = TcpListener::bind(bind).await?;
     let addr = listener.local_addr()?;
     info!(bind = %addr, "sync server starting");
     println!("listening url=http://{addr}");
     serve_connections(listener, app, MAX_CONNECTIONS, shutdown_signal()).await
+}
+
+/// Periodically deletes the bytes of encrypted images that no live task
+/// references, in small batches so request writers are not starved.
+async fn prune_images(database: Database, grace: Duration) {
+    const BATCH: usize = 128;
+    let mut interval = tokio::time::interval(IMAGE_PRUNE_INTERVAL);
+    loop {
+        interval.tick().await;
+        loop {
+            match database.prune_encrypted_images(grace, BATCH).await {
+                Ok(pruned) if pruned == BATCH => tokio::task::yield_now().await,
+                Ok(_) => break,
+                Err(error) => {
+                    warn!(error = %error, "encrypted image prune failed");
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Serves HTTP/1 with bounded connections and a header deadline, so a

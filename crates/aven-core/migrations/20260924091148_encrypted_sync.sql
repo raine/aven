@@ -345,6 +345,7 @@ CREATE TABLE server_e2ee_image_references (
     PRIMARY KEY(workspace, reference),
     FOREIGN KEY(workspace, parent) REFERENCES server_e2ee_image_parents(workspace, parent)
 );
+CREATE INDEX server_e2ee_image_references_object ON server_e2ee_image_references(object);
 CREATE TABLE server_e2ee_image_chunks (
     object BLOB NOT NULL REFERENCES server_e2ee_images(object),
     chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),

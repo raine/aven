@@ -382,6 +382,16 @@ async fn scalar(db: &Database, sql: &str) -> i64 {
         .await
         .unwrap()
 }
+/// Runs a prune pass that deletes nothing, so unreferenced images get their
+/// grace-period stamp, then evaluates `sql`.
+async fn scalar_after_prune_pass(db: &Database, sql: &str) -> i64 {
+    let pruned = db
+        .prune_encrypted_images(std::time::Duration::from_secs(86400), 128)
+        .await
+        .unwrap();
+    assert_eq!(pruned, 0);
+    scalar(db, sql).await
+}
 fn files(path: &Path) -> Vec<Vec<u8>> {
     let mut bytes = std::fs::read_dir(path)
         .unwrap()
@@ -471,7 +481,7 @@ async fn independent_clients_create_conflict_resolve_delete_restore_and_keep_ima
         .unwrap();
     converge(&f).await;
     assert_eq!(
-        scalar(
+        scalar_after_prune_pass(
             &f.server,
             "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at IS NOT NULL"
         )
@@ -491,7 +501,7 @@ async fn independent_clients_create_conflict_resolve_delete_restore_and_keep_ima
         .unwrap();
     converge(&f).await;
     assert_eq!(
-        scalar(
+        scalar_after_prune_pass(
             &f.server,
             "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at IS NOT NULL"
         )
@@ -1239,7 +1249,7 @@ async fn deletion_conflict_force_and_exact_retry_keep_conservative_parent_protec
         1
     );
     assert_eq!(
-        scalar(
+        scalar_after_prune_pass(
             &f.server,
             "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at IS NOT NULL"
         )
@@ -2136,7 +2146,7 @@ async fn checkpoint_snapshot_shared_image_survives_parent_delete_restore() {
         .unwrap();
         converge(&f).await;
         assert_eq!(
-            scalar(
+            scalar_after_prune_pass(
                 &f.server,
                 "SELECT count(*) FROM server_e2ee_images WHERE unreferenced_at IS NOT NULL"
             )

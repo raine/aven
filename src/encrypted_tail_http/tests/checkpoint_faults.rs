@@ -852,7 +852,6 @@ async fn removed_credentials_cannot_retry_history_or_protected_routes_and_keep_p
             descriptor_commitment: commitment,
             reservation: [0; 32],
         },
-        attachments::Operation::Prune { limit: 1 },
         attachments::Operation::Declare {
             workspace: "removed-device".into(),
             descriptor: vec![],
@@ -923,18 +922,11 @@ async fn pruned_bootstrap_image_does_not_block_fresh_post_rotation_metadata() {
     let mut policy = crate::config::AttachmentLifecycleConfig::default().server_policy();
     policy.grace = std::time::Duration::ZERO;
     restart_server_with_policy(&mut f, no_fault(), policy).await;
-    let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
-    let attachments::Reply::Pruned(pruned) = client
-        .image_exchange(
-            &inputs.authority.context,
-            &inputs.bearer,
-            attachments::Operation::Prune { limit: 128 },
-        )
+    let pruned = f
+        .server
+        .prune_encrypted_images(policy.grace, 128)
         .await
-        .unwrap()
-    else {
-        panic!("prune response");
-    };
+        .unwrap();
     assert_eq!(pruned, 1);
     let removed_id = device(&removed.store, &removed.db, &f.origin).await;
     rotate_twice_while_peer_is_offline(&f, &driver, removed_id).await;

@@ -271,7 +271,6 @@ impl Database {
                         .await?;
                 }
             }
-            crate::sync::encrypted_tail::attachments::server::refresh(&mut tx, now()?).await?;
         }
         tx.commit().await?;
         Ok(record.to_vec())

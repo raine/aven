@@ -1060,7 +1060,6 @@ async fn process_exit_before_floor_and_after_readback_recovers_without_reinstall
 
 #[tokio::test]
 async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_watermark() {
-    use aven_core::sync::encrypted_tail::attachments::{Operation as Op, Reply as ImageReply};
     let mut f = fixture().await;
     let tail = Client::new(&f.origin).unwrap();
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -1074,18 +1073,13 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
     let mut policy = crate::config::AttachmentLifecycleConfig::default().server_policy();
     policy.grace = std::time::Duration::ZERO;
-    assert!(matches!(
+    assert_eq!(
         f.server
-            .encrypted_image_exchange(
-                &inputs.authority.context,
-                &inputs.bearer,
-                Op::Prune { limit: 128 },
-                policy
-            )
+            .prune_encrypted_images(policy.grace, 128)
             .await
             .unwrap(),
-        ImageReply::Pruned(1)
-    ));
+        1
+    );
     drop(inputs);
     for n in 0..aven_core::sync::encrypted_tail::PAGE_COUNT + 2 {
         f.seed

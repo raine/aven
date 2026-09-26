@@ -165,7 +165,6 @@ fn mutations(d: &Descriptor, t: &image::Ticket, chunk: &[u8]) -> Vec<image::Oper
             descriptor_commitment: commitment,
             reservation: t.reservation,
         },
-        image::Operation::Prune { limit: 1 },
     ]
 }
 async fn upload(

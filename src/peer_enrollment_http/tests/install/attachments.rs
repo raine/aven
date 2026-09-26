@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and_tail() {
-    use aven_core::sync::encrypted_tail::{self as tail, attachments as images};
+    use aven_core::sync::encrypted_tail as tail;
     let f = enrolled().await;
     let seed_store = isolated_store(&f.source, &f.root.path().join("keys")).await;
     let workspace = f.source.list_workspaces().await.unwrap().remove(0);
@@ -52,19 +52,11 @@ async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and
         assert!(count(&f.server, "server_e2ee_image_chunks").await > 0);
         let mut policy = crate::config::AttachmentLifecycleConfig::default().server_policy();
         policy.grace = std::time::Duration::ZERO;
-        let images::Reply::Pruned(pruned) = f
+        let pruned = f
             .server
-            .encrypted_image_exchange(
-                &inputs.authority.context,
-                &inputs.bearer,
-                images::Operation::Prune { limit: 128 },
-                policy,
-            )
+            .prune_encrypted_images(policy.grace, 128)
             .await
-            .unwrap()
-        else {
-            panic!("prune result")
-        };
+            .unwrap();
         assert_eq!(pruned, 1);
         assert_eq!(count(&f.server, "server_e2ee_image_chunks").await, 0);
         assert_eq!(count(&f.server, "server_e2ee_images").await, 1);
