@@ -13,9 +13,9 @@ Inspect both variants before resolving. Variant tokens come from `conflict show`
 --use takes precedence over explicit values. Without --use, supply exactly one
 of --value, --value-file, or --value-stdin."#;
 
-pub(super) const SERVER_HELP: &str = r#"Prepare storage with `aven server setup` first. The server binds only
-loopback addresses by default and does not terminate TLS. For direct HTTP,
-bind it only to a trusted VPN; otherwise put a TLS reverse proxy in front."#;
+pub(super) const SERVER_HELP: &str = r#"Prepare storage with `aven server setup` first. The server does not terminate
+TLS. Bind it directly to a trusted VPN address for HTTP, or use a TLS reverse
+proxy. Public and wildcard binds require --unsafe-public-bind."#;
 
 pub(super) const SYNC_HELP: &str = r#"Sync is end-to-end encrypted. Start it on one device with `aven sync setup`
 and add other devices with `aven sync invite` and `aven sync join`. The server

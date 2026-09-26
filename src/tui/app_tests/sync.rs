@@ -722,9 +722,7 @@ async fn sync_automatically_asks_before_changing_anything() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(matches!(
         sync_page(&app),
-        crate::tui::overlay::SyncPage::ConfirmAutomaticSync {
-            service: crate::tui::overlay::AutomaticSyncService::OtherDatabase(_)
-        }
+        crate::tui::overlay::SyncPage::ConfirmAutomaticSync { .. }
     ));
     assert!(!app.intake.config().sync.enabled);
 

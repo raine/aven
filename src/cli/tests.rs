@@ -163,7 +163,7 @@ fn complex_commands_keep_examples_and_safety_guidance() {
         (&["skill"][..], "without live task context"),
         (&["skill", "install"][..], "repeat for multiple"),
         (&["sync"][..], "end-to-end encrypted"),
-        (&["server"][..], "binds only"),
+        (&["server"][..], "trusted VPN address"),
         (&["server", "setup"][..], "aven server --data PATH"),
     ];
 
