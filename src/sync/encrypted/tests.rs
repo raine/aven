@@ -463,6 +463,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         "{stdout}"
     );
     assert!(stdout.contains("Images are up to date"), "{stdout}");
+    assert!(stdout.contains("aven daemon install"), "{stdout}");
 
     // A setup invitation for storage claimed by another database is a
     // definite refusal and leaves local data local-only.
@@ -545,6 +546,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         stdout.contains(&format!("Joined sync with {url}")),
         "{stdout}"
     );
+    assert!(stdout.contains("aven daemon install"), "{stdout}");
     let invited = invite.wait_with_output().await.unwrap();
     assert!(invited.status.success());
     let mut rest = String::new();

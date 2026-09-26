@@ -260,6 +260,7 @@ async fn dispatch_standalone(
                         config,
                         program: args.program,
                     })
+                    .map(|service| service.print())
                 }
                 Some(DaemonSubcommand::Uninstall) => daemon::uninstall(),
                 Some(DaemonSubcommand::Restart) => daemon::restart(),

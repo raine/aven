@@ -18,8 +18,8 @@ use crate::sync::encrypted::{self, DaemonRound};
 mod service;
 
 pub use service::{
-    ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, install, repair, restart,
-    status_snapshot, uninstall,
+    InstalledService, ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, install, repair,
+    restart, status_snapshot, uninstall,
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);

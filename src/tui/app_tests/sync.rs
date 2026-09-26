@@ -88,6 +88,7 @@ async fn sync_dialog_add_device_hands_off_to_the_invitation_flow() {
     let mut app = test_app().await;
     app.store.sync_status.set_up = true;
     app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    app.store.sync_status.enabled = true;
     app.show_sync_dialog();
 
     app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
@@ -340,6 +341,7 @@ async fn manage_devices_checks_with_the_server_and_reports_failures_on_the_page(
     let mut app = test_app().await;
     app.store.sync_status.set_up = true;
     app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    app.store.sync_status.enabled = true;
     app.show_sync_dialog();
     app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
     app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
@@ -553,4 +555,110 @@ async fn add_device_shows_loading_then_the_qr_code_without_closing() {
     .await
     .expect("invitation is created");
     assert!(app.store.sync_status.invitation.is_some());
+}
+
+fn select_sync_automatically(app: &mut App) {
+    let Some(OverlayState::Sync(state)) = &mut app.overlay else {
+        panic!("sync dialog is open");
+    };
+    state.selected =
+        crate::tui::overlay::sync_actions(state, &app.store.sync_status, &app.sync_ops.activity)
+            .iter()
+            .position(|action| *action == crate::tui::overlay::SyncAction::SyncAutomatically)
+            .expect("sync automatically is offered");
+}
+
+static INSTALLED_DB: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+fn record_install(
+    args: crate::daemon::ServiceInstallArgs,
+) -> anyhow::Result<crate::daemon::InstalledService> {
+    assert!(args.config.sync.enabled);
+    *INSTALLED_DB.lock().unwrap() = Some(args.db_path);
+    Ok(crate::daemon::InstalledService {
+        path: std::path::PathBuf::from("/service"),
+        logs: String::new(),
+    })
+}
+
+fn refuse_install(
+    _args: crate::daemon::ServiceInstallArgs,
+) -> anyhow::Result<crate::daemon::InstalledService> {
+    panic!("the service must not be installed");
+}
+
+async fn set_up_app_offering_automatic_sync() -> (App, tempfile::TempDir) {
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    app.show_sync_dialog();
+    select_sync_automatically(&mut app);
+    (app, tempfile::tempdir().unwrap())
+}
+
+#[tokio::test]
+async fn sync_automatically_enables_sync_and_installs_the_service_for_this_database() {
+    let (mut app, dir) = set_up_app_offering_automatic_sync().await;
+    let config_path = dir.path().join("config.yaml");
+    std::fs::write(&config_path, "# mine\nsync:\n  interval_seconds: 60\n").unwrap();
+
+    app.turn_on_automatic_sync_at(crate::tui::app_sync_dialog::AutomaticSyncTarget {
+        config_path: config_path.clone(),
+        service_db: Some(app.store.database_path().to_path_buf()),
+        install: record_install,
+    })
+    .await
+    .unwrap();
+
+    let text = std::fs::read_to_string(&config_path).unwrap();
+    assert!(text.contains("# mine"), "{text}");
+    assert!(text.contains("enabled: true"), "{text}");
+    assert!(text.contains("interval_seconds: 60"), "{text}");
+    assert!(app.intake.config().sync.enabled);
+    assert!(app.store.sync_status.enabled);
+    assert_eq!(
+        INSTALLED_DB.lock().unwrap().as_deref(),
+        Some(app.store.database_path())
+    );
+    assert_eq!(toast_message(&app).unwrap(), "automatic sync is on");
+}
+
+#[tokio::test]
+async fn sync_automatically_leaves_the_service_alone_for_another_database() {
+    let (mut app, dir) = set_up_app_offering_automatic_sync().await;
+    let config_path = dir.path().join("config.yaml");
+
+    app.turn_on_automatic_sync_at(crate::tui::app_sync_dialog::AutomaticSyncTarget {
+        config_path: config_path.clone(),
+        service_db: Some(dir.path().join("default.sqlite")),
+        install: refuse_install,
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        std::fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("enabled: true")
+    );
+    let message = toast_message(&app).unwrap();
+    assert!(message.contains("--db"), "{message}");
+    assert!(message.contains("daemon install"), "{message}");
+}
+
+#[tokio::test]
+async fn sync_automatically_without_a_service_manager_points_to_the_daemon() {
+    let (mut app, dir) = set_up_app_offering_automatic_sync().await;
+
+    app.turn_on_automatic_sync_at(crate::tui::app_sync_dialog::AutomaticSyncTarget {
+        config_path: dir.path().join("config.yaml"),
+        service_db: None,
+        install: refuse_install,
+    })
+    .await
+    .unwrap();
+
+    assert!(app.intake.config().sync.enabled);
+    let message = toast_message(&app).unwrap();
+    assert!(message.contains("`aven daemon`"), "{message}");
 }

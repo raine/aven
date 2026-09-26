@@ -108,6 +108,10 @@ impl App {
                 self.begin_sync();
                 state
             }
+            SyncAction::SyncAutomatically => {
+                Box::pin(self.turn_on_automatic_sync()).await?;
+                home
+            }
             // The Add device page replaces the dialog at once; admission
             // keeps waiting after it closes.
             SyncAction::AddDevice => {
@@ -198,6 +202,60 @@ impl App {
             }
         };
         self.overlay = Some(OverlayState::Sync(next));
+        Ok(())
+    }
+
+    async fn turn_on_automatic_sync(&mut self) -> Result<()> {
+        let target = AutomaticSyncTarget::for_user(self.intake.config())?;
+        self.turn_on_automatic_sync_at(target).await
+    }
+
+    /// Turns on `sync.enabled` in the config file and installs the
+    /// background service when this is the database `aven daemon install`
+    /// would choose. Another database only gets the command, so the single
+    /// service is never repointed from here.
+    pub(super) async fn turn_on_automatic_sync_at(
+        &mut self,
+        target: AutomaticSyncTarget,
+    ) -> Result<()> {
+        if let Err(error) =
+            crate::config_edit::set_scalar(&target.config_path, "sync", "enabled", "true")
+        {
+            self.set_error(format!("couldn't turn on automatic sync: {error:#}"));
+            return Ok(());
+        }
+        let mut config = self.intake.config().clone();
+        config.sync.enabled = true;
+        self.set_config(config.clone());
+        self.store.refresh_sync_status().await?;
+
+        let db_path = self.store.database_path().to_path_buf();
+        let Some(service_db) = target.service_db else {
+            self.set_warning("automatic sync is on; run `aven daemon` to sync in the background");
+            return Ok(());
+        };
+        if !same_path(&service_db, &db_path) {
+            self.set_warning(format!(
+                "automatic sync is on; run `aven --db {} daemon install` to sync this database",
+                db_path.display()
+            ));
+            return Ok(());
+        }
+        let install = target.install;
+        let installed = tokio::task::spawn_blocking(move || {
+            install(crate::daemon::ServiceInstallArgs {
+                db_path,
+                config,
+                program: None,
+            })
+        })
+        .await?;
+        match installed {
+            Ok(_) => self.set_success("automatic sync is on"),
+            Err(error) => self.set_error(format!(
+                "automatic sync is on, but the background service didn't start: {error:#}"
+            )),
+        }
         Ok(())
     }
 
@@ -413,4 +471,41 @@ fn invitation_page(kind: InvitationKind) -> SyncDialogState {
         input: SecretText::default(),
         error: None,
     })
+}
+
+/// Where turning on automatic sync writes its setting and installs the
+/// service.
+pub(super) struct AutomaticSyncTarget {
+    pub(super) config_path: std::path::PathBuf,
+    /// The database a service would serve; `None` where no service can be
+    /// installed.
+    pub(super) service_db: Option<std::path::PathBuf>,
+    pub(super) install:
+        fn(crate::daemon::ServiceInstallArgs) -> Result<crate::daemon::InstalledService>,
+}
+
+impl AutomaticSyncTarget {
+    #[cfg(not(test))]
+    fn for_user(config: &crate::config::AppConfig) -> Result<Self> {
+        Ok(Self {
+            config_path: crate::config::config_file_path()?,
+            service_db: cfg!(any(target_os = "macos", target_os = "linux"))
+                .then(|| crate::config::resolve_db_path(None, config).ok())
+                .flatten(),
+            install: crate::daemon::install,
+        })
+    }
+
+    /// Tests must never edit the user's config or service manager.
+    #[cfg(test)]
+    fn for_user(_config: &crate::config::AppConfig) -> Result<Self> {
+        panic!("tests call turn_on_automatic_sync_at with a temporary target");
+    }
+}
+
+fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
 }

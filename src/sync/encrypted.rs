@@ -295,6 +295,7 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
     .await?;
     println!("Sync set up with {}", invitation.server);
     print_outcome(&outcome);
+    print_automatic_sync_hint(config);
     Ok(())
 }
 
@@ -826,6 +827,7 @@ pub(crate) async fn join(database: &Database, config: &AppConfig, args: JoinArgs
     .context("error sync-join-command")?;
     println!("Joined sync with {server}");
     print_outcome(&outcome);
+    print_automatic_sync_hint(config);
     Ok(())
 }
 
@@ -1269,6 +1271,14 @@ async fn conflict_identities(database: &Database) -> Result<HashSet<String>> {
         }
     }
     Ok(identities)
+}
+
+fn print_automatic_sync_hint(config: &AppConfig) {
+    if !config.sync.enabled {
+        println!(
+            "To sync automatically, run `aven config set sync.enabled true` and `aven daemon install`."
+        );
+    }
 }
 
 fn print_outcome(outcome: &Outcome) {

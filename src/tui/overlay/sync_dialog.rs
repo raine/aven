@@ -136,6 +136,8 @@ impl SecretText {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncAction {
     SyncNow,
+    /// Turns on automatic sync and installs the background service.
+    SyncAutomatically,
     AddDevice,
     CancelInvitation,
     SetUp,
@@ -163,6 +165,7 @@ impl SyncAction {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::SyncNow => "Sync now",
+            Self::SyncAutomatically => "Sync automatically",
             Self::AddDevice => "Add device",
             Self::CancelInvitation => "Cancel invitation",
             Self::SetUp => "Set up sync",
@@ -199,6 +202,9 @@ pub(crate) fn sync_actions(
             LocalPhase::SetUp => {
                 let refused = status.access_refused_at.is_some();
                 let mut actions = vec![SyncAction::SyncNow];
+                if !refused && !status.enabled && status.runtime_allowed {
+                    actions.push(SyncAction::SyncAutomatically);
+                }
                 if !refused {
                     actions.push(SyncAction::AddDevice);
                 }
@@ -487,6 +493,7 @@ mod tests {
 
     fn status(phase: LocalPhase) -> TuiSyncStatus {
         TuiSyncStatus {
+            enabled: true,
             set_up: phase != LocalPhase::NotSetUp,
             phase,
             ..TuiSyncStatus::default()
@@ -520,6 +527,19 @@ mod tests {
             sync_actions(&state, &status(LocalPhase::SetUp), &idle),
             [
                 SyncAction::SyncNow,
+                SyncAction::AddDevice,
+                SyncAction::ManageDevices
+            ]
+        );
+        let manual_only = TuiSyncStatus {
+            enabled: false,
+            ..status(LocalPhase::SetUp)
+        };
+        assert_eq!(
+            sync_actions(&state, &manual_only, &idle),
+            [
+                SyncAction::SyncNow,
+                SyncAction::SyncAutomatically,
                 SyncAction::AddDevice,
                 SyncAction::ManageDevices
             ]

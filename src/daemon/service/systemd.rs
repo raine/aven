@@ -5,8 +5,8 @@ use std::process::Output;
 use anyhow::{Context, Result, bail};
 
 use super::{
-    ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, paths_resolve_to_same_file,
-    validate_install_config,
+    InstalledService, ServiceInstallArgs, ServiceRepairArgs, ServiceStatus,
+    paths_resolve_to_same_file, validate_install_config,
 };
 #[cfg(target_os = "linux")]
 use super::{absolute_path, stable_program_path_from_candidates};
@@ -83,12 +83,13 @@ pub(super) fn install_with_runner(
     args: ServiceInstallArgs,
     spec: &UnitSpec,
     runner: &impl SystemctlRunner,
-) -> Result<()> {
+) -> Result<InstalledService> {
     validate_install_config(&args.config)?;
     reload_service(runner, spec)?;
-    println!("installed {}", spec.unit_path.display());
-    println!("logs journalctl --user -u {UNIT}");
-    Ok(())
+    Ok(InstalledService {
+        path: spec.unit_path.clone(),
+        logs: format!("journalctl --user -u {UNIT}"),
+    })
 }
 
 pub(super) fn uninstall_with_runner(spec: &UnitSpec, runner: &impl SystemctlRunner) -> Result<()> {

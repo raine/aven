@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- The TUI **Sync** dialog offers **Sync automatically** once sync is set up, which turns on automatic sync and installs the background service. `aven sync setup` and `aven sync join` print how to turn it on.
+
 - `aven daemon install`, `uninstall`, `restart`, `repair`, and `status` now work on Linux, managing a systemd user service. See [Sync across devices](https://aventasks.dev/sync/).
 
 - Fix: Encrypted sync setup no longer discards its setup keys when a server storage error follows an accepted claim, and recovers from an interrupted cancellation of a refused setup. Server timeouts and failures no longer mark a device's access as refused, any accepted request clears the refusal, and the TUI keeps invitation cancellation available while access is refused.

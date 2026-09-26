@@ -63,8 +63,23 @@ pub struct ServiceStatus {
     pub stdout_path: Option<PathBuf>,
     pub stderr_path: Option<PathBuf>,
 }
+
+/// Where an installed service lives and where its output goes.
+#[derive(Debug)]
+pub struct InstalledService {
+    pub path: PathBuf,
+    pub logs: String,
+}
+
+impl InstalledService {
+    pub fn print(&self) {
+        println!("installed {}", self.path.display());
+        println!("logs {}", self.logs);
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
-pub fn install(args: ServiceInstallArgs) -> Result<()> {
+pub fn install(args: ServiceInstallArgs) -> Result<InstalledService> {
     install_with_runner(args, &SystemRunner, &SystemSleeper)
 }
 
@@ -89,7 +104,7 @@ pub fn status_snapshot() -> Result<ServiceStatus> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn install(args: ServiceInstallArgs) -> Result<()> {
+pub fn install(args: ServiceInstallArgs) -> Result<InstalledService> {
     let spec = systemd::UnitSpec::from_install_args(args.db_path.clone(), args.program.clone())?;
     systemd::install_with_runner(args, &spec, &systemd::SystemSystemctl)
 }
@@ -162,14 +177,15 @@ fn install_with_runner(
     args: ServiceInstallArgs,
     runner: &impl LaunchctlRunner,
     sleeper: &impl Sleeper,
-) -> Result<()> {
+) -> Result<InstalledService> {
     validate_install_config(&args.config)?;
     let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
     let plist = render_plist(&spec);
     reload_service(runner, sleeper, &spec, &plist)?;
-    println!("installed {}", spec.plist_path.display());
-    println!("logs {}", spec.log_dir.display());
-    Ok(())
+    Ok(InstalledService {
+        path: spec.plist_path,
+        logs: spec.log_dir.display().to_string(),
+    })
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -177,7 +193,7 @@ fn install_with_runner(
     args: ServiceInstallArgs,
     _runner: &impl LaunchctlRunner,
     _sleeper: &SystemSleeper,
-) -> Result<()> {
+) -> Result<InstalledService> {
     let ServiceInstallArgs {
         db_path,
         config,
