@@ -1110,6 +1110,7 @@ fn updates_task_and_preserves_suffix_on_project_move() {
     ));
     let original = extract_ref(&created);
     let original_suffix = suffix(&original);
+    ok(env.aven(&db, ["project", "create", "homelab"]));
 
     let updated = ok(env.aven(
         &db,
