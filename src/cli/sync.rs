@@ -270,8 +270,8 @@ input. Setup previews this database and asks for confirmation; use --yes when
 standard input is not a terminal. This database becomes the starting point of
 the synced data. Rerun the same command to resume an interrupted setup."#;
 
-pub(super) const INVITE_HELP: &str = r#"The invitation is printed to standard output. Anyone with it can access all
-synced data and manage devices. Keep this command running until the other
+pub(super) const INVITE_HELP: &str = r#"The invitation, which begins with `AVEN:`, is printed to standard output.
+Anyone with it can access all synced data and manage devices. Keep this command running until the other
 device joins; it stops when the invitation expires after ten minutes. Sync keeps
 running meanwhile. Rerunning resumes an open invitation and reports its real
 expiry.
@@ -281,8 +281,8 @@ already have been sent, it remains open until expiry and the next sync changes
 keys before uploading new changes; that device can still read anything it
 received before."#;
 
-pub(super) const JOIN_HELP: &str = r#"Paste the invitation printed by `aven sync invite`, or pipe it to standard
-input, while the inviting device waits. The database must be empty. Joining
+pub(super) const JOIN_HELP: &str = r#"Paste the `AVEN:` invitation printed by `aven sync invite`, or pipe it to
+standard input, while the inviting device waits. Letter case doesn't matter. The database must be empty. Joining
 shows the server and asks for confirmation; use --yes when standard input is
 not a terminal. It downloads the synced data and then its images. Rerun the
 same command to resume an interrupted join without pasting the invitation again.

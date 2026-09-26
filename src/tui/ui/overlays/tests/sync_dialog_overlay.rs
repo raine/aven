@@ -982,7 +982,7 @@ fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
         ..TuiSyncStatus::default()
     };
     let mut input = SecretText::default();
-    input.insert("aven://pair/v2/SECRETSECRET");
+    input.insert("AVEN:SECRETSECRET");
     let form = render_page(
         SyncPage::Invitation {
             kind: InvitationKind::Join,

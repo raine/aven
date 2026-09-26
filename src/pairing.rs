@@ -110,6 +110,7 @@ pub(crate) struct PairingQr {
     width: usize,
     quiet_zone: usize,
     version: i16,
+    alphanumeric: bool,
     rows: Vec<String>,
 }
 
@@ -124,7 +125,13 @@ impl PairingQr {
         quiet_zone: usize,
         glyphs: QrGlyphs,
     ) -> Result<Self> {
-        let Ok(code) = QrCode::with_error_correction_level(payload, level) else {
+        let alphanumeric = payload.iter().all(|&byte| is_qr_alphanumeric(byte));
+        let code = if alphanumeric {
+            alphanumeric_bits(payload, level).and_then(|bits| QrCode::with_bits(bits, level).ok())
+        } else {
+            QrCode::with_error_correction_level(payload, level).ok()
+        };
+        let Some(code) = code else {
             bail!("error pairing-qr-too-large");
         };
         let source_width = code.width();
@@ -144,6 +151,7 @@ impl PairingQr {
             width: rows.first().map_or(0, |row| row.chars().count()),
             quiet_zone,
             version,
+            alphanumeric,
             rows,
         })
     }
@@ -156,6 +164,22 @@ impl PairingQr {
     pub(crate) fn rows(&self) -> &[String] {
         &self.rows
     }
+}
+
+/// QR alphanumeric mode stores two characters in 11 bits, against 16 in
+/// byte mode.
+fn is_qr_alphanumeric(byte: u8) -> bool {
+    byte.is_ascii_digit() || byte.is_ascii_uppercase() || b" $%*+-./:".contains(&byte)
+}
+
+/// One alphanumeric segment in the smallest version that holds it.
+fn alphanumeric_bits(payload: &[u8], level: EcLevel) -> Option<qrcode::bits::Bits> {
+    (1..=40).find_map(|version| {
+        let mut bits = qrcode::bits::Bits::new(Version::Normal(version));
+        bits.push_alphanumeric_data(payload).ok()?;
+        bits.push_terminator(level).ok()?;
+        Some(bits)
+    })
 }
 
 fn source_is_dark(
@@ -353,7 +377,7 @@ mod tests {
     use super::*;
 
     const TEST_SERVER: &str = "https://sync.example.test:8443";
-    const TEST_INVITATION: &str = "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2VjcmV0";
+    const TEST_INVITATION: &str = "AVEN:AEMGC5TFNYXGK6DBNVYGYZJOORSXG5A";
 
     fn presentation() -> PairingPresentation {
         PairingPresentation::new(
@@ -396,11 +420,9 @@ mod tests {
     }
 
     #[test]
-    fn tui_invitation_uses_low_correction_and_two_module_quiet_zone() {
-        let invitation = format!(
-            "aven://pair/v2/{}",
-            "a".repeat(194 - "aven://pair/v2/".len())
-        );
+    fn realistic_invitation_uses_one_alphanumeric_segment_up_to_version_7() {
+        let (_, invitation) =
+            crate::sync::encrypted::sample_invitations("https://sync.example.com");
         let presentation = PairingPresentation::new_tui(
             TEST_SERVER,
             &invitation,
@@ -410,11 +432,21 @@ mod tests {
         .unwrap();
         let qr = presentation.qr();
 
-        assert_eq!(invitation.len(), 194);
-        assert_eq!(qr.version, 9);
+        assert!(invitation.starts_with("AVEN:"));
+        assert!(qr.alphanumeric);
+        assert!(qr.version <= 7, "version {}", qr.version);
+        // Version 7 has 45 modules, plus the two-module quiet zone.
         assert_eq!(qr.quiet_zone, TUI_PAIRING_QUIET_ZONE_MODULES);
-        assert_eq!(qr.width(), 57);
-        assert_eq!(qr.rows().len(), 29);
+        assert_eq!(qr.width(), 49);
+        assert_eq!(qr.rows().len(), 25);
+
+        // The same bytes in byte mode need a larger symbol.
+        let bytes = QrCode::with_error_correction_level(
+            invitation.to_ascii_lowercase().as_bytes(),
+            EcLevel::L,
+        )
+        .unwrap();
+        assert!(bytes.width() > 45);
     }
 
     #[test]
@@ -423,7 +455,7 @@ mod tests {
         let debug = format!("{presentation:?}");
 
         assert!(debug.contains(TEST_SERVER));
-        assert!(!debug.contains("aven://pair/"));
+        assert!(!debug.contains("AVEN:"));
         for row in presentation.qr().rows() {
             let visible = row.trim();
             if !visible.is_empty() {
@@ -473,7 +505,7 @@ mod tests {
             render_terminal_qr(qr, Some(width - 1), false).unwrap_err()
         );
         assert!(message.contains("pairing-terminal-too-narrow"));
-        assert!(!message.contains("aven://pair/"));
+        assert!(!message.contains("AVEN:"));
     }
 
     #[test]
@@ -512,21 +544,19 @@ mod tests {
 
     #[test]
     fn sextant_qr_is_smaller_and_keeps_the_quiet_zone() {
-        let invitation = format!(
-            "aven://pair/v2/{}",
-            "a".repeat(194 - "aven://pair/v2/".len())
-        );
+        let (_, invitation) =
+            crate::sync::encrypted::sample_invitations("https://sync.example.com");
         let half = PairingPresentation::new_tui(TEST_SERVER, &invitation, 123, QrGlyphs::HalfBlock)
             .unwrap();
         let sextant =
             PairingPresentation::new_tui(TEST_SERVER, &invitation, 123, QrGlyphs::Sextant).unwrap();
         let qr = sextant.qr();
 
-        assert_eq!(half.qr().width(), 57);
-        assert_eq!(half.qr().rows().len(), 29);
-        assert_eq!(qr.width(), 29);
-        assert_eq!(qr.rows().len(), 19);
-        assert!(qr.rows().iter().all(|row| row.chars().count() == 29));
+        assert_eq!(half.qr().width(), 49);
+        assert_eq!(half.qr().rows().len(), 25);
+        assert_eq!(qr.width(), 25);
+        assert_eq!(qr.rows().len(), 17);
+        assert!(qr.rows().iter().all(|row| row.chars().count() == 25));
         // The two-module quiet zone fills the first cell column and the top
         // two module rows of the first cell row.
         assert!(qr.rows().iter().all(|row| row.starts_with(' ')));

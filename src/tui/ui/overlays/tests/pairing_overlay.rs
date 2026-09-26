@@ -1,7 +1,7 @@
 use super::*;
 
 const TEST_SERVER: &str = "https://sync.example.test:8443";
-const TEST_INVITATION: &str = "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2VjcmV0";
+const TEST_INVITATION: &str = "AVEN:AEMGC5TFNYXGK6DBNVYGYZJOORSXG5A";
 
 fn presentation() -> std::sync::Arc<crate::pairing::PairingPresentation> {
     std::sync::Arc::new(
@@ -92,10 +92,7 @@ fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
 
 #[test]
 fn low_correction_invitation_fits_a_39_row_terminal() {
-    let invitation = format!(
-        "aven://pair/v2/{}",
-        "a".repeat(194 - "aven://pair/v2/".len())
-    );
+    let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
     let presentation = crate::pairing::PairingPresentation::new_tui(
         TEST_SERVER,
         &invitation,
@@ -126,7 +123,7 @@ fn constrained_overlay_renders_complete_actionable_fallback_without_secrets() {
             .any(|cell| cell.symbol() == "v" && cell.fg == crate::tui::theme::BLUE)
     );
     assert!(text.contains(NETWORK_REQUIREMENT));
-    assert!(!text.contains("aven://pair/"));
+    assert!(!text.contains("AVEN:"));
     assert!(!buffer.content.iter().any(|cell| {
         cell.fg == ratatui::style::Color::Rgb(0, 0, 0)
             && cell.bg == ratatui::style::Color::Rgb(255, 255, 255)
@@ -162,7 +159,7 @@ fn overlay_presents_only_safe_pairing_data() {
     assert!(rendered.contains("Sync › Add device"));
     assert!(rendered.contains("https://sync.example.test:8443"));
     assert!(rendered.contains("c copy invitation"));
-    assert!(!rendered.contains("aven://pair/"));
+    assert!(!rendered.contains("AVEN:"));
 }
 
 #[test]

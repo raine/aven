@@ -872,7 +872,7 @@ aven sync invite
 aven sync invite --cancel
 ```
 
-Standard output receives only the `aven://pair/v2/` invitation. Interactive
+Standard output receives only the `AVEN:` invitation. Interactive
 standard error also shows it as a QR code, and the eventual **Device added**
 message is written to standard error. Anyone with the invitation can access
 all synced data and manage devices. It expires after ten minutes. Rerunning the

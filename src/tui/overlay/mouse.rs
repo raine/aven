@@ -413,7 +413,7 @@ mod tests {
         let presentation = std::sync::Arc::new(
             crate::pairing::PairingPresentation::new(
                 "https://sync.example.test:8443",
-                "aven://pair/v2/AgAAAB1pbnZpdGF0aW9uLWZpeHR1cmUtc2VjcmV0",
+                "AVEN:AEMGC5TFNYXGK6DBNVYGYZJOORSXG5A",
                 crate::pairing::QrGlyphs::HalfBlock,
             )
             .unwrap(),

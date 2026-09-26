@@ -101,7 +101,7 @@ running:
 aven sync invite
 ```
 
-The command prints an `aven://pair/v2/` invitation to standard output and, in
+The command prints an `AVEN:` invitation to standard output and, in
 an interactive terminal, also shows it as a QR code. Its eventual **Device
 added** message goes to standard error, so redirected standard output contains
 only the invitation. In the TUI, choose **Add device** in the

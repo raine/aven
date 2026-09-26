@@ -482,6 +482,12 @@ pub(crate) async fn create_invitation(
     let Some((_, server)) = store.association(database).await? else {
         bail!("error sync-setup-incomplete hint=\"rerun `aven sync setup`\"");
     };
+    // Checked before registering, so an origin the invitation text can't
+    // carry never leaves an open invitation behind.
+    ensure!(
+        server.len() <= aven_core::sync::device_invitation::MAX_SERVER_BYTES,
+        "error sync-server-url-too-long hint=\"device invitations need a server origin of at most 255 bytes\""
+    );
     let now = unix_now()?;
     let created = peer_enrollment_http::Client::new(&server)?
         .invite_with_status(&store, database, now + invitation_seconds())
@@ -501,7 +507,7 @@ pub(crate) async fn create_invitation(
         server: server.clone(),
         invitation: created.invitation,
     }
-    .encode();
+    .encode()?;
     Ok(PendingInvitation {
         server,
         text,
