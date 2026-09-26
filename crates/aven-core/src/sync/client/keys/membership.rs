@@ -53,11 +53,13 @@ impl ProtectedLocalKeyStore {
         if let Some(Some(known)) = known {
             return known;
         }
+        // A listed item that fails to load has vanished, never absent.
+        let listed = known.is_some();
         let marker_name = format!("{kind}-authority");
         let marker = self.read_record(&marker_name, 32)?;
         let Some(frame) = self.load_secret(kind, limit)? else {
             ensure!(
-                !required && marker.is_none(),
+                !required && !listed && marker.is_none(),
                 "error enrollment-protected-missing"
             );
             return Ok(None);
@@ -367,5 +369,32 @@ mod tests {
         };
         let bytes = serde_json::to_vec(&floor).unwrap();
         assert!(bytes.len() + 44 <= FLOOR_LIMIT);
+    }
+
+    #[test]
+    fn listed_item_that_vanishes_before_load_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let database_path = temp.path().join("database.sqlite");
+        std::fs::File::create(&database_path).unwrap();
+        let store = test_support::account_store(
+            test_support::raw_account(&database_path),
+            &temp.path().join("keys"),
+        );
+        store.prepare().unwrap();
+        {
+            let _lock = store.lock().unwrap();
+            store.write_owned("record", FLOOR_LIMIT, b"value").unwrap();
+        }
+        let _lock = store.lock().unwrap();
+        assert!(
+            store
+                .read_owned("other", FLOOR_LIMIT, false)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::remove_file(store.file_path("record")).unwrap();
+        std::fs::remove_file(store.file_path("record-authority")).unwrap();
+        let error = store.read_owned("record", FLOOR_LIMIT, false).unwrap_err();
+        assert_eq!(error.to_string(), "error enrollment-protected-missing");
     }
 }
