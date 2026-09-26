@@ -118,26 +118,21 @@ impl Client {
         inputs: &mut ActiveInputs,
         handle: [u8; 32],
     ) -> Result<CancelStatus> {
-        for attempt in 0..2 {
-            match self
-                .exchange(
-                    Operation::Cancel {
-                        context: Context::active(inputs),
-                        handle,
-                    },
-                    Some(inputs.bearer()),
-                )
-                .await
-            {
-                Ok(Reply::Cancelled(status)) => return Ok(status),
-                Err(error) if is_stale(&error) && attempt == 0 => {
-                    self.refresh_inputs(store, db, inputs).await?
-                }
-                Err(error) => return Err(error),
-                _ => anyhow::bail!("error enrollment-response"),
-            }
+        let reply = retry_stale!(
+            self.exchange(
+                Operation::Cancel {
+                    context: Context::active(inputs),
+                    handle,
+                },
+                Some(inputs.bearer()),
+            )
+            .await,
+            self.refresh_inputs(store, db, inputs).await,
+        )?;
+        match reply {
+            Reply::Cancelled(status) => Ok(status),
+            _ => anyhow::bail!("error enrollment-response"),
         }
-        unreachable!()
     }
     pub async fn manage(
         &self,

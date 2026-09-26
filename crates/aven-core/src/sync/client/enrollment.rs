@@ -4,6 +4,7 @@ mod management;
 use anyhow::{Context as _, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+use super::errors::is_stale;
 use super::exchange::{self, Link};
 use super::keys::ProtectedLocalKeyStore;
 use super::keys::peer::{ActiveInputs, OpenInvitation};
@@ -380,38 +381,31 @@ impl Client {
         let journal = store
             .prepare_invitation(db, &inputs, Some(expires), None)
             .await?;
-        for attempt in 0..2 {
-            match self
-                .exchange(
-                    Operation::Register {
-                        context: Context::active(&inputs),
-                        declaration: journal.declaration.clone(),
-                    },
-                    Some(inputs.bearer()),
-                )
-                .await
-            {
-                Ok(Reply::Registered(peer::RegistrationStatus::Open)) => {
-                    let invitation = store.registered_invitation(db, &inputs, &journal).await?;
-                    let state = store
-                        .open_invitation(db, &inputs)
-                        .await?
-                        .context("error enrollment-invitation-missing")?;
-                    return Ok(CreatedInvitation {
-                        invitation,
-                        state,
-                        vault: inputs.membership.genesis().context().vault_id,
-                        resumed: previous.is_some_and(|old| old.handle == journal.handle),
-                    });
-                }
-                Err(error) if is_stale(&error) && attempt == 0 => {
-                    self.refresh_inputs(store, db, &mut inputs).await?
-                }
-                Err(error) => return Err(error),
-                _ => anyhow::bail!("error enrollment-invitation-unavailable"),
-            }
-        }
-        unreachable!()
+        let reply = retry_stale!(
+            self.exchange(
+                Operation::Register {
+                    context: Context::active(&inputs),
+                    declaration: journal.declaration.clone(),
+                },
+                Some(inputs.bearer()),
+            )
+            .await,
+            self.refresh_inputs(store, db, &mut inputs).await,
+        )?;
+        let Reply::Registered(peer::RegistrationStatus::Open) = reply else {
+            anyhow::bail!("error enrollment-invitation-unavailable");
+        };
+        let invitation = store.registered_invitation(db, &inputs, &journal).await?;
+        let state = store
+            .open_invitation(db, &inputs)
+            .await?
+            .context("error enrollment-invitation-missing")?;
+        Ok(CreatedInvitation {
+            invitation,
+            state,
+            vault: inputs.membership.genesis().context().vault_id,
+            resumed: previous.is_some_and(|old| old.handle == journal.handle),
+        })
     }
     #[cfg(any(test, feature = "test-support"))]
     pub async fn request(
@@ -518,35 +512,33 @@ impl Client {
         let Some(request) = mail.request else {
             return Ok(false);
         };
-        for attempt in 0..2 {
-            let record = store
-                .prepare_admission(db, &inputs, &journal, &request)
-                .await?;
-            match self
-                .exchange(
-                    Operation::Admit {
-                        context: Context::active(&inputs),
-                        handle: journal.handle,
-                        record: record.clone(),
-                    },
-                    Some(inputs.bearer()),
-                )
-                .await
-            {
-                Ok(Reply::Admitted(accepted)) => {
-                    ensure!(accepted == record, "error enrollment-outcome-mismatch");
-                    self.refresh_inputs(store, db, &mut inputs).await?;
-                    store.finish_inviter(db, &inputs, &journal, &record).await?;
-                    return Ok(true);
-                }
-                Err(error) if is_stale(&error) && attempt == 0 => {
-                    self.refresh_inputs(store, db, &mut inputs).await?
-                }
-                Err(error) => return Err(error),
-                _ => anyhow::bail!("error enrollment-response"),
+        let (record, reply) = retry_stale!(
+            async {
+                let record = store
+                    .prepare_admission(db, &inputs, &journal, &request)
+                    .await?;
+                let reply = self
+                    .exchange(
+                        Operation::Admit {
+                            context: Context::active(&inputs),
+                            handle: journal.handle,
+                            record: record.clone(),
+                        },
+                        Some(inputs.bearer()),
+                    )
+                    .await?;
+                anyhow::Ok((record, reply))
             }
-        }
-        unreachable!()
+            .await,
+            self.refresh_inputs(store, db, &mut inputs).await,
+        )?;
+        let Reply::Admitted(accepted) = reply else {
+            anyhow::bail!("error enrollment-response");
+        };
+        ensure!(accepted == record, "error enrollment-outcome-mismatch");
+        self.refresh_inputs(store, db, &mut inputs).await?;
+        store.finish_inviter(db, &inputs, &journal, &record).await?;
+        Ok(true)
     }
     /// Checks every retained attempt for an admission and completes the one
     /// whose grant opens for its exact request; a grant that does not open is
@@ -611,8 +603,4 @@ impl Client {
         store.finish_peer(db, mail, &evidence).await?;
         Ok(true)
     }
-}
-
-pub fn is_stale(error: &anyhow::Error) -> bool {
-    error.is::<membership::StaleContext>()
 }

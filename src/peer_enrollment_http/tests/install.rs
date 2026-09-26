@@ -179,7 +179,7 @@ async fn snapshot_download_removal_fails_closed_without_stale_retry() {
     });
 
     let error = f.client.install(&f.store, &f.peer).await.unwrap_err();
-    assert!(!enrollment::is_stale(&error));
+    assert!(!aven_core::sync::client::errors::is_stale(&error));
     assert_eq!(removal.await.unwrap().unwrap(), RemovalStatus::Complete);
     assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 1);
     assert_eq!(f.counts.tracked_published.load(Ordering::Relaxed), 1);
@@ -237,7 +237,7 @@ async fn snapshot_download_bounds_exhausted_stale_retry() {
     });
 
     let error = f.client.install(&f.store, &f.peer).await.unwrap_err();
-    assert!(enrollment::is_stale(&error));
+    assert!(aven_core::sync::client::errors::is_stale(&error));
     assert!(first_admission.await.unwrap().unwrap());
     assert!(second_admission.await.unwrap().unwrap());
     assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 2);

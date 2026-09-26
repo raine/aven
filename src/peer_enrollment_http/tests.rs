@@ -1044,7 +1044,7 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
         .await
         .err()
         .unwrap();
-    assert!(enrollment::is_stale(&stale));
+    assert!(aven_core::sync::client::errors::is_stale(&stale));
     context.device = seed.genesis().device_id();
     for op in [
         Operation::PrepareManagement {
@@ -1068,7 +1068,7 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
             .await
             .err()
             .unwrap();
-        assert!(!enrollment::is_stale(&e));
+        assert!(!aven_core::sync::client::errors::is_stale(&e));
     }
     let pending = m.append(&[], &[], &revoke).unwrap();
     context.device = joiner.device();

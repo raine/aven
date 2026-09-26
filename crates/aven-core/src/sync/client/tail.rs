@@ -2,6 +2,7 @@
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
+use super::errors::is_stale;
 use super::exchange::{self, Link};
 use super::keys::ProtectedLocalKeyStore;
 use super::keys::peer::{PublishingBlocked, TailSnapshot};
@@ -262,13 +263,10 @@ impl Client {
     ) -> Result<bool> {
         let enrollment = self.enrollment()?;
         enrollment.refresh(store, db).await?;
-        match self.pull_only_round_once(store, db).await {
-            Err(error) if is_stale(&error) => {
-                enrollment.refresh(store, db).await?;
-                self.pull_only_round_once(store, db).await
-            }
-            result => result,
-        }
+        retry_stale!(
+            self.pull_only_round_once(store, db).await,
+            enrollment.refresh(store, db).await,
+        )
     }
     #[cfg(any(test, feature = "test-support"))]
     async fn pull_only_round_once(
@@ -303,8 +301,4 @@ impl Client {
         db.apply_encrypted_tail_page(a, &page).await?;
         Ok(!page.has_more)
     }
-}
-
-pub fn is_stale(error: &anyhow::Error) -> bool {
-    error.is::<crate::sync::seed_claim::membership::StaleContext>()
 }

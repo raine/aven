@@ -124,20 +124,17 @@ impl Client {
             drain.tail = store.tail_inputs(db, &self.locator).await?;
         }
         let mut progress = RoundProgress::default();
-        match self
-            .round_once(&drain.tail, db, blob_dir, &mut progress)
-            .await
-        {
-            Err(error) if is_stale(&error) => {
-                let enrollment = self.enrollment()?;
-                enrollment.refresh(store, db).await?;
+        retry_stale!(
+            self.round_once(&drain.tail, db, blob_dir, &mut progress)
+                .await,
+            async {
+                self.enrollment()?.refresh(store, db).await?;
                 drain.tail = store.tail_inputs(db, &self.locator).await?;
                 progress.preflight_local_seq = None;
-                self.round_once(&drain.tail, db, blob_dir, &mut progress)
-                    .await
+                anyhow::Ok(())
             }
-            result => result,
-        }
+            .await,
+        )
     }
     async fn round_once(
         &self,
@@ -307,17 +304,11 @@ impl Client {
     ) -> Result<()> {
         let enrollment = self.enrollment()?;
         enrollment.refresh(store, db).await?;
-        match self
-            .repair_attachment_once(store, db, blob_dir, workspace, reference)
-            .await
-        {
-            Err(error) if is_stale(&error) => {
-                enrollment.refresh(store, db).await?;
-                self.repair_attachment_once(store, db, blob_dir, workspace, reference)
-                    .await
-            }
-            result => result,
-        }
+        retry_stale!(
+            self.repair_attachment_once(store, db, blob_dir, workspace, reference)
+                .await,
+            enrollment.refresh(store, db).await,
+        )
     }
     async fn repair_attachment_once(
         &self,

@@ -24,6 +24,11 @@ pub fn has_code(error: &Error, expected: &str) -> bool {
     codes(error).any(|code| code == expected)
 }
 
+/// The server saw an older membership head than its current one.
+pub fn is_stale(error: &Error) -> bool {
+    error.is::<crate::sync::seed_claim::membership::StaleContext>()
+}
+
 /// The server refused this device's credential or membership, which may
 /// mean another device removed it.
 pub fn is_access_refusal(error: &Error) -> bool {

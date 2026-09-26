@@ -3,6 +3,21 @@
 //! Hosts run [`engine`] operations as sans-IO [`Session`]s, persist
 //! protected keys through [`keys::ProtectedStorage`] and supply policy,
 //! storage and paths through [`ClientHost`].
+
+/// Evaluates `$attempt`, and once more after `$refresh` if the server
+/// reported a stale membership context. Both are awaited expressions.
+macro_rules! retry_stale {
+    ($attempt:expr, $refresh:expr $(,)?) => {
+        match $attempt {
+            Err(error) if $crate::sync::client::errors::is_stale(&error) => {
+                $refresh?;
+                $attempt
+            }
+            result => result,
+        }
+    };
+}
+
 pub mod bootstrap;
 pub mod coordination;
 mod device_label;
