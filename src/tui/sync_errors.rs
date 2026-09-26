@@ -31,12 +31,12 @@ fn signal(error: &anyhow::Error) -> Option<FailureSignal> {
 
 fn action(kind: OperationKind) -> ErrorAction {
     match kind {
-        OperationKind::Sync => ErrorAction::Sync,
         OperationKind::Setup => ErrorAction::Setup,
         OperationKind::Join => ErrorAction::Join,
-        OperationKind::ListDevices => ErrorAction::ListDevices,
-        OperationKind::RemoveDevice(_) => ErrorAction::RemoveDevice,
-        OperationKind::FinishRemoval => ErrorAction::FinishRemoval,
+        OperationKind::Sync
+        | OperationKind::ListDevices
+        | OperationKind::RemoveDevice(_)
+        | OperationKind::FinishRemoval => ErrorAction::General,
     }
 }
 

@@ -9,12 +9,8 @@ use crate::protected_local_keys::{ProtectedLocalKeyStoreError, ProtectedLocalKey
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ErrorAction {
     General,
-    Sync,
     Setup,
     Join,
-    ListDevices,
-    RemoveDevice,
-    FinishRemoval,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,17 +44,16 @@ pub(crate) fn explain(
 ) -> Option<Explanation> {
     let all = codes(error).collect::<Vec<_>>();
     let has = |expected: &str| all.iter().any(|code| code == expected);
+    // Codes that share one explanation; the first present one is displayed.
+    let first = |family: &[&'static str]| family.iter().copied().find(|code| has(code));
 
     if all.iter().any(|code| code.ends_with("-network")) {
-        let code = if has("enrollment-network") {
-            "enrollment-network"
-        } else if has("bootstrap-network") {
-            "bootstrap-network"
-        } else if has("encrypted-tail-network") {
-            "encrypted-tail-network"
-        } else {
-            "sync-network"
-        };
+        let code = first(&[
+            "enrollment-network",
+            "bootstrap-network",
+            "encrypted-tail-network",
+        ])
+        .unwrap_or("sync-network");
         return Some(Explanation {
             code,
             message: "Couldn't reach the sync server.",
@@ -297,18 +292,13 @@ pub(crate) fn explain(
             },
         });
     }
-    if has("shared-state-install")
-        || has("snapshot-target-not-fresh")
-        || has("sync-join-target-not-empty")
-    {
+    if let Some(code) = first(&[
+        "sync-join-target-not-empty",
+        "shared-state-install",
+        "snapshot-target-not-fresh",
+    ]) {
         return Some(Explanation {
-            code: if has("sync-join-target-not-empty") {
-                "sync-join-target-not-empty"
-            } else if has("shared-state-install") {
-                "shared-state-install"
-            } else {
-                "snapshot-target-not-fresh"
-            },
+            code,
             message: "Data was added to this database while joining, so synced tasks can't be installed here.",
             next_step: match surface {
                 ErrorSurface::Cli => {
@@ -341,13 +331,12 @@ pub(crate) fn explain(
             next_step: "Use an invitation from the device that created the first one.",
         });
     }
-    if has("sync-join-invitation-conflict") || has("enrollment-invitation-conflict") {
+    if let Some(code) = first(&[
+        "sync-join-invitation-conflict",
+        "enrollment-invitation-conflict",
+    ]) {
         return Some(Explanation {
-            code: if has("sync-join-invitation-conflict") {
-                "sync-join-invitation-conflict"
-            } else {
-                "enrollment-invitation-conflict"
-            },
+            code,
             message: "This invitation doesn't match the join already started here.",
             next_step: match surface {
                 ErrorSurface::Cli => {
@@ -389,13 +378,9 @@ pub(crate) fn explain(
             });
         }
     }
-    if has("sync-key-change-required") || has("withdrawal-rotation-required") {
+    if let Some(code) = first(&["sync-key-change-required", "withdrawal-rotation-required"]) {
         return Some(Explanation {
-            code: if has("sync-key-change-required") {
-                "sync-key-change-required"
-            } else {
-                "withdrawal-rotation-required"
-            },
+            code,
             message: "An invitation expired after keys may have been sent to a device that never joined.",
             next_step: match surface {
                 ErrorSurface::Cli => {
@@ -407,24 +392,19 @@ pub(crate) fn explain(
             },
         });
     }
-    if has("sync-invitation-unresolved") || has("withdrawal-required-unsupported") {
+    if let Some(code) = first(&[
+        "sync-invitation-unresolved",
+        "withdrawal-required-unsupported",
+    ]) {
         return Some(Explanation {
-            code: if has("sync-invitation-unresolved") {
-                "sync-invitation-unresolved"
-            } else {
-                "withdrawal-required-unsupported"
-            },
+            code,
             message: "The last invitation may have sent keys to a device that hasn't joined.",
             next_step: "Add a device again after it joins, or after the invitation expires and the next sync changes keys.",
         });
     }
-    if has("sync-device-change-limit") || has("membership-change-limit") {
+    if let Some(code) = first(&["sync-device-change-limit", "membership-change-limit"]) {
         return Some(Explanation {
-            code: if has("sync-device-change-limit") {
-                "sync-device-change-limit"
-            } else {
-                "membership-change-limit"
-            },
+            code,
             message: "This sync has reached its limit on device changes.",
             next_step: "Start a new sync to keep changing devices; see Recover from device loss in the sync docs.",
         });
@@ -446,12 +426,8 @@ pub(crate) fn explain(
             next_step: "Try again in a moment.",
         });
     }
-    if has("enrollment-revoked") || has("sync-device-removed") {
-        return Some(access_refused(if has("sync-device-removed") {
-            "sync-device-removed"
-        } else {
-            "enrollment-revoked"
-        }));
+    if let Some(code) = first(&["sync-device-removed", "enrollment-revoked"]) {
+        return Some(access_refused(code));
     }
     if has("sync-join-command") && has("enrollment-refused") {
         return Some(Explanation {
@@ -460,41 +436,25 @@ pub(crate) fn explain(
             next_step: "The invitation may have expired, been cancelled, or already been used; run `aven sync invite` on the other device and try again.",
         });
     }
-    if has("sync-server-refused")
-        || (has("enrollment-unauthorized")
-            && matches!(
-                action,
-                ErrorAction::Sync
-                    | ErrorAction::ListDevices
-                    | ErrorAction::RemoveDevice
-                    | ErrorAction::FinishRemoval
-                    | ErrorAction::General
-            ))
-    {
-        return Some(access_refused(if has("sync-server-refused") {
-            "sync-server-refused"
-        } else {
-            "enrollment-unauthorized"
-        }));
+    // Setup and join run before this device has access to refuse.
+    let refused: &[&'static str] = if action == ErrorAction::General {
+        &["sync-server-refused", "enrollment-unauthorized"]
+    } else {
+        &["sync-server-refused"]
+    };
+    if let Some(code) = first(refused) {
+        return Some(access_refused(code));
     }
-    if has("enrollment-timeout") || has("enrollment-server") {
+    if let Some(code) = first(&["enrollment-timeout", "enrollment-server"]) {
         return Some(Explanation {
-            code: if has("enrollment-timeout") {
-                "enrollment-timeout"
-            } else {
-                "enrollment-server"
-            },
+            code,
             message: "The sync server couldn't complete the request.",
             next_step: "Try again later. Local work continues.",
         });
     }
-    if has("sync-device-removal-unfinished") || has("management-unfinished") {
+    if let Some(code) = first(&["sync-device-removal-unfinished", "management-unfinished"]) {
         return Some(Explanation {
-            code: if has("sync-device-removal-unfinished") {
-                "sync-device-removal-unfinished"
-            } else {
-                "management-unfinished"
-            },
+            code,
             message: "An earlier device removal from this device is unfinished.",
             next_step: match surface {
                 ErrorSurface::Cli => "Run `aven sync` to finish it, then retry.",
@@ -519,12 +479,7 @@ pub(crate) fn explain(
             next_step: "Remove it from another device in sync.",
         });
     }
-    if has("enrollment-refused") || has("bootstrap-refused") {
-        let code = if has("enrollment-refused") {
-            "enrollment-refused"
-        } else {
-            "bootstrap-refused"
-        };
+    if let Some(code) = first(&["enrollment-refused", "bootstrap-refused"]) {
         return Some(match action {
             ErrorAction::Join => Explanation {
                 code,
@@ -619,7 +574,7 @@ mod tests {
     fn access_refusal_names_removal_only_as_a_possibility() {
         let error = anyhow!("error enrollment-unauthorized")
             .context("error sync-server-refused hint=\"raw\"");
-        let explanation = explain(ErrorAction::Sync, ErrorSurface::Tui, &error).unwrap();
+        let explanation = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
         assert_eq!(explanation.code, "sync-server-refused");
         assert!(explanation.combined().contains("may have been removed"));
         assert!(!explanation.combined().contains("was removed"));
@@ -630,14 +585,14 @@ mod tests {
         let mut config = crate::config::AppConfig::default();
         config.sync.disable_override = true;
         let error = config.ensure_sync_allowed().unwrap_err();
-        let environment = explain(ErrorAction::Sync, ErrorSurface::Cli, &error).unwrap();
+        let environment = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(environment.code, "sync-disabled");
         assert!(environment.next_step.contains("AVEN_SYNC_DISABLED"));
 
         let error = crate::config::AppConfig::default()
             .ensure_automatic_sync_enabled()
             .unwrap_err();
-        let configured = explain(ErrorAction::Sync, ErrorSurface::Cli, &error).unwrap();
+        let configured = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(configured.code, "sync-disabled");
         assert!(configured.next_step.contains("sync.enabled true"));
         assert!(!configured.combined().contains("AVEN_SYNC_DISABLED"));
