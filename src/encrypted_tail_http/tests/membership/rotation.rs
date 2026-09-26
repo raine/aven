@@ -51,7 +51,6 @@ fn auth<'a>(
         genesis: m.genesis().commitment(),
         head: m.head(),
         device: signer.device(),
-        credential_version: 1,
         bearer: signer.bearer(),
     }
 }

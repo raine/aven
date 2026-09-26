@@ -1,6 +1,6 @@
 use super::*;
 use crate::db::Database;
-use crate::sync::seed_claim::{ClaimAuthentication, Secret, SeedAuthority, SetupAuthority};
+use crate::sync::seed_claim::{ClaimAuthentication, Secret, SeedAuthority};
 use crate::sync::{LocalSharedStatePackageContext, LocalSharedStatePackageKey, bootstrap_format};
 use sha2::{Digest, Sha256};
 
@@ -130,14 +130,13 @@ impl Fixture {
             .await
             .unwrap();
         let setup_secret = Secret::new([75; 32]);
-        let setup = SetupAuthority::from_verifier(
-            [64; 32],
-            SetupAuthority::verifier([64; 32], &setup_secret),
-        );
+        server
+            .issue_e2ee_server_setup(&setup_secret, [64; 32], u64::MAX)
+            .await
+            .unwrap();
         server
             .admit_seed_claim(
                 &seed.genesis().claim_bytes(),
-                Some(&setup),
                 ClaimAuthentication::SetupSecret(&setup_secret),
             )
             .await
@@ -504,7 +503,6 @@ async fn authentication_context_and_successor_gate_protect_every_operation() {
         f.server
             .admit_seed_claim(
                 &f.seed.genesis().claim_bytes(),
-                None,
                 ClaimAuthentication::SeedBearer(f.seed.bearer())
             )
             .await

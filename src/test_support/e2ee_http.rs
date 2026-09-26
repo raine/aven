@@ -5,17 +5,25 @@ use aven_core::{
     db::Database,
     sync::{
         bootstrap_format::Package,
-        seed_claim::{ClaimAuthentication, Secret, SeedAuthority, SetupAuthority},
+        seed_claim::{ClaimAuthentication, Secret, SeedAuthority},
     },
 };
 use axum::Router;
 use std::path::Path;
 
-pub(crate) fn setup() -> SetupAuthority {
-    SetupAuthority::from_verifier(
-        [9; 32],
-        SetupAuthority::verifier([9; 32], &Secret::new([7; 32])),
-    )
+/// The setup secret [`issue_setup`] issues.
+pub(crate) fn setup_secret() -> Secret {
+    Secret::new([7; 32])
+}
+
+/// Issues [`setup_secret`] for the fixture setup ID on unclaimed server
+/// storage, as `aven server setup` does.
+pub(crate) async fn issue_setup(db: &Database) {
+    if !db.e2ee_server_is_claimed().await.unwrap() {
+        db.issue_e2ee_server_setup(&setup_secret(), [9; 32], u64::MAX)
+            .await
+            .unwrap();
+    }
 }
 
 pub(crate) async fn fixture(
@@ -185,14 +193,15 @@ async fn representative_domain(
 }
 
 /// Every encrypted sync route, with `tail` serving the tail and image routes.
-pub(crate) fn router_with_tail(db: Database, tail: Router) -> Router {
-    crate::seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
+pub(crate) async fn router_with_tail(db: Database, tail: Router) -> Router {
+    issue_setup(&db).await;
+    crate::seed_bootstrap_http::router(db.clone(), Default::default())
         .merge(crate::peer_enrollment_http::router(db))
         .merge(tail)
 }
 
-pub(crate) fn router(db: Database) -> Router {
-    router_with_tail(db.clone(), crate::encrypted_tail_http::router(db))
+pub(crate) async fn router(db: Database) -> Router {
+    router_with_tail(db.clone(), crate::encrypted_tail_http::router(db)).await
 }
 
 /// Serves `app` on `address` and returns its origin.
@@ -216,7 +225,7 @@ pub(crate) async fn adopt(
     bootstrap
         .claim(
             seed.genesis(),
-            ClaimAuthentication::SetupSecret(&Secret::new([7; 32])),
+            ClaimAuthentication::SetupSecret(&setup_secret()),
         )
         .await
         .unwrap();

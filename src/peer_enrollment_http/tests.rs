@@ -7,15 +7,16 @@ use crate::{
         peer::OutboundInvitation,
         tests::{BACKEND_LOADS, isolated_store},
     },
-    test_support::e2ee_http::{self, fixture, setup},
+    test_support::e2ee_http::{self, fixture},
 };
 use aven_core::db::installation::InstallationGuard;
 use aven_core::sync::seed_claim::{membership::Mailbox, peer};
 use axum::{
     body::{Body, to_bytes},
     extract::Request,
+    http::{StatusCode, header},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use std::collections::VecDeque;
 use std::path::Path;
@@ -111,8 +112,11 @@ async fn count_exchange(
             *remaining -= 1;
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                [(header::RETRY_AFTER, "0")],
-                "enrollment-busy",
+                [
+                    (header::RETRY_AFTER, "0"),
+                    (header::CONTENT_TYPE, "application/json"),
+                ],
+                r#"{"error":"enrollment-busy"}"#,
             )
                 .into_response();
         }
@@ -134,7 +138,7 @@ async fn serve_counted(
     db: Database,
     counts: Arc<ExchangeCounts>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let app = e2ee_http::router(db);
+    let app = e2ee_http::router(db).await;
     serve_counted_app(app, counts).await
 }
 async fn serve_counted_with_clock(
@@ -142,7 +146,8 @@ async fn serve_counted_with_clock(
     counts: Arc<ExchangeCounts>,
     clock: Arc<AtomicU64>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let app = seed_bootstrap_http::router(db.clone(), Some(setup()), Default::default())
+    e2ee_http::issue_setup(&db).await;
+    let app = seed_bootstrap_http::router(db.clone(), Default::default())
         .merge(router_with_clock(db.clone(), clock))
         .merge(crate::encrypted_tail_http::router(db));
     serve_counted_app(app, counts).await
@@ -233,7 +238,9 @@ async fn adopted_inner(
             let counts = Arc::new(ExchangeCounts::default());
             serve_counted_with_clock(server.clone(), counts, clock).await
         }
-        (None, None) => e2ee_http::serve(e2ee_http::router(server.clone()), "127.0.0.1:0").await,
+        (None, None) => {
+            e2ee_http::serve(e2ee_http::router(server.clone()).await, "127.0.0.1:0").await
+        }
     };
     e2ee_http::adopt(&origin, &db, &store, &seed).await;
     (db, store, server, origin, task)
@@ -391,9 +398,8 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
     let listener = tokio::net::TcpListener::bind(origin.strip_prefix("http://").unwrap())
         .await
         .unwrap();
-    let app =
-        seed_bootstrap_http::router(reopened_server.clone(), Some(setup()), Default::default())
-            .merge(router(reopened_server));
+    let app = seed_bootstrap_http::router(reopened_server.clone(), Default::default())
+        .merge(router(reopened_server));
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
@@ -686,11 +692,19 @@ async fn bounded_http_redacts_refusals_and_rejects_unsafe_origins() {
     let db = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
-    let (origin, task) = e2ee_http::serve(e2ee_http::router(db), "127.0.0.1:0").await;
+    let (origin, task) = e2ee_http::serve(e2ee_http::router(db).await, "127.0.0.1:0").await;
     let http = reqwest::Client::new();
-    for body in [
-        "PRIVATE-INVALID-CONTENT".to_string(),
-        "x".repeat(CONTROL_LIMIT + 1),
+    for (body, status, code) in [
+        (
+            "PRIVATE-INVALID-CONTENT".to_string(),
+            StatusCode::UNAUTHORIZED,
+            "enrollment-credential",
+        ),
+        (
+            "x".repeat(CONTROL_LIMIT + 1),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "enrollment-limit",
+        ),
     ] {
         let response = http
             .post(format!("{origin}{PATH}"))
@@ -700,9 +714,9 @@ async fn bounded_http_redacts_refusals_and_rejects_unsafe_origins() {
             .send()
             .await
             .unwrap();
-        assert!(!response.status().is_success());
+        assert_eq!(response.status(), status);
         let text = response.text().await.unwrap();
-        assert_eq!(text, "enrollment-refused");
+        assert_eq!(text, format!(r#"{{"error":"{code}"}}"#));
     }
     task.abort();
 }
@@ -937,7 +951,7 @@ async fn enrollment_permit_timeout_is_retryable_and_uncacheable() {
     assert_eq!(response.headers()[header::RETRY_AFTER], "1");
     assert_eq!(
         to_bytes(response.into_body(), 256).await.unwrap(),
-        "enrollment-busy"
+        r#"{"error":"enrollment-busy"}"#
     );
     assert_eq!(server.gate.available_operations(), 0);
     drop(permit);
@@ -967,7 +981,6 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
         vault: m.genesis().context().vault_id,
         genesis: m.genesis().commitment(),
         device: seed.genesis().device_id(),
-        credential_version: 1,
         head: m.head(),
     };
     let client = Client::new(&origin).unwrap();
@@ -1043,7 +1056,7 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
         .await
         .err()
         .unwrap();
-    assert!(is_stale(&stale));
+    assert!(enrollment::is_stale(&stale));
     context.device = seed.genesis().device_id();
     for op in [
         Operation::PrepareManagement {
@@ -1067,7 +1080,7 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
             .await
             .err()
             .unwrap();
-        assert!(!is_stale(&e));
+        assert!(!enrollment::is_stale(&e));
     }
     let pending = m.append(&[], &[], &revoke).unwrap();
     context.device = joiner.device();
@@ -1106,7 +1119,6 @@ async fn management_loopback_authenticates_removed_seed_before_stale_hint() {
                 vault: m.genesis().context().vault_id,
                 genesis: m.genesis().commitment(),
                 device: seed.genesis().device_id(),
-                credential_version: 1,
                 head: rotated.head(),
                 bearer: seed.bearer()
             })
@@ -1511,7 +1523,10 @@ async fn only_authentication_refusals_read_as_access_refusals() {
         ),
     ];
     for (status, body, expected, refusal) in cases {
-        let app = Router::new().route(PATH, post(move || async move { (status, body) }));
+        let app = Router::new().route(
+            PATH,
+            post(move || async move { crate::http_admission::refusal(status, body) }),
+        );
         let (origin, task) = e2ee_http::serve(app, "127.0.0.1:0").await;
         let error = Client::new(&origin)
             .unwrap()

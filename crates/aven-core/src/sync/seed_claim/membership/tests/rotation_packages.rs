@@ -207,7 +207,6 @@ fn revoke_requires_sorted_active_targets_and_predecessor_authority() {
         vault: f.seed.genesis.context.vault_id,
         genesis: f.seed.genesis.commitment(),
         device: peer.device(),
-        credential_version: 1,
         head: m.head(),
         bearer: peer.bearer(),
     };

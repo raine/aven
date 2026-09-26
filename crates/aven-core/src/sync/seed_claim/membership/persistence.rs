@@ -253,7 +253,7 @@ impl Database {
         let (signer, action) = encoding::signer_action(core)?;
         ensure!(matches!(action, 4 | 5), "error membership-action");
         if !c.evidence.transitions.iter().any(|t| t.record == record) {
-            ensure!(signer == auth.device, "error enrollment-unauthorized");
+            ensure!(signer == auth.device, super::Unauthorized);
             let next = c.membership.append(&[], &[], record)?;
             let high = allocator(&mut tx, &c.membership).await?;
             ensure!(
@@ -324,7 +324,7 @@ impl Database {
         let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         let d = Declaration::from_record(&c.membership, raw)?;
-        ensure!(d.inviter == auth.device, "error enrollment-unauthorized");
+        ensure!(d.inviter == auth.device, super::Unauthorized);
         let expiry = i64::try_from(d.expiry()).context("error enrollment-expired")?;
         let high = observe(&mut tx, time).await?;
         let stored: Option<Vec<u8>> = sqlx::query_scalar(
@@ -470,7 +470,7 @@ impl Database {
         ensure!(
             inviter == auth.device
                 && Declaration::from_record(&c.membership, &declaration)?.handle == handle,
-            "error enrollment-unauthorized"
+            super::Unauthorized
         );
         let status = if admitted {
             CancelStatus::Admitted
@@ -516,7 +516,7 @@ impl Database {
             let d = Declaration::from_record(&c.membership, &declaration)?;
             ensure!(
                 d.handle == handle && d.inviter == auth.device,
-                "error enrollment-unauthorized"
+                super::Unauthorized
             );
             let high = observe(&mut tx, time).await?;
             // Cancelled and clock-expired rows stay terminal for new admission.

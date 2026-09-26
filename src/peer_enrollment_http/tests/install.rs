@@ -179,7 +179,7 @@ async fn snapshot_download_removal_fails_closed_without_stale_retry() {
     });
 
     let error = f.client.install(&f.store, &f.peer).await.unwrap_err();
-    assert!(!is_stale(&error));
+    assert!(!enrollment::is_stale(&error));
     assert_eq!(removal.await.unwrap().unwrap(), RemovalStatus::Complete);
     assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 1);
     assert_eq!(f.counts.tracked_published.load(Ordering::Relaxed), 1);
@@ -237,7 +237,7 @@ async fn snapshot_download_bounds_exhausted_stale_retry() {
     });
 
     let error = f.client.install(&f.store, &f.peer).await.unwrap_err();
-    assert!(is_stale(&error));
+    assert!(enrollment::is_stale(&error));
     assert!(first_admission.await.unwrap().unwrap());
     assert!(second_admission.await.unwrap().unwrap());
     assert_eq!(f.counts.tracked_membership.load(Ordering::Relaxed), 2);
@@ -348,20 +348,18 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
         vault: peer.vault(),
         genesis: grant.genesis,
         device: peer.device(),
-        credential_version: 1,
         head: grant.outcome,
     };
     let descriptor = sha2::Sha256::digest(&f.package.descriptor).into();
-    for field in 0..7 {
+    for field in 0..6 {
         let mut wrong = context.clone();
         let mut expected = descriptor;
         match field {
             0 => wrong.vault = [0; 32],
             1 => wrong.genesis = [0; 32],
             2 => wrong.device = [0; 32],
-            3 => wrong.credential_version = 2,
-            4 => wrong.head = [0; 32],
-            5 => expected = [0; 32],
+            3 => wrong.head = [0; 32],
+            4 => expected = [0; 32],
             _ => {}
         }
         let setup = Secret::new([7; 32]);
@@ -374,7 +372,7 @@ async fn published_http_requires_exact_current_context_and_never_restores_missin
                         component: None,
                         index: 0
                     },
-                    Some(if field == 6 { &setup } else { peer.bearer() })
+                    Some(if field == 5 { &setup } else { peer.bearer() })
                 )
                 .await
                 .is_err()
@@ -761,7 +759,6 @@ async fn control_request_cap_rejects_padding_while_large_published_image_reads_s
             vault: peer.vault(),
             genesis: grant.genesis,
             device: peer.device(),
-            credential_version: 1,
             head: grant.outcome,
         },
         descriptor: sha2::Sha256::digest(&f.package.descriptor).into(),
@@ -785,8 +782,11 @@ async fn control_request_cap_rejects_padding_while_large_published_image_reads_s
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(response.text().await.unwrap(), "enrollment-refused");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response.text().await.unwrap(),
+        r#"{"error":"enrollment-limit"}"#
+    );
 
     let reply = f.client.exchange(op, Some(peer.bearer())).await.unwrap();
     let encoded_length = serde_json::to_vec(&reply).unwrap().len();

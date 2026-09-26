@@ -14,14 +14,13 @@ pub(super) async fn authorize_current(
         sqlx::query_as("SELECT genesis, genesis_only FROM server_seed_claim WHERE singleton = 1")
             .fetch_optional(&mut *conn)
             .await?;
-    let (record, genesis_only) =
-        row.ok_or_else(|| anyhow::anyhow!("error bootstrap-unauthorized"))?;
+    let (record, genesis_only) = row.ok_or(crate::sync::bootstrap_staging::Unauthorized)?;
     let genesis = Genesis::from_record(&record)?;
     ensure!(
         genesis.authorizes_bearer(auth.bearer)
             && genesis.context().vault_id == auth.vault_id
             && genesis.commitment() == auth.genesis_commitment,
-        "error bootstrap-unauthorized"
+        crate::sync::bootstrap_staging::Unauthorized
     );
     let head: Option<(i64, Vec<u8>)> = sqlx::query_as(
         "SELECT sequence, commitment FROM server_e2ee_membership_head WHERE singleton = 1",
@@ -44,7 +43,6 @@ pub(super) async fn authorize_current(
             vault: auth.vault_id,
             genesis: auth.genesis_commitment,
             device: genesis.device_id(),
-            credential_version: 1,
             head: current.membership.head(),
             bearer: auth.bearer,
         },

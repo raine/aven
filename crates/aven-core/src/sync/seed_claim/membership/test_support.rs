@@ -39,13 +39,11 @@ impl Fixture {
         let p = seed.prepare_bootstrap_publication(&package, &key).unwrap();
         let db = Database::open(&dir.path().join("server.db")).await.unwrap();
         let setup_secret = Secret::new([5; 32]);
-        let setup = SetupAuthority::from_verifier(
-            [4; 32],
-            SetupAuthority::verifier([4; 32], &setup_secret),
-        );
+        db.issue_e2ee_server_setup(&setup_secret, [4; 32], u64::MAX)
+            .await
+            .unwrap();
         db.admit_seed_claim(
             &seed.genesis().claim_bytes(),
-            Some(&setup),
             ClaimAuthentication::SetupSecret(&setup_secret),
         )
         .await

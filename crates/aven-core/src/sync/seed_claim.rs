@@ -457,6 +457,18 @@ impl fmt::Display for ClaimRefusal {
 
 impl std::error::Error for ClaimRefusal {}
 
+/// Server setup refused storage that already holds plaintext sync history.
+#[derive(Debug)]
+pub struct StorageNotEmpty;
+
+impl fmt::Display for StorageNotEmpty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("error e2ee-server-storage-not-empty")
+    }
+}
+
+impl std::error::Error for StorageNotEmpty {}
+
 /// Equality result, not proof of READY, active membership or physical durability.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaimResult {

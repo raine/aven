@@ -47,7 +47,6 @@ impl SeedSourceAuthority {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct IntentData {
-    version: u32,
     source: Vec<u8>,
     client: String,
     generation: i64,
@@ -75,7 +74,6 @@ impl SeedPublicationIntent {
             serde_json::from_slice(bytes).context("error seed-intent-corrupt")?;
         ensure!(
             source.0[72..] == genesis.commitment()
-                && data.version == 1
                 && data.source == source.0
                 && serde_json::to_vec(&data)? == bytes,
             "error seed-intent-source-mismatch"
@@ -454,7 +452,6 @@ impl Database {
         )?;
         let publication = seed.prepare_bootstrap_publication(&upload, key)?;
         let data = IntentData {
-            version: 1,
             source: source.0.clone(),
             client,
             generation: generation(&mut tx).await?,

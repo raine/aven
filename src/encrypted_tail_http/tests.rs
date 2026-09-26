@@ -5,7 +5,7 @@ use aven_core::{
     choices::TaskSource,
     operations::{TaskDraft, TaskUpdate},
 };
-use axum::body::to_bytes;
+use axum::{body::to_bytes, http::header, response::IntoResponse};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 struct Fixture {
@@ -37,17 +37,19 @@ async fn serve(server: Database, address: &str) -> (String, tokio::task::JoinHan
             gate: crate::http_admission::Admission::new(1),
             image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
         }));
-    let app = e2ee_http::router_with_tail(server, tail).layer(axum::middleware::from_fn(
-        |request: Request, next: axum::middleware::Next| async move {
-            use axum::body::HttpBody;
-            use std::sync::atomic::Ordering::Relaxed;
-            HTTP_REQUESTS.fetch_add(1, Relaxed);
-            HTTP_REQUEST_BYTES.fetch_add(request.body().size_hint().lower(), Relaxed);
-            let response = next.run(request).await;
-            HTTP_RESPONSE_BYTES.fetch_add(response.body().size_hint().lower(), Relaxed);
-            response
-        },
-    ));
+    let app = e2ee_http::router_with_tail(server, tail)
+        .await
+        .layer(axum::middleware::from_fn(
+            |request: Request, next: axum::middleware::Next| async move {
+                use axum::body::HttpBody;
+                use std::sync::atomic::Ordering::Relaxed;
+                HTTP_REQUESTS.fetch_add(1, Relaxed);
+                HTTP_REQUEST_BYTES.fetch_add(request.body().size_hint().lower(), Relaxed);
+                let response = next.run(request).await;
+                HTTP_RESPONSE_BYTES.fetch_add(response.body().size_hint().lower(), Relaxed);
+                response
+            },
+        ));
     e2ee_http::serve(app, address).await
 }
 async fn fixture() -> Fixture {
@@ -1418,7 +1420,6 @@ fn maximal_envelope<T: Serialize>(operation: T) -> usize {
         vault: [255; 32],
         genesis: [255; 32],
         device: [255; 32],
-        credential_version: u32::MAX,
         head: [255; 32],
         stream: [255; 32],
         descriptor: [255; 32],
@@ -1653,8 +1654,8 @@ async fn stalled_http_bodies_never_hold_operation_permits() {
     let mut admitted = tokio::net::TcpStream::connect(address).await.unwrap();
     admitted.write_all(complete.as_bytes()).await.unwrap();
     let response = read_response(&mut admitted).await;
-    assert!(response.starts_with("HTTP/1.1 409"));
-    assert!(response.ends_with("encrypted_tail_refused"));
+    assert!(response.starts_with("HTTP/1.1 400"));
+    assert!(response.ends_with(r#"{"error":"encrypted-tail-malformed"}"#));
 
     // Advance the server clock rather than waiting for a client-side timeout.
     tokio::time::pause();
@@ -1663,7 +1664,7 @@ async fn stalled_http_bodies_never_hold_operation_permits() {
     for stream in [&mut first, &mut second] {
         let response = read_response(stream).await;
         assert!(response.starts_with("HTTP/1.1 408"));
-        assert!(response.ends_with("encrypted_tail_timeout"));
+        assert!(response.ends_with(r#"{"error":"encrypted-tail-timeout"}"#));
         assert!(!response.contains(&"0".repeat(64)));
     }
     assert_eq!(server.gate.available_ingress(), ingress);
@@ -1725,11 +1726,14 @@ async fn client_retries_busy_but_not_dispatch_timeout() {
                     (
                         StatusCode::SERVICE_UNAVAILABLE,
                         [(header::RETRY_AFTER, "0")],
-                        "encrypted_tail_busy",
+                        "",
                     )
                         .into_response()
                 } else {
-                    (StatusCode::REQUEST_TIMEOUT, "encrypted_tail_timeout").into_response()
+                    crate::http_admission::refusal(
+                        StatusCode::REQUEST_TIMEOUT,
+                        "encrypted-tail-timeout",
+                    )
                 }
             }
         }),
@@ -1744,7 +1748,6 @@ async fn client_retries_busy_but_not_dispatch_timeout() {
                 vault: [0; 32],
                 genesis: [0; 32],
                 device: [0; 32],
-                credential_version: 1,
                 head: [0; 32],
                 stream: [0; 32],
                 descriptor: [0; 32],

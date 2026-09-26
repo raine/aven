@@ -81,7 +81,7 @@ impl Database {
                 valid(e.vault == context.vault && e.stream == context.stream)?;
                 ensure!(
                     !prefix(&mut tx, &e.id).await?,
-                    "error encrypted-tail-prefix-identity-collision"
+                    super::PrefixIdentityCollision
                 );
                 if let Some(old) = found(&mut tx, &e.id).await? {
                     Reply::Appended(old.mapping)

@@ -32,7 +32,6 @@ impl Peers {
                 vault: m.genesis().context().vault_id,
                 genesis: m.genesis().commitment(),
                 device,
-                credential_version: 1,
                 head: m.head(),
                 stream: m.publication().binding().stream_id,
                 descriptor: m.publication().binding().descriptor_commitment,
@@ -75,7 +74,6 @@ async fn enroll(f: &Fixture, m: &mut Membership) -> Joiner {
         vault: m.genesis().context().vault_id,
         genesis: m.genesis().commitment(),
         device: f.seed.genesis().device_id(),
-        credential_version: 1,
         head: m.head(),
         bearer: f.seed.bearer(),
     };

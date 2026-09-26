@@ -34,6 +34,18 @@ mod tests;
 use super::seed_claim::Secret;
 use serde::{Deserialize, Serialize};
 
+/// The credential does not authenticate current membership for staging.
+#[derive(Debug)]
+pub struct Unauthorized;
+
+impl std::fmt::Display for Unauthorized {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("error bootstrap-unauthorized")
+    }
+}
+
+impl std::error::Error for Unauthorized {}
+
 /// Refusal limits for the single-vault staging storage profile.
 pub const MAX_STORAGE_BYTES: u64 = 600 * 1_048_576;
 pub const MAX_CHUNKS: u64 = 4096;

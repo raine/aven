@@ -13,7 +13,6 @@ use crate::sync::{
 mod images;
 pub use images::{DrainSnapshot, IMAGES_PATH, ImageTransfer, Round};
 pub const PATH: &str = "/e2ee/tail/v1";
-const BUSY_RETRIES: usize = 3;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope<T> {
@@ -93,64 +92,24 @@ impl Client {
             operation,
         })?;
         ensure!(bytes.len() <= request_limit, "error encrypted-tail-limit");
-        let headers = vec![exchange::json_content(), exchange::bearer(bearer)];
-        let mut attempt = 0;
-        let response = loop {
-            let response = self
-                .link
-                .send(
-                    "POST",
-                    &endpoint,
-                    headers.clone(),
-                    bytes.clone(),
-                    response_limit,
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("error encrypted-tail-network outcome-unknown"))?;
-            if response.status == 200 {
-                break response;
-            }
-            let status = response.status;
-            let retry_after = response.retry_after();
-            ensure!(
-                response.body.len() <= tail::CONTROL_LIMIT,
-                "error encrypted-tail-refused"
-            );
-            let response_bytes = response.body;
-            let busy = status == 503
-                && retry_after.is_some()
-                && matches!(
-                    response_bytes.as_slice(),
-                    b"encrypted_tail_busy" | b"encrypted_image_busy"
-                );
-            if busy && attempt < BUSY_RETRIES {
-                self.link
-                    .wait(exchange::busy_retry_delay(attempt, retry_after.unwrap()))
-                    .await;
-                attempt += 1;
-                continue;
-            }
-            if response_bytes == b"membership-stale" {
-                anyhow::bail!(crate::sync::seed_claim::membership::StaleContext);
-            }
-            if response_bytes == b"prefix_identity_collision" {
-                anyhow::bail!("error encrypted-tail-prefix-identity-collision")
-            }
-            anyhow::bail!("error encrypted-tail-refused outcome-unknown")
-        };
-        ensure!(
-            response.is_json()
-                && !response.has_header("content-encoding")
-                && response
-                    .content_length()
-                    .is_none_or(|n| n <= response_limit as u64),
-            "error encrypted-tail-http"
-        );
-        ensure!(
-            response.body.len() <= response_limit,
-            "error encrypted-tail-limit"
-        );
-        let bytes = response.body;
+        let bytes = exchange::post_json(&self.link, &endpoint, Some(bearer), bytes, response_limit)
+            .await
+            .map_err(|failure| match failure {
+                exchange::Failure::Network => {
+                    anyhow::anyhow!("error encrypted-tail-network outcome-unknown")
+                }
+                exchange::Failure::Malformed => anyhow::anyhow!("error encrypted-tail-http"),
+                exchange::Failure::TooLarge => anyhow::anyhow!("error encrypted-tail-limit"),
+                exchange::Failure::Refused { code, .. } => match code.as_deref() {
+                    Some("membership-stale") => {
+                        crate::sync::seed_claim::membership::StaleContext.into()
+                    }
+                    Some("encrypted-tail-prefix-identity-collision") => {
+                        tail::PrefixIdentityCollision.into()
+                    }
+                    _ => anyhow::anyhow!("error encrypted-tail-refused outcome-unknown"),
+                },
+            })?;
         let response: Envelope<R> = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("error encrypted-tail-http"))?;
         ensure!(

@@ -6,7 +6,6 @@ fn auth<'a>(f: &Fixture, head: Hash, device: Hash, bearer: &'a Secret) -> Authen
         vault: f.seed.genesis().context().vault_id,
         genesis: f.seed.genesis().commitment(),
         device,
-        credential_version: 1,
         head,
         bearer,
     }

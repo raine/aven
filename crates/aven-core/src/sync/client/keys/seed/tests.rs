@@ -462,7 +462,7 @@ fn seed_create_failure_and_unsafe_files_do_not_replace_authority() {
 
 #[tokio::test]
 async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
-    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret};
     use std::sync::{Arc, Mutex};
     use tracing::instrument::WithSubscriber;
 
@@ -488,8 +488,10 @@ async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
     let store = isolated_store(&client, &root.path().join("keys")).await;
     let seed = store.prepare_seed_claim(&client, [9; 32]).await.unwrap();
     let setup_secret = Secret::generate().unwrap();
-    let setup =
-        SetupAuthority::from_verifier([9; 32], SetupAuthority::verifier([9; 32], &setup_secret));
+    server
+        .issue_e2ee_server_setup(&setup_secret, [9; 32], u64::MAX)
+        .await
+        .unwrap();
     let wrong_secret = Secret::generate().unwrap();
     let sink = LogSink(Arc::new(Mutex::new(Vec::new())));
     let writer = sink.clone();
@@ -502,11 +504,7 @@ async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
         tracing::info!("isolated seed claim trace capture");
         let request = seed.genesis().claim_bytes();
         let result = server
-            .admit_seed_claim(
-                &request,
-                Some(&setup),
-                ClaimAuthentication::SetupSecret(&setup_secret),
-            )
+            .admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&setup_secret))
             .await
             .unwrap();
         result.validate_pinned(seed.genesis()).unwrap();
@@ -514,21 +512,16 @@ async fn protected_seed_claim_round_trip_keeps_secrets_out_of_tracing() {
         let retry = server
             .admit_seed_claim(
                 &reopened.genesis().claim_bytes(),
-                None,
                 ClaimAuthentication::SeedBearer(reopened.bearer()),
             )
             .await
             .unwrap();
         assert_eq!(result, retry);
         let error = server
-            .admit_seed_claim(
-                &request,
-                Some(&setup),
-                ClaimAuthentication::SetupSecret(&wrong_secret),
-            )
+            .admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&wrong_secret))
             .await
             .unwrap_err();
-        format!("{error:?} {seed:?} {result:?} {setup:?}")
+        format!("{error:?} {seed:?} {result:?}")
     }
     .with_subscriber(subscriber)
     .await;

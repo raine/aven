@@ -5,7 +5,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     use crate::sync::bootstrap_staging::{
         Authentication, Budget, Component, PublishBootstrap, PutChunk, Status,
     };
-    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret};
 
     let root = tempfile::tempdir().unwrap();
     let client = Database::open(&root.path().join("client.sqlite"))
@@ -109,12 +109,13 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
     let server_path = root.path().join("server.sqlite");
     let server = Database::open(&server_path).await.unwrap();
     let setup_secret = Secret::generate().unwrap();
-    let setup =
-        SetupAuthority::from_verifier([9; 32], SetupAuthority::verifier([9; 32], &setup_secret));
+    server
+        .issue_e2ee_server_setup(&setup_secret, [9; 32], u64::MAX)
+        .await
+        .unwrap();
     server
         .admit_seed_claim(
             &seed.genesis().claim_bytes(),
-            Some(&setup),
             ClaimAuthentication::SetupSecret(&setup_secret),
         )
         .await

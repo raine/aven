@@ -10,11 +10,7 @@
 //! bounds concurrent core materialization; busy callers retry a bounded number
 //! of times. No request tracing, credential redirects or cancellation.
 
-use crate::{
-    http_admission::{self, Outcome},
-    protected_local_keys::ProtectedLocalKeyStore,
-    sync_http::HttpDriver,
-};
+use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, sync_http::HttpDriver};
 use anyhow::{Result, ensure};
 pub(crate) use aven_core::sync::client::bootstrap::{
     Envelope, Operation, PATH, REQUEST_LIMIT, RESPONSE_LIMIT, Reply,
@@ -24,100 +20,72 @@ use aven_core::{
     sync::{
         bootstrap_staging as staging,
         client::bootstrap,
-        seed_claim::{ClaimAuthentication, ClaimRefusal, Genesis, Secret, SetupAuthority},
+        seed_claim::{ClaimAuthentication, ClaimRefusal, Genesis, Secret},
     },
 };
 use axum::{
     Router,
     body::Bytes,
     extract::{Request, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, StatusCode},
+    response::Response,
     routing::post,
 };
 use std::{sync::Arc, time::Duration};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
+const CODES: http_admission::Codes = http_admission::codes!("bootstrap");
 
 struct Server {
     database: Database,
-    setup: Option<SetupAuthority>,
     policy: staging::PublicationPolicy,
     admission: http_admission::Admission,
 }
 
 /// A dedicated router with no plaintext routes or legacy-token authentication.
 /// Its database must be isolated from a plaintext server and other routers.
-/// Without an explicit `setup`, claims use the storage's unexpired issued verifier.
+/// Claims use the storage's unexpired issued setup verifier.
 /// Bind loopback for local construction, or terminate TLS before remote access.
-pub fn router(
-    database: Database,
-    setup: Option<SetupAuthority>,
-    policy: staging::PublicationPolicy,
-) -> Router {
+pub fn router(database: Database, policy: staging::PublicationPolicy) -> Router {
     Router::new()
         .route(PATH, post(handle))
-        .fallback(|| async { refusal(StatusCode::NOT_FOUND) })
-        .method_not_allowed_fallback(|| async { refusal(StatusCode::METHOD_NOT_ALLOWED) })
+        .fallback(|| async { http_admission::refusal(StatusCode::NOT_FOUND, "not-found") })
+        .method_not_allowed_fallback(|| async {
+            http_admission::refusal(StatusCode::METHOD_NOT_ALLOWED, "method-not-allowed")
+        })
         .with_state(Arc::new(Server {
             database,
-            setup,
             policy,
             admission: http_admission::Admission::new(1),
         }))
 }
 
-fn refusal(status: StatusCode) -> Response {
-    refusal_with(status, "bootstrap-refused")
-}
-
-fn refusal_with(status: StatusCode, code: &'static str) -> Response {
-    (
-        status,
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        format!("{{\"error\":\"{code}\"}}"),
-    )
-        .into_response()
-}
-
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    match http_admission::dispatch(
+    let server = &*server;
+    let outcome = http_admission::dispatch(
         &server.admission,
         TIMEOUT,
         request,
         REQUEST_LIMIT,
-        |headers, bytes| handle_bounded(&server, headers, bytes),
+        |headers, bytes| handle_bounded(server, headers, bytes),
     )
-    .await
-    {
-        Outcome::Dispatched(response) => response,
-        Outcome::DispatchTimeout => refusal(StatusCode::REQUEST_TIMEOUT),
-        Outcome::PermitTimeout => {
-            let mut response = refusal(StatusCode::SERVICE_UNAVAILABLE);
-            http_admission::mark_busy(&mut response);
-            response
-        }
-    }
+    .await;
+    http_admission::respond(&CODES, outcome)
+}
+
+fn framing(
+    headers: &HeaderMap,
+    bytes: Option<Bytes>,
+) -> Result<(Secret, Envelope), http_admission::Refusal> {
+    let bytes = CODES.json_body(headers, bytes)?;
+    let secret = CODES.bearer(headers)?;
+    Ok((secret, CODES.parse(&bytes)?))
 }
 
 async fn handle_bounded(server: &Server, headers: HeaderMap, bytes: Option<Bytes>) -> Response {
-    if !http_admission::is_json(&headers) {
-        return refusal(StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    }
-    let Some(secret) = headers
-        .get(header::AUTHORIZATION)
-        .and_then(http_admission::bearer)
-    else {
-        return refusal(StatusCode::UNAUTHORIZED);
-    };
-    let Some(bytes) = bytes else {
-        return refusal(StatusCode::PAYLOAD_TOO_LARGE);
-    };
-    let Ok(envelope) = serde_json::from_slice::<Envelope>(&bytes) else {
-        return refusal(StatusCode::BAD_REQUEST);
+    let (secret, envelope) = match framing(&headers, bytes) {
+        Ok(framed) => framed,
+        Err(refusal) => return http_admission::operation_refusal(&CODES, &refusal.into()),
     };
     let claim = matches!(
         &envelope.operation,
@@ -129,29 +97,36 @@ async fn handle_bounded(server: &Server, headers: HeaderMap, bytes: Option<Bytes
         // other claim error, such as a storage timeout, leaves the outcome
         // unknown so the claimant keeps its authority and retries.
         Err(error) if claim => {
-            let code = match error.downcast_ref::<ClaimRefusal>() {
-                Some(ClaimRefusal::Unauthorized { claimed: false }) => {
-                    "bootstrap-setup-invitation-rejected"
-                }
-                Some(ClaimRefusal::Expired) => "bootstrap-setup-invitation-expired",
-                Some(_) => "bootstrap-storage-already-claimed",
-                None => return refusal(StatusCode::CONFLICT),
+            return match error.downcast_ref::<ClaimRefusal>() {
+                Some(ClaimRefusal::Unauthorized { claimed: false }) => http_admission::refusal(
+                    StatusCode::FORBIDDEN,
+                    "bootstrap-setup-invitation-rejected",
+                ),
+                Some(ClaimRefusal::Expired) => http_admission::refusal(
+                    StatusCode::FORBIDDEN,
+                    "bootstrap-setup-invitation-expired",
+                ),
+                Some(_) => claimed(),
+                None => http_admission::operation_refusal(&CODES, &error),
             };
-            return refusal_with(StatusCode::CONFLICT, code);
         }
-        Err(error) if error.to_string() == "error bootstrap-unauthorized" => {
-            let code = match server.database.e2ee_server_is_claimed().await {
-                Ok(true) => "bootstrap-storage-already-claimed",
-                Ok(false) => "bootstrap-setup-invitation-rejected",
-                Err(_) => return refusal(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(error) if error.downcast_ref::<staging::Unauthorized>().is_some() => {
+            return match server.database.e2ee_server_is_claimed().await {
+                Ok(true) => claimed(),
+                Ok(false) => http_admission::refusal(
+                    StatusCode::FORBIDDEN,
+                    "bootstrap-setup-invitation-rejected",
+                ),
+                Err(error) => http_admission::operation_refusal(&CODES, &error),
             };
-            return refusal_with(StatusCode::CONFLICT, code);
         }
-        Err(_) => return refusal(StatusCode::CONFLICT),
+        Err(error) => return http_admission::operation_refusal(&CODES, &error),
     };
-    http_admission::json(&reply, RESPONSE_LIMIT)
-        .map(http_admission::no_store)
-        .unwrap_or_else(|| refusal(StatusCode::INTERNAL_SERVER_ERROR))
+    http_admission::reply(&CODES, &reply, RESPONSE_LIMIT)
+}
+
+fn claimed() -> Response {
+    http_admission::refusal(StatusCode::CONFLICT, "bootstrap-storage-already-claimed")
 }
 
 async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply> {
@@ -178,9 +153,7 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
             } else {
                 ClaimAuthentication::SeedBearer(secret)
             };
-            let result = db
-                .admit_seed_claim(bytes, server.setup.as_ref(), authentication)
-                .await?;
+            let result = db.admit_seed_claim(bytes, authentication).await?;
             Reply::Claimed {
                 vault: result.vault_id,
                 claim: result.claim_id,

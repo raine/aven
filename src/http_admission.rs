@@ -1,13 +1,14 @@
 use std::{future::Future, time::Duration};
 
-use aven_core::sync::seed_claim::Secret;
+use aven_core::sync::seed_claim::{Secret, membership};
 use axum::{
     body::{Bytes, to_bytes},
     extract::Request,
-    http::{HeaderMap, HeaderValue, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use std::fmt;
 use tokio::sync::Semaphore;
 
 /// Requests collecting or holding a body per router. Callers beyond it are
@@ -88,10 +89,161 @@ where
     outcome
 }
 
-pub(crate) fn mark_busy(response: &mut Response) {
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+/// A refusal with a `{"error":"<code>"}` body. Statuses follow meaning: 400
+/// malformed, 401 unauthenticated, 403 forbidden, 408 timeout, 409 stale or
+/// conflicting, 413 too large, 415 wrong content type, 500 server fault and
+/// 503 busy with `Retry-After`. Clients act on the code, not the status.
+pub(crate) fn refusal(status: StatusCode, code: &str) -> Response {
+    no_store(
+        (
+            status,
+            [(header::CONTENT_TYPE, "application/json")],
+            serde_json::json!({ "error": code }).to_string(),
+        )
+            .into_response(),
+    )
+}
+
+/// A request refused before or during its operation, carried through
+/// `anyhow` so operation code can return it with `?`.
+#[derive(Debug)]
+pub(crate) struct Refusal {
+    status: StatusCode,
+    code: &'static str,
+}
+
+impl Refusal {
+    pub(crate) fn new(status: StatusCode, code: &'static str) -> Self {
+        Self { status, code }
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "error {}", self.code)
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+/// Error codes of one router, each prefixed with its family name.
+pub(crate) struct Codes {
+    /// 415: the body is not uncompressed JSON.
+    pub(crate) content_type: &'static str,
+    /// 401: a required bearer credential is missing or malformed.
+    pub(crate) credential: &'static str,
+    /// 413: the body exceeds its limit.
+    pub(crate) limit: &'static str,
+    /// 400: the body does not parse as a request.
+    pub(crate) malformed: &'static str,
+    /// 400: the operation refused a well-formed request.
+    pub(crate) refused: &'static str,
+    /// 403: the credential may not perform the operation.
+    pub(crate) unauthorized: &'static str,
+    /// 408: the body or the operation did not finish in time.
+    pub(crate) timeout: &'static str,
+    /// 500: storage failed or the reply exceeded its limit.
+    pub(crate) server_error: &'static str,
+    /// 503: every permit is taken; retry after `Retry-After`.
+    pub(crate) busy: &'static str,
+}
+
+/// The [`Codes`] of a router family, e.g. `codes!("enrollment")`.
+macro_rules! codes {
+    ($family:literal) => {
+        $crate::http_admission::Codes {
+            content_type: concat!($family, "-content-type"),
+            credential: concat!($family, "-credential"),
+            limit: concat!($family, "-limit"),
+            malformed: concat!($family, "-malformed"),
+            refused: concat!($family, "-refused"),
+            unauthorized: concat!($family, "-unauthorized"),
+            timeout: concat!($family, "-timeout"),
+            server_error: concat!($family, "-server-error"),
+            busy: concat!($family, "-busy"),
+        }
+    };
+}
+pub(crate) use codes;
+
+impl Codes {
+    /// An uncompressed JSON body within the router's collection limit.
+    pub(crate) fn json_body(
+        &self,
+        headers: &HeaderMap,
+        bytes: Option<Bytes>,
+    ) -> Result<Bytes, Refusal> {
+        if !is_json(headers) {
+            return Err(Refusal::new(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                self.content_type,
+            ));
+        }
+        bytes.ok_or(Refusal::new(StatusCode::PAYLOAD_TOO_LARGE, self.limit))
+    }
+
+    /// A present `Authorization` header that must be a valid bearer.
+    pub(crate) fn optional_bearer(&self, headers: &HeaderMap) -> Result<Option<Secret>, Refusal> {
+        headers
+            .get(header::AUTHORIZATION)
+            .map(|value| bearer(value).ok_or_else(|| self.missing_credential()))
+            .transpose()
+    }
+
+    pub(crate) fn bearer(&self, headers: &HeaderMap) -> Result<Secret, Refusal> {
+        self.optional_bearer(headers)?
+            .ok_or_else(|| self.missing_credential())
+    }
+
+    pub(crate) fn missing_credential(&self) -> Refusal {
+        Refusal::new(StatusCode::UNAUTHORIZED, self.credential)
+    }
+
+    pub(crate) fn too_large(&self) -> Refusal {
+        Refusal::new(StatusCode::PAYLOAD_TOO_LARGE, self.limit)
+    }
+
+    pub(crate) fn parse<T: serde::de::DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, Refusal> {
+        serde_json::from_slice(bytes)
+            .map_err(|_| Refusal::new(StatusCode::BAD_REQUEST, self.malformed))
+    }
+}
+
+/// The refusal for an operation error. Errors the operation did not
+/// classify are refusals of a well-formed request, except storage faults.
+pub(crate) fn operation_refusal(codes: &Codes, error: &anyhow::Error) -> Response {
+    if let Some(known) = error.downcast_ref::<Refusal>() {
+        refusal(known.status, known.code)
+    } else if error.downcast_ref::<membership::StaleContext>().is_some() {
+        refusal(StatusCode::CONFLICT, "membership-stale")
+    } else if error.downcast_ref::<membership::Unauthorized>().is_some() {
+        refusal(StatusCode::FORBIDDEN, codes.unauthorized)
+    } else if aven_core::db::is_storage_error(error) {
+        refusal(StatusCode::INTERNAL_SERVER_ERROR, codes.server_error)
+    } else {
+        refusal(StatusCode::BAD_REQUEST, codes.refused)
+    }
+}
+
+/// The response for an admission outcome whose operation produced one.
+pub(crate) fn respond(codes: &Codes, outcome: Outcome<Response>) -> Response {
+    match outcome {
+        Outcome::Dispatched(response) => no_store(response),
+        Outcome::DispatchTimeout => refusal(StatusCode::REQUEST_TIMEOUT, codes.timeout),
+        Outcome::PermitTimeout => {
+            let mut response = refusal(StatusCode::SERVICE_UNAVAILABLE, codes.busy);
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+            response
+        }
+    }
+}
+
+/// A JSON reply, or a server fault when it exceeds `limit` bytes.
+pub(crate) fn reply(codes: &Codes, reply: &impl Serialize, limit: usize) -> Response {
+    json(reply, limit)
+        .unwrap_or_else(|| refusal(StatusCode::INTERNAL_SERVER_ERROR, codes.server_error))
 }
 
 /// Whether the request declares an uncompressed JSON body.

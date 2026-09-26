@@ -10,7 +10,6 @@ pub(super) fn authority() -> Authority {
             vault: b.vault_id,
             genesis: membership.genesis().commitment(),
             device: [3; 32],
-            credential_version: 1,
             head: membership.head(),
             stream: b.stream_id,
             descriptor: b.descriptor_commitment,

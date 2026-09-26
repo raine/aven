@@ -64,7 +64,7 @@ async fn setup() -> Journey {
         .await
         .unwrap();
     let (origin, server_task) =
-        e2ee_http::serve(e2ee_http::router(server.clone()), "127.0.0.1:0").await;
+        e2ee_http::serve(e2ee_http::router(server.clone()).await, "127.0.0.1:0").await;
     e2ee_http::adopt(&origin, &a_db, &a_store, &authority).await;
     let a = Node {
         db: a_db,
@@ -767,7 +767,8 @@ async fn restart_server(journey: &mut Journey) {
     journey.server_task.abort();
     let _ = (&mut journey.server_task).await;
     let server = Database::open(journey.server.path()).await.unwrap();
-    let (origin, server_task) = e2ee_http::serve(e2ee_http::router(server.clone()), &address).await;
+    let (origin, server_task) =
+        e2ee_http::serve(e2ee_http::router(server.clone()).await, &address).await;
     assert_eq!(origin, journey.origin);
     journey.server_task = server_task;
     let old = std::mem::replace(&mut journey.server, server);

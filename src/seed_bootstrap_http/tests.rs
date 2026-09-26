@@ -1,11 +1,11 @@
 use super::*;
 use crate::{
     protected_local_keys::tests::isolated_store,
-    test_support::e2ee_http::{self, fixture, setup},
+    test_support::e2ee_http::{self, fixture},
 };
 use aven_core::sync::bootstrap_format::Package;
 use aven_core::sync::client::bootstrap::components;
-use axum::body::to_bytes;
+use axum::{body::to_bytes, http::header};
 use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -64,7 +64,8 @@ async fn client_retries_retryable_busy_response() {
 }
 
 async fn serve(db: Database) -> (Client, tokio::task::JoinHandle<()>) {
-    let app = router(db, Some(setup()), Default::default());
+    e2ee_http::issue_setup(&db).await;
+    let app = router(db, Default::default());
     let (origin, task) = e2ee_http::serve(app, "127.0.0.1:0").await;
     (Client::new(&origin).unwrap(), task)
 }
@@ -161,7 +162,7 @@ async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let mut conn = aven_core::test_support::acquire(&server).await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM server_seed_claim")
         .fetch_one(&mut *conn)
@@ -290,9 +291,17 @@ async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
         .await
         .is_err()
     );
-    for bytes in [
-        b"{\"invalid\":true}".to_vec(),
-        vec![b' '; REQUEST_LIMIT + 1],
+    for (bytes, status, code) in [
+        (
+            b"{\"invalid\":true}".to_vec(),
+            StatusCode::BAD_REQUEST,
+            "bootstrap-malformed",
+        ),
+        (
+            vec![b' '; REQUEST_LIMIT + 1],
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "bootstrap-limit",
+        ),
     ] {
         let response = http
             .http
@@ -303,13 +312,10 @@ async fn loopback_rejects_bad_authority_context_and_bytes_without_mutation() {
             .send()
             .await
             .unwrap();
-        assert!(matches!(
-            response.status(),
-            StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE
-        ));
+        assert_eq!(response.status(), status);
         assert_eq!(
             response.text().await.unwrap(),
-            "{\"error\":\"bootstrap-refused\"}"
+            format!("{{\"error\":\"{code}\"}}")
         );
     }
     assert_eq!(
@@ -655,7 +661,8 @@ async fn server_worker() {
     let root = PathBuf::from(std::env::var_os("AVEN_HTTP_TEST_ROOT").unwrap());
     let fault = std::env::var("AVEN_HTTP_TEST_FAULT").unwrap();
     let database = Database::open(&root.join("server.sqlite")).await.unwrap();
-    let app = router(database, Some(setup()), Default::default()).layer(axum::middleware::from_fn(
+    e2ee_http::issue_setup(&database).await;
+    let app = router(database, Default::default()).layer(axum::middleware::from_fn(
         move |request: Request, next: axum::middleware::Next| {
             let fault = fault.clone();
             async move {
@@ -713,22 +720,22 @@ async fn invalid_http_outcome_preserves_sealed_intent_and_capture_until_verified
     let server = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
-    let app =
-        router(server.clone(), Some(setup()), Default::default()).layer(axum::middleware::from_fn(
-            |request: Request, next: axum::middleware::Next| async move {
-                let response = next.run(request).await;
-                let (parts, body) = response.into_parts();
-                let bytes = to_bytes(body, RESPONSE_LIMIT).await.unwrap();
-                let replacement = match serde_json::from_slice::<Reply>(&bytes) {
-                    Ok(Reply::Published(mut record)) => {
-                        *record.last_mut().unwrap() ^= 1;
-                        serde_json::to_vec(&Reply::Published(record)).unwrap()
-                    }
-                    _ => bytes.to_vec(),
-                };
-                Response::from_parts(parts, axum::body::Body::from(replacement))
-            },
-        ));
+    e2ee_http::issue_setup(&server).await;
+    let app = router(server.clone(), Default::default()).layer(axum::middleware::from_fn(
+        |request: Request, next: axum::middleware::Next| async move {
+            let response = next.run(request).await;
+            let (parts, body) = response.into_parts();
+            let bytes = to_bytes(body, RESPONSE_LIMIT).await.unwrap();
+            let replacement = match serde_json::from_slice::<Reply>(&bytes) {
+                Ok(Reply::Published(mut record)) => {
+                    *record.last_mut().unwrap() ^= 1;
+                    serde_json::to_vec(&Reply::Published(record)).unwrap()
+                }
+                _ => bytes.to_vec(),
+            };
+            Response::from_parts(parts, axum::body::Body::from(replacement))
+        },
+    ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let http = Client::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let task = tokio::spawn(async move {

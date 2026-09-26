@@ -8,7 +8,7 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     use crate::sync::bootstrap_staging::{
         Authentication, Budget, Component, PublishBootstrap, PutChunk, Status,
     };
-    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret};
 
     let root = tempfile::tempdir().unwrap();
     let client = Database::open(&root.path().join("client.sqlite"))
@@ -254,12 +254,13 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
     let server_path = root.path().join("server.sqlite");
     let server = Database::open(&server_path).await.unwrap();
     let setup_secret = Secret::generate().unwrap();
-    let setup =
-        SetupAuthority::from_verifier([9; 32], SetupAuthority::verifier([9; 32], &setup_secret));
+    server
+        .issue_e2ee_server_setup(&setup_secret, [9; 32], u64::MAX)
+        .await
+        .unwrap();
     server
         .admit_seed_claim(
             &seed.genesis().claim_bytes(),
-            Some(&setup),
             ClaimAuthentication::SetupSecret(&setup_secret),
         )
         .await
@@ -879,16 +880,15 @@ async fn publish_empty_package(
     use crate::sync::bootstrap_staging::{
         Authentication, Budget, Component, PublishBootstrap, PutChunk,
     };
-    use crate::sync::seed_claim::{ClaimAuthentication, Secret, SetupAuthority};
+    use crate::sync::seed_claim::{ClaimAuthentication, Secret};
     let secret = Secret::generate().unwrap();
-    let setup = SetupAuthority::from_verifier(
-        seed.genesis().setup_id(),
-        SetupAuthority::verifier(seed.genesis().setup_id(), &secret),
-    );
+    server
+        .issue_e2ee_server_setup(&secret, seed.genesis().setup_id(), u64::MAX)
+        .await
+        .unwrap();
     server
         .admit_seed_claim(
             &seed.genesis().claim_bytes(),
-            Some(&setup),
             ClaimAuthentication::SetupSecret(&secret),
         )
         .await

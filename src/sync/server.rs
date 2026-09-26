@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
-use aven_core::sync::seed_claim::Secret;
+use aven_core::sync::seed_claim::{Secret, StorageNotEmpty};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
@@ -57,9 +57,12 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
             super::encrypted::unix_now()? + SETUP_INVITATION_SECONDS,
         )
         .await
-        .map_err(|error| match error.to_string().as_str() {
-            "error e2ee-server-storage-not-empty" => error.context(UNSUPPORTED_STORAGE),
-            _ => error,
+        .map_err(|error| {
+            if error.is::<StorageNotEmpty>() {
+                error.context(UNSUPPORTED_STORAGE)
+            } else {
+                error
+            }
         })?;
     let invitation = super::encrypted::SetupInvitation {
         server,
@@ -129,7 +132,7 @@ async fn serve(
         .verify_membership_history()
         .await
         .map_err(|error| error.context(INVALID_MEMBERSHIP))?;
-    let app = crate::seed_bootstrap_http::router(database.clone(), None, Default::default())
+    let app = crate::seed_bootstrap_http::router(database.clone(), Default::default())
         .merge(crate::peer_enrollment_http::router(database.clone()))
         .merge(crate::encrypted_tail_http::router_with_policy(
             database,

@@ -1438,7 +1438,6 @@ impl ProtectedLocalKeyStore {
                 vault: b.vault_id,
                 genesis: inputs.membership.genesis().commitment(),
                 device: inputs.device(),
-                credential_version: 1,
                 head: inputs.membership.head(),
                 stream: b.stream_id,
                 descriptor: b.descriptor_commitment,

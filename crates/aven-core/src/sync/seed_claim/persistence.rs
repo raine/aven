@@ -12,49 +12,42 @@ const SEED_CLAIM_REFUSED: &str = "e2ee_seed_claim_refused";
 
 impl Database {
     /// Admits one immutable sequence-zero claim under operator setup authority.
-    /// Without `configured_setup`, the storage's unexpired issued verifier is
-    /// read in this claim transaction, so a concurrent reissue either precedes
-    /// the claim or finds the storage claimed.
+    /// The storage's unexpired issued verifier is read in this claim
+    /// transaction, so a concurrent reissue either precedes the claim or finds
+    /// the storage claimed.
     /// Exact authenticated retries return the original result without reissuance.
     /// This does not authorize uploads, READY, or ordinary plaintext sync.
     pub async fn admit_seed_claim(
         &self,
         request: &[u8],
-        configured_setup: Option<&SetupAuthority>,
         authentication: ClaimAuthentication<'_>,
     ) -> Result<ClaimResult> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        self.admit_seed_claim_at(request, configured_setup, authentication, now)
-            .await
+        self.admit_seed_claim_at(request, authentication, now).await
     }
 
     pub(in crate::sync::seed_claim) async fn admit_seed_claim_at(
         &self,
         request: &[u8],
-        configured_setup: Option<&SetupAuthority>,
         authentication: ClaimAuthentication<'_>,
         now: u64,
     ) -> Result<ClaimResult> {
         let incoming = codec::claim_record(request)?;
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let (persisted, expired) = match configured_setup {
-            Some(_) => (None, None),
-            None => match db::get_meta(&mut tx, SERVER_SETUP_KEY).await? {
-                Some(value) => {
-                    let (setup, expires_at) = parse_server_setup(&value)?;
-                    if now < expires_at {
-                        (Some(setup), None)
-                    } else {
-                        (None, Some(setup))
-                    }
+        let (issued, expired) = match db::get_meta(&mut tx, SERVER_SETUP_KEY).await? {
+            Some(value) => {
+                let (setup, expires_at) = parse_server_setup(&value)?;
+                if now < expires_at {
+                    (Some(setup), None)
+                } else {
+                    (None, Some(setup))
                 }
-                None => (None, None),
-            },
+            }
+            None => (None, None),
         };
-        let configured_setup = configured_setup.or(persisted.as_ref());
         let genesis_only: Option<bool> =
             sqlx::query_scalar("SELECT genesis_only FROM server_seed_claim WHERE singleton = 1")
                 .fetch_optional(&mut *tx)
@@ -73,7 +66,9 @@ impl Database {
                 expired_secret = expired
                     .as_ref()
                     .is_some_and(|setup| setup.authorizes(genesis.setup, secret));
-                configured_setup.is_some_and(|setup| setup.authorizes(genesis.setup, secret))
+                issued
+                    .as_ref()
+                    .is_some_and(|setup| setup.authorizes(genesis.setup, secret))
             }
             ClaimAuthentication::SeedBearer(token) => {
                 stored.is_some()
@@ -230,7 +225,7 @@ impl Database {
         let history: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM changes)")
             .fetch_one(&mut *tx)
             .await?;
-        ensure!(!history, "error e2ee-server-storage-not-empty");
+        ensure!(!history, super::StorageNotEmpty);
         let id = match db::get_meta(&mut tx, SERVER_SETUP_KEY).await? {
             Some(value) => parse_server_setup(&value)?.0.id,
             None => fresh_id,

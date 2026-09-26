@@ -41,7 +41,6 @@ async fn current_authority_precedes_exact_outcome_and_never_uses_historical_cred
         f.server
             .admit_seed_claim(
                 &f.seed.genesis().claim_bytes(),
-                None,
                 ClaimAuthentication::SeedBearer(f.seed.bearer())
             )
             .await

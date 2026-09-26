@@ -23,7 +23,6 @@ pub struct CreatedInvitation {
 }
 
 pub const PATH: &str = "/e2ee/enrollment/v1";
-const BUSY_RETRIES: usize = 3;
 pub const CONTROL_LIMIT: usize =
     crate::sync::base64_bytes::encoded_len(membership::MAX_RECORD_BYTES) + 4096;
 pub const PUBLISHED_RESPONSE_LIMIT: usize =
@@ -35,7 +34,6 @@ pub struct Context {
     pub vault: [u8; 32],
     pub genesis: [u8; 32],
     pub device: [u8; 32],
-    pub credential_version: u32,
     pub head: [u8; 32],
 }
 impl Context {
@@ -44,7 +42,6 @@ impl Context {
             vault: inputs.membership.genesis().context().vault_id,
             genesis: inputs.membership.genesis().commitment(),
             device: inputs.device(),
-            credential_version: 1,
             head: inputs.membership.head(),
         }
     }
@@ -53,7 +50,6 @@ impl Context {
             vault: self.vault,
             genesis: self.genesis,
             device: self.device,
-            credential_version: self.credential_version,
             head: self.head,
             bearer,
         }
@@ -155,78 +151,32 @@ impl Client {
         let bytes =
             serde_json::to_vec(&op).map_err(|_| anyhow::anyhow!("error enrollment-http"))?;
         ensure!(bytes.len() <= CONTROL_LIMIT, "error enrollment-limit");
-        let mut headers = vec![exchange::json_content()];
-        if let Some(secret) = secret {
-            headers.push(exchange::bearer(secret));
-        }
-        let mut attempt = 0;
-        let response = loop {
-            let response = self
-                .link
-                .send(
-                    "POST",
-                    &self.endpoint,
-                    headers.clone(),
-                    bytes.clone(),
-                    response_limit,
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("error enrollment-network outcome-unknown"))?;
-            if response.status == 200 {
-                break response;
-            }
-            let status = response.status;
-            let retry_after = response.retry_after();
-            ensure!(
-                response.body.len() <= 256,
-                "error enrollment-server outcome-unknown"
-            );
-            let response_bytes = response.body;
-            let busy =
-                status == 503 && response_bytes == b"enrollment-busy" && retry_after.is_some();
-            if busy && attempt < BUSY_RETRIES {
-                self.link
-                    .wait(exchange::busy_retry_delay(attempt, retry_after.unwrap()))
-                    .await;
-                attempt += 1;
-                continue;
-            }
-            if status == 409 && response_bytes == b"membership-stale" {
-                anyhow::bail!(membership::StaleContext);
-            }
-            if busy {
-                anyhow::bail!("error enrollment-busy");
-            }
-            // Only an authentication refusal says anything about this device's
-            // access; timeouts and server failures stay ordinary errors.
-            match (status, response_bytes.as_slice()) {
-                (403, b"enrollment-unauthorized") => {
-                    anyhow::bail!("error enrollment-unauthorized")
+        let bytes = exchange::post_json(&self.link, &self.endpoint, secret, bytes, response_limit)
+            .await
+            .map_err(|failure| match failure {
+                exchange::Failure::Network => {
+                    anyhow::anyhow!("error enrollment-network outcome-unknown")
                 }
-                (400, b"enrollment-refused") => {
-                    anyhow::bail!("error enrollment-refused outcome-unknown")
+                exchange::Failure::Malformed => {
+                    anyhow::anyhow!("error enrollment-server outcome-unknown")
                 }
-                (408, _) => {
-                    anyhow::bail!("error enrollment-timeout outcome-unknown")
-                }
-                _ => anyhow::bail!("error enrollment-server outcome-unknown"),
-            }
-        };
-        ensure!(
-            response.is_json() && !response.has_header("content-encoding"),
-            "error enrollment-server outcome-unknown"
-        );
-        ensure!(
-            response
-                .content_length()
-                .is_none_or(|n| n <= response_limit as u64),
-            "error enrollment-limit"
-        );
-        ensure!(
-            response.body.len() <= response_limit,
-            "error enrollment-limit"
-        );
-        let bytes = response.body;
+                exchange::Failure::TooLarge => anyhow::anyhow!("error enrollment-limit"),
+                // Only an authentication refusal says anything about this
+                // device's access; timeouts and server failures stay
+                // ordinary errors.
+                exchange::Failure::Refused { status, code } => match code.as_deref() {
+                    Some("membership-stale") => membership::StaleContext.into(),
+                    Some("enrollment-busy") => anyhow::anyhow!("error enrollment-busy"),
+                    Some("enrollment-unauthorized") => membership::Unauthorized.into(),
+                    Some("enrollment-timeout") => {
+                        anyhow::anyhow!("error enrollment-timeout outcome-unknown")
+                    }
+                    Some(_) if (400..500).contains(&status) => {
+                        anyhow::anyhow!("error enrollment-refused outcome-unknown")
+                    }
+                    _ => anyhow::anyhow!("error enrollment-server outcome-unknown"),
+                },
+            })?;
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))
     }
     /// Installs only a protected, independently enrolled peer into a fresh target.
@@ -258,7 +208,6 @@ impl Client {
             vault: peer.vault(),
             genesis: verified.genesis().commitment(),
             device: peer.device(),
-            credential_version: 1,
             head: floor.head(),
         };
         let evidence = self.membership(&initial_context, peer.bearer()).await?;
@@ -271,7 +220,6 @@ impl Client {
                 vault: peer.vault(),
                 genesis: verified.genesis().commitment(),
                 device: peer.device(),
-                credential_version: 1,
                 head: floor.head(),
             };
             loop {
@@ -640,7 +588,6 @@ impl Client {
             vault: peer.vault(),
             genesis: grant.genesis,
             device: peer.device(),
-            credential_version: 1,
             head: grant.outcome,
         };
         let evidence = self.membership(&context, peer.bearer()).await?;

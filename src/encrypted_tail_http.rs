@@ -1,12 +1,8 @@
 //! Isolated encrypted ordinary-task transport, not shipping sync configuration.
 #[cfg(test)]
 use crate::protected_local_keys::peer::TailSnapshot;
-use crate::{
-    http_admission::{self, Outcome},
-    protected_local_keys::ProtectedLocalKeyStore,
-    seed_bootstrap_http,
-};
-use anyhow::{Result, ensure};
+use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
+use anyhow::Result;
 #[cfg(test)]
 pub(crate) use aven_core::sync::client::tail::DrainSnapshot;
 #[cfg(test)]
@@ -26,8 +22,8 @@ use axum::{
     Router,
     body::Bytes,
     extract::{Request, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, StatusCode},
+    response::Response,
     routing::post,
 };
 use std::path::Path;
@@ -58,62 +54,45 @@ pub fn router_with_policy(
             image_policy,
         }))
 }
+const CODES: http_admission::Codes = http_admission::codes!("encrypted-tail");
 async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response {
-    let response = match http_admission::dispatch(
+    let server = &*server;
+    let outcome = http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
         request,
         tail::APPEND_LIMIT,
-        |headers, bytes| dispatch(&server.db, headers, bytes),
+        |headers, bytes| async move {
+            match dispatch(&server.db, headers, bytes).await {
+                Ok(reply) => http_admission::reply(&CODES, &reply, tail::RESPONSE_LIMIT),
+                Err(error)
+                    if error
+                        .downcast_ref::<tail::PrefixIdentityCollision>()
+                        .is_some() =>
+                {
+                    http_admission::refusal(
+                        StatusCode::CONFLICT,
+                        "encrypted-tail-prefix-identity-collision",
+                    )
+                }
+                Err(error) => http_admission::operation_refusal(&CODES, &error),
+            }
+        },
     )
-    .await
-    {
-        Outcome::Dispatched(Ok(reply)) => http_admission::json(&reply, tail::RESPONSE_LIMIT)
-            .unwrap_or_else(|| {
-                (StatusCode::INTERNAL_SERVER_ERROR, "encrypted_tail_refused").into_response()
-            }),
-        Outcome::Dispatched(Err(e)) => {
-            let category = if is_stale(&e) {
-                "membership-stale"
-            } else if e.to_string() == "error encrypted-tail-prefix-identity-collision" {
-                "prefix_identity_collision"
-            } else {
-                "encrypted_tail_refused"
-            };
-            (StatusCode::CONFLICT, category).into_response()
-        }
-        Outcome::DispatchTimeout => {
-            (StatusCode::REQUEST_TIMEOUT, "encrypted_tail_timeout").into_response()
-        }
-        Outcome::PermitTimeout => {
-            let mut response =
-                (StatusCode::SERVICE_UNAVAILABLE, "encrypted_tail_busy").into_response();
-            http_admission::mark_busy(&mut response);
-            response
-        }
-    };
-    http_admission::no_store(response)
+    .await;
+    http_admission::respond(&CODES, outcome)
 }
 async fn dispatch(
     db: &Database,
     headers: HeaderMap,
     bytes: Option<Bytes>,
 ) -> Result<Envelope<Reply>> {
-    ensure!(
-        http_admission::is_json(&headers),
-        "error encrypted-tail-http"
-    );
-    let secret = headers
-        .get(header::AUTHORIZATION)
-        .and_then(http_admission::bearer)
-        .ok_or_else(|| anyhow::anyhow!("error encrypted-tail-credential"))?;
-    let bytes = bytes.ok_or_else(|| anyhow::anyhow!("error encrypted-tail-limit"))?;
-    let input: Envelope<Operation> =
-        serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error encrypted-tail-http"))?;
-    ensure!(
-        matches!(input.operation, Operation::Append { .. }) || bytes.len() <= tail::CONTROL_LIMIT,
-        "error encrypted-tail-limit"
-    );
+    let bytes = CODES.json_body(&headers, bytes)?;
+    let secret = CODES.bearer(&headers)?;
+    let input: Envelope<Operation> = CODES.parse(&bytes)?;
+    if !matches!(input.operation, Operation::Append { .. }) && bytes.len() > tail::CONTROL_LIMIT {
+        return Err(CODES.too_large().into());
+    }
     let operation = db
         .encrypted_tail_exchange(&input.context, &secret, input.operation)
         .await?;
@@ -233,7 +212,3 @@ impl Client {
 
 #[cfg(test)]
 mod tests;
-
-fn is_stale(error: &anyhow::Error) -> bool {
-    error.is::<aven_core::sync::seed_claim::membership::StaleContext>()
-}

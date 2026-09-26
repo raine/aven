@@ -158,11 +158,13 @@ async fn empty_prefix_initializes_zero_allocator_and_signing_requires_authentica
         .await
         .unwrap();
     let secret = Secret::new([6; 32]);
-    let setup = SetupAuthority::from_verifier([4; 32], SetupAuthority::verifier([4; 32], &secret));
+    server
+        .issue_e2ee_server_setup(&secret, [4; 32], u64::MAX)
+        .await
+        .unwrap();
     server
         .admit_seed_claim(
             &seed.genesis().claim_bytes(),
-            Some(&setup),
             ClaimAuthentication::SetupSecret(&secret),
         )
         .await

@@ -229,21 +229,18 @@ impl Membership {
         ancestor: bool,
     ) -> Result<()> {
         ensure!(
-            auth.credential_version == 1
-                && auth.vault == self.genesis.context.vault_id
+            auth.vault == self.genesis.context.vault_id
                 && auth.genesis == self.genesis.commitment(),
-            "error enrollment-unauthorized"
+            Unauthorized
         );
-        let member = self
-            .member(&auth.device)
-            .map_err(|_| anyhow::anyhow!("error enrollment-unauthorized"))?;
+        let member = self.member(&auth.device).map_err(|_| Unauthorized)?;
         ensure!(
             bool::from(member.verifier.ct_eq(&credential_verifier(
                 auth.vault,
                 auth.device,
                 auth.bearer
             ))),
-            "error enrollment-unauthorized"
+            Unauthorized
         );
         ensure!(
             self.heads.contains(&auth.head),
@@ -372,3 +369,13 @@ impl fmt::Display for StaleContext {
     }
 }
 impl std::error::Error for StaleContext {}
+
+/// The credential or device may not perform this membership operation.
+#[derive(Debug)]
+pub struct Unauthorized;
+impl fmt::Display for Unauthorized {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("error enrollment-unauthorized")
+    }
+}
+impl std::error::Error for Unauthorized {}

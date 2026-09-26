@@ -54,7 +54,6 @@ fn auth<'a>(m: &Membership, peer: &'a Joiner) -> peer::Authentication<'a> {
         vault: m.genesis().context().vault_id,
         genesis: m.genesis().commitment(),
         device: peer.device(),
-        credential_version: 1,
         head: m.head(),
         bearer: peer.bearer(),
     }

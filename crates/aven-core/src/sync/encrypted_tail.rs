@@ -24,13 +24,24 @@ pub const PAGE_BYTES: usize = 2 * 1048576;
 pub const PAGE_COUNT: usize = 256;
 pub const RESPONSE_LIMIT: usize = PAGE_BYTES + CONTROL_LIMIT;
 
+/// An appended record's identity collides with a published prefix record.
+#[derive(Debug)]
+pub struct PrefixIdentityCollision;
+
+impl std::fmt::Display for PrefixIdentityCollision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("error encrypted-tail-prefix-identity-collision")
+    }
+}
+
+impl std::error::Error for PrefixIdentityCollision {}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
     pub vault: [u8; 32],
     pub genesis: [u8; 32],
     pub device: [u8; 32],
-    pub credential_version: u32,
     pub head: [u8; 32],
     pub stream: [u8; 32],
     pub descriptor: [u8; 32],
@@ -44,7 +55,6 @@ impl Context {
             vault: self.vault,
             genesis: self.genesis,
             device: self.device,
-            credential_version: self.credential_version,
             head: self.head,
             bearer,
         }

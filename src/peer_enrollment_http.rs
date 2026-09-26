@@ -1,10 +1,6 @@
 //! Isolated repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
-use crate::{
-    http_admission::{self, Outcome},
-    protected_local_keys::ProtectedLocalKeyStore,
-    seed_bootstrap_http,
-};
+use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
 use anyhow::{Result, ensure};
 #[cfg(test)]
 pub(crate) use aven_core::sync::client::enrollment::Context;
@@ -27,8 +23,8 @@ use axum::{
     Router,
     body::Bytes,
     extract::{Request, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
+    http::HeaderMap,
+    response::Response,
     routing::post,
 };
 #[cfg(test)]
@@ -36,6 +32,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const CODES: http_admission::Codes = http_admission::codes!("enrollment");
 struct Server {
     db: Database,
     gate: http_admission::Admission,
@@ -71,47 +68,29 @@ async fn handle(State(server): State<Arc<Server>>, request: Request) -> Response
         .map(|time| i64::try_from(time).expect("test clock fits Unix time"));
     #[cfg(not(test))]
     let time = None;
-    let response = match http_admission::dispatch(
+    let server = &*server;
+    let outcome = http_admission::dispatch(
         &server.gate,
         REQUEST_TIMEOUT,
         request,
         CONTROL_LIMIT,
-        |headers, bytes| dispatch(&server.db, headers, bytes, time),
+        |headers, bytes| async move {
+            match dispatch(&server.db, headers, bytes, time).await {
+                Ok(reply) => {
+                    let limit = match &reply {
+                        Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
+                        Reply::PreparedManagement(_) => membership::MAX_EVIDENCE_JSON_BYTES + 128,
+                        Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
+                        _ => CONTROL_LIMIT,
+                    };
+                    http_admission::reply(&CODES, &reply, limit)
+                }
+                Err(error) => http_admission::operation_refusal(&CODES, &error),
+            }
+        },
     )
-    .await
-    {
-        Outcome::Dispatched(Ok(reply)) => {
-            let limit = match &reply {
-                Reply::Membership(_) => membership::MAX_EVIDENCE_JSON_BYTES,
-                Reply::PreparedManagement(_) => membership::MAX_EVIDENCE_JSON_BYTES + 128,
-                Reply::Published(_) => PUBLISHED_RESPONSE_LIMIT,
-                _ => CONTROL_LIMIT,
-            };
-            http_admission::json(&reply, limit)
-                .unwrap_or_else(|| (StatusCode::BAD_REQUEST, "enrollment-refused").into_response())
-        }
-        Outcome::Dispatched(Err(error)) if is_stale(&error) => {
-            (StatusCode::CONFLICT, "membership-stale").into_response()
-        }
-        Outcome::Dispatched(Err(error)) if is_unauthorized(&error) => {
-            (StatusCode::FORBIDDEN, "enrollment-unauthorized").into_response()
-        }
-        Outcome::Dispatched(Err(error)) if aven_core::db::is_storage_error(&error) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "enrollment-server-error").into_response()
-        }
-        Outcome::Dispatched(Err(_)) => {
-            (StatusCode::BAD_REQUEST, "enrollment-refused").into_response()
-        }
-        Outcome::DispatchTimeout => {
-            (StatusCode::REQUEST_TIMEOUT, "enrollment-timeout").into_response()
-        }
-        Outcome::PermitTimeout => {
-            let mut response = (StatusCode::SERVICE_UNAVAILABLE, "enrollment-busy").into_response();
-            http_admission::mark_busy(&mut response);
-            response
-        }
-    };
-    http_admission::no_store(response)
+    .await;
+    http_admission::respond(&CODES, outcome)
 }
 async fn dispatch(
     db: &Database,
@@ -121,23 +100,16 @@ async fn dispatch(
 ) -> Result<Reply> {
     #[cfg(not(test))]
     let _ = time;
-    ensure!(http_admission::is_json(&headers), "error enrollment-http");
-    let credential = headers
-        .get(header::AUTHORIZATION)
-        .map(|h| {
-            http_admission::bearer(h).ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))
-        })
-        .transpose()?;
-    let bytes = bytes.ok_or_else(|| anyhow::anyhow!("error enrollment-limit"))?;
-    let op: Operation =
-        serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))?;
+    let bytes = CODES.json_body(&headers, bytes)?;
+    let credential = CODES.optional_bearer(&headers)?;
+    let op: Operation = CODES.parse(&bytes)?;
     Ok(match op {
         Operation::PrepareManagement { context } => Reply::PreparedManagement(
             db.prepare_membership_management(
                 &context.auth(
                     credential
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                        .ok_or_else(|| CODES.missing_credential())?,
                 ),
             )
             .await?,
@@ -147,7 +119,7 @@ async fn dispatch(
                 &context.auth(
                     credential
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                        .ok_or_else(|| CODES.missing_credential())?,
                 ),
                 &record,
             )
@@ -157,7 +129,7 @@ async fn dispatch(
             let auth = context.auth(
                 credential
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                    .ok_or_else(|| CODES.missing_credential())?,
             );
             #[cfg(test)]
             let status = match time {
@@ -197,7 +169,7 @@ async fn dispatch(
             let auth = context.auth(
                 credential
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                    .ok_or_else(|| CODES.missing_credential())?,
             );
             #[cfg(test)]
             let status = match time {
@@ -224,7 +196,7 @@ async fn dispatch(
             let auth = context.auth(
                 credential
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                    .ok_or_else(|| CODES.missing_credential())?,
             );
             #[cfg(test)]
             let admitted = match time {
@@ -247,7 +219,7 @@ async fn dispatch(
                 &context.auth(
                     credential
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                        .ok_or_else(|| CODES.missing_credential())?,
                 ),
                 descriptor,
                 component,
@@ -260,7 +232,7 @@ async fn dispatch(
                 &context.auth(
                     credential
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("error enrollment-credential"))?,
+                        .ok_or_else(|| CODES.missing_credential())?,
                 ),
             )
             .await?,
@@ -397,15 +369,6 @@ impl Client {
     ) -> Result<()> {
         run!(self, |client| client.refresh(store, db))
     }
-}
-fn is_stale(error: &anyhow::Error) -> bool {
-    error.is::<membership::StaleContext>()
-}
-/// Credential or membership authentication failed for this request.
-fn is_unauthorized(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.to_string() == "error enrollment-unauthorized")
 }
 #[cfg(test)]
 mod tests;

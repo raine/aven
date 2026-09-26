@@ -9,7 +9,6 @@ pub struct Authentication<'a> {
     pub vault: [u8; 32],
     pub genesis: [u8; 32],
     pub device: [u8; 32],
-    pub credential_version: u32,
     pub head: [u8; 32],
     pub bearer: &'a Secret,
 }

@@ -304,9 +304,93 @@ impl<'a, T> Session<'a, T> {
     }
 }
 
+/// Busy retries after the first attempt of one JSON exchange.
+const BUSY_RETRIES: usize = 3;
+/// Refusal bodies over this many bytes carry no readable error code.
+const REFUSAL_LIMIT: usize = 1024;
+
+/// Why a JSON exchange produced no reply.
+#[derive(Debug)]
+pub(crate) enum Failure {
+    /// No complete response arrived.
+    Network,
+    /// A non-success status with the `{"error":"<code>"}` body's code, if
+    /// readable. A busy server was already retried.
+    Refused { status: u16, code: Option<String> },
+    /// A success response that is not uncompressed JSON.
+    Malformed,
+    /// A success response over its limit.
+    TooLarge,
+}
+
+/// POSTs a JSON `body` and returns the success body of at most
+/// `response_limit` bytes. A busy server, answering 503 with `Retry-After`,
+/// is retried a bounded number of times.
+pub(crate) async fn post_json(
+    link: &Link,
+    endpoint: &url::Url,
+    credential: Option<&crate::sync::seed_claim::Secret>,
+    body: Vec<u8>,
+    response_limit: usize,
+) -> Result<Vec<u8>, Failure> {
+    let mut headers = vec![json_content()];
+    headers.extend(credential.map(bearer));
+    let mut attempt = 0;
+    loop {
+        let response = link
+            .send(
+                "POST",
+                endpoint,
+                headers.clone(),
+                body.clone(),
+                response_limit,
+            )
+            .await
+            .map_err(|TransportFailure| Failure::Network)?;
+        if response.status == 200 {
+            if !response.is_json() || response.has_header("content-encoding") {
+                return Err(Failure::Malformed);
+            }
+            if response.body.len() > response_limit
+                || response
+                    .content_length()
+                    .is_some_and(|length| length > response_limit as u64)
+            {
+                return Err(Failure::TooLarge);
+            }
+            return Ok(response.body);
+        }
+        if response.status == 503
+            && attempt < BUSY_RETRIES
+            && let Some(retry_after) = response.retry_after()
+        {
+            link.wait(busy_retry_delay(attempt, retry_after)).await;
+            attempt += 1;
+            continue;
+        }
+        return Err(Failure::Refused {
+            status: response.status,
+            code: refusal_code(&response),
+        });
+    }
+}
+
+fn refusal_code(response: &HttpResponse) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Refusal {
+        error: String,
+    }
+    if !response.is_json() || response.body.len() > REFUSAL_LIMIT {
+        return None;
+    }
+    serde_json::from_slice::<Refusal>(&response.body)
+        .ok()
+        .map(|refusal| refusal.error)
+}
+
 /// Backoff before retrying a busy server; never shorter than its
 /// `Retry-After`, capped at two seconds.
-pub(crate) fn busy_retry_delay(attempt: usize, retry_after: u64) -> Duration {
+fn busy_retry_delay(attempt: usize, retry_after: u64) -> Duration {
     let base_ms = 50_u64 << attempt.min(5);
     let mut random = [0_u8; 2];
     let _ = getrandom::fill(&mut random);

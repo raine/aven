@@ -12,7 +12,7 @@
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
-use super::exchange::{self, HttpResponse, Link};
+use super::exchange::{self, Link};
 use super::keys::ProtectedLocalKeyStore;
 use crate::db::Database;
 use crate::sync::{
@@ -23,7 +23,6 @@ use crate::sync::{
 pub const PATH: &str = "/e2ee/bootstrap/v1";
 pub const REQUEST_LIMIT: usize = base64_bytes::encoded_len(staging::MAX_REQUEST_BYTES) + 4096;
 pub const RESPONSE_LIMIT: usize = 1_048_576;
-const BUSY_RETRIES: usize = 3;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -109,28 +108,6 @@ pub struct Client {
     endpoint: url::Url,
 }
 
-fn ensure_json_response(response: &HttpResponse) -> Result<()> {
-    ensure!(
-        response.is_json() && !response.has_header("content-encoding"),
-        "error bootstrap-response"
-    );
-    ensure!(
-        response
-            .content_length()
-            .is_none_or(|length| length <= RESPONSE_LIMIT as u64),
-        "error bootstrap-response-limit"
-    );
-    Ok(())
-}
-
-fn response_bytes(response: HttpResponse) -> Result<Vec<u8>> {
-    ensure!(
-        response.body.len() <= RESPONSE_LIMIT,
-        "error bootstrap-response-limit"
-    );
-    Ok(response.body)
-}
-
 impl Client {
     pub fn new(origin: &str, link: Link) -> Result<Self> {
         Ok(Self {
@@ -159,54 +136,33 @@ impl Client {
             bytes.len() <= REQUEST_LIMIT,
             "error bootstrap-request-limit"
         );
-        let headers = vec![exchange::bearer(secret), exchange::json_content()];
-        let mut attempt = 0;
-        let response = loop {
-            let response = self
-                .link
-                .send(
-                    "POST",
-                    &self.endpoint,
-                    headers.clone(),
-                    bytes.clone(),
-                    RESPONSE_LIMIT,
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("error bootstrap-network outcome-unknown"))?;
-            if response.status == 200 {
-                break response;
+        let bytes = exchange::post_json(
+            &self.link,
+            &self.endpoint,
+            Some(secret),
+            bytes,
+            RESPONSE_LIMIT,
+        )
+        .await
+        .map_err(|failure| match failure {
+            exchange::Failure::Network => {
+                anyhow::anyhow!("error bootstrap-network outcome-unknown")
             }
-            if response.status == 503
-                && attempt < BUSY_RETRIES
-                && let Some(retry_after) = response.retry_after()
-            {
-                self.link
-                    .wait(exchange::busy_retry_delay(attempt, retry_after))
-                    .await;
-                attempt += 1;
-                continue;
-            }
-            ensure_json_response(&response)?;
-            let bytes = response_bytes(response)?;
-            let code = serde_json::from_slice::<serde_json::Value>(&bytes)
-                .ok()
-                .and_then(|value| value.get("error")?.as_str().map(str::to_owned));
-            match code.as_deref() {
+            exchange::Failure::Malformed => anyhow::anyhow!("error bootstrap-response"),
+            exchange::Failure::TooLarge => anyhow::anyhow!("error bootstrap-response-limit"),
+            exchange::Failure::Refused { code, .. } => match code.as_deref() {
                 Some("bootstrap-storage-already-claimed") => {
-                    anyhow::bail!("error bootstrap-storage-already-claimed")
+                    anyhow::anyhow!("error bootstrap-storage-already-claimed")
                 }
                 Some("bootstrap-setup-invitation-rejected") if claim => {
-                    anyhow::bail!("error bootstrap-setup-invitation-rejected")
+                    anyhow::anyhow!("error bootstrap-setup-invitation-rejected")
                 }
                 Some("bootstrap-setup-invitation-expired") if claim => {
-                    anyhow::bail!("error bootstrap-setup-invitation-expired")
+                    anyhow::anyhow!("error bootstrap-setup-invitation-expired")
                 }
-                _ => {}
-            }
-            anyhow::bail!("error bootstrap-refused outcome-unknown");
-        };
-        ensure_json_response(&response)?;
-        let bytes = response_bytes(response)?;
+                _ => anyhow::anyhow!("error bootstrap-refused outcome-unknown"),
+            },
+        })?;
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error bootstrap-response"))
     }
 

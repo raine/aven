@@ -30,13 +30,17 @@ fn authority() -> SeedAuthority {
     SeedAuthority::from_protected_storage(&bytes, context(), &key()).unwrap()
 }
 
-fn operator() -> (Secret, SetupAuthority) {
-    let secret = Secret::new([0x91; 32]);
-    let authority = SetupAuthority::from_verifier(
-        array("setup"),
-        SetupAuthority::verifier(array("setup"), &secret),
-    );
-    (secret, authority)
+fn operator_secret() -> Secret {
+    Secret::new([0x91; 32])
+}
+
+/// Issues the fixture genesis's setup ID to `db` for [`operator_secret`].
+async fn operator(db: &Database) -> Secret {
+    let secret = operator_secret();
+    db.issue_e2ee_server_setup(&secret, array("setup"), u64::MAX)
+        .await
+        .unwrap();
+    secret
 }
 
 struct FixedEntropy([u8; 32]);
@@ -246,64 +250,50 @@ async fn setup_authorization_resume_restart_and_divergent_bindings() {
     let db = Database::open(&path).await.unwrap();
     let seed = authority();
     let request = seed.genesis.claim_bytes();
-    let (secret, operator) = operator();
+    let secret = operator(&db).await;
     for authentication in [
         ClaimAuthentication::SeedBearer(seed.bearer()),
         ClaimAuthentication::SetupSecret(&Secret::new([0; 32])),
     ] {
-        assert!(
-            db.admit_seed_claim(&request, Some(&operator), authentication)
-                .await
-                .is_err()
-        );
+        assert!(db.admit_seed_claim(&request, authentication).await.is_err());
     }
-    let wrong_setup =
-        SetupAuthority::from_verifier([3; 32], SetupAuthority::verifier([3; 32], &secret));
-    assert!(
-        db.admit_seed_claim(
-            &request,
-            Some(&wrong_setup),
-            ClaimAuthentication::SetupSecret(&secret)
-        )
+    // A verifier issued for another setup ID refuses the same secret.
+    let other = Database::open(&root.path().join("other.sqlite"))
         .await
-        .is_err()
+        .unwrap();
+    other
+        .issue_e2ee_server_setup(&secret, [3; 32], u64::MAX)
+        .await
+        .unwrap();
+    assert!(
+        other
+            .admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&secret))
+            .await
+            .is_err()
     );
     let result = db
-        .admit_seed_claim(
-            &request,
-            Some(&operator),
-            ClaimAuthentication::SetupSecret(&secret),
-        )
+        .admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&secret))
         .await
         .unwrap();
     result.validate_pinned(seed.genesis()).unwrap();
     drop(db);
-    // The prior response could have been lost. Reopen with no operator config.
+    // The prior response could have been lost. Reopen and resume.
     let db = Database::open(&path).await.unwrap();
     assert_eq!(
         result,
-        db.admit_seed_claim(
-            &request,
-            None,
-            ClaimAuthentication::SeedBearer(seed.bearer())
-        )
-        .await
-        .unwrap()
+        db.admit_seed_claim(&request, ClaimAuthentication::SeedBearer(seed.bearer()))
+            .await
+            .unwrap()
     );
     assert_eq!(
         result,
-        db.admit_seed_claim(
-            &request,
-            Some(&operator),
-            ClaimAuthentication::SetupSecret(&secret)
-        )
-        .await
-        .unwrap()
+        db.admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&secret))
+            .await
+            .unwrap()
     );
     assert!(
         db.admit_seed_claim(
             &request,
-            Some(&operator),
             ClaimAuthentication::SetupSecret(&Secret::new([0; 32]))
         )
         .await
@@ -312,7 +302,6 @@ async fn setup_authorization_resume_restart_and_divergent_bindings() {
     assert!(
         db.admit_seed_claim(
             &request,
-            None,
             ClaimAuthentication::SeedBearer(&Secret::new([0; 32]))
         )
         .await
@@ -338,7 +327,6 @@ async fn setup_authorization_resume_restart_and_divergent_bindings() {
         let error = db
             .admit_seed_claim(
                 &divergent.claim_bytes(),
-                Some(&operator),
                 ClaimAuthentication::SetupSecret(&secret),
             )
             .await
@@ -349,7 +337,6 @@ async fn setup_authorization_resume_restart_and_divergent_bindings() {
     assert!(
         db.admit_seed_claim(
             &other.genesis.claim_bytes(),
-            None,
             ClaimAuthentication::SeedBearer(other.bearer())
         )
         .await
@@ -357,13 +344,9 @@ async fn setup_authorization_resume_restart_and_divergent_bindings() {
     );
     assert_eq!(
         result,
-        db.admit_seed_claim(
-            &request,
-            None,
-            ClaimAuthentication::SeedBearer(seed.bearer())
-        )
-        .await
-        .unwrap()
+        db.admit_seed_claim(&request, ClaimAuthentication::SeedBearer(seed.bearer()))
+            .await
+            .unwrap()
     );
 }
 
@@ -373,7 +356,7 @@ async fn two_connections_compete_and_failed_insert_rolls_back() {
     let path = root.path().join("server.sqlite");
     let db = Database::open(&path).await.unwrap();
     let seed = authority();
-    let (secret, operator) = operator();
+    let secret = operator(&db).await;
     let request = seed.genesis.claim_bytes();
     {
         let mut conn = db.acquire_writer().await.unwrap();
@@ -381,13 +364,9 @@ async fn two_connections_compete_and_failed_insert_rolls_back() {
             .execute(&mut *conn).await.unwrap();
     }
     assert!(
-        db.admit_seed_claim(
-            &request,
-            Some(&operator),
-            ClaimAuthentication::SetupSecret(&secret)
-        )
-        .await
-        .is_err()
+        db.admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&secret))
+            .await
+            .is_err()
     );
     {
         let mut conn = db.acquire_writer().await.unwrap();
@@ -405,14 +384,9 @@ async fn two_connections_compete_and_failed_insert_rolls_back() {
     let competitor = SeedAuthority::generate(context(), &key(), array("setup")).unwrap();
     let competing_request = competitor.genesis.claim_bytes();
     let (a, b) = tokio::join!(
-        db.admit_seed_claim(
-            &request,
-            Some(&operator),
-            ClaimAuthentication::SetupSecret(&secret)
-        ),
+        db.admit_seed_claim(&request, ClaimAuthentication::SetupSecret(&secret)),
         second.admit_seed_claim(
             &competing_request,
-            Some(&operator),
             ClaimAuthentication::SetupSecret(&secret)
         ),
     );
@@ -430,7 +404,6 @@ async fn two_connections_compete_and_failed_insert_rolls_back() {
         reopened
             .admit_seed_claim(
                 &winner.genesis.claim_bytes(),
-                None,
                 ClaimAuthentication::SeedBearer(winner.bearer())
             )
             .await
@@ -445,11 +418,10 @@ async fn server_storage_exports_and_diagnostics_exclude_secrets() {
         .await
         .unwrap();
     let seed = authority();
-    let (setup, operator) = operator();
+    let setup = operator(&db).await;
     let result = db
         .admit_seed_claim(
             &seed.genesis.claim_bytes(),
-            Some(&operator),
             ClaimAuthentication::SetupSecret(&setup),
         )
         .await
@@ -457,7 +429,7 @@ async fn server_storage_exports_and_diagnostics_exclude_secrets() {
     let exported =
         serde_json::to_vec(&db.export_data("2026-09-22T00:00:00Z".into()).await.unwrap()).unwrap();
     let debug = format!(
-        "{seed:?} {result:?} {operator:?} {:?}",
+        "{seed:?} {result:?} {:?}",
         ClaimAuthentication::SetupSecret(&setup)
     );
     let mut conn = db.acquire_reader().await.unwrap();
@@ -518,7 +490,6 @@ async fn committed_claim_resumes_after_process_exit_without_response() {
     let result = db
         .admit_seed_claim(
             &seed.genesis.claim_bytes(),
-            None,
             ClaimAuthentication::SeedBearer(seed.bearer()),
         )
         .await
@@ -535,10 +506,9 @@ async fn claim_exit_worker() {
     let db = Database::open(&std::path::PathBuf::from(root).join("server.sqlite"))
         .await
         .unwrap();
-    let (secret, operator) = operator();
+    let secret = operator(&db).await;
     db.admit_seed_claim(
         &authority().genesis.claim_bytes(),
-        Some(&operator),
         ClaimAuthentication::SetupSecret(&secret),
     )
     .await
@@ -555,7 +525,7 @@ async fn issued_server_setup_expires_and_refuses_used_storage() {
     assert!(!db.is_e2ee_server_storage().await.unwrap());
     let seed = authority();
     let request = seed.genesis.claim_bytes();
-    let (secret, _) = operator();
+    let secret = operator_secret();
     let stale = Secret::new([0x92; 32]);
     let id = db
         .issue_e2ee_server_setup(&stale, array("setup"), 100)
@@ -570,23 +540,15 @@ async fn issued_server_setup_expires_and_refuses_used_storage() {
         .await
         .unwrap();
     assert_eq!(id, array("setup"));
-    let issued = db.e2ee_server_setup(199).await.unwrap().unwrap();
+    assert!(db.e2ee_server_setup(199).await.unwrap().is_some());
     assert!(
-        db.admit_seed_claim(
-            &request,
-            Some(&issued),
-            ClaimAuthentication::SetupSecret(&stale),
-        )
-        .await
-        .is_err()
+        db.admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&stale), 199)
+            .await
+            .is_err()
     );
-    db.admit_seed_claim(
-        &request,
-        Some(&issued),
-        ClaimAuthentication::SetupSecret(&secret),
-    )
-    .await
-    .unwrap();
+    db.admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&secret), 199)
+        .await
+        .unwrap();
     let error = db
         .issue_e2ee_server_setup(&secret, [3; 32], 300)
         .await
@@ -610,11 +572,10 @@ async fn persisted_setup_is_read_in_the_claim_transaction() {
     let root = tempfile::tempdir().unwrap();
     let seed = authority();
     let request = seed.genesis.claim_bytes();
-    let (old, _) = operator();
+    let old = operator_secret();
     let new = Secret::new([0x93; 32]);
 
-    // Reissue first: the claim, with no preloaded authority as the router
-    // passes it, sees only the replacement verifier.
+    // Reissue first: the claim sees only the replacement verifier.
     let db = Database::open(&root.path().join("reissued.sqlite"))
         .await
         .unwrap();
@@ -625,16 +586,16 @@ async fn persisted_setup_is_read_in_the_claim_transaction() {
         .await
         .unwrap();
     let error = db
-        .admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&old), 100)
+        .admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&old), 100)
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), "error seed-claim-unauthorized");
     assert!(
-        db.admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&new), 200)
+        db.admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&new), 200)
             .await
             .is_err()
     );
-    db.admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&new), 100)
+    db.admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&new), 100)
         .await
         .unwrap()
         .validate_pinned(seed.genesis())
@@ -647,7 +608,7 @@ async fn persisted_setup_is_read_in_the_claim_transaction() {
     db.issue_e2ee_server_setup(&old, array("setup"), 200)
         .await
         .unwrap();
-    db.admit_seed_claim_at(&request, None, ClaimAuthentication::SetupSecret(&old), 100)
+    db.admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&old), 100)
         .await
         .unwrap();
     let error = db
@@ -662,7 +623,7 @@ async fn expired_setup_is_named_only_for_its_own_secret() {
     let root = tempfile::tempdir().unwrap();
     let seed = authority();
     let request = seed.genesis.claim_bytes();
-    let (secret, _) = operator();
+    let secret = operator_secret();
     let guess = Secret::new([0x93; 32]);
     let db = Database::open(&root.path().join("expired.sqlite"))
         .await
@@ -673,34 +634,19 @@ async fn expired_setup_is_named_only_for_its_own_secret() {
 
     let refusal = |error: anyhow::Error| *error.downcast_ref::<ClaimRefusal>().unwrap();
     let expired = db
-        .admit_seed_claim_at(
-            &request,
-            None,
-            ClaimAuthentication::SetupSecret(&secret),
-            200,
-        )
+        .admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&secret), 200)
         .await
         .unwrap_err();
     assert_eq!(refusal(expired), ClaimRefusal::Expired);
     let wrong = db
-        .admit_seed_claim_at(
-            &request,
-            None,
-            ClaimAuthentication::SetupSecret(&guess),
-            200,
-        )
+        .admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&guess), 200)
         .await
         .unwrap_err();
     assert_eq!(
         refusal(wrong),
         ClaimRefusal::Unauthorized { claimed: false }
     );
-    db.admit_seed_claim_at(
-        &request,
-        None,
-        ClaimAuthentication::SetupSecret(&secret),
-        100,
-    )
-    .await
-    .unwrap();
+    db.admit_seed_claim_at(&request, ClaimAuthentication::SetupSecret(&secret), 100)
+        .await
+        .unwrap();
 }
