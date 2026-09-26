@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::errors::is_access_refusal;
+use super::errors::{code, has_code, is_access_refusal};
 use super::exchange::Link;
 use super::host::{ClientHost, key_store};
 use super::keys::peer::InvitationProgress;
@@ -343,8 +343,8 @@ pub async fn create_invitation(
     let created = enrollment::Client::new(&server, link.clone())?
         .invite_with_status(&store, database, now + invitation_seconds())
         .await
-        .map_err(|error| match error.to_string().as_str() {
-            "error withdrawal-required-unsupported" => error.context(
+        .map_err(|error| match code(&error).as_deref() {
+            Some("withdrawal-required-unsupported") => error.context(
                 "error sync-invitation-unresolved hint=\"keys may already have been sent with the previous invitation; invite again after that device joins, or after the invitation expires and the next `aven sync` changes keys\"",
             ),
             _ => explain_change_limit(error),
@@ -616,20 +616,20 @@ pub async fn run_join(
 /// Explains why a join request could not use this invitation. Every refusal
 /// leaves the database, its device keys and earlier invitations unchanged.
 fn explain_join_refusal(error: anyhow::Error) -> anyhow::Error {
-    let hint = match error.to_string().as_str() {
-        "error enrollment-invitation-conflict" => {
+    let hint = match code(&error).as_deref() {
+        Some("enrollment-invitation-conflict") => {
             "error sync-join-invitation-conflict hint=\"this database started joining with another invitation; rerun with that invitation to resume, or pass a new invitation from the same inviting device with `aven sync join --new-invitation`\""
         }
-        "error enrollment-retry-context" => {
+        Some("enrollment-retry-context") => {
             "error sync-join-new-invitation-mismatch hint=\"a new invitation must come from the device that created the first one; run `aven sync invite` there\""
         }
-        "error enrollment-retry-unavailable" => {
+        Some("enrollment-retry-unavailable") => {
             "error sync-join-new-invitation-unavailable hint=\"joining already got past admission, so a new invitation cannot be used; rerun `aven sync join` with an invitation this database already used\""
         }
-        "error enrollment-retry-limit" => {
+        Some("enrollment-retry-limit") => {
             "error sync-join-new-invitation-limit hint=\"this database has reached its invitation limit; rerun `aven sync join` with an invitation it already used to finish if the other device accepted it, otherwise keep this database unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
         }
-        _ if error.to_string().starts_with("error shared-state-install") => {
+        Some("shared-state-install") => {
             "error sync-join-target-not-empty hint=\"data was added to this database while joining, so it cannot finish joining; keep it unchanged and join from a new empty database, for example `aven --db PATH sync join`\""
         }
         _ => return error,
@@ -680,19 +680,21 @@ pub async fn await_join(
 
 fn setup_refusal(error: &anyhow::Error) -> bool {
     matches!(
-        error.to_string().as_str(),
-        "error bootstrap-storage-already-claimed"
-            | "error bootstrap-setup-invitation-rejected"
-            | "error bootstrap-setup-invitation-expired"
+        code(error).as_deref(),
+        Some(
+            "bootstrap-storage-already-claimed"
+                | "bootstrap-setup-invitation-rejected"
+                | "bootstrap-setup-invitation-expired"
+        )
     )
 }
 
 fn explain_fenced_setup_refusal(error: anyhow::Error) -> anyhow::Error {
-    match error.to_string().as_str() {
-        "error bootstrap-setup-invitation-rejected" | "error bootstrap-setup-invitation-expired" => error.context(
+    match code(&error).as_deref() {
+        Some("bootstrap-setup-invitation-rejected" | "bootstrap-setup-invitation-expired") => error.context(
             "error sync-setup-fenced-invitation-rejected hint=\"this setup is already frozen; resume with the invitation that started setup or the newest invitation for that same server storage; if neither is available, back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
         ),
-        "error bootstrap-storage-already-claimed" => error.context(
+        Some("bootstrap-storage-already-claimed") => error.context(
             "error sync-setup-fenced-storage-claimed hint=\"the server reported that this storage belongs to another sync; this setup is frozen and resuming retries it; if it keeps failing, back up this database and restore it to a new path for a local-only copy; local editing and export still work\"",
         ),
         _ => error,
@@ -700,14 +702,14 @@ fn explain_fenced_setup_refusal(error: anyhow::Error) -> anyhow::Error {
 }
 
 fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
-    match error.to_string().as_str() {
-        "error bootstrap-storage-already-claimed" => error.context(
+    match code(&error).as_deref() {
+        Some("bootstrap-storage-already-claimed") => error.context(
             "error sync-setup-storage-already-claimed hint=\"this server already belongs to another sync; nothing here was changed; to use that sync, join it from an empty database\"",
         ),
-        "error bootstrap-setup-invitation-rejected" => error.context(
+        Some("bootstrap-setup-invitation-rejected") => error.context(
             "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; run `aven server setup` for this unclaimed storage and try its current invitation\"",
         ),
-        "error bootstrap-setup-invitation-expired" => error.context(
+        Some("bootstrap-setup-invitation-expired") => error.context(
             "error sync-setup-invitation-expired hint=\"this setup invitation expired; nothing here was changed; run `aven server setup` on the server again for a new invitation\"",
         ),
         _ => error,
@@ -716,7 +718,7 @@ fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
 
 /// The enrollment server serves one exchange at a time; pollers retry.
 fn busy(error: &anyhow::Error) -> bool {
-    error.to_string() == "error enrollment-busy"
+    has_code(error, "enrollment-busy")
 }
 
 async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) -> Result<String> {
@@ -740,10 +742,7 @@ async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) 
 const CHANGE_LIMIT: &str = "error sync-device-change-limit hint=\"this sync has reached its limit on device changes, so devices can no longer be added or removed; start a new sync to keep changing devices, see https://aventasks.dev/sync/#recover-from-device-loss\"";
 
 fn explain_change_limit(error: anyhow::Error) -> anyhow::Error {
-    if error
-        .chain()
-        .any(|cause| cause.to_string() == "error membership-change-limit")
-    {
+    if has_code(&error, "membership-change-limit") {
         error.context(CHANGE_LIMIT)
     } else {
         error
@@ -756,12 +755,12 @@ const REFUSED: &str = "error sync-server-refused hint=\"the server refused this 
 /// Explains engine refusals that ordinary rounds report while a join is
 /// unfinished or new changes wait for a key change.
 fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
-    match error.to_string().as_str() {
-        "error snapshot-not-installed" | "error enrollment-unresolved" => {
+    match code(&error).as_deref() {
+        Some("snapshot-not-installed" | "enrollment-unresolved") => {
             error.context("error sync-join-incomplete hint=\"rerun `aven sync join`\"")
         }
-        "error enrollment-unauthorized" => error.context(REFUSED),
-        "error withdrawal-rotation-required" => error.context(KEY_CHANGE_REQUIRED),
+        Some("enrollment-unauthorized") => error.context(REFUSED),
+        Some("withdrawal-rotation-required") => error.context(KEY_CHANGE_REQUIRED),
         _ => error,
     }
 }
@@ -1068,7 +1067,7 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
                         "ready"
                     }
                 }
-                Err(error) if peer && error.to_string() == "error snapshot-not-installed" => {
+                Err(error) if peer && has_code(&error, "snapshot-not-installed") => {
                     "join-incomplete"
                 }
                 Err(error) => return Err(error),

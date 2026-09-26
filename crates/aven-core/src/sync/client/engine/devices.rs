@@ -11,6 +11,7 @@ use super::{
 use crate::db::Database;
 use crate::sync::client::coordination;
 use crate::sync::client::enrollment::{self, RemovalStatus};
+use crate::sync::client::errors::{code, has_code};
 use crate::sync::client::exchange::Link;
 use crate::sync::client::host::{ClientHost, key_store};
 use crate::sync::client::keys::ProtectedLocalKeyStore;
@@ -18,7 +19,7 @@ use crate::sync::client::keys::ProtectedLocalKeyStore;
 const REMOVED: &str = "error sync-device-removed hint=\"another device removed this device from sync; its local tasks and images stay available here but can no longer sync\"";
 
 fn explain_revoked(error: anyhow::Error) -> anyhow::Error {
-    if error.to_string() == "error enrollment-revoked" {
+    if has_code(&error, "enrollment-revoked") {
         error.context(REMOVED)
     } else {
         error
@@ -82,8 +83,8 @@ pub async fn load_devices(
     let refreshed = client
         .refresh_inputs(&store, database, &mut inputs)
         .await
-        .map_err(|error| match error.to_string().as_str() {
-            "error enrollment-unauthorized" => error.context(REFUSED),
+        .map_err(|error| match code(&error).as_deref() {
+            Some("enrollment-unauthorized") => error.context(REFUSED),
             _ => explain_revoked(error),
         });
     track_access_result(database, refreshed).await?;
@@ -114,10 +115,10 @@ async fn explain_removal_error(
     target: [u8; 32],
     error: anyhow::Error,
 ) -> anyhow::Error {
-    let hint = match error.to_string().as_str() {
-        "error enrollment-revoked" => return error.context(REMOVED),
+    let hint = match code(&error).as_deref() {
+        Some("enrollment-revoked") => return error.context(REMOVED),
         // Preparing a removal refuses a target outside verified membership.
-        "error membership-signer" | "error membership-invalid" => {
+        Some("membership-signer" | "membership-invalid") => {
             match store.active_inputs(database, server).await {
                 Ok(inputs) if !inputs.membership.has_device(target) => {
                     "error sync-device-not-found hint=\"the device is not in sync; list devices with `aven sync device list`\""
@@ -125,11 +126,11 @@ async fn explain_removal_error(
                 _ => return error,
             }
         }
-        "error membership-change-limit" => return explain_change_limit(error),
-        "error management-unfinished" => {
+        Some("membership-change-limit") => return explain_change_limit(error),
+        Some("management-unfinished") => {
             "error sync-device-removal-unfinished hint=\"an earlier device removal from this device is unfinished; run `aven sync` to finish it, then retry\""
         }
-        "error enrollment-unauthorized" => {
+        Some("enrollment-unauthorized") => {
             "error sync-device-removal-incomplete hint=\"rerun the same command; it resumes this removal. If the server keeps refusing, another device may have removed this device from sync\""
         }
         _ => {
@@ -206,8 +207,8 @@ pub async fn finish_removal(
     let finished = client
         .finish_pending_management(&store, database)
         .await
-        .map_err(|error| match error.to_string().as_str() {
-            "error enrollment-unauthorized" => error.context(REFUSED),
+        .map_err(|error| match code(&error).as_deref() {
+            Some("enrollment-unauthorized") => error.context(REFUSED),
             _ => explain_revoked(error),
         });
     track_access_result(database, finished).await?;

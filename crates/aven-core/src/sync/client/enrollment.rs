@@ -563,7 +563,9 @@ impl Client {
                 Ok(_) => {
                     failed.get_or_insert(anyhow::anyhow!("error enrollment-response"));
                 }
-                Err(error) if error.to_string() == "error enrollment-busy" => busy = Some(error),
+                Err(error) if super::errors::has_code(&error, "enrollment-busy") => {
+                    busy = Some(error)
+                }
                 Err(error) => {
                     failed.get_or_insert(error);
                 }

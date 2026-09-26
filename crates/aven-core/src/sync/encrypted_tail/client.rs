@@ -516,11 +516,9 @@ impl Database {
         let result = self
             .commit_encrypted_tail_outcome(authority, accepted)
             .await;
-        if result
-            .as_ref()
-            .err()
-            .is_some_and(|error| error.to_string() == "error encrypted-tail-same-id-divergence")
-        {
+        if result.as_ref().err().is_some_and(|error| {
+            crate::sync::client::errors::has_code(error, "encrypted-tail-same-id-divergence")
+        }) {
             let mut conn = self.acquire_writer().await?;
             sqlx::query("UPDATE local_e2ee_outbox SET blocked = 1 WHERE operation_id = ?")
                 .bind(&accepted.mapping.operation_id)

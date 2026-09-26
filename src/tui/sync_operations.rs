@@ -80,16 +80,27 @@ pub(crate) struct OperationFailure {
     pub(crate) kind: OperationKind,
     pub(crate) message: String,
     pub(crate) details: String,
+    pub(crate) signal: Option<FailureSignal>,
+}
+
+/// An error code in the failure chain that changes which actions the Sync
+/// dialog offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailureSignal {
+    JoinTimedOut,
+    /// The engine reported an earlier removal that must finish first.
+    RemovalUnfinished,
+    SetupStorageClaimed,
+    SetupInvitationRefused,
 }
 
 impl OperationFailure {
     pub(crate) fn join_timed_out(&self) -> bool {
-        self.kind == OperationKind::Join && self.details.contains("error sync-join-timeout")
+        self.kind == OperationKind::Join && self.signal == Some(FailureSignal::JoinTimedOut)
     }
 
-    /// The engine reported an earlier removal that must finish first.
     pub(crate) fn removal_unfinished(&self) -> bool {
-        self.details.contains("error management-unfinished")
+        self.signal == Some(FailureSignal::RemovalUnfinished)
     }
 }
 

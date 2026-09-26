@@ -200,10 +200,9 @@ impl Client {
                             .adopt_refresh(db, &mut inputs, dispatch.evidence)
                             .await;
                         ensure!(
-                            result
-                                .as_ref()
-                                .err()
-                                .is_some_and(|e| e.to_string() == "error enrollment-revoked"),
+                            result.as_ref().err().is_some_and(|e| {
+                                crate::sync::client::errors::has_code(e, "enrollment-revoked")
+                            }),
                             "error management-self-revoke"
                         );
                         return Ok(RemovalStatus::SelfRevoked);

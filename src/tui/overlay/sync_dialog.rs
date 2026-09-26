@@ -9,7 +9,9 @@ use zeroize::Zeroizing;
 
 use crate::sync::encrypted::{InvitationCheck, LocalPhase, SetupPreview};
 use crate::tui::store::TuiSyncStatus;
-use crate::tui::sync_operations::{OperationFailure, OperationKind, OperationResult, SyncActivity};
+use crate::tui::sync_operations::{
+    FailureSignal, OperationFailure, OperationKind, OperationResult, SyncActivity,
+};
 
 /// Upper bound on pasted invitation text, matching the CLI's input limit.
 const INVITATION_LIMIT: usize = 8192;
@@ -281,17 +283,10 @@ fn setup_refusal(activity: &SyncActivity) -> Option<SetupRefusal> {
     if failure.kind != OperationKind::Setup {
         return None;
     }
-    if failure
-        .details
-        .contains("sync-setup-storage-already-claimed")
-    {
-        Some(SetupRefusal::StorageClaimed)
-    } else if failure.details.contains("sync-setup-invitation-rejected")
-        || failure.details.contains("sync-setup-invitation-expired")
-    {
-        Some(SetupRefusal::Invitation)
-    } else {
-        None
+    match failure.signal? {
+        FailureSignal::SetupStorageClaimed => Some(SetupRefusal::StorageClaimed),
+        FailureSignal::SetupInvitationRefused => Some(SetupRefusal::Invitation),
+        _ => None,
     }
 }
 
@@ -812,6 +807,7 @@ mod tests {
             kind: OperationKind::RemoveDevice([2; 32]),
             message: String::new(),
             details: "error enrollment-network outcome-unknown".to_string(),
+            signal: None,
         }));
         assert_eq!(
             sync_actions(&state, &set_up, &failed)[0],
@@ -821,6 +817,7 @@ mod tests {
             kind: OperationKind::RemoveDevice([2; 32]),
             message: String::new(),
             details: "error management-unfinished".to_string(),
+            signal: Some(FailureSignal::RemovalUnfinished),
         }));
         assert_eq!(
             sync_actions(&state, &set_up, &failed)[0],

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use aven_core::db::Database;
+use aven_core::sync::client::errors::is_access_refusal;
 use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep_until};
 
@@ -83,6 +84,7 @@ async fn run_loop(
     let mut next_sync = Instant::now();
     let mut retry_not_before = None;
     let mut awaiting_setup = false;
+    let mut access_refused = false;
     let mut next_attachment_maintenance = Instant::now();
     let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     loop {
@@ -121,6 +123,7 @@ async fn run_loop(
                     Ok(DaemonRound::Completed(outcome)) => {
                         backoff_seconds = 1;
                         awaiting_setup = false;
+                        access_refused = false;
                         next_sync = if outcome.more_work_ready() {
                             Instant::now() + DAEMON_INCOMPLETE_RESCHEDULE
                         } else {
@@ -128,6 +131,7 @@ async fn run_loop(
                         };
                     }
                     Ok(DaemonRound::NotSetUp) => {
+                        access_refused = false;
                         if !awaiting_setup {
                             awaiting_setup = true;
                             println!("daemon-sync-not-set-up hint=\"run `aven sync setup` or `aven sync join`\"");
@@ -138,6 +142,17 @@ async fn run_loop(
                     Ok(DaemonRound::Deferred) => {
                         debug!("daemon sync deferred");
                         next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
+                    }
+                    // Refusals persist until the user acts elsewhere, so
+                    // backing off only repeats the warning.
+                    Err(err) if is_access_refusal(&err) => {
+                        if !access_refused {
+                            access_refused = true;
+                            warn!(error = %err, "daemon sync refused by server");
+                        }
+                        backoff_seconds = 1;
+                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
+                        retry_not_before = Some(next_sync);
                     }
                     Err(err) => {
                         let retry_seconds = backoff_seconds;

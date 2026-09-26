@@ -427,11 +427,10 @@ async fn removing_requires_confirmation_targets_the_full_id_and_survives_closing
 
 fn record_setup_refusal(app: &mut App, code: &str) {
     app.sync_ops.activity.last = Some(crate::tui::sync_operations::OperationResult::Failed(
-        crate::tui::sync_operations::OperationFailure {
-            kind: crate::tui::sync_operations::OperationKind::Setup,
-            message: "Setup was refused.".to_string(),
-            details: format!("error {code}"),
-        },
+        crate::tui::sync_errors::failure(
+            crate::tui::sync_operations::OperationKind::Setup,
+            &anyhow::anyhow!("error {code}"),
+        ),
     ));
 }
 

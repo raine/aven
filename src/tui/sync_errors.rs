@@ -1,6 +1,6 @@
 //! TUI adapter for the shared plain-language sync error explanations.
 use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
-use crate::tui::sync_operations::{OperationFailure, OperationKind};
+use crate::tui::sync_operations::{FailureSignal, OperationFailure, OperationKind};
 
 pub(super) fn failure(kind: OperationKind, error: &anyhow::Error) -> OperationFailure {
     let message = error_explanations::explain(action(kind), ErrorSurface::Tui, error)
@@ -10,6 +10,22 @@ pub(super) fn failure(kind: OperationKind, error: &anyhow::Error) -> OperationFa
         kind,
         message,
         details: format!("{error:#}"),
+        signal: signal(error),
+    }
+}
+
+fn signal(error: &anyhow::Error) -> Option<FailureSignal> {
+    let has = |code| error_explanations::has_code(error, code);
+    if has("sync-join-timeout") {
+        Some(FailureSignal::JoinTimedOut)
+    } else if has("management-unfinished") {
+        Some(FailureSignal::RemovalUnfinished)
+    } else if has("sync-setup-storage-already-claimed") {
+        Some(FailureSignal::SetupStorageClaimed)
+    } else if has("sync-setup-invitation-rejected") || has("sync-setup-invitation-expired") {
+        Some(FailureSignal::SetupInvitationRefused)
+    } else {
+        None
     }
 }
 

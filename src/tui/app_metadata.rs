@@ -123,7 +123,7 @@ impl App {
             }
             Err(error) => {
                 state.error = Some(metadata_error(&error));
-                if error.to_string() == "error metadata-field-changed"
+                if crate::sync::error_explanations::has_code(&error, "metadata-field-changed")
                     && let Ok(fields) = self.store.metadata_fields().await
                     && let Some(renamed) = fields
                         .into_iter()

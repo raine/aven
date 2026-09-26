@@ -15,6 +15,11 @@ pub fn codes(error: &Error) -> impl Iterator<Item = String> + '_ {
     })
 }
 
+/// The outermost stable error code in the chain.
+pub fn code(error: &Error) -> Option<String> {
+    codes(error).next()
+}
+
 pub fn has_code(error: &Error, expected: &str) -> bool {
     codes(error).any(|code| code == expected)
 }

@@ -670,6 +670,7 @@ fn failures_show_plain_messages_without_raw_error_chains() {
         kind: OperationKind::Setup,
         message: "Couldn't reach the sync server.".to_string(),
         details: "error bootstrap-network outcome-unknown".to_string(),
+        signal: None,
     };
     let activity = SyncActivity {
         running: None,
@@ -878,6 +879,7 @@ fn pending_rotation_and_stale_lists_are_labelled_honestly() {
         kind: OperationKind::ListDevices,
         message: "Couldn't reach the sync server.".to_string(),
         details: "error enrollment-network outcome-unknown".to_string(),
+        signal: None,
     }));
     let rendered = render_page(SyncPage::Devices, sync_status(), stale);
     assert!(rendered.contains("latest check failed"));
@@ -946,6 +948,7 @@ fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
             kind: OperationKind::Join,
             message: crate::tui::sync_errors::JOIN_TIMEOUT.to_string(),
             details: "error sync-join-timeout".to_string(),
+            signal: Some(crate::tui::sync_operations::FailureSignal::JoinTimedOut),
         })),
         join_timed_out: true,
         ..SyncActivity::default()
@@ -1021,6 +1024,7 @@ fn commands_render_in_code_style_without_backticks() {
         message: "Start aven with `aven --db /new/path sync join` to use a new database."
             .to_string(),
         details: String::new(),
+        signal: None,
     };
     let activity = SyncActivity {
         running: None,
@@ -1061,6 +1065,7 @@ fn no_sync_page_renders_its_title_inside_the_box() {
             kind,
             message: "Couldn't reach the sync server.".to_string(),
             details: String::new(),
+            signal: None,
         })),
         ..SyncActivity::default()
     };
