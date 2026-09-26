@@ -434,6 +434,19 @@ impl PendingInvitation {
         crate::pairing::PairingPresentation::new(&self.server, &self.text)
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_test(server: &str, text: &str, expires_at: u64) -> Self {
+        Self {
+            server: server.to_string(),
+            text: Zeroizing::new(text.to_string()),
+            handle: [0; 32],
+            vault: [0; 32],
+            deadline: Instant::now(),
+            expires_at,
+            resumed: false,
+        }
+    }
+
     pub(crate) fn tui_presentation(&self) -> Result<crate::pairing::PairingPresentation> {
         crate::pairing::PairingPresentation::new_tui(&self.server, &self.text, self.expires_at)
     }

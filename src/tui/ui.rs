@@ -67,7 +67,7 @@ pub(crate) use self::detail::{
 };
 pub(crate) use self::overlays::{
     AddTaskLayout, SyncDialogHit, add_task_field_at, changelog_link_at, composer_help_scroll_cap,
-    database_stats_scroll_cap, pairing_layout, sync_dialog_hit, sync_dialog_scroll_cap,
+    database_stats_scroll_cap, pairing_area, sync_dialog_hit, sync_dialog_scroll_cap,
     text_panel_scroll_cap, update_action_at, update_dialog_size, update_link_at,
     update_notes_scroll_cap,
 };

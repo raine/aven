@@ -7,8 +7,8 @@ use ratatui::widgets::Paragraph;
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::inline_code::wrap_with_code;
 use crate::pairing::{PairingPresentation, PairingQr};
-use crate::tui::overlay::{dialog_area, dialog_inner_area};
-use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
+use crate::tui::overlay::{PairingOverlay, dialog_area, dialog_inner_area};
+use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED, RED};
 
 pub(crate) const NETWORK_REQUIREMENT: &str = "Anyone with this code can access all synced data.";
 const PAIRING_TITLE: &str = "Sync › Add device";
@@ -83,7 +83,70 @@ pub(crate) fn pairing_layout(terminal: Rect, presentation: &PairingPresentation)
     }
 }
 
-pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &PairingPresentation) {
+/// The dialog area for any state of the page, for hit testing.
+pub(crate) fn pairing_area(terminal: Rect, pairing: &PairingOverlay) -> Rect {
+    match pairing {
+        PairingOverlay::Ready(presentation) => pairing_layout(terminal, presentation).area,
+        _ => status_layout(terminal, &status_lines(pairing, FALLBACK_WIDTH)).0,
+    }
+}
+
+pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, pairing: &PairingOverlay) {
+    match pairing {
+        PairingOverlay::Ready(presentation) => render_presentation(frame, presentation),
+        _ => render_status(frame, pairing),
+    }
+}
+
+/// Lines for the page before its QR code is available.
+fn status_lines(pairing: &PairingOverlay, width: u16) -> Vec<Line<'static>> {
+    let inner = usize::from(width.saturating_sub(DIALOG_CHROME_COLUMNS));
+    match pairing {
+        PairingOverlay::Creating { started_at } => vec![Line::from(vec![
+            Span::styled(
+                format!("{} ", super::sync_dialog::spinner(*started_at)),
+                Style::new().fg(ACCENT),
+            ),
+            Span::styled("Creating invitation…", Style::new().fg(FG)),
+        ])],
+        PairingOverlay::Failed(message) => {
+            let mut lines = vec![Line::from(Span::styled(
+                "! Couldn't create the invitation",
+                Style::new().fg(RED),
+            ))];
+            lines.extend(wrap_with_code(message, Style::new().fg(FG), inner));
+            lines
+        }
+        PairingOverlay::Ready(_) => Vec::new(),
+    }
+}
+
+fn status_layout(terminal: Rect, lines: &[Line<'static>]) -> (Rect, u16) {
+    let width = FALLBACK_WIDTH.min(terminal.width.saturating_sub(2));
+    let body = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    let height = body
+        .saturating_add(FOOTER_ROWS)
+        .saturating_add(DIALOG_CHROME_ROWS);
+    (dialog_area(terminal, width, height), body)
+}
+
+fn render_status(frame: &mut Frame, pairing: &PairingOverlay) {
+    let width = FALLBACK_WIDTH.min(frame.area().width.saturating_sub(2));
+    let lines = status_lines(pairing, width);
+    let (area, body) = status_layout(frame.area(), &lines);
+    let inner = Dialog::new(PAIRING_TITLE, area.width, area.height).render_block_at(frame, area);
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::new().bg(BG_ALT)),
+        Rect::new(inner.x, inner.y, inner.width, body.min(inner.height)),
+    );
+    let hints: &[(&str, &str)] = match pairing {
+        PairingOverlay::Failed(_) => &[("Enter", "retry"), ("Esc", "back")],
+        _ => &[("Esc", "close")],
+    };
+    render_hints(frame, footer_rect(inner), hints);
+}
+
+fn render_presentation(frame: &mut Frame, presentation: &PairingPresentation) {
     let layout = pairing_layout(frame.area(), presentation);
     let inner = Dialog::new(PAIRING_TITLE, layout.area.width, layout.area.height)
         .render_block_at(frame, layout.area);
@@ -95,7 +158,11 @@ pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &Pairi
     } else {
         render_text(frame, layout.content, &fallback_text(), FG);
     }
-    render_footer(frame, layout.footer);
+    render_hints(
+        frame,
+        layout.footer,
+        &[("c", "copy invitation"), ("Esc", "close")],
+    );
 }
 
 fn waiting_text(presentation: &PairingPresentation) -> String {
@@ -183,16 +250,12 @@ fn render_qr(frame: &mut Frame, area: Rect, qr: &PairingQr) {
     frame.render_widget(Paragraph::new(lines).style(style), area);
 }
 
-fn render_footer(frame: &mut Frame, area: Rect) {
+fn render_hints(frame: &mut Frame, area: Rect, hints: &[(&str, &str)]) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     frame.render_widget(
-        Paragraph::new(dialog_hint_line(&[
-            ("c", "copy invitation"),
-            ("Esc", "close"),
-        ]))
-        .style(Style::new().bg(BG_ALT)),
+        Paragraph::new(dialog_hint_line(hints)).style(Style::new().bg(BG_ALT)),
         area,
     );
 }

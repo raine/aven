@@ -30,12 +30,16 @@ async fn add_device_is_disabled_until_sync_is_set_up() {
 }
 
 #[tokio::test]
-async fn add_device_reports_invitation_failures_without_an_overlay() {
+async fn add_device_reports_invitation_failures_on_its_page() {
+    use crate::tui::overlay::PairingOverlay;
     let mut app = test_app().await;
     app.store.sync_status.set_up = true;
 
     activate_add_device(&mut app, "pair").await;
-    assert!(app.invite.work_pending());
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Pairing(PairingOverlay::Creating { .. }))
+    ));
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while app.invite.work_pending() {
             app.poll_invite().await.unwrap();
@@ -45,17 +49,31 @@ async fn add_device_reports_invitation_failures_without_an_overlay() {
     .await
     .expect("invitation task settles");
 
-    assert!(app.overlay.is_none());
-    let message = toast_message(&app).unwrap();
-    assert!(message.starts_with("invitation unavailable:"), "{message}");
+    let Some(OverlayState::Pairing(PairingOverlay::Failed(message))) = &app.overlay else {
+        panic!("expected the failure on the Add device page");
+    };
     assert!(
         message.contains("Sync isn't set up for this database"),
         "{message}"
     );
-    assert!(
-        message.contains("Set up sync or Join existing sync"),
-        "{message}"
-    );
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Pairing(PairingOverlay::Creating { .. }))
+    ));
+    assert!(app.invite.work_pending());
+}
+
+#[tokio::test]
+async fn back_from_a_failed_add_device_returns_to_the_sync_dialog() {
+    use crate::tui::overlay::PairingOverlay;
+    let mut app = test_app().await;
+    app.overlay = Some(OverlayState::Pairing(PairingOverlay::Failed("x".into())));
+
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(matches!(app.overlay, Some(OverlayState::Sync(_))));
 }
 
 #[tokio::test]

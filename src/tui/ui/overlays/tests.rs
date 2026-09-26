@@ -4,11 +4,11 @@ use crate::tui::authoring::{AddTaskStep, PendingTaskAttachmentSummary};
 use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::overlay::{
     AddTaskAttachmentsView, AddTaskMode, AddTaskView, ConfirmView, LineEdit, MultilineInputKind,
-    MultilineInputMode, MultilineInputView, OverlayState, OverlayView, PickerIntent, PickerItem,
-    PickerKind, PickerMode, PickerState, PickerView, ScheduleEditorField, ScheduleEditorMode,
-    ScheduleEditorState, SearchKind, SearchResultItem, SyncDialogState, SyncDialogView,
-    TagComboboxIntent, TagComboboxKind, TagComboboxView, TextInputKind, TextInputView,
-    TextPanelView,
+    MultilineInputMode, MultilineInputView, OverlayState, OverlayView, PairingOverlay,
+    PickerIntent, PickerItem, PickerKind, PickerMode, PickerState, PickerView, ScheduleEditorField,
+    ScheduleEditorMode, ScheduleEditorState, SearchKind, SearchResultItem, SyncDialogState,
+    SyncDialogView, TagComboboxIntent, TagComboboxKind, TagComboboxView, TextInputKind,
+    TextInputView, TextPanelView,
 };
 use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,

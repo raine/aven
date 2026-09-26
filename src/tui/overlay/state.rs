@@ -22,6 +22,15 @@ pub(crate) use editors::{
     PickerState, TagComboboxIntent, TagComboboxState, TextInputState, TextIntent,
 };
 
+/// The Sync › Add device page: the invitation is created behind a loading
+/// state, then its QR code replaces it in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PairingOverlay {
+    Creating { started_at: std::time::Instant },
+    Failed(String),
+    Ready(std::sync::Arc<crate::pairing::PairingPresentation>),
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
@@ -54,7 +63,7 @@ pub(crate) enum OverlayState {
     Confirm(ConfirmState),
     TextPanel(TextPanelState),
     Changelog(ChangelogState),
-    Pairing(std::sync::Arc<crate::pairing::PairingPresentation>),
+    Pairing(PairingOverlay),
     RecurrenceHistory(Box<RecurrenceHistoryState>),
     Sync(super::sync_dialog::SyncDialogState),
     DatabaseStats {

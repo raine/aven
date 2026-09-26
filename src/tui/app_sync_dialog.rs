@@ -108,8 +108,8 @@ impl App {
                 self.begin_sync();
                 state
             }
-            // The invitation overlay replaces the dialog; admission keeps
-            // waiting after it closes.
+            // The Add device page replaces the dialog at once; admission
+            // keeps waiting after it closes.
             SyncAction::AddDevice => {
                 self.show_pairing_invitation();
                 return Ok(());

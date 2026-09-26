@@ -528,7 +528,7 @@ fn spinner_line(running: &RunningOperation) -> Line<'static> {
     ])
 }
 
-fn spinner(started_at: Instant) -> &'static str {
+pub(super) fn spinner(started_at: Instant) -> &'static str {
     let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     frames[(started_at.elapsed().as_millis() as usize / 120) % frames.len()]
 }

@@ -59,13 +59,11 @@ pub(crate) fn dispatch_overlay_mouse(
             dispatch_recurrence_history_mouse(*state, mouse, terminal_size)
         }
         OverlayState::Update(state) => dispatch_update_mouse(state, mouse, terminal_size),
-        OverlayState::Pairing(presentation)
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
-        {
+        OverlayState::Pairing(pairing) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
             let terminal = Rect::new(0, 0, terminal_size.width, terminal_size.height);
-            let area = crate::tui::ui::pairing_layout(terminal, presentation.as_ref()).area;
+            let area = crate::tui::ui::pairing_area(terminal, &pairing);
             if contains(area, mouse.column, mouse.row) {
-                OverlayMouseOutcome::Retained(OverlayState::Pairing(presentation))
+                OverlayMouseOutcome::Retained(OverlayState::Pairing(pairing))
             } else {
                 OverlayMouseOutcome::Closed
             }
@@ -320,7 +318,7 @@ mod tests {
 
     use super::*;
     use crate::ids::WorkspaceId;
-    use crate::tui::overlay::{HeaderMenuItem, HeaderMenuKind, HeaderMenuState};
+    use crate::tui::overlay::{HeaderMenuItem, HeaderMenuKind, HeaderMenuState, PairingOverlay};
     use crate::tui::store::TaskQuery;
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -420,15 +418,14 @@ mod tests {
             .unwrap(),
         );
         let size = Size::new(160, 80);
-        let area = crate::tui::ui::pairing_layout(
+        let area = crate::tui::ui::pairing_area(
             Rect::new(0, 0, size.width, size.height),
-            presentation.as_ref(),
-        )
-        .area;
+            &PairingOverlay::Ready(presentation.clone()),
+        );
         let outside_column = area.x.saturating_sub(1);
 
         let inside = dispatch_overlay_mouse(
-            OverlayState::Pairing(presentation.clone()),
+            OverlayState::Pairing(PairingOverlay::Ready(presentation.clone())),
             mouse(MouseEventKind::Down(MouseButton::Left), area.x, area.y),
             size,
             context(),
@@ -439,7 +436,7 @@ mod tests {
         ));
 
         let outside = dispatch_overlay_mouse(
-            OverlayState::Pairing(presentation.clone()),
+            OverlayState::Pairing(PairingOverlay::Ready(presentation.clone())),
             mouse(
                 MouseEventKind::Down(MouseButton::Left),
                 outside_column,
@@ -451,7 +448,7 @@ mod tests {
         assert_eq!(outside, OverlayMouseOutcome::Closed);
 
         let right = dispatch_overlay_mouse(
-            OverlayState::Pairing(presentation),
+            OverlayState::Pairing(PairingOverlay::Ready(presentation)),
             mouse(
                 MouseEventKind::Down(MouseButton::Right),
                 outside_column,

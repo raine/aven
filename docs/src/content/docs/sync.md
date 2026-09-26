@@ -106,7 +106,8 @@ an interactive terminal, also shows it as a QR code. Its eventual **Device
 added** message goes to standard error, so redirected standard output contains
 only the invitation. In the TUI, choose **Add device** in the
 Sync dialog, or `:add-device`, to show the QR code, the time left, and the join
-command for the other device. The TUI keeps waiting after you close the overlay
+command for the other device. If the invitation can't be created, the page says
+why; press Enter to try again. The TUI keeps waiting after you close the overlay
 and shows the open invitation in the header and Sync dialog. To paste the
 invitation on another computer, press `c` in the overlay to copy it; the TUI
 never copies it otherwise. If clipboard support is unavailable, run

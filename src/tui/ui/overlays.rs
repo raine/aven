@@ -30,6 +30,8 @@ pub(super) use multiline::{
 pub(super) use onboarding::{render_onboarding, render_onboarding_raised};
 #[cfg(test)]
 pub(crate) use pairing::NETWORK_REQUIREMENT;
+pub(crate) use pairing::pairing_area;
+#[cfg(test)]
 pub(crate) use pairing::pairing_layout;
 pub(super) use pairing::render_pairing;
 pub(super) use picker::render_picker;

@@ -492,3 +492,65 @@ async fn enter_on_back_closes_the_dialog_when_recovery_is_required() {
 
     assert!(app.overlay.is_none());
 }
+
+fn select_add_device(app: &mut App) {
+    let Some(OverlayState::Sync(state)) = &mut app.overlay else {
+        panic!("expected the Sync dialog");
+    };
+    let actions =
+        crate::tui::overlay::sync_actions(state, &app.store.sync_status, &app.sync_ops.activity);
+    state.selected = actions
+        .iter()
+        .position(|action| *action == crate::tui::overlay::SyncAction::AddDevice)
+        .expect("Add device is offered");
+}
+
+#[tokio::test]
+async fn add_device_shows_loading_then_the_qr_code_without_closing() {
+    use crate::tui::overlay::PairingOverlay;
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.enabled = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let pending = crate::sync::encrypted::PendingInvitation::for_test(
+        "https://sync.example.com",
+        &invitation,
+        crate::sync::encrypted::unix_now().unwrap() + 600,
+    );
+    app.invite.create_with_for_test(tokio::spawn(async move {
+        released.await.ok();
+        Ok(pending)
+    }));
+    app.show_sync_dialog();
+    select_add_device(&mut app);
+
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Pairing(PairingOverlay::Creating { .. }))
+    ));
+    app.poll_invite().await.unwrap();
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Pairing(PairingOverlay::Creating { .. }))
+    ));
+
+    release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let changed = app.poll_invite().await.unwrap();
+            match &app.overlay {
+                Some(OverlayState::Pairing(PairingOverlay::Creating { .. })) => {}
+                Some(OverlayState::Pairing(PairingOverlay::Ready(_))) if changed => break,
+                other => panic!("the page left the loading state for {other:?}"),
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("invitation is created");
+    assert!(app.store.sync_status.invitation.is_some());
+}

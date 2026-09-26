@@ -6,8 +6,8 @@ use zeroize::Zeroizing;
 
 use crate::pairing::PairingPresentation;
 use crate::sync::encrypted::{self, PendingInvitation};
-use crate::tui::app::{App, Notification};
-use crate::tui::overlay::OverlayState;
+use crate::tui::app::App;
+use crate::tui::overlay::{OverlayState, PairingOverlay};
 
 /// Creates a device invitation and waits for its admission in the background.
 /// Dismissing the QR overlay keeps waiting, as `aven sync invite` does, until
@@ -16,6 +16,9 @@ use crate::tui::overlay::OverlayState;
 /// the user asks to copy it.
 pub(super) struct InviteController {
     create: Option<JoinHandle<Result<PendingInvitation>>>,
+    create_started: std::time::Instant,
+    #[cfg(test)]
+    create_for_test: Option<JoinHandle<Result<PendingInvitation>>>,
     admission: Option<JoinHandle<Result<encrypted::Admission>>>,
     presentation: Option<Arc<PairingPresentation>>,
     text: Option<Zeroizing<String>>,
@@ -25,6 +28,9 @@ impl InviteController {
     pub(super) fn new() -> Self {
         Self {
             create: None,
+            create_started: std::time::Instant::now(),
+            #[cfg(test)]
+            create_for_test: None,
             admission: None,
             presentation: None,
             text: None,
@@ -40,6 +46,12 @@ impl InviteController {
         self.presentation = Some(presentation);
         self.text = Some(Zeroizing::new(text.to_string()));
     }
+
+    /// Makes the next Add device use `task` instead of contacting a server.
+    #[cfg(test)]
+    pub(super) fn create_with_for_test(&mut self, task: JoinHandle<Result<PendingInvitation>>) {
+        self.create_for_test = Some(task);
+    }
 }
 
 impl Drop for InviteController {
@@ -54,25 +66,54 @@ impl Drop for InviteController {
 }
 
 impl App {
+    /// Opens Sync › Add device at once. A new invitation is created behind a
+    /// loading state, and its QR code replaces it in place.
     pub(in crate::tui) fn show_pairing_invitation(&mut self) {
-        if let Some(presentation) = &self.invite.presentation {
-            self.overlay = Some(OverlayState::Pairing(presentation.clone()));
-            return;
-        }
-        if self.invite.create.is_some() {
-            self.set_info("invitation is being created");
-            return;
-        }
-        if self.sync_ops.work_pending() {
-            self.set_info("sync is busy; open :sync to follow its progress");
-            return;
+        let page = if let Some(presentation) = &self.invite.presentation {
+            PairingOverlay::Ready(presentation.clone())
+        } else if self.invite.create.is_some() {
+            PairingOverlay::Creating {
+                started_at: self.invite.create_started,
+            }
+        } else if self.sync_ops.work_pending() {
+            PairingOverlay::Failed(
+                "Sync is busy. Try again when it finishes; :sync shows its progress.".into(),
+            )
+        } else {
+            self.invite.create = Some(self.spawn_create_invitation());
+            self.invite.create_started = std::time::Instant::now();
+            PairingOverlay::Creating {
+                started_at: self.invite.create_started,
+            }
+        };
+        self.overlay = Some(OverlayState::Pairing(page));
+    }
+
+    fn spawn_create_invitation(&mut self) -> JoinHandle<Result<PendingInvitation>> {
+        #[cfg(test)]
+        if let Some(task) = self.invite.create_for_test.take() {
+            return task;
         }
         let database = self.store.database();
         let config = self.intake.config().clone();
-        self.invite.create = Some(tokio::spawn(async move {
-            encrypted::create_invitation(&database, &config).await
-        }));
-        self.notification = Some(Notification::loading("creating invitation"));
+        tokio::spawn(async move { encrypted::create_invitation(&database, &config).await })
+    }
+
+    fn creating_page_open(&self) -> bool {
+        matches!(
+            self.overlay,
+            Some(OverlayState::Pairing(PairingOverlay::Creating { .. }))
+        )
+    }
+
+    /// Reports a creation failure on the Add device page while it waits, or
+    /// as a notification once it was closed.
+    fn invitation_failed(&mut self, page_message: String, notification: String) {
+        if self.creating_page_open() {
+            self.overlay = Some(OverlayState::Pairing(PairingOverlay::Failed(page_message)));
+        } else {
+            self.set_error(notification);
+        }
     }
 
     /// Copies the waiting invitation's text on explicit request, so another
@@ -94,9 +135,6 @@ impl App {
 
     pub(super) async fn poll_invite(&mut self) -> Result<bool> {
         if let Some(task) = self.invite.create.take_if(|task| task.is_finished()) {
-            if matches!(self.notification, Some(Notification::Loading { .. })) {
-                self.notification = None;
-            }
             match task
                 .await
                 .context("invitation task stopped")
@@ -111,20 +149,26 @@ impl App {
                         });
                         self.invite.presentation = Some(presentation.clone());
                         self.invite.text = Some(Zeroizing::new(invitation.text().to_string()));
-                        self.overlay = Some(OverlayState::Pairing(presentation));
+                        // A closed page stays closed; the header shows the
+                        // open invitation and Add device reopens its QR code.
+                        if self.creating_page_open() {
+                            self.overlay =
+                                Some(OverlayState::Pairing(PairingOverlay::Ready(presentation)));
+                        }
                         let database = self.store.database();
                         self.invite.admission = Some(tokio::spawn(async move {
                             encrypted::await_admission(&database, &invitation).await
                         }));
                     }
                     Err(error) => {
-                        self.set_error(format!(
-                            "QR code unavailable: {error:#}; run `aven sync invite`"
-                        ));
+                        let message =
+                            format!("QR code unavailable: {error:#}; run `aven sync invite`");
+                        self.invitation_failed(message.clone(), message);
                     }
                 },
                 Err(error) if crate::tui::sync_errors::reached_change_limit(&error) => {
-                    self.set_error(crate::tui::sync_errors::CHANGE_LIMIT)
+                    let message = crate::tui::sync_errors::CHANGE_LIMIT.to_string();
+                    self.invitation_failed(message.clone(), message);
                 }
                 Err(error) => {
                     self.store.refresh_sync_status().await?;
@@ -133,7 +177,10 @@ impl App {
                         &error,
                     )
                     .message;
-                    self.set_error(format!("invitation unavailable: {message}"));
+                    self.invitation_failed(
+                        message.clone(),
+                        format!("invitation unavailable: {message}"),
+                    );
                 }
             }
             return Ok(true);
@@ -143,7 +190,10 @@ impl App {
         };
         self.invite.presentation = None;
         self.invite.text = None;
-        if matches!(self.overlay, Some(OverlayState::Pairing(_))) {
+        if matches!(
+            self.overlay,
+            Some(OverlayState::Pairing(PairingOverlay::Ready(_)))
+        ) {
             self.overlay = None;
         }
         match task

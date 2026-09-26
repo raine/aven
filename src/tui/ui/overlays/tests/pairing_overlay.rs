@@ -10,14 +10,14 @@ fn presentation() -> std::sync::Arc<crate::pairing::PairingPresentation> {
 }
 
 fn rendered_buffer(
-    presentation: &crate::pairing::PairingPresentation,
+    presentation: &std::sync::Arc<crate::pairing::PairingPresentation>,
     width: u16,
     height: u16,
 ) -> ratatui::buffer::Buffer {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|frame| render_pairing(frame, presentation))
+        .draw(|frame| render_pairing(frame, &PairingOverlay::Ready(presentation.clone())))
         .unwrap();
     terminal.backend().buffer().clone()
 }
@@ -63,7 +63,9 @@ fn normal_overlay_renders_shared_compact_qr_rows() {
 #[test]
 fn header_wraps_complete_copy_without_overlapping_qr_or_footer() {
     let server = format!("https://{}.example.test:8443", "a".repeat(63));
-    let presentation = crate::pairing::PairingPresentation::new(&server, TEST_INVITATION).unwrap();
+    let presentation = std::sync::Arc::new(
+        crate::pairing::PairingPresentation::new(&server, TEST_INVITATION).unwrap(),
+    );
     let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 200, 100), &presentation);
     let qr = layout.qr.expect("expected QR layout");
     let buffer = rendered_buffer(&presentation, 200, 100);
@@ -139,10 +141,47 @@ fn layout_saturates_for_minimal_terminal_dimensions() {
 #[test]
 fn overlay_presents_only_safe_pairing_data() {
     let presentation = presentation();
-    let rendered = render_overlay_view_at(OverlayView::Pairing(presentation), 160, 80);
+    let rendered = render_overlay_view_at(
+        OverlayView::Pairing(PairingOverlay::Ready(presentation)),
+        160,
+        80,
+    );
 
     assert!(rendered.contains("Sync › Add device"));
     assert!(rendered.contains("https://sync.example.test:8443"));
     assert!(rendered.contains("c copy invitation"));
     assert!(!rendered.contains("aven://pair/"));
+}
+
+#[test]
+fn creating_page_shows_a_spinner_in_place_of_the_qr_code() {
+    let rendered = render_overlay_view_at(
+        OverlayView::Pairing(PairingOverlay::Creating {
+            started_at: std::time::Instant::now(),
+        }),
+        160,
+        80,
+    );
+
+    assert!(rendered.contains("Sync › Add device"));
+    assert!(rendered.contains("⠋ Creating invitation…"));
+    assert!(rendered.contains("Esc close"));
+    assert!(!rendered.contains("copy invitation"));
+}
+
+#[test]
+fn failed_page_offers_retry_and_back() {
+    let rendered = render_overlay_view_at(
+        OverlayView::Pairing(PairingOverlay::Failed(
+            "Couldn't reach the sync server.".into(),
+        )),
+        160,
+        80,
+    );
+
+    assert!(rendered.contains("Sync › Add device"));
+    assert!(rendered.contains("Couldn't create the invitation"));
+    assert!(rendered.contains("Couldn't reach the sync server."));
+    assert!(rendered.contains("Enter retry"));
+    assert!(rendered.contains("Esc back"));
 }

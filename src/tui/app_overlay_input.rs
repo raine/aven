@@ -5,7 +5,8 @@ use ratatui::layout::Size;
 use crate::tui::app::App;
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{
-    AddTaskMode, MultilineIntent, OverlayOutcome, OverlayState, PickerIntent, TagComboboxIntent,
+    AddTaskMode, MultilineIntent, OverlayOutcome, OverlayState, PairingOverlay, PickerIntent,
+    TagComboboxIntent,
 };
 use crate::tui::platform::{is_editor_prefix_key, open_url_in_default_browser};
 use crate::tui::ui::{
@@ -40,11 +41,17 @@ impl App {
                     .await
             }
             OverlayState::Changelog(state) => self.handle_changelog_key(state, key, terminal_size),
-            OverlayState::Pairing(presentation)
+            OverlayState::Pairing(page @ PairingOverlay::Ready(_))
                 if key.code == KeyCode::Char('c') && key.modifiers.is_empty() =>
             {
-                self.overlay = Some(OverlayState::Pairing(presentation));
+                self.overlay = Some(OverlayState::Pairing(page));
                 self.copy_pairing_invitation();
+            }
+            OverlayState::Pairing(PairingOverlay::Failed(_)) if key.code == KeyCode::Enter => {
+                self.show_pairing_invitation();
+            }
+            OverlayState::Pairing(PairingOverlay::Failed(_)) if key.code == KeyCode::Esc => {
+                self.show_sync_dialog();
             }
             OverlayState::Sync(state) => {
                 self.handle_sync_dialog_key(state, key, terminal_size)
