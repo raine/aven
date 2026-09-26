@@ -265,4 +265,36 @@ mod prefix_tests {
         assert_eq!(matching_devices(&devices, "abab1")[0].id, first);
         assert!(matching_devices(&devices, "ffff").is_empty());
     }
+
+    fn entry(device_id: &str) -> DeviceEntry {
+        DeviceEntry {
+            device_id: device_id.into(),
+            label: None,
+            current: false,
+            admission_sequence: 1,
+        }
+    }
+
+    #[test]
+    fn short_device_ids_extend_past_eight_only_while_prefixes_collide() {
+        let distinct = [entry(&"a".repeat(64)), entry(&"b".repeat(64))];
+        assert_eq!(
+            short_device_ids(&distinct),
+            [format!("{}…", "a".repeat(8)), format!("{}…", "b".repeat(8))]
+        );
+        let shared = format!("{}0", "c".repeat(10));
+        let colliding = [
+            entry(&format!("{shared}{}", "1".repeat(53))),
+            entry(&format!("{shared}{}", "2".repeat(53))),
+            entry(&"d".repeat(64)),
+        ];
+        assert_eq!(
+            short_device_ids(&colliding),
+            [
+                format!("{shared}1…"),
+                format!("{shared}2…"),
+                format!("{}…", "d".repeat(12)),
+            ]
+        );
+    }
 }

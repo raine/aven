@@ -1,6 +1,11 @@
 //! Real CLI commands in separate worker processes: two installations with
 //! independent databases, configuration and file-backed protected keys, and an
 //! `aven server` process on loopback.
+//!
+//! Workers re-exec this lib test binary (`cli_worker`) rather than the `aven`
+//! binary from `tests/`: `protected_local_keys::storage()` honours
+//! `AVEN_TEST_PROTECTED_KEYS` file-backed keys only under `cfg(test)`, so a
+//! release-style binary would reach the login Keychain.
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -476,14 +481,14 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     // An abandoned invite command resumes the same invitation; B joins while
     // the second command waits for it.
     // Open and expired unused invitations never stop sync.
-    let (mut expiring, expired_invitation, _) = spawn_invite(&a, Some("5")).await;
+    let (mut expiring, expired_invitation, _) = spawn_invite(&a, Some("3")).await;
     let declared = Instant::now();
     expiring.kill().await.unwrap();
     expiring.wait().await.unwrap();
     assert_eq!(status(&a).await["state"], "ready");
     let stdout = a.ok(&["sync"]).await;
     assert!(synced(&stdout), "{stdout}");
-    tokio::time::sleep_until(declared + Duration::from_secs(6)).await;
+    tokio::time::sleep_until(declared + Duration::from_secs(4)).await;
     let stdout = a.ok(&["sync"]).await;
     assert!(synced(&stdout), "{stdout}");
     assert_eq!(status(&a).await["state"], "ready");
@@ -784,11 +789,11 @@ async fn cli_join_continues_with_a_new_invitation_after_expiry() {
     let root = tempfile::tempdir().unwrap();
     let (_server, a) = set_up(root.path()).await;
     let b = Installation::new(root.path(), "b");
-    let (mut invite, expired, _stdout) = spawn_invite(&a, Some("15")).await;
+    let (mut invite, expired, _stdout) = spawn_invite(&a, Some("8")).await;
     invite.kill().await.unwrap();
     let mut join = b
         .command(&["sync", "join", "--yes"])
-        .env("AVEN_TEST_INVITATION_SECONDS", "15")
+        .env("AVEN_TEST_INVITATION_SECONDS", "8")
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
