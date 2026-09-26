@@ -110,7 +110,10 @@ impl App {
                     Some(error) => {
                         self.set_warning(format!("sync finished but refresh failed: {error:#}"));
                     }
-                    None if result.metadata_caught_up && result.images == "complete" => {
+                    None if result.metadata_caught_up
+                        && result.images
+                            == aven_core::sync::client::tail::ImageTransfer::Complete =>
+                    {
                         self.set_success("sync complete")
                     }
                     None if result.metadata_caught_up => {

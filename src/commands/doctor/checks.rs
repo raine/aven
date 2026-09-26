@@ -149,7 +149,7 @@ pub(super) async fn add_runtime_database_sections(
                     sync_section.info(
                         "sync.set_up",
                         "set up",
-                        if status.state == "not-set-up" {
+                        if status.state == crate::sync::encrypted::SyncState::NotSetUp {
                             "no; run `aven sync setup` or `aven sync join`"
                         } else {
                             "yes"

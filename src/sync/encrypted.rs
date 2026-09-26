@@ -15,9 +15,10 @@ use aven_core::db::Database;
 use aven_core::sync::client::engine;
 pub(crate) use aven_core::sync::client::engine::{
     Admission, AssociationStatus, Cancellation, DaemonRound, InvitationStatus, LocalPhase, Outcome,
-    PendingInvitation, SetupPreview, Stage, StatusReport, local_phase, unix_now,
+    PendingInvitation, SetupPreview, Stage, StatusReport, SyncState, local_phase, unix_now,
 };
 use aven_core::sync::client::keys::{ProtectedStorage, StoreResult};
+use aven_core::sync::client::tail::ImageTransfer;
 use aven_core::sync::client::{ClientHost, Step};
 use zeroize::Zeroizing;
 
@@ -582,7 +583,7 @@ fn print_outcome(outcome: &Outcome) {
             outcome.sent_changes, outcome.received_changes, outcome.rounds
         );
         print_conflict_outcome(outcome);
-        if outcome.images == "failed" {
+        if outcome.images == ImageTransfer::Failed {
             println!(
                 "An image transfer failed, or an image added here is missing from this \
                  computer. Changes after it wait until it uploads."
@@ -600,10 +601,12 @@ fn print_outcome(outcome: &Outcome) {
     }
     print_conflict_outcome(outcome);
     match outcome.images {
-        "complete" => println!("Images are up to date"),
-        "unavailable" => println!("Some images are unavailable on the server"),
-        "failed" => println!("Some image transfers failed. Run `aven sync` again to retry."),
-        _ => println!("Images are still transferring. Run `aven sync` again."),
+        ImageTransfer::Complete => println!("Images are up to date"),
+        ImageTransfer::Unavailable => println!("Some images are unavailable on the server"),
+        ImageTransfer::Failed => {
+            println!("Some image transfers failed. Run `aven sync` again to retry.")
+        }
+        ImageTransfer::Pending => println!("Images are still transferring. Run `aven sync` again."),
     }
 }
 
@@ -624,14 +627,14 @@ fn print_conflict_outcome(outcome: &Outcome) {
     );
 }
 
-pub(crate) fn status_state_words(state: &str) -> &'static str {
+pub(crate) fn status_state_words(state: SyncState) -> &'static str {
     match state {
-        "not-set-up" => "not set up",
-        "setup-incomplete" => "setup incomplete",
-        "join-incomplete" => "joining incomplete",
-        "key-change-pending" => "key change pending",
-        "access-refused" => "access unconfirmed",
-        _ => "ready",
+        SyncState::NotSetUp => "not set up",
+        SyncState::SetupIncomplete => "setup incomplete",
+        SyncState::JoinIncomplete => "joining incomplete",
+        SyncState::KeyChangePending => "key change pending",
+        SyncState::AccessRefused => "access unconfirmed",
+        SyncState::Ready => "ready",
     }
 }
 
@@ -640,7 +643,7 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     if json {
         return print_json_pretty(&report);
     }
-    if report.state == "not-set-up" {
+    if report.state == SyncState::NotSetUp {
         println!("Sync: not set up; this database is local only");
         println!(
             "Run `aven sync setup` with an invitation from `aven server setup`, or \
@@ -653,21 +656,21 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
         println!("Server: {server}");
     }
     match report.state {
-        "setup-incomplete" => println!("State: setup incomplete. Rerun `aven sync setup`."),
-        "join-incomplete" => println!(
+        SyncState::SetupIncomplete => println!("State: setup incomplete. Rerun `aven sync setup`."),
+        SyncState::JoinIncomplete => println!(
             "State: joining incomplete. Rerun `aven sync join`; if its invitation expired, \
              pass a new one from the same device with `aven sync join --new-invitation`."
         ),
-        "key-change-pending" => println!(
+        SyncState::KeyChangePending => println!(
             "State: an invitation expired after keys may have been sent to a device that \
              never joined. The next `aven sync` changes keys before uploading new changes; \
              data that device may already hold stays readable to it."
         ),
-        "access-refused" => println!(
+        SyncState::AccessRefused => println!(
             "State: access unconfirmed. The server refused this device. It may have been \
              removed from sync; check from another device. Local tasks and images stay here."
         ),
-        _ => println!("State: ready"),
+        SyncState::Ready | SyncState::NotSetUp => println!("State: ready"),
     }
     if let Some(expires_at) = report.invitation_expires_at {
         println!("Invitation: open, expires {}", format_expiry(expires_at));

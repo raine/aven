@@ -856,7 +856,7 @@ pub struct Outcome {
     pub version: u32,
     pub rounds: usize,
     pub metadata_caught_up: bool,
-    pub images: &'static str,
+    pub images: ImageTransfer,
     pub sent_changes: usize,
     pub received_changes: usize,
     pub conflicts: usize,
@@ -867,16 +867,8 @@ impl Outcome {
     /// True when another round would likely make progress now: images are
     /// still transferring, or metadata remains while images are not blocked.
     pub fn more_work_ready(&self) -> bool {
-        self.images == "pending" || (!self.metadata_caught_up && self.images == "complete")
-    }
-}
-
-fn image_label(images: ImageTransfer) -> &'static str {
-    match images {
-        ImageTransfer::Complete => "complete",
-        ImageTransfer::Pending => "pending",
-        ImageTransfer::Failed => "failed",
-        ImageTransfer::Unavailable => "unavailable",
+        self.images == ImageTransfer::Pending
+            || (!self.metadata_caught_up && self.images == ImageTransfer::Complete)
     }
 }
 
@@ -947,7 +939,7 @@ async fn drain_reporting(
         version: 1,
         rounds,
         metadata_caught_up: last.metadata_caught_up,
-        images: image_label(last.images),
+        images: last.images,
         sent_changes,
         received_changes,
         conflicts: conflicts_after.len(),
@@ -978,11 +970,22 @@ async fn conflict_identities(database: &Database) -> Result<HashSet<String>> {
     Ok(identities)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SyncState {
+    NotSetUp,
+    SetupIncomplete,
+    JoinIncomplete,
+    KeyChangePending,
+    Ready,
+    AccessRefused,
+}
+
 #[derive(Serialize)]
 pub struct StatusReport {
     pub version: u32,
     pub server: Option<String>,
-    pub state: &'static str,
+    pub state: SyncState,
     pub local_changes_pending: Option<bool>,
     pub server_position: Option<i64>,
     pub initial_download_pending: Option<bool>,
@@ -1001,7 +1004,7 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
     let mut report = StatusReport {
         version: 1,
         server: None,
-        state: "not-set-up",
+        state: SyncState::NotSetUp,
         local_changes_pending: None,
         server_position: None,
         initial_download_pending: None,
@@ -1019,7 +1022,7 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
     if !is_set_up(database).await? {
         return Ok(report);
     }
-    report.state = "setup-incomplete";
+    report.state = SyncState::SetupIncomplete;
     let store = key_store(host, database).await?;
     let _guard = coordination::acquire(database).await?;
     if let Some((peer, server)) = store.association(database).await? {
@@ -1037,7 +1040,7 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
             }
         }
         report.state = if !enrollment_ready {
-            "join-incomplete"
+            SyncState::JoinIncomplete
         } else {
             match store.tail_inputs(database, &server).await {
                 Ok(inputs) => {
@@ -1049,22 +1052,25 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
                     report.image_downloads_pending = state.downloads.map(|d| d.pending);
                     report.images_unavailable = state.downloads.map(|d| d.unavailable);
                     if inputs.publishing_blocked()? {
-                        "key-change-pending"
+                        SyncState::KeyChangePending
                     } else {
-                        "ready"
+                        SyncState::Ready
                     }
                 }
                 Err(error) if peer && has_code(&error, "snapshot-not-installed") => {
-                    "join-incomplete"
+                    SyncState::JoinIncomplete
                 }
                 Err(error) => return Err(error),
             }
         };
     }
     if report.access_refused_at.is_some()
-        && !matches!(report.state, "setup-incomplete" | "join-incomplete")
+        && !matches!(
+            report.state,
+            SyncState::SetupIncomplete | SyncState::JoinIncomplete
+        )
     {
-        report.state = "access-refused";
+        report.state = SyncState::AccessRefused;
     }
     Ok(report)
 }

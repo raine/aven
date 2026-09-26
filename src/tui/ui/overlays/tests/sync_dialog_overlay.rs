@@ -591,7 +591,7 @@ fn results_distinguish_images_from_tasks() {
                 server: "https://sync.example.com".to_string(),
                 drain: DrainSummary {
                     tasks_current: true,
-                    images: "unavailable",
+                    images: aven_core::sync::client::tail::ImageTransfer::Unavailable,
                 },
             }),
             devices: None,
@@ -613,7 +613,7 @@ fn complete_results_leave_only_the_status_and_server() {
                 server: "https://sync.example.com".to_string(),
                 drain: DrainSummary {
                     tasks_current: true,
-                    images: "complete",
+                    images: aven_core::sync::client::tail::ImageTransfer::Complete,
                 },
             }),
             ..SyncActivity::default()

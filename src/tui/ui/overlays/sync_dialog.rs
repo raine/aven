@@ -901,15 +901,23 @@ fn elapsed(since: Instant) -> String {
 
 /// Distinguishes task synchronization from image availability; `None` when
 /// both are complete.
+use aven_core::sync::client::tail::ImageTransfer;
+
 fn drain_text(drain: &DrainSummary) -> Option<&'static str> {
     if !drain.tasks_current {
         return Some("Some changes are still waiting. Sync now continues.");
     }
     Some(match drain.images {
-        "complete" => return None,
-        "pending" => "Tasks are in sync. Images are still transferring; Sync now continues.",
-        "unavailable" => "Tasks are in sync. Some images are unavailable on the server.",
-        _ => "Tasks are in sync. Some image transfers failed; Sync now retries them.",
+        ImageTransfer::Complete => return None,
+        ImageTransfer::Pending => {
+            "Tasks are in sync. Images are still transferring; Sync now continues."
+        }
+        ImageTransfer::Unavailable => {
+            "Tasks are in sync. Some images are unavailable on the server."
+        }
+        ImageTransfer::Failed => {
+            "Tasks are in sync. Some image transfers failed; Sync now retries them."
+        }
     })
 }
 

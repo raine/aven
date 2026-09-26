@@ -9,12 +9,24 @@ pub const IMAGES_PATH: &str = "/e2ee/images/v1";
 /// to clear well within the drain's round budget.
 const PUSH_LIMIT: usize = 2048;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ImageTransfer {
     Complete,
     Pending,
     Failed,
     Unavailable,
+}
+
+impl std::fmt::Display for ImageTransfer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Complete => "complete",
+            Self::Pending => "pending",
+            Self::Failed => "failed",
+            Self::Unavailable => "unavailable",
+        })
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Round {

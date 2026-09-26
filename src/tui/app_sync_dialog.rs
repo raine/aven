@@ -426,7 +426,9 @@ impl App {
                     OperationResult::SetUp { .. } => "sync set up",
                     _ => "joined sync",
                 };
-                if drain.tasks_current && drain.images == "complete" {
+                if drain.tasks_current
+                    && drain.images == aven_core::sync::client::tail::ImageTransfer::Complete
+                {
                     self.set_success(done);
                 } else {
                     self.set_warning(format!(

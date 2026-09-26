@@ -52,7 +52,7 @@ pub(crate) struct RunningOperation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DrainSummary {
     pub(crate) tasks_current: bool,
-    pub(crate) images: &'static str,
+    pub(crate) images: aven_core::sync::client::tail::ImageTransfer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

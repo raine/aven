@@ -1082,7 +1082,7 @@ async fn cli_drain_stops_promptly_behind_missing_local_image_and_still_pulls() {
     .unwrap();
     assert_eq!(outcome.rounds, 16);
     assert!(!outcome.metadata_caught_up);
-    assert_eq!(outcome.images, "failed");
+    assert_eq!(outcome.images, ImageTransfer::Failed);
     assert_eq!(
         title(&f.peer, remote.id.as_str()).await,
         "remote behind missing image"
