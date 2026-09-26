@@ -468,21 +468,7 @@ async fn server_storage_exports_and_diagnostics_exclude_secrets() {
 #[tokio::test]
 async fn committed_claim_resumes_after_process_exit_without_response() {
     let root = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "sync::seed_claim::tests::claim_exit_worker",
-            "--ignored",
-        ])
-        .env("AVEN_SEED_CLAIM_TEST_ROOT", root.path())
-        .output()
-        .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(23),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    crate::test_support::worker::run("sync::seed_claim::tests::claim_exit_worker", &root.path());
     let db = Database::open(&root.path().join("server.sqlite"))
         .await
         .unwrap();
@@ -500,12 +486,10 @@ async fn committed_claim_resumes_after_process_exit_without_response() {
 #[tokio::test]
 #[ignore = "subprocess worker exits without destructors; invoked with an isolated test root"]
 async fn claim_exit_worker() {
-    let Some(root) = std::env::var_os("AVEN_SEED_CLAIM_TEST_ROOT") else {
+    let Some(root) = crate::test_support::worker::args::<std::path::PathBuf>() else {
         return;
     };
-    let db = Database::open(&std::path::PathBuf::from(root).join("server.sqlite"))
-        .await
-        .unwrap();
+    let db = Database::open(&root.join("server.sqlite")).await.unwrap();
     let secret = operator(&db).await;
     db.admit_seed_claim(
         &authority().genesis.claim_bytes(),
@@ -513,7 +497,7 @@ async fn claim_exit_worker() {
     )
     .await
     .unwrap();
-    std::process::exit(23);
+    crate::test_support::worker::exit();
 }
 
 #[tokio::test]

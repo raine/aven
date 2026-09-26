@@ -214,19 +214,15 @@ async fn initial_image_demand_has_a_fixed_restart_safe_watermark(delete: bool) {
     let report = f.client.install(&f.store, &f.peer).await.unwrap();
     let expected = report.prefix_count + page as u64 + 1 + u64::from(delete);
     for stage in ["before-page-commit", "after-page-commit"] {
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "peer_enrollment_http::tests::install::attachments::initial_tail_worker",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("AVEN_SNAPSHOT_ROOT", f.root.path())
-            .env("AVEN_SNAPSHOT_ORIGIN", &f.client.locator)
-            .env("AVEN_TAIL_CRASH", stage)
-            .output()
-            .await
-            .unwrap();
+        let output = e2ee_http::worker(
+            "peer_enrollment_http::tests::install::attachments::initial_tail_worker",
+        )
+        .env("AVEN_SNAPSHOT_ROOT", f.root.path())
+        .env("AVEN_SNAPSHOT_ORIGIN", &f.client.locator)
+        .env("AVEN_TAIL_CRASH", stage)
+        .output()
+        .await
+        .unwrap();
         assert_eq!(
             output.status.code(),
             Some(84),

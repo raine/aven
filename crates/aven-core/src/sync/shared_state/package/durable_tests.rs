@@ -366,24 +366,9 @@ async fn process_exit_before_and_after_freeze_commit_preserves_ownership() {
             .await
             .unwrap();
         drop(database);
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "sync::shared_state::package::durable_tests::process_freeze_worker",
-                "--ignored",
-            ])
-            .env("AVEN_PACKAGE_TEST_ROOT", dir.path())
-            .env(
-                "AVEN_PACKAGE_TEST_COMMIT",
-                if committed { "yes" } else { "no" },
-            )
-            .output()
-            .unwrap();
-        assert_eq!(
-            output.status.code(),
-            Some(23),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        crate::test_support::worker::run(
+            "sync::shared_state::package::durable_tests::process_freeze_worker",
+            &(dir.path(), committed),
         );
         let database = Database::open(&dir.path().join("source.sqlite"))
             .await
@@ -435,10 +420,10 @@ async fn process_exit_before_and_after_freeze_commit_preserves_ownership() {
 #[tokio::test]
 #[ignore = "subprocess worker exits without destructors; invoked by the process-boundary test"]
 async fn process_freeze_worker() {
-    let Some(root) = std::env::var_os("AVEN_PACKAGE_TEST_ROOT") else {
+    let Some((root, committed)) = crate::test_support::worker::args::<(std::path::PathBuf, bool)>()
+    else {
         return;
     };
-    let root = std::path::PathBuf::from(root);
     let database = Database::open(&root.join("source.sqlite")).await.unwrap();
     let capture = database
         .resume_local_shared_state_never_dispatched()
@@ -469,10 +454,10 @@ async fn process_freeze_worker() {
     let mut conn = database.acquire_writer().await.unwrap();
     let mut tx = db::begin_immediate(&mut conn).await.unwrap();
     persist_package(&mut tx, &package).await.unwrap();
-    if std::env::var("AVEN_PACKAGE_TEST_COMMIT").unwrap() == "yes" {
+    if committed {
         tx.commit().await.unwrap();
     }
-    std::process::exit(23);
+    crate::test_support::worker::exit();
 }
 
 #[tokio::test]

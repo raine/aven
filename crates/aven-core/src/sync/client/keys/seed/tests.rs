@@ -350,20 +350,9 @@ async fn seed_secrets_stay_outside_database_export_and_backup() {
 async fn seed_survives_process_exit_but_not_same_path_database_replacement() {
     for replace_database in [false, true] {
         let root = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "sync::client::keys::seed::tests::seed_exit_worker",
-                "--ignored",
-            ])
-            .env("AVEN_SEED_AUTHORITY_TEST_ROOT", root.path())
-            .output()
-            .unwrap();
-        assert_eq!(
-            output.status.code(),
-            Some(23),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        crate::test_support::worker::run(
+            "sync::client::keys::seed::tests::seed_exit_worker",
+            &root.path(),
         );
         let path = root.path().join("db.sqlite");
         let keys = root.path().join("keys");
@@ -402,15 +391,14 @@ async fn seed_survives_process_exit_but_not_same_path_database_replacement() {
 #[tokio::test]
 #[ignore = "subprocess worker exits without destructors; invoked with an isolated test root"]
 async fn seed_exit_worker() {
-    let Some(root) = std::env::var_os("AVEN_SEED_AUTHORITY_TEST_ROOT") else {
+    let Some(root) = crate::test_support::worker::args::<PathBuf>() else {
         return;
     };
-    let root = PathBuf::from(root);
     let db = Database::open(&root.join("db.sqlite")).await.unwrap();
     let store = isolated_store(&db, &root.join("keys")).await;
     let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
     fs::write(root.join("public-genesis"), seed.genesis().record()).unwrap();
-    std::process::exit(23);
+    crate::test_support::worker::exit();
 }
 
 #[test]

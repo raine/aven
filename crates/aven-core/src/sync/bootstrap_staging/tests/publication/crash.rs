@@ -19,20 +19,9 @@ async fn committed_publication_survives_process_exit_without_response() {
     )
     .unwrap();
     std::fs::write(f.dir.path().join("publication.fixture"), p.record()).unwrap();
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "sync::bootstrap_staging::tests::publication::crash::publication_exit_worker",
-            "--ignored",
-        ])
-        .env("AVEN_PUBLICATION_TEST_ROOT", f.dir.path())
-        .output()
-        .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(24),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    crate::test_support::worker::run(
+        "sync::bootstrap_staging::tests::publication::crash::publication_exit_worker",
+        &f.dir.path(),
     );
     let recovered = f.publish(&p).await.unwrap();
     assert_eq!(recovered.publication(), &p);
@@ -51,10 +40,9 @@ async fn committed_publication_survives_process_exit_without_response() {
 #[tokio::test]
 #[ignore = "subprocess worker exits without destructors; invoked with an isolated test root"]
 async fn publication_exit_worker() {
-    let Some(root) = std::env::var_os("AVEN_PUBLICATION_TEST_ROOT") else {
+    let Some(root) = crate::test_support::worker::args::<std::path::PathBuf>() else {
         return;
     };
-    let root = std::path::PathBuf::from(root);
     let seed = SeedAuthority::from_protected_storage(
         &std::fs::read(root.join("seed.fixture")).unwrap(),
         LocalSharedStatePackageContext {
@@ -85,5 +73,5 @@ async fn publication_exit_worker() {
         )
         .await
         .unwrap();
-    std::process::exit(24);
+    crate::test_support::worker::exit();
 }

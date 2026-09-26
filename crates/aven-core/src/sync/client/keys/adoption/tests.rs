@@ -1060,21 +1060,9 @@ async fn process_exit_reopens_preparing_sealed_and_adopted_before_cleanup() {
     for phase in ["preparing", "sealed", "adopted"] {
         let (root, database, store) = local_intent_fixture().await;
         drop(database);
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "sync::client::keys::adoption::tests::adoption_process_worker",
-                "--ignored",
-            ])
-            .env("AVEN_ADOPTION_TEST_ROOT", root.path())
-            .env("AVEN_ADOPTION_TEST_PHASE", phase)
-            .output()
-            .unwrap();
-        assert_eq!(
-            output.status.code(),
-            Some(23),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        crate::test_support::worker::run(
+            "sync::client::keys::adoption::tests::adoption_process_worker",
+            &(root.path(), phase),
         );
         let database = Database::open(&root.path().join("client.sqlite"))
             .await
@@ -1139,10 +1127,9 @@ async fn process_exit_reopens_preparing_sealed_and_adopted_before_cleanup() {
 #[tokio::test]
 #[ignore = "subprocess worker exits without destructors; invoked by the process-boundary test"]
 async fn adoption_process_worker() {
-    let Some(root) = std::env::var_os("AVEN_ADOPTION_TEST_ROOT") else {
+    let Some((root, phase)) = crate::test_support::worker::args::<(PathBuf, String)>() else {
         return;
     };
-    let root = PathBuf::from(root);
     let database = Database::open(&root.join("client.sqlite")).await.unwrap();
     let store = isolated_store(&database, &root.join("keys")).await;
     let package = store.load_required().unwrap();
@@ -1161,7 +1148,6 @@ async fn adoption_process_worker() {
         .await
         .unwrap()
         .upload_package();
-    let phase = std::env::var("AVEN_ADOPTION_TEST_PHASE").unwrap();
     if phase == "preparing" {
         database
             .prepare_seed_publication_intent(&source, &seed, package.package_key())
@@ -1187,7 +1173,7 @@ async fn adoption_process_worker() {
             );
         }
     }
-    std::process::exit(23);
+    crate::test_support::worker::exit();
 }
 
 #[tokio::test]
