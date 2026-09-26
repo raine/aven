@@ -24,9 +24,7 @@ pub use package::{
 /// This value deliberately has no serialized wire representation. Encryption and
 /// publication layers can package it later without making this local interchange
 /// type a protocol contract.
-const LOCAL_CAPTURE_FORMAT: &str = "aven-local-shared-capture";
 const LOCAL_CAPTURE_VERSION: i64 = 1;
-const LOCAL_CAPTURE_STATE: &str = "never_dispatched";
 
 /// A transient consistent copy used by installation and future packaging layers.
 #[derive(Debug)]
@@ -62,8 +60,6 @@ impl NeverDispatchedLocalSharedCapture {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PersistedLocalCapture {
-    format: String,
-    version: i64,
     candidate_id: String,
     stream_id: String,
     images: Vec<PersistedCaptureImage>,
@@ -172,8 +168,6 @@ impl Database {
         db::set_meta(&mut tx, "sync_generation", &sync_generation.to_string()).await?;
 
         let persisted = PersistedLocalCapture {
-            format: LOCAL_CAPTURE_FORMAT.to_string(),
-            version: LOCAL_CAPTURE_VERSION,
             candidate_id: candidate_id.clone(),
             stream_id: stream_id.clone(),
             images: image_classes
@@ -188,15 +182,12 @@ impl Database {
         let snapshot_json = serde_json::to_string(&persisted)?;
         sqlx::query(
             "INSERT INTO local_shared_capture_journal(
-                 singleton, candidate_id, stream_id, state, internal_format,
-                 internal_version, snapshot_json, local_seq_floor,
-                 sync_generation, created_at
-             ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 singleton, candidate_id, stream_id, internal_version,
+                 snapshot_json, local_seq_floor, sync_generation, created_at
+             ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&candidate_id)
         .bind(&stream_id)
-        .bind(LOCAL_CAPTURE_STATE)
-        .bind(LOCAL_CAPTURE_FORMAT)
         .bind(LOCAL_CAPTURE_VERSION)
         .bind(&snapshot_json)
         .bind(local_seq_floor)
@@ -309,15 +300,15 @@ impl Database {
             active == candidate_id,
             "error local-shared-capture-candidate-mismatch"
         );
-        sqlx::query(
-            "DELETE FROM local_shared_capture_journal
-             WHERE singleton = 1 AND candidate_id = ? AND state = 'never_dispatched'",
+        let deleted = sqlx::query(
+            "DELETE FROM local_shared_capture_journal WHERE singleton = 1 AND candidate_id = ?",
         )
         .bind(candidate_id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
         tx.commit().await?;
-        Ok(true)
+        Ok(deleted == 1)
     }
 
     /// Atomically installs captured shared state into a fresh database.
@@ -606,19 +597,17 @@ pub(crate) async fn ensure_changes_not_local_capture_protected(
 async fn load_persisted_local_capture(
     conn: &mut sqlx::SqliteConnection,
 ) -> Result<Option<NeverDispatchedLocalSharedCapture>> {
-    let row: Option<(String, String, String, String, i64)> = sqlx::query_as(
-        "SELECT candidate_id, stream_id, state, internal_format, internal_version
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT candidate_id, stream_id, internal_version
          FROM local_shared_capture_journal WHERE singleton = 1",
     )
     .fetch_optional(&mut *conn)
     .await?;
-    let Some((candidate_id, stream_id, state, internal_format, internal_version)) = row else {
+    let Some((candidate_id, stream_id, internal_version)) = row else {
         return Ok(None);
     };
     ensure!(
-        state == LOCAL_CAPTURE_STATE
-            && internal_format == LOCAL_CAPTURE_FORMAT
-            && internal_version == LOCAL_CAPTURE_VERSION,
+        internal_version == LOCAL_CAPTURE_VERSION,
         "error local-shared-capture-unsupported"
     );
     let snapshot_json: String = sqlx::query_scalar(
@@ -629,10 +618,7 @@ async fn load_persisted_local_capture(
     let persisted: PersistedLocalCapture =
         serde_json::from_str(&snapshot_json).context("error local-shared-capture-malformed")?;
     ensure!(
-        persisted.format == internal_format
-            && persisted.version == internal_version
-            && persisted.candidate_id == candidate_id
-            && persisted.stream_id == stream_id,
+        persisted.candidate_id == candidate_id && persisted.stream_id == stream_id,
         "error local-shared-capture-encoding-mismatch"
     );
     let capture = SharedStateCapture {

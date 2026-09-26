@@ -10,7 +10,7 @@ use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
-use super::{LOCAL_CAPTURE_STATE, NeverDispatchedLocalSharedCapture};
+use super::NeverDispatchedLocalSharedCapture;
 use crate::data_safety::export_types::AvenExport;
 use crate::db::{self, Database};
 
@@ -216,13 +216,13 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         super::adoption::ensure_no_intent(&mut tx).await?;
-        let active: Option<(String, String)> = sqlx::query_as(
-            "SELECT candidate_id, state FROM local_shared_capture_journal WHERE singleton = 1",
+        let active: Option<String> = sqlx::query_scalar(
+            "SELECT candidate_id FROM local_shared_capture_journal WHERE singleton = 1",
         )
         .fetch_optional(&mut *tx)
         .await?;
         ensure!(
-            active.as_ref() == Some(&(candidate_id.clone(), LOCAL_CAPTURE_STATE.to_string())),
+            active.as_ref() == Some(&candidate_id),
             "error local-shared-capture-changed-during-packaging"
         );
         super::validate_persisted_local_capture(

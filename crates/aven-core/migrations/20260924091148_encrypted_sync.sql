@@ -14,8 +14,6 @@ CREATE TABLE local_shared_capture_journal (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     candidate_id TEXT NOT NULL UNIQUE,
     stream_id TEXT NOT NULL UNIQUE,
-    state TEXT NOT NULL CHECK (state = 'never_dispatched'),
-    internal_format TEXT NOT NULL,
     internal_version INTEGER NOT NULL,
     snapshot_json TEXT NOT NULL,
     local_seq_floor INTEGER NOT NULL CHECK (local_seq_floor >= 0),
@@ -146,7 +144,7 @@ END;
 -- Terminal identities remain even after their bounded artifact storage is reclaimed.
 CREATE TABLE server_bootstrap_candidates (
     bootstrap BLOB PRIMARY KEY CHECK (length(bootstrap) = 32),
-    descriptor BLOB CHECK (descriptor IS NULL OR length(descriptor) <= 1978),
+    descriptor BLOB,
     canceled INTEGER NOT NULL CHECK (canceled IN (0, 1)),
     expires_at INTEGER NOT NULL,
     byte_budget INTEGER NOT NULL CHECK (byte_budget BETWEEN 0 AND 629145600),
@@ -162,7 +160,7 @@ CREATE TABLE server_bootstrap_chunks (
     bootstrap BLOB NOT NULL REFERENCES server_bootstrap_candidates(bootstrap),
     component BLOB NOT NULL CHECK (length(component) IN (1, 33)),
     chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
-    bytes BLOB NOT NULL CHECK (length(bytes) BETWEEN 1 AND 1048798),
+    bytes BLOB NOT NULL CHECK (length(bytes) >= 1),
     PRIMARY KEY (bootstrap, component, chunk_index)
 );
 
@@ -176,7 +174,7 @@ CREATE TABLE server_e2ee_membership_head (
 CREATE TABLE server_bootstrap_publication (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     bootstrap BLOB NOT NULL UNIQUE REFERENCES server_bootstrap_candidates(bootstrap),
-    descriptor BLOB NOT NULL CHECK (length(descriptor) <= 1978),
+    descriptor BLOB NOT NULL,
     signed_record BLOB NOT NULL CHECK (length(signed_record) = 805),
     published_at INTEGER NOT NULL
 );
@@ -213,7 +211,7 @@ CREATE UNIQUE INDEX server_membership_unfinished_inviter
 CREATE TABLE server_membership_transitions (
     sequence INTEGER PRIMARY KEY CHECK (sequence BETWEEN 2 AND 257),
     handle BLOB UNIQUE REFERENCES server_membership_invitations(handle),
-    record BLOB NOT NULL CHECK (length(record) <= 32768)
+    record BLOB NOT NULL
 );
 
 -- A new invitation cannot reset a previously observed vault clock.
@@ -265,7 +263,7 @@ CREATE TABLE server_e2ee_tail (
     operation_id TEXT PRIMARY KEY,
     sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
     commitment BLOB NOT NULL CHECK(length(commitment) = 32),
-    record BLOB NOT NULL CHECK(length(record) <= 132328)
+    record BLOB NOT NULL
 );
 CREATE TABLE local_e2ee_outbox (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -334,7 +332,7 @@ CREATE TABLE server_e2ee_images (
     bootstrap BLOB REFERENCES server_bootstrap_publication(bootstrap),
     byte_size INTEGER NOT NULL CHECK(byte_size > 0),
     unreferenced_at INTEGER,
-    descriptor BLOB NOT NULL CHECK(length(descriptor) <= 1984),
+    descriptor BLOB NOT NULL,
     origin TEXT,
     complete INTEGER NOT NULL DEFAULT 0 CHECK(complete IN (0,1))
 );
