@@ -78,9 +78,26 @@ pub(crate) enum AutomaticSyncService {
     /// Installs the background service for this database.
     Install,
     /// The service would serve another database, so none is installed.
+    /// Carries this database's path for the command that would serve it.
     OtherDatabase(std::path::PathBuf),
     /// No supported service manager exists on this platform.
     Unsupported,
+}
+
+/// The shell command that installs the background service for `db`, with
+/// the path quoted as one POSIX shell word when it needs quoting.
+pub(crate) fn daemon_install_command(db: &std::path::Path) -> String {
+    let path = db.display().to_string();
+    let plain = !path.is_empty()
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/._-+:@,=".contains(&b));
+    let path = if plain {
+        path
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    };
+    format!("aven --db {path} daemon install")
 }
 
 impl SyncPage {
@@ -505,6 +522,19 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn daemon_install_command_quotes_paths_that_need_it() {
+        let command = |path: &str| daemon_install_command(std::path::Path::new(path));
+        assert_eq!(
+            command("/home/me/aven.sqlite"),
+            "aven --db /home/me/aven.sqlite daemon install"
+        );
+        assert_eq!(
+            command("/Users/me/My Tasks/it's.sqlite"),
+            "aven --db '/Users/me/My Tasks/it'\\''s.sqlite' daemon install"
+        );
     }
 
     fn status(phase: LocalPhase) -> TuiSyncStatus {

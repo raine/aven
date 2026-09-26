@@ -211,9 +211,6 @@ mod keychain {
                 let attributes = result
                     .simplify_dict()
                     .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
-                if attributes.get("acct").map(String::as_str) != Some(namespace) {
-                    return Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable));
-                }
                 match attributes.get("svce") {
                     Some(service) if *service == self.service => {
                         items.insert(KEYRING_ITEM.to_string());

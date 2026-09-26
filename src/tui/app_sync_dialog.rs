@@ -242,8 +242,8 @@ impl App {
             AutomaticSyncService::Install => {}
             AutomaticSyncService::OtherDatabase(path) => {
                 self.set_warning(format!(
-                    "automatic sync is on; run `aven --db {} daemon install` to sync this database",
-                    path.display()
+                    "automatic sync is on; run `{}` to sync this database",
+                    crate::tui::overlay::daemon_install_command(&path)
                 ));
                 return Ok(());
             }

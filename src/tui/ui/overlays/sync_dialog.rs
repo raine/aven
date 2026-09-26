@@ -1100,9 +1100,8 @@ fn confirm_automatic_sync_lines(
             lines.push(Line::from(""));
             lines.extend(paragraph(
                 &format!(
-                    "To sync this database in the background instead, run \
-                     `aven --db {} daemon install`.",
-                    path.display()
+                    "To sync this database in the background instead, run `{}`.",
+                    crate::tui::overlay::daemon_install_command(path)
                 ),
                 muted,
                 width,

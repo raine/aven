@@ -42,7 +42,8 @@ pub(crate) use state::{
 pub(crate) use state::{ConfirmState, TextInputState};
 pub(crate) use sync_dialog::{
     AutomaticSyncService, InvitationKind, SecretText, SyncAction, SyncDialogOutcome,
-    SyncDialogState, SyncPage, handle_sync_dialog_key, paste_into_sync_dialog, sync_actions,
+    SyncDialogState, SyncPage, daemon_install_command, handle_sync_dialog_key,
+    paste_into_sync_dialog, sync_actions,
 };
 
 pub(crate) use text_buffer::TextBuffer;
