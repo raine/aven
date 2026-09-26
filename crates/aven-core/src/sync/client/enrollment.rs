@@ -560,7 +560,8 @@ impl Client {
             {
                 Ok(Reply::Mailbox(mail)) if mail.admission.is_some() => {
                     let grant = store.open_peer_response(db, &mail).await?;
-                    return self.finish(store, db, peer, &mail, grant).await;
+                    self.finish(store, db, peer, &mail, grant).await?;
+                    return Ok(true);
                 }
                 Ok(Reply::Mailbox(_)) => waiting = true,
                 Ok(_) => {
@@ -588,7 +589,7 @@ impl Client {
         peer: &membership::Joiner,
         mail: &membership::Mailbox,
         grant: membership::ProvisionalGrant,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let context = Context {
             vault: peer.vault(),
             genesis: grant.genesis,
@@ -597,7 +598,6 @@ impl Client {
         };
         // `finish_peer` verifies the chain while locating the outcome.
         let evidence = self.unverified_membership(&context, peer.bearer()).await?;
-        store.finish_peer(db, mail, &evidence).await?;
-        Ok(true)
+        store.finish_peer(db, mail, &evidence).await
     }
 }

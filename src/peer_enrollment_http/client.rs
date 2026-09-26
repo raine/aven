@@ -108,7 +108,7 @@ impl Client {
         peer: &Joiner,
         mail: &membership::Mailbox,
         grant: membership::ProvisionalGrant,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         run!(self, |client| client.finish(store, db, peer, mail, grant))
     }
     pub(crate) async fn finish_pending_management(

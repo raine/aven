@@ -112,7 +112,7 @@ pub(crate) async fn invitation_status(
     database: &Database,
     config: &AppConfig,
 ) -> Result<Option<InvitationStatus>> {
-    engine::invitation_status(database, &DesktopHost(config)).await
+    Ok(association_status(database, config).await?.invitation)
 }
 
 pub(crate) async fn cancel_invitation(

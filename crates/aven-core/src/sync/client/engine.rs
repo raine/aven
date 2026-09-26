@@ -396,13 +396,6 @@ pub async fn association_status(
     })
 }
 
-pub async fn invitation_status(
-    database: &Database,
-    host: &dyn ClientHost,
-) -> Result<Option<InvitationStatus>> {
-    Ok(association_status(database, host).await?.invitation)
-}
-
 pub async fn cancel_invitation(
     link: Link,
     database: &Database,
