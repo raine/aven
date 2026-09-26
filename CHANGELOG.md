@@ -3,9 +3,9 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.44 (2026-09-26)
 
-- Fix: Opening a [search](https://aventasks.dev/tui/#search-filter-and-order) result with `Enter` keeps the typed query as the committed search view, so closing the task detail returns to the full result list instead of a single-task view scoped to that task's reference.
+- Fix: Opening a [search](https://aventasks.dev/tui/#search-filter-and-order) result with `Enter` keeps the typed query as the committed search view, so closing the task detail returns to the full result list instead of a single-task view scoped to that task's reference. ([#21](https://github.com/raine/aven/pull/21))
 
 ## v0.1.43 (2026-09-26)
 
