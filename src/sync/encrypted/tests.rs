@@ -221,7 +221,7 @@ async fn spawn_invite(
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     loop {
         let line = lines.next_line().await.unwrap().unwrap();
-        if line.starts_with(aven_core::sync::device_invitation::PREFIX) {
+        if line.starts_with(aven_core::sync::invitation_text::DEVICE_PREFIX) {
             return (child, line, lines);
         }
     }
@@ -370,7 +370,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         &operator
             .ok(&["server", "setup", "--data", &data, "--url", &url])
             .await,
-        "aven-sync-setup-1:",
+        "aven-setup:",
     );
     let error = failure(
         &operator
@@ -415,7 +415,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         &operator
             .ok(&["server", "setup", "--data", &data, "--url", &url])
             .await,
-        "aven-sync-setup-1:",
+        "aven-setup:",
     );
     let (old, new) = (
         SetupInvitation::decode(&setup_invitation).unwrap(),
@@ -633,9 +633,9 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     assert!(error.contains("sync-already-set-up"), "{error}");
 
     // Secrets stay out of databases, configuration and logs.
-    let secret = setup_invitation.trim_start_matches("aven-sync-setup-1:");
+    let secret = setup_invitation.trim_start_matches("aven-setup:");
     let device_secret =
-        device_invitation.trim_start_matches(aven_core::sync::device_invitation::PREFIX);
+        device_invitation.trim_start_matches(aven_core::sync::invitation_text::DEVICE_PREFIX);
     for path in [
         a.db(),
         b.db(),
@@ -704,7 +704,7 @@ async fn set_up(root: &Path) -> (Child, Installation) {
                 &url,
             ])
             .await,
-        "aven-sync-setup-1:",
+        "aven-setup:",
     );
     let server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
     success(
@@ -914,7 +914,7 @@ async fn cli_forged_setup_refusals_keep_committed_claim_recoverable() {
                 &relay_url,
             ])
             .await,
-        "aven-sync-setup-1:",
+        "aven-setup:",
     );
     let _server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
 

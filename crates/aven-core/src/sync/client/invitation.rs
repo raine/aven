@@ -1,21 +1,12 @@
-//! Text handoff for setup and device invitations. Debug output is redacted.
-//!
-//! Device invitation text is defined in `crate::sync::device_invitation`;
-//! this module adds server origin validation. Setup invitations are
-//! provisional: `aven-sync-setup-1:` and base64url of the setup ID and secret
-//! followed by the server origin.
+//! Setup and device invitations, encoded as described in
+//! `crate::sync::invitation_text`. Debug output is redacted.
 use std::fmt;
 
 use anyhow::Result;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use zeroize::Zeroizing;
 
-use super::origin::server_origin;
-use crate::sync::device_invitation;
+use crate::sync::invitation_text::{self, Kind};
 use crate::sync::seed_claim::{Secret, membership::Invitation};
-
-const SETUP_PREFIX: &str = "aven-sync-setup-1:";
-const MAX_SERVER_BYTES: usize = 2048;
 
 /// Authority to claim an unclaimed server's storage and start a sync.
 pub struct SetupInvitation {
@@ -43,19 +34,23 @@ impl fmt::Debug for DeviceInvitation {
 }
 
 impl SetupInvitation {
-    pub fn encode(&self) -> Zeroizing<String> {
+    pub fn encode(&self) -> Result<Zeroizing<String>> {
         let mut secret = Zeroizing::new(self.setup_id.to_vec());
         secret.extend_from_slice(self.secret.expose());
-        encode(SETUP_PREFIX, &secret, &self.server)
+        invitation_text::encode(Kind::Setup, &self.server, &secret)
     }
 
     pub fn decode(text: &str) -> Result<Self> {
-        let (secret, server) = decode(SETUP_PREFIX, text, 64)
-            .ok_or_else(|| anyhow::anyhow!("error sync-setup-invitation-invalid"))?;
-        Ok(Self {
-            server,
-            setup_id: secret[..32].try_into()?,
-            secret: Secret::new(secret[32..].try_into()?),
+        Self::decode_fields(text)
+            .ok_or_else(|| anyhow::anyhow!("error sync-setup-invitation-invalid"))
+    }
+
+    fn decode_fields(text: &str) -> Option<Self> {
+        let decoded = invitation_text::decode(text).filter(|d| d.kind == Kind::Setup)?;
+        Some(Self {
+            setup_id: decoded.secret[..32].try_into().ok()?,
+            secret: Secret::new(decoded.secret[32..].try_into().ok()?),
+            server: decoded.server,
         })
     }
 }
@@ -65,8 +60,7 @@ impl DeviceInvitation {
         // Protected storage order is vault, inviter HPKE public key, PSK,
         // matching the invitation text.
         let fields = self.invitation.protected_storage_bytes();
-        let secret: &[u8; device_invitation::SECRET_BYTES] = fields[..].try_into()?;
-        device_invitation::encode(&self.server, secret)
+        invitation_text::encode(Kind::Device, &self.server, &fields)
     }
 
     pub fn decode(text: &str) -> Result<Self> {
@@ -75,12 +69,9 @@ impl DeviceInvitation {
     }
 
     fn decode_fields(text: &str) -> Option<Self> {
-        let decoded = device_invitation::decode(text)?;
-        if server_origin(&decoded.server).ok()? != decoded.server {
-            return None;
-        }
+        let decoded = invitation_text::decode(text).filter(|d| d.kind == Kind::Device)?;
         Some(Self {
-            invitation: Invitation::from_protected_storage(decoded.secret.as_slice()).ok()?,
+            invitation: Invitation::from_protected_storage(&decoded.secret).ok()?,
             server: decoded.server,
         })
     }
@@ -101,42 +92,16 @@ pub enum InvitationCheck {
 
 impl InvitationCheck {
     pub fn of(text: &str) -> Self {
-        let text = text.trim();
-        if text.is_empty() {
-            Self::Empty
-        } else if let Ok(invitation) = SetupInvitation::decode(text) {
-            Self::Setup(invitation.server)
-        } else if let Ok(invitation) = DeviceInvitation::decode(text) {
-            Self::Device(invitation.server)
-        } else if text.starts_with(SETUP_PREFIX) || device_invitation::has_prefix(text) {
-            Self::Incomplete
-        } else {
-            Self::Unknown
+        if text.trim().is_empty() {
+            return Self::Empty;
+        }
+        match invitation_text::decode(text) {
+            Some(decoded) if decoded.kind == Kind::Setup => Self::Setup(decoded.server),
+            Some(decoded) => Self::Device(decoded.server),
+            None if Kind::of_prefix(text).is_some() => Self::Incomplete,
+            None => Self::Unknown,
         }
     }
-}
-
-fn encode(prefix: &str, secret: &[u8], server: &str) -> Zeroizing<String> {
-    let mut bytes = Zeroizing::new(secret.to_vec());
-    bytes.extend_from_slice(server.as_bytes());
-    Zeroizing::new(format!(
-        "{prefix}{}",
-        URL_SAFE_NO_PAD.encode(bytes.as_slice())
-    ))
-}
-
-fn decode(prefix: &str, text: &str, secret_len: usize) -> Option<(Zeroizing<Vec<u8>>, String)> {
-    let encoded = text.trim().strip_prefix(prefix)?;
-    if encoded.len() > (secret_len + MAX_SERVER_BYTES) * 4 / 3 + 4 {
-        return None;
-    }
-    let bytes = Zeroizing::new(URL_SAFE_NO_PAD.decode(encoded).ok()?);
-    if bytes.len() <= secret_len {
-        return None;
-    }
-    let server = std::str::from_utf8(&bytes[secret_len..]).ok()?;
-    let origin = server_origin(server).ok()?;
-    (origin == server).then(|| (Zeroizing::new(bytes[..secret_len].to_vec()), origin))
 }
 
 /// Encoded setup and device invitations for `server`, for tests outside
@@ -155,7 +120,10 @@ pub fn sample_invitations(server: &str) -> (Zeroizing<String>, Zeroizing<String>
         server: server.into(),
         invitation: Invitation::from_protected_storage(&storage).expect("sample invitation"),
     };
-    (setup.encode(), device.encode().expect("sample invitation"))
+    (
+        setup.encode().expect("sample invitation"),
+        device.encode().expect("sample invitation"),
+    )
 }
 
 #[cfg(test)]
@@ -163,66 +131,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn invitations_round_trip_and_refuse_other_kinds() {
-        let setup = SetupInvitation {
-            server: "https://sync.example.net".into(),
-            setup_id: [3; 32],
-            secret: Secret::new([4; 32]),
-        };
-        let text = setup.encode();
-        let decoded = SetupInvitation::decode(&format!("  {}\n", text.as_str())).unwrap();
-        assert_eq!(decoded.server, setup.server);
-        assert_eq!(decoded.setup_id, setup.setup_id);
-        assert_eq!(decoded.secret.expose(), setup.secret.expose());
-        assert!(DeviceInvitation::decode(&text).is_err());
+    fn invitations_round_trip_and_report_their_kind() {
+        let server = "https://sync.example.net";
+        let (setup_text, device_text) = sample_invitations(server);
+
+        assert!(setup_text.starts_with(invitation_text::SETUP_PREFIX));
+        let decoded = SetupInvitation::decode(&format!("  {}\n", setup_text.as_str())).unwrap();
+        assert_eq!(decoded.server, server);
+        assert_eq!(decoded.setup_id, [3; 32]);
+        assert_eq!(decoded.secret.expose(), &[4; 32]);
+        assert_eq!(format!("{decoded:?}"), "SetupInvitation([REDACTED])");
+        assert!(DeviceInvitation::decode(&setup_text).is_err());
+
+        assert!(device_text.starts_with(invitation_text::DEVICE_PREFIX));
+        let decoded = DeviceInvitation::decode(&device_text.to_ascii_lowercase()).unwrap();
+        assert_eq!(decoded.server, server);
+        assert_eq!(decoded.encode().unwrap(), device_text);
+        assert!(SetupInvitation::decode(&device_text).is_err());
+
         assert_eq!(
-            InvitationCheck::of(&text),
-            InvitationCheck::Setup(setup.server.clone())
+            InvitationCheck::of(&setup_text),
+            InvitationCheck::Setup(server.into())
         );
         assert_eq!(
-            InvitationCheck::of(&text[..60]),
+            InvitationCheck::of(&device_text),
+            InvitationCheck::Device(server.into())
+        );
+        assert_eq!(
+            InvitationCheck::of(&setup_text[..60]),
+            InvitationCheck::Incomplete
+        );
+        assert_eq!(
+            InvitationCheck::of(&device_text[..40].to_ascii_lowercase()),
             InvitationCheck::Incomplete
         );
         assert_eq!(InvitationCheck::of("hello"), InvitationCheck::Unknown);
         assert_eq!(InvitationCheck::of("  "), InvitationCheck::Empty);
-        assert_eq!(format!("{decoded:?}"), "SetupInvitation([REDACTED])");
-
-        let mut storage = vec![5; 32];
-        storage.extend([6; 32]);
-        storage.extend([7; 32]);
-        let device = DeviceInvitation {
-            server: "https://sync.example.net".into(),
-            invitation: Invitation::from_protected_storage(&storage).unwrap(),
-        };
-        let text = device.encode().unwrap();
-        assert!(text.starts_with(device_invitation::PREFIX));
-        let decoded = DeviceInvitation::decode(&text.to_ascii_lowercase()).unwrap();
-        assert_eq!(decoded.server, device.server);
-        assert_eq!(
-            *decoded.invitation.protected_storage_bytes(),
-            *device.invitation.protected_storage_bytes()
-        );
-        assert!(SetupInvitation::decode(&text).is_err());
-        assert_eq!(
-            InvitationCheck::of(&text),
-            InvitationCheck::Device(device.server.clone())
-        );
-        assert_eq!(
-            InvitationCheck::of(&text[..40].to_ascii_lowercase()),
-            InvitationCheck::Incomplete
-        );
-
-        // The text format accepts any origin; decoding here also refuses
-        // origins encrypted sync can't use.
-        for server in ["http://sync.example.net", "https://sync.example.net/x"] {
-            let text = device_invitation::encode(server, &[1; 96]).unwrap();
-            assert!(DeviceInvitation::decode(&text).is_err(), "{server}");
-            assert_eq!(InvitationCheck::of(&text), InvitationCheck::Incomplete);
-        }
-
-        let plaintext_remote = encode(SETUP_PREFIX, &[0; 64], "http://sync.example.net");
-        assert!(SetupInvitation::decode(&plaintext_remote).is_err());
-        let with_path = encode(SETUP_PREFIX, &[0; 64], "https://sync.example.net/x");
-        assert!(SetupInvitation::decode(&with_path).is_err());
     }
 }

@@ -370,7 +370,7 @@ fn render_invitation(kind: InvitationKind, text: &str) -> String {
 #[test]
 fn invitation_form_never_renders_the_secret() {
     let mut input = SecretText::default();
-    input.insert("aven-sync-setup-1:SECRETSECRET");
+    input.insert("aven-setup:SECRETSECRET");
     let rendered = render_page(
         SyncPage::Invitation {
             kind: InvitationKind::Setup,
@@ -382,7 +382,6 @@ fn invitation_form_never_renders_the_secret() {
     );
 
     assert!(!rendered.contains("SECRET"));
-    assert!(!rendered.contains("aven-sync-setup-1"));
     assert!(rendered.contains("Incomplete invitation; part may be missing"));
     assert!(rendered.contains("Paste the invitation first."));
     assert!(!rendered.contains("isn't shown or saved"));

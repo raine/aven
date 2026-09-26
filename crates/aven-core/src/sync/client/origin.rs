@@ -2,7 +2,8 @@
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
-const MAX_SERVER_BYTES: usize = 2048;
+/// Longest server origin; invitations carry its length in one byte.
+pub const MAX_SERVER_BYTES: usize = 255;
 
 /// Validates `origin` for encrypted transport and returns the endpoint at
 /// `path`: HTTPS, or HTTP only with a loopback host, with no credentials,
@@ -36,7 +37,7 @@ pub fn server_origin(url: &str) -> Result<String> {
     let origin = Url::parse(url)?.origin().ascii_serialization();
     ensure!(
         origin.len() <= MAX_SERVER_BYTES,
-        "error sync-server-url-too-long"
+        "error sync-server-url-too-long hint=\"use a server origin of at most 255 bytes\""
     );
     Ok(origin)
 }

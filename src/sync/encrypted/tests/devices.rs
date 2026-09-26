@@ -118,7 +118,7 @@ async fn cli_lists_and_removes_devices_with_resumable_removal() {
                 &url,
             ])
             .await,
-        "aven-sync-setup-1:",
+        "aven-setup:",
     );
     let _server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
     success(

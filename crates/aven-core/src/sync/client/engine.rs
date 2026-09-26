@@ -336,8 +336,8 @@ pub async fn create_invitation(
     // Checked before registering, so an origin the invitation text can't
     // carry never leaves an open invitation behind.
     ensure!(
-        server.len() <= crate::sync::device_invitation::MAX_SERVER_BYTES,
-        "error sync-server-url-too-long hint=\"device invitations need a server origin of at most 255 bytes\""
+        server.len() <= super::MAX_SERVER_BYTES,
+        "error sync-server-url-too-long hint=\"invitations need a server origin of at most 255 bytes\""
     );
     let now = unix_now()?;
     let created = enrollment::Client::new(&server, link.clone())?

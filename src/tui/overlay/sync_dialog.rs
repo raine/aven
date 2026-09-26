@@ -715,11 +715,11 @@ mod tests {
             input: SecretText::default(),
             error: None,
         });
-        paste_into_sync_dialog(&mut state, "aven-sync-setup-1:abc\r\n");
+        paste_into_sync_dialog(&mut state, "aven-setup:abc\r\n");
         let SyncPage::Invitation { input, .. } = &state.page else {
             panic!("expected invitation page");
         };
-        assert_eq!(input.expose(), "aven-sync-setup-1:abc");
+        assert_eq!(input.expose(), "aven-setup:abc");
         let mut long = SecretText::default();
         long.insert(&"x".repeat(INVITATION_LIMIT + 10));
         assert_eq!(long.chars(), INVITATION_LIMIT);

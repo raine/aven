@@ -126,7 +126,10 @@ pub struct Client {
 }
 impl Client {
     pub fn new(origin: &str, link: Link) -> Result<Self> {
-        ensure!(origin.len() <= 2048, "error enrollment-locator-limit");
+        ensure!(
+            origin.len() <= super::MAX_SERVER_BYTES,
+            "error enrollment-locator-limit"
+        );
         Ok(Self {
             link,
             endpoint: super::origin::endpoint(origin, PATH)?,

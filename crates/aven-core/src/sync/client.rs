@@ -22,4 +22,4 @@ pub use exchange::{
 };
 pub use host::ClientHost;
 pub use invitation::{DeviceInvitation, InvitationCheck, SetupInvitation};
-pub use origin::server_origin;
+pub use origin::{MAX_SERVER_BYTES, server_origin};

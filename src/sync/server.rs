@@ -64,7 +64,7 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
         setup_id,
         secret,
     };
-    println!("{}", invitation.encode().as_str());
+    println!("{}", invitation.encode()?.as_str());
     eprintln!("Anyone with this invitation can claim this server. It expires in one hour.");
     eprintln!("Run `aven sync setup` on the device whose data should start the sync.");
     let port = url::Url::parse(&args.url)
