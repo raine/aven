@@ -486,8 +486,10 @@ impl ProtectedLocalKeyStore {
                 inputs.keys.authority(),
                 &evidence,
                 target,
-                &inputs.membership,
-                &inputs.coverage,
+                super::membership::Verified {
+                    membership: &inputs.membership,
+                    keys: &inputs.coverage,
+                },
             )
             .await?;
         inputs.membership = membership;
@@ -1317,8 +1319,10 @@ impl ProtectedLocalKeyStore {
             peer.authority(),
             evidence,
             current,
-            verified.membership(),
-            verified.keys(),
+            super::membership::Verified {
+                membership: verified.membership(),
+                keys: verified.keys(),
+            },
         )
         .await?;
         self.save_phase(db, &id, "peer-ready", 128, &record.outcome)
@@ -1428,8 +1432,10 @@ impl ProtectedLocalKeyStore {
                 peer.authority(),
                 evidence,
                 target,
-                verified.membership(),
-                verified.keys(),
+                super::membership::Verified {
+                    membership: verified.membership(),
+                    keys: verified.keys(),
+                },
             )
             .await?
             .0)

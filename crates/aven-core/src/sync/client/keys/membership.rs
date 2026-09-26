@@ -322,15 +322,17 @@ impl ProtectedLocalKeyStore {
         device: Device<'_>,
         evidence: &Evidence,
         target: Membership,
-        original: &Membership,
-        original_keys: &VerifiedKeys,
+        original: Verified<'_>,
     ) -> Result<(Membership, VerifiedKeys)> {
         let (mut before, mut keys) =
             if let Some((m, _, keys)) = self.membership_floor(db, identity).await? {
-                ensure!(m.extends(original), "error membership-original-mismatch");
+                ensure!(
+                    m.extends(original.membership),
+                    "error membership-original-mismatch"
+                );
                 (m, keys)
             } else {
-                (original.clone(), original_keys.clone())
+                (original.membership.clone(), original.keys.clone())
             };
         device.validate(&before)?;
         ensure!(target.extends(&before), "error membership-floor-fork");
@@ -363,6 +365,13 @@ impl ProtectedLocalKeyStore {
             .await?;
         Ok((target, keys))
     }
+}
+
+/// A membership with the recipient keys verified against it.
+#[derive(Clone, Copy)]
+pub(super) struct Verified<'a> {
+    pub(super) membership: &'a Membership,
+    pub(super) keys: &'a VerifiedKeys,
 }
 
 #[cfg(test)]

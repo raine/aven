@@ -273,8 +273,7 @@ async fn stale_image_uploaders_are_rejected_across_prune_expiry_and_reactivation
     let prune = async || {
         let mut p = policy();
         p.grace = std::time::Duration::ZERO;
-        let count = f.server.prune_encrypted_images(p.grace, 128).await.unwrap();
-        count
+        f.server.prune_encrypted_images(p.grace, 128).await.unwrap()
     };
     let chunks = async || {
         scalar(
