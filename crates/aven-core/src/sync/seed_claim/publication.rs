@@ -172,6 +172,18 @@ impl SeedAuthority {
             binding.bootstrap_id,
             self.genesis.commitment(),
         )?;
+        self.sign_authenticated_publication(&package.descriptor, key)
+    }
+
+    /// Signs publication intent for a descriptor whose package the caller
+    /// has already authenticated under `key` against this genesis.
+    pub(crate) fn sign_authenticated_publication(
+        &self,
+        descriptor: &[u8],
+        key: &LocalSharedStatePackageKey,
+    ) -> Result<Publication> {
+        self.validate(self.genesis.context, key)?;
+        let binding = PublicationBinding::from_descriptor(&self.genesis, descriptor)?;
         let (core, state, attachments) = components(&self.genesis, &binding);
         let signature = SigningKey::from_bytes(self.signing.expose())
             .sign(&cce("aven-e2ee/v1/membership/sign", &[&core, &attachments]));
@@ -179,7 +191,7 @@ impl SeedAuthority {
         for part in [&core[..], &state, &attachments, &signature.to_bytes()] {
             bytes(&mut record, part);
         }
-        Publication::from_record(&self.genesis, &package.descriptor, &record)
+        Publication::from_record(&self.genesis, descriptor, &record)
     }
 }
 
@@ -206,11 +218,13 @@ impl PublicationOutcome {
 
     /// Authenticate the signed binding against pinned genesis and local expectation.
     /// Never replace that expectation with a descriptor supplied by the server.
+    /// The record is already verified against the genesis and descriptor its
+    /// binding commits to, so comparing commitments suffices.
     pub fn validate_expected(&self, genesis: &Genesis, expected_descriptor: &[u8]) -> Result<()> {
-        let expected =
-            Publication::from_record(genesis, expected_descriptor, self.publication.record())?;
+        let b = &self.publication.binding;
         ensure!(
-            expected == self.publication,
+            b.genesis_commitment == genesis.commitment()
+                && b.descriptor_commitment == hash(expected_descriptor),
             "error bootstrap-publication-conflict"
         );
         Ok(())

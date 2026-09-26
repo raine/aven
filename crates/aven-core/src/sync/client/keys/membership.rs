@@ -146,8 +146,9 @@ impl ProtectedLocalKeyStore {
     fn evidence_record(digest: &Hash) -> String {
         format!("membership-evidence-{}", hex::encode(digest))
     }
+    /// Callers pass evidence they have already verified; every load verifies
+    /// it again before use.
     pub(super) fn save_evidence(&self, evidence: &Evidence) -> Result<EvidenceRef> {
-        evidence.verify()?;
         let bytes = serde_json::to_vec(evidence)?;
         ensure!(
             bytes.len() <= MAX_EVIDENCE_JSON_BYTES,
@@ -158,19 +159,26 @@ impl ProtectedLocalKeyStore {
             length: bytes.len(),
         };
         let name = Self::evidence_record(&reference.digest);
-        if let Some(saved) = self.read_record(&name, bytes.len())? {
-            ensure!(saved == bytes, "error membership-evidence-corrupt");
-        } else {
-            self.write_record(&name, &bytes)?;
-        }
-        self.load_evidence(&reference)?;
+        let saved = match self.read_record(&name, bytes.len())? {
+            Some(saved) => saved,
+            None => {
+                self.write_record(&name, &bytes)?;
+                self.read_record(&name, bytes.len())?
+                    .context("error membership-evidence-missing")?
+            }
+        };
+        ensure!(saved == bytes, "error membership-evidence-corrupt");
         #[cfg(any(test, feature = "test-support"))]
         if std::env::var("AVEN_PEER_CRASH_KIND").as_deref() == Ok("membership-evidence") {
             std::process::exit(79);
         }
         Ok(reference)
     }
-    pub(super) fn load_evidence(&self, reference: &EvidenceRef) -> Result<Evidence> {
+    pub(super) fn load_evidence(&self, reference: &EvidenceRef) -> Result<(Evidence, Membership)> {
+        Evidence::decode(&self.load_evidence_bytes(reference)?)
+    }
+    /// Digest-checked but unverified; the caller must replay it before use.
+    pub(super) fn load_evidence_bytes(&self, reference: &EvidenceRef) -> Result<Vec<u8>> {
         ensure!(
             reference.length <= MAX_EVIDENCE_JSON_BYTES,
             "error membership-limit"
@@ -182,14 +190,14 @@ impl ProtectedLocalKeyStore {
             Sha256::digest(&bytes).as_slice() == reference.digest,
             "error membership-evidence-corrupt"
         );
-        Evidence::decode(&bytes)
+        Ok(bytes)
     }
     /// Caller retains both installation and store exclusion across read and use.
     pub(super) async fn membership_floor(
         &self,
         db: &Database,
         identity: Hash,
-    ) -> Result<Option<(Membership, EvidenceRef, VerifiedKeys)>> {
+    ) -> Result<Option<(Membership, Evidence, VerifiedKeys)>> {
         let mut floors: Vec<Floor> = Vec::new();
         for sequence in 1..=MAX_TRANSITIONS + 1 {
             let kind = format!("membership-floor-{sequence}");
@@ -216,7 +224,7 @@ impl ProtectedLocalKeyStore {
         // earlier floor is an ancestor, so loads stay linear in the chain length.
         let latest = match floors.last() {
             Some(floor) => {
-                let m = self.load_evidence(&floor.evidence)?.verify()?;
+                let (evidence, m) = self.load_evidence(&floor.evidence)?;
                 ensure!(
                     m.sequence() == floor.sequence && m.head() == floor.head,
                     "error membership-floor-corrupt"
@@ -239,12 +247,12 @@ impl ProtectedLocalKeyStore {
                     "error membership-coverage-corrupt"
                 );
                 let keys = VerifiedKeys::from_protected_storage(&m, &coverage)?;
-                Some((m, floor.evidence.clone(), keys))
+                Some((m, evidence, keys, floor.evidence.digest))
             }
             None => None,
         };
         if let Some((id, sequence, head, digest)) = db.membership_checkpoint_mirror().await? {
-            let (m, _, _) = latest.as_ref().context("error membership-floor-missing")?;
+            let (m, _, _, _) = latest.as_ref().context("error membership-floor-missing")?;
             ensure!(
                 id == identity && m.head_at(sequence) == Some(head),
                 "error membership-mirror"
@@ -256,21 +264,22 @@ impl ProtectedLocalKeyStore {
                 .map_err(|_| anyhow::anyhow!("error membership-floor-corrupt"))?;
             ensure!(floor.evidence.digest == digest, "error membership-mirror");
         }
-        if let Some((m, reference, _)) = &latest {
-            db.mirror_membership_checkpoint(identity, m, reference.digest)
+        if let Some((m, _, _, digest)) = &latest {
+            db.mirror_membership_checkpoint(identity, m, *digest)
                 .await?;
         }
-        Ok(latest)
+        Ok(latest.map(|(m, evidence, keys, _)| (m, evidence, keys)))
     }
-    /// Key coverage and own identity must be verified by the caller first.
+    /// `m` must be what `evidence` verifies to. Key coverage and own identity
+    /// must be verified by the caller first.
     pub(super) async fn adopt_membership(
         &self,
         db: &Database,
         identity: Hash,
         evidence: &Evidence,
+        m: Membership,
         keys: &VerifiedKeys,
     ) -> Result<Membership> {
-        let m = evidence.verify()?;
         keys.validate(&m)?;
         let before = self.membership_floor(db, identity).await?;
         if let Some((before, _, _)) = &before {
@@ -304,17 +313,18 @@ impl ProtectedLocalKeyStore {
             .await?;
         Ok(m)
     }
-    /// Replay only authenticated descendants, retaining each required recipient key.
+    /// `target` must be what `evidence` verifies to. Replay only authenticated
+    /// descendants, retaining each required recipient key.
     pub(super) async fn refresh_membership(
         &self,
         db: &Database,
         identity: Hash,
         device: Device<'_>,
         evidence: &Evidence,
+        target: Membership,
         original: &Membership,
         original_keys: &VerifiedKeys,
     ) -> Result<(Membership, VerifiedKeys)> {
-        let target = evidence.verify()?;
         let (mut before, mut keys) =
             if let Some((m, _, keys)) = self.membership_floor(db, identity).await? {
                 ensure!(m.extends(original), "error membership-original-mismatch");
@@ -338,7 +348,8 @@ impl ProtectedLocalKeyStore {
                 // Signed removal is a durable denial, not an inference from a network error.
                 let mut removal = evidence.clone();
                 removal.transitions.truncate(next.sequence() as usize - 1);
-                self.adopt_membership(db, identity, &removal, &keys).await?;
+                self.adopt_membership(db, identity, &removal, next, &keys)
+                    .await?;
                 anyhow::bail!("error enrollment-revoked");
             }
             if next.generations().len() != before.generations().len() {
@@ -347,7 +358,9 @@ impl ProtectedLocalKeyStore {
             keys.validate(&next)?;
             before = next;
         }
-        self.adopt_membership(db, identity, evidence, &keys).await?;
+        let target = self
+            .adopt_membership(db, identity, evidence, target, &keys)
+            .await?;
         Ok((target, keys))
     }
 }

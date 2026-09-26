@@ -377,7 +377,7 @@ async fn pending_admission_enters_rotation_coverage_and_fresh_join_gets_all_hist
         .await
         .unwrap();
     let e = f.db.membership_evidence(&pa).await.unwrap();
-    let enrolled = e.enrollment(&fresh, hash(&admission)).unwrap();
+    let (enrolled, _) = e.enrollment(&fresh, hash(&admission)).unwrap();
     for g in m.generations() {
         assert_eq!(
             enrolled.keys().key(g.id).unwrap().protected_storage_bytes(),

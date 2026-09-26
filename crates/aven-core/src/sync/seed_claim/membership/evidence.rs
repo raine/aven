@@ -103,35 +103,50 @@ fn records<'de, D: serde::Deserializer<'de>>(
     d.deserialize_seq(Records)
 }
 impl Evidence {
-    /// Verify the complete chain while retaining the exact original enrollment.
-    pub fn enrollment(&self, peer: &Joiner, outcome: Hash) -> Result<VerifiedEnrollment> {
-        let current = self.verify()?;
-        let g = Genesis::from_record(&self.genesis)?;
-        let mut before = Membership::from_publication(&g, &self.descriptor, &self.publication)?;
-        for a in &self.transitions {
-            if hash(&a.record) == outcome {
-                let verified = peer.verify_enrollment(&before, &a.declaration, &a.record)?;
-                ensure!(
-                    current.extends(verified.membership()),
-                    "error membership-fork"
-                );
-                return Ok(verified);
+    /// Verify the complete chain once, returning the exact original
+    /// enrollment and the chain's current membership.
+    pub fn enrollment(
+        &self,
+        peer: &Joiner,
+        outcome: Hash,
+    ) -> Result<(VerifiedEnrollment, Membership)> {
+        let mut enrollment = None;
+        let current = self.replay(|before, a| {
+            if enrollment.is_none() && hash(&a.record) == outcome {
+                enrollment = Some(peer.verify_enrollment(before, &a.declaration, &a.record)?);
             }
-            before = before.append(&a.declaration, &a.request, &a.record)?;
-        }
-        anyhow::bail!("error enrollment-outcome-missing")
+            Ok(())
+        })?;
+        let verified = enrollment.context("error enrollment-outcome-missing")?;
+        ensure!(
+            current.extends(verified.membership()),
+            "error membership-fork"
+        );
+        Ok((verified, current))
     }
-    pub fn decode(bytes: &[u8]) -> Result<Self> {
+    /// Parse and verify, returning the membership the chain proves.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, Membership)> {
+        let evidence = Self::decode_unverified(bytes)?;
+        let membership = evidence.verify()?;
+        Ok((evidence, membership))
+    }
+    /// Parse within bounds only; the caller must verify before use.
+    pub fn decode_unverified(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= MAX_EVIDENCE_JSON_BYTES,
             "error membership-limit"
         );
-        let evidence: Self = serde_json::from_slice(bytes)
-            .map_err(|_| anyhow::anyhow!("error membership-evidence"))?;
-        evidence.verify()?;
-        Ok(evidence)
+        serde_json::from_slice(bytes).map_err(|_| anyhow::anyhow!("error membership-evidence"))
     }
     pub fn verify(&self) -> Result<Membership> {
+        self.replay(|_, _| Ok(()))
+    }
+    /// One bounded replay of the chain; `visit` sees each transition with the
+    /// verified membership before it.
+    fn replay(
+        &self,
+        mut visit: impl FnMut(&Membership, &EvidenceRecord) -> Result<()>,
+    ) -> Result<Membership> {
         ensure!(
             self.transitions.len() <= MAX_TRANSITIONS,
             "error membership-limit"
@@ -159,6 +174,7 @@ impl Evidence {
         let genesis = Genesis::from_record(&self.genesis)?;
         let mut m = Membership::from_publication(&genesis, &self.descriptor, &self.publication)?;
         for a in &self.transitions {
+            visit(&m, a)?;
             m = m.append(&a.declaration, &a.request, &a.record)?;
         }
         Ok(m)

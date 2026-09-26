@@ -1,7 +1,7 @@
 //! Bounded append-only removal intents and exact management dispatch ownership.
 use super::{membership::EvidenceRef, peer::ActiveInputs, *};
 use crate::sync::seed_claim::membership::{
-    Evidence, MAX_CANDIDATES, MAX_RECORD_BYTES, MAX_TRANSITIONS, RotationMaterial,
+    Evidence, MAX_CANDIDATES, MAX_RECORD_BYTES, MAX_TRANSITIONS, Membership, RotationMaterial,
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -53,12 +53,13 @@ struct Plan {
 pub struct Dispatch {
     pub record: Vec<u8>,
     pub evidence: Evidence,
+    pub membership: Membership,
     pub action: Action,
 }
 
 impl ProtectedLocalKeyStore {
     fn management_action(&self, inputs: &ActiveInputs, intent: &Intent) -> Result<Option<Action>> {
-        let original = self.load_evidence(&intent.original)?.verify()?;
+        let (_, original) = self.load_evidence(&intent.original)?;
         ensure!(
             inputs.membership.extends(&original),
             "error management-fork"
@@ -105,13 +106,16 @@ impl ProtectedLocalKeyStore {
         }))
     }
 
-    /// Validate every retained phase before treating its slot as committed or lost.
+    /// Validate every retained phase before treating its slot as committed or
+    /// lost. Without `prove`, only phase presence, framing and evidence digests
+    /// are checked, for an intent whose completion `ready` already proves.
     async fn management_plans(
         &self,
         db: &Database,
         inputs: &ActiveInputs,
         intent: &Intent,
-    ) -> Result<Vec<(Plan, Option<Vec<u8>>)>> {
+        prove: bool,
+    ) -> Result<Vec<(Plan, Option<Membership>, Option<Vec<u8>>)>> {
         let mut plans = Vec::new();
         let mut gap = false;
         let mut previous_sequence = 0;
@@ -146,13 +150,6 @@ impl ProtectedLocalKeyStore {
             };
             ensure!(!gap, "error management-plan-missing");
             let plan: Plan = serde_json::from_slice(&raw)?;
-            let before = self.load_evidence(&plan.before)?.verify()?;
-            ensure!(inputs.membership.extends(&before), "error management-fork");
-            ensure!(
-                before.sequence() > previous_sequence,
-                "error management-plan-order"
-            );
-            previous_sequence = before.sequence();
             if plan.action == Action::Revoke {
                 ensure!(
                     material.is_none() && plan.cutoff == 0,
@@ -162,11 +159,27 @@ impl ProtectedLocalKeyStore {
             if let Some(material) = &material {
                 RotationMaterial::from_protected_storage(material)?;
             }
+            ensure!(
+                record.is_some() || sent.is_none(),
+                "error management-candidate-missing"
+            );
+            ensure!(
+                record.is_none() || plan.action != Action::Rotate || material.is_some(),
+                "error management-material-missing"
+            );
+            if !prove {
+                self.load_evidence_bytes(&plan.before)?;
+                plans.push((plan, None, record.map(|r| r.to_vec())));
+                continue;
+            }
+            let (_, before) = self.load_evidence(&plan.before)?;
+            ensure!(inputs.membership.extends(&before), "error management-fork");
+            ensure!(
+                before.sequence() > previous_sequence,
+                "error management-plan-order"
+            );
+            previous_sequence = before.sequence();
             if let Some(record) = &record {
-                ensure!(
-                    plan.action != Action::Rotate || material.is_some(),
-                    "error management-material-missing"
-                );
                 let after = before.append(&[], &[], record)?;
                 if plan.action == Action::Revoke {
                     ensure!(
@@ -203,10 +216,8 @@ impl ProtectedLocalKeyStore {
                         "error management-sent-mismatch"
                     );
                 }
-            } else {
-                ensure!(sent.is_none(), "error management-candidate-missing");
             }
-            plans.push((plan, record.map(|r| r.to_vec())));
+            plans.push((plan, Some(before), record.map(|r| r.to_vec())));
         }
         Ok(plans)
     }
@@ -236,18 +247,23 @@ impl ProtectedLocalKeyStore {
             next = index + 1;
             let intent: Intent = serde_json::from_slice(&raw)?;
             ensure!(intent.index == index, "error management-intent");
-            self.management_plans(db, inputs, &intent).await?;
-            let done = self.management_action(inputs, &intent)?.is_none();
-            if let Some(ready) = self.phase(db, &intent.name("ready"), 128).await? {
+            // `ready` was recorded only once the chain proved the intent done,
+            // and every extension of that head stays done, so a completed
+            // intent keeps only its structural phase checks.
+            let done = if let Some(ready) = self.phase(db, &intent.name("ready"), 128).await? {
                 ensure!(
-                    done && inputs
+                    inputs
                         .membership
                         .contains_head(&ready.as_slice().try_into()?),
                     "error management-ready-mismatch"
                 );
-            }
-            if done {
-                if self.phase(db, &intent.name("ready"), 128).await?.is_none() {
+                self.load_evidence_bytes(&intent.original)?;
+                self.management_plans(db, inputs, &intent, false).await?;
+                true
+            } else {
+                self.management_plans(db, inputs, &intent, true).await?;
+                let done = self.management_action(inputs, &intent)?.is_none();
+                if done {
                     self.save_management_phase(
                         db,
                         inputs,
@@ -257,6 +273,9 @@ impl ProtectedLocalKeyStore {
                     )
                     .await?;
                 }
+                done
+            };
+            if done {
                 if (target.is_some() && target == intent.target)
                     || (withdraw.is_some() && withdraw == intent.withdraw)
                 {
@@ -309,14 +328,14 @@ impl ProtectedLocalKeyStore {
         intent: &Intent,
         high: u64,
     ) -> Result<Option<Dispatch>> {
-        let plans = self.management_plans(db, inputs, intent).await?;
+        let plans = self.management_plans(db, inputs, intent, true).await?;
         let Some(action) = self.management_action(inputs, intent)? else {
             return Ok(None);
         };
         let mut index = plans.len();
         let mut selected = None;
-        for (n, (plan, record)) in plans.into_iter().enumerate() {
-            let before = self.load_evidence(&plan.before)?.verify()?;
+        for (n, (plan, before, record)) in plans.into_iter().enumerate() {
+            let before = before.context("error management-plan")?;
             if let Some(head) = inputs.membership.head_at(before.sequence() + 1) {
                 if record
                     .as_ref()
@@ -410,7 +429,8 @@ impl ProtectedLocalKeyStore {
             &Sha256::digest(&record),
         )
         .await?;
-        let mut evidence = self.load_evidence(&plan.before)?;
+        let (mut evidence, before) = self.load_evidence(&plan.before)?;
+        let membership = before.append(&[], &[], &record)?;
         evidence
             .transitions
             .push(crate::sync::seed_claim::membership::EvidenceRecord {
@@ -418,10 +438,10 @@ impl ProtectedLocalKeyStore {
                 request: vec![],
                 record: record.clone(),
             });
-        evidence.verify()?;
         Ok(Some(Dispatch {
             record,
             evidence,
+            membership,
             action,
         }))
     }

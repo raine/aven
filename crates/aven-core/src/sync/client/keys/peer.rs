@@ -374,12 +374,12 @@ impl ProtectedLocalKeyStore {
             }
         };
         ensure!(id.locator == locator, "error enrollment-context");
-        let (keys, original, original_keys) = if id.role == "peer" {
+        let (keys, original, original_membership, original_keys) = if id.role == "peer" {
             ensure!(
                 self.phase(db, "peer-ready", 128).await?.is_some(),
                 "error enrollment-unresolved"
             );
-            let (peer, verified, record) = self.verified_peer(db, &id).await?;
+            let (peer, verified, _, (evidence, current)) = self.verified_peer(db, &id).await?;
             let installed = self
                 .phase(db, "peer-installed", 128)
                 .await?
@@ -394,7 +394,8 @@ impl ProtectedLocalKeyStore {
             );
             (
                 Keys::Peer(Box::new(peer)),
-                self.load_evidence(&record.evidence)?,
+                evidence,
+                current,
                 verified.keys().clone(),
             )
         } else {
@@ -403,20 +404,26 @@ impl ProtectedLocalKeyStore {
                 "error enrollment-client-mismatch"
             );
             let (seed, evidence, key) = self.seed_inputs(db).await?;
-            let coverage = evidence.verify()?.verify_initial_key(&key)?;
-            (Keys::Seed(Box::new(seed)), evidence, coverage)
+            let m = evidence.verify()?;
+            let coverage = m.verify_initial_key(&key)?;
+            (Keys::Seed(Box::new(seed)), evidence, m, coverage)
         };
-        let original_membership = original.verify()?;
         let (membership, evidence, coverage) =
-            if let Some((m, r, coverage)) = self.membership_floor(db, id.incarnation).await? {
-                (m, self.load_evidence(&r)?, coverage)
+            if let Some(floor) = self.membership_floor(db, id.incarnation).await? {
+                floor
             } else {
                 ensure!(
                     id.role == "inviter" && self.journals(db).await?.is_empty(),
                     "error membership-floor-missing"
                 );
                 let m = self
-                    .adopt_membership(db, id.incarnation, &original, &original_keys)
+                    .adopt_membership(
+                        db,
+                        id.incarnation,
+                        &original,
+                        original_membership.clone(),
+                        &original_keys,
+                    )
                     .await?;
                 (m, original, original_keys)
             };
@@ -460,12 +467,25 @@ impl ProtectedLocalKeyStore {
         inputs: &mut ActiveInputs,
         evidence: Evidence,
     ) -> Result<()> {
+        let target = evidence.verify()?;
+        self.adopt_verified_refresh(db, inputs, evidence, target)
+            .await
+    }
+    /// `target` must be what `evidence` verifies to.
+    pub async fn adopt_verified_refresh(
+        &self,
+        db: &Database,
+        inputs: &mut ActiveInputs,
+        evidence: Evidence,
+        target: Membership,
+    ) -> Result<()> {
         let (membership, coverage) = self
             .refresh_membership(
                 db,
                 inputs.id.incarnation,
                 inputs.keys.authority(),
                 &evidence,
+                target,
                 &inputs.membership,
                 &inputs.coverage,
             )
@@ -514,7 +534,7 @@ impl ProtectedLocalKeyStore {
                     ensure!(!gap, "error enrollment-candidate-missing");
                     let saved: Candidate = serde_json::from_slice(&bytes)
                         .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
-                    let before = self.load_evidence(&saved.predecessor)?.verify()?;
+                    let (_, before) = self.load_evidence(&saved.predecessor)?;
                     let after = before.append(
                         &journal.declaration,
                         bound.as_ref().context("error enrollment-binding-missing")?,
@@ -782,7 +802,7 @@ impl ProtectedLocalKeyStore {
                 .await?;
             let candidate: Candidate = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
-            let predecessor = self.load_evidence(&candidate.predecessor)?.verify()?;
+            let (_, predecessor) = self.load_evidence(&candidate.predecessor)?;
             let result = predecessor.append(&journal.declaration, request, &candidate.record)?;
             ensure!(
                 inputs.membership.extends(&predecessor),
@@ -916,7 +936,7 @@ impl ProtectedLocalKeyStore {
             };
             let saved: Candidate = serde_json::from_slice(&bytes)
                 .map_err(|_| anyhow::anyhow!("error enrollment-protected-framing"))?;
-            let before = self.load_evidence(&saved.predecessor)?.verify()?;
+            let (_, before) = self.load_evidence(&saved.predecessor)?;
             ensure!(
                 inputs.membership.extends(&before),
                 "error enrollment-candidate-fork"
@@ -1256,8 +1276,7 @@ impl ProtectedLocalKeyStore {
                 .as_deref()
                 .context("error enrollment-outcome-missing")?,
         )?;
-        let verified = evidence.enrollment(&peer, grant.outcome)?;
-        let current = evidence.verify()?;
+        let (verified, current) = evidence.enrollment(&peer, grant.outcome)?;
         self.save_phase(
             db,
             &id,
@@ -1297,6 +1316,7 @@ impl ProtectedLocalKeyStore {
             id.incarnation,
             peer.authority(),
             evidence,
+            current,
             verified.membership(),
             verified.keys(),
         )
@@ -1308,7 +1328,7 @@ impl ProtectedLocalKeyStore {
         &self,
         db: &Database,
         id: &Identity,
-    ) -> Result<(Joiner, VerifiedEnrollment, Verified)> {
+    ) -> Result<(Joiner, VerifiedEnrollment, Verified, (Evidence, Membership))> {
         let ready = self
             .phase(db, "peer-ready", 128)
             .await?
@@ -1324,15 +1344,15 @@ impl ProtectedLocalKeyStore {
             .await?
             .context("error enrollment-response-missing")?;
         let peer = responding(self.attempts(db, id).await?, &mail)?;
-        let verified = self
-            .load_evidence(&record.evidence)?
-            .enrollment(&peer, record.outcome)?;
+        // Locating the outcome verifies the whole chain, so load it unverified.
+        let evidence = Evidence::decode_unverified(&self.load_evidence_bytes(&record.evidence)?)?;
+        let (verified, current) = evidence.enrollment(&peer, record.outcome)?;
         ensure!(
             ready.as_slice() == record.outcome
                 && verified.key().protected_storage_bytes().as_slice() == record.key,
             "error enrollment-verified-corrupt"
         );
-        Ok((peer, verified, record))
+        Ok((peer, verified, record, (evidence, current)))
     }
     pub async fn install_peer_snapshot(
         &self,
@@ -1351,7 +1371,7 @@ impl ProtectedLocalKeyStore {
             id.role == "peer" && id.locator == locator,
             "error enrollment-context"
         );
-        let (peer, verified, record) = self.verified_peer(db, &id).await?;
+        let (peer, verified, _, (evidence, _)) = self.verified_peer(db, &id).await?;
         let completed = self.phase(db, "peer-installed", 128).await?;
         if let Some(report) = db
             .peer_snapshot_receipt(&verified, id.incarnation, &id.client, &guard)
@@ -1382,7 +1402,7 @@ impl ProtectedLocalKeyStore {
                 id.incarnation,
                 &peer,
                 &verified,
-                &self.load_evidence(&record.evidence)?.descriptor,
+                &evidence.descriptor,
             )
             .await?;
         let report = db
@@ -1399,6 +1419,7 @@ impl ProtectedLocalKeyStore {
         peer: &Joiner,
         verified: &VerifiedEnrollment,
         evidence: &Evidence,
+        target: Membership,
     ) -> Result<Membership> {
         Ok(self
             .refresh_membership(
@@ -1406,6 +1427,7 @@ impl ProtectedLocalKeyStore {
                 identity,
                 peer.authority(),
                 evidence,
+                target,
                 verified.membership(),
                 verified.keys(),
             )

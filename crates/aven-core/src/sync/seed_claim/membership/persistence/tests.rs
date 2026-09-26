@@ -294,10 +294,7 @@ async fn invitation_budget_and_bounded_evidence_refuse_without_forgetting_outcom
     );
     let evidence = f.db.membership_evidence(&a).await.unwrap();
     let bytes = serde_json::to_vec(&evidence).unwrap();
-    assert_eq!(
-        Evidence::decode(&bytes).unwrap().verify().unwrap().head(),
-        m.head()
-    );
+    assert_eq!(Evidence::decode(&bytes).unwrap().1.head(), m.head());
     let mut value = serde_json::to_value(&evidence).unwrap();
     value["genesis"] = serde_json::json!(vec![0; MAX_RECORD_BYTES + 1]);
     assert!(serde_json::from_value::<Evidence>(value).is_err());

@@ -476,10 +476,7 @@ fn maximum_signed_chain_fits_every_bound() {
     assert_eq!(evidence.verify().unwrap().head(), m.head());
     assert!(m.evidence_bytes <= MAX_CHAIN_BYTES);
     let json = serde_json::to_vec(&evidence).unwrap();
-    assert_eq!(
-        Evidence::decode(&json).unwrap().verify().unwrap().head(),
-        m.head()
-    );
+    assert_eq!(Evidence::decode(&json).unwrap().1.head(), m.head());
     assert!(seed().prepare_revoke(&m, &[]).is_err());
     assert!(seed().prepare_invitation(&m, 100).is_err());
 

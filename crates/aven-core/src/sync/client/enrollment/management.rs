@@ -64,7 +64,9 @@ impl Client {
                 && prepared.high_water <= MAX_CUTOFF,
             "error management-context"
         );
-        store.adopt_refresh(db, inputs, prepared.evidence).await?;
+        store
+            .adopt_verified_refresh(db, inputs, prepared.evidence, membership)
+            .await?;
         Ok(prepared.high_water)
     }
     /// Ends an expired invitation whose grant may have been sent. Admission
@@ -197,7 +199,12 @@ impl Client {
                     if intent.target() == Some(inputs.device()) && dispatch.action == Action::Revoke
                     {
                         let result = store
-                            .adopt_refresh(db, &mut inputs, dispatch.evidence)
+                            .adopt_verified_refresh(
+                                db,
+                                &mut inputs,
+                                dispatch.evidence,
+                                dispatch.membership,
+                            )
                             .await;
                         ensure!(
                             result.as_ref().err().is_some_and(|e| {

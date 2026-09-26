@@ -332,8 +332,8 @@ impl Joiner {
         record: &[u8],
     ) -> Result<VerifiedEnrollment> {
         let grant = self.open_provisional(declaration, record)?;
-        let membership = predecessor.append(declaration, self.request(), record)?;
         let d = Declaration::from_record(predecessor, declaration)?;
+        let membership = predecessor.admit(&d, self.request(), record)?;
         check(d.hpke == self.0.invitation.inviter)?;
         let recipient = self.0.recipient()?;
         let member = membership.member(&self.device())?;

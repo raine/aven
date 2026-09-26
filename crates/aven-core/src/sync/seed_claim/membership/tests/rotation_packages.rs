@@ -156,12 +156,13 @@ fn mixed_evidence_replays_historical_enrollment_after_inviter_removal() {
         ],
     };
     let bytes = serde_json::to_vec(&evidence).unwrap();
-    let parsed = Evidence::decode(&bytes).unwrap();
-    assert_eq!(parsed.verify().unwrap().sequence(), 4);
+    let (parsed, current) = Evidence::decode(&bytes).unwrap();
+    assert_eq!(current.sequence(), 4);
     assert_eq!(
         parsed
             .enrollment(&peer, hash(&admission))
             .unwrap()
+            .0
             .checkpoint(),
         m.head()
     );

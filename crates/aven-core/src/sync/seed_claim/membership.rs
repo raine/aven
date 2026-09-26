@@ -284,34 +284,46 @@ impl Membership {
     pub fn append(&self, declaration: &[u8], request: &[u8], record: &[u8]) -> Result<Self> {
         let (core, _, _, _) = encoding::components(record)?;
         let (_, action) = encoding::signer_action(core)?;
-        let mut next = match action {
-            3 => {
-                let declaration = Declaration::from_record(self, declaration)?;
-                let recipient = admission::validate(self, &declaration, request, record)?;
-                let mut next = self.clone();
-                next.members.push(Member {
-                    device: recipient.device,
-                    sign: recipient.sign,
-                    hpke: recipient.hpke,
-                    verifier: recipient.verifier,
-                    admission: declaration.handle,
-                    admitted_at: self.sequence() + 1,
-                });
-                next.members.sort_by_key(|m| m.device);
-                next.handles.push(declaration.handle);
-                next
-            }
+        match action {
+            3 => self.admit(
+                &Declaration::from_record(self, declaration)?,
+                request,
+                record,
+            ),
             4 | 5 => {
                 check(declaration.is_empty() && request.is_empty())?;
-                rotation::validate(self, record)?
+                self.finish(rotation::validate(self, record)?, 0, record)
             }
             _ => anyhow::bail!("error membership-action"),
-        };
+        }
+    }
+    /// `append` for an admission whose declaration was already parsed against
+    /// this membership.
+    pub(super) fn admit(
+        &self,
+        declaration: &Declaration,
+        request: &[u8],
+        record: &[u8],
+    ) -> Result<Self> {
+        let recipient = admission::validate(self, declaration, request, record)?;
+        let mut next = self.clone();
+        next.members.push(Member {
+            device: recipient.device,
+            sign: recipient.sign,
+            hpke: recipient.hpke,
+            verifier: recipient.verifier,
+            admission: declaration.handle,
+            admitted_at: self.sequence() + 1,
+        });
+        next.members.sort_by_key(|m| m.device);
+        next.handles.push(declaration.handle);
+        self.finish(next, DECLARATION_BYTES + request.len(), record)
+    }
+    fn finish(&self, mut next: Self, attached: usize, record: &[u8]) -> Result<Self> {
         next.heads.push(hash(record));
         next.evidence_bytes = self
             .evidence_bytes
-            .checked_add(declaration.len())
-            .and_then(|n| n.checked_add(request.len()))
+            .checked_add(attached)
             .and_then(|n| n.checked_add(record.len()))
             .context("error membership-limit")?;
         next.capacity()?;

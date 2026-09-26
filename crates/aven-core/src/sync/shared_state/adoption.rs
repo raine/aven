@@ -4,10 +4,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
 
-use super::{load_persisted_local_capture, package};
+use super::{NeverDispatchedLocalSharedCapture, load_persisted_local_capture, package};
 use crate::db::{self, Database};
 use crate::sync::LocalSharedStatePackageKey;
 use crate::sync::seed_claim::{Genesis, Publication, PublicationOutcome, SeedAuthority};
+
+fn same_capture(
+    a: &NeverDispatchedLocalSharedCapture,
+    b: &NeverDispatchedLocalSharedCapture,
+) -> Result<bool> {
+    Ok(a.candidate_id == b.candidate_id
+        && a.stream_id == b.stream_id
+        && a.images == b.images
+        && serde_json::to_vec(&a.capture.snapshot)? == serde_json::to_vec(&b.capture.snapshot)?)
+}
 
 /// Host-persisted source identity, independent of replaceable SQLite state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -318,14 +328,44 @@ impl Database {
             upload.descriptor == intent.data.descriptor,
             "error seed-package-mismatch"
         );
+        tx.commit().await?;
+        drop(conn);
+        // Decryption validates the snapshot read above without holding the writer.
         package::publication::validate_against_capture(
             &upload,
             &capture,
             key,
             seed.genesis().commitment(),
         )?;
-        tx.commit().await?;
         Ok(Some(upload))
+    }
+
+    /// Loads the never-dispatched capture with its frozen package and
+    /// authenticates one against the other on a reader, so the full-package
+    /// decrypt never holds the writer. Writers reload both and compare.
+    async fn validated_frozen_capture(
+        &self,
+        key: &LocalSharedStatePackageKey,
+        seed: &SeedAuthority,
+    ) -> Result<(
+        NeverDispatchedLocalSharedCapture,
+        package::EncryptedLocalSharedStatePackage,
+    )> {
+        let mut conn = self.acquire_reader().await?;
+        let capture = load_persisted_local_capture(&mut conn)
+            .await?
+            .context("error seed-capture-missing")?;
+        let package = package::load_package(&mut conn, capture.candidate_id())
+            .await?
+            .context("error seed-package-missing")?;
+        drop(conn);
+        package::publication::validate_against_capture(
+            &package.upload_package(),
+            &capture,
+            key,
+            seed.genesis().commitment(),
+        )?;
+        Ok((capture, package))
     }
 
     pub async fn seed_source_pin(&self) -> Result<Option<Vec<u8>>> {
@@ -389,6 +429,21 @@ impl Database {
         seed: &SeedAuthority,
         key: &LocalSharedStatePackageKey,
     ) -> Result<SeedPublicationIntent> {
+        // Failures surface only where the writer would have validated.
+        let prepared = if self.seed_publication_intent_bytes().await?.is_none() {
+            Some(
+                async {
+                    let (capture, package) = self.validated_frozen_capture(key, seed).await?;
+                    // The package was just authenticated under `key` against the capture.
+                    let publication =
+                        seed.sign_authenticated_publication(package.descriptor(), key)?;
+                    anyhow::Ok((capture, package, publication))
+                }
+                .await,
+            )
+        } else {
+            None
+        };
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         let client = source_matches(&mut tx, source).await?;
@@ -426,6 +481,8 @@ impl Database {
                 let capture = load_persisted_local_capture(&mut tx)
                     .await?
                     .context("error seed-capture-missing")?;
+                tx.commit().await?;
+                drop(conn);
                 package::publication::validate_against_capture(
                     &package.upload_package(),
                     &capture,
@@ -443,14 +500,13 @@ impl Database {
         let package = package::load_package(&mut tx, capture.candidate_id())
             .await?
             .context("error seed-package-missing")?;
+        let (validated_capture, validated, publication) =
+            prepared.context("error seed-intent-changed")??;
+        ensure!(
+            validated == package && same_capture(&validated_capture, &capture)?,
+            "error seed-capture-changed"
+        );
         let upload = package.upload_package();
-        package::publication::validate_against_capture(
-            &upload,
-            &capture,
-            key,
-            seed.genesis().commitment(),
-        )?;
-        let publication = seed.prepare_bootstrap_publication(&upload, key)?;
         let data = IntentData {
             source: source.0.clone(),
             client,
@@ -525,6 +581,11 @@ impl Database {
             hex::encode(binding.stream_id),
             hex::encode(binding.bootstrap_id)
         );
+        let validated = match self.seed_publication_intent_bytes().await? {
+            Some((_, state)) if state == "adopted" => None,
+            // Failures surface only where the writer would have validated.
+            _ => Some(self.validated_frozen_capture(key, seed).await),
+        };
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;
         let pin: Vec<u8> =
@@ -587,12 +648,11 @@ impl Database {
             package.descriptor() == intent.data.descriptor,
             "error seed-package-mismatch"
         );
-        package::publication::validate_against_capture(
-            &package.upload_package(),
-            &capture,
-            key,
-            seed.genesis().commitment(),
-        )?;
+        let (validated_capture, validated) = validated.context("error seed-intent-changed")??;
+        ensure!(
+            validated == package && same_capture(&validated_capture, &capture)?,
+            "error seed-capture-changed"
+        );
         ensure!(
             capture.capture.snapshot.tables.changes.len() as u64 == binding.prefix_count,
             "error seed-prefix-count-mismatch"

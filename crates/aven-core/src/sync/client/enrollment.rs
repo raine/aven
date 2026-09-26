@@ -210,9 +210,9 @@ impl Client {
             device: peer.device(),
             head: floor.head(),
         };
-        let evidence = self.membership(&initial_context, peer.bearer()).await?;
+        let (evidence, current) = self.membership(&initial_context, peer.bearer()).await?;
         floor = store
-            .adopt_download_refresh(db, identity, peer, verified, &evidence)
+            .adopt_download_refresh(db, identity, peer, verified, &evidence, current)
             .await?;
         let mut retried = false;
         let mut read = async |component, index| -> Result<Vec<u8>> {
@@ -238,9 +238,11 @@ impl Client {
                     Ok(Reply::Published(bytes)) => return Ok(bytes),
                     Err(error) if is_stale(&error) && !retried => {
                         retried = true;
-                        let evidence = self.membership(&context, peer.bearer()).await?;
+                        let (evidence, current) = self.membership(&context, peer.bearer()).await?;
                         floor = store
-                            .adopt_download_refresh(db, identity, peer, verified, &evidence)
+                            .adopt_download_refresh(
+                                db, identity, peer, verified, &evidence, current,
+                            )
                             .await?;
                         context.head = floor.head();
                     }
@@ -315,7 +317,17 @@ impl Client {
         }
         Ok(package)
     }
-    async fn membership(&self, context: &Context, bearer: &Secret) -> Result<Evidence> {
+    async fn membership(
+        &self,
+        context: &Context,
+        bearer: &Secret,
+    ) -> Result<(Evidence, membership::Membership)> {
+        let evidence = self.unverified_membership(context, bearer).await?;
+        let membership = evidence.verify()?;
+        Ok((evidence, membership))
+    }
+    /// The caller must verify the returned chain before use.
+    async fn unverified_membership(&self, context: &Context, bearer: &Secret) -> Result<Evidence> {
         let Reply::Membership(evidence) = self
             .exchange(
                 Operation::Membership {
@@ -327,7 +339,6 @@ impl Client {
         else {
             anyhow::bail!("error membership-response");
         };
-        evidence.verify()?;
         Ok(evidence)
     }
     pub async fn refresh_inputs(
@@ -336,10 +347,12 @@ impl Client {
         db: &Database,
         inputs: &mut ActiveInputs,
     ) -> Result<()> {
-        let evidence = self
+        let (evidence, membership) = self
             .membership(&Context::active(inputs), inputs.bearer())
             .await?;
-        store.adopt_refresh(db, inputs, evidence).await
+        store
+            .adopt_verified_refresh(db, inputs, evidence, membership)
+            .await
     }
     pub async fn refresh(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<()> {
         let mut inputs = store.active_inputs(db, &self.locator).await?;
@@ -592,7 +605,8 @@ impl Client {
             device: peer.device(),
             head: grant.outcome,
         };
-        let evidence = self.membership(&context, peer.bearer()).await?;
+        // `finish_peer` verifies the chain while locating the outcome.
+        let evidence = self.unverified_membership(&context, peer.bearer()).await?;
         store.finish_peer(db, mail, &evidence).await?;
         Ok(true)
     }
