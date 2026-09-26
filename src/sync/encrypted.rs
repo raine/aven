@@ -44,7 +44,8 @@ mod tests;
 
 const INPUT_LIMIT: u64 = 8192;
 
-pub(crate) const SINGLE_DEVICE_HINT: &str = "Only this device has the keys. The server can't restore it, so keep backups or add a device.";
+pub(crate) const SINGLE_DEVICE_HINT: &str =
+    "Only this device has the keys. The server can't restore it, so keep backups or add a device.";
 
 const INVITATION_CANCELLED: &str = "error sync-invitation-cancelled hint=\"another command cancelled this invitation; run `aven sync invite` again to add a device\"";
 

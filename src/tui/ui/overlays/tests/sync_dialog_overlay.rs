@@ -1,10 +1,10 @@
 use super::*;
-use crate::tui::theme::FG_MUTED;
 use crate::sync::encrypted::{LocalPhase, SetupPreview, Stage};
 use crate::tui::overlay::{AutomaticSyncService, InvitationKind, SecretText, SyncPage};
 use crate::tui::sync_operations::{
     DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
 };
+use crate::tui::theme::FG_MUTED;
 
 #[test]
 fn idle_sync_renders_compact_summary_and_actions() {
@@ -44,7 +44,11 @@ fn single_device_hint_is_muted_and_wraps() {
                 break;
             }
             assert!(line.width() <= width);
-            assert!(line.spans.iter().all(|span| span.style.fg == Some(FG_MUTED)));
+            assert!(
+                line.spans
+                    .iter()
+                    .all(|span| span.style.fg == Some(FG_MUTED))
+            );
             hint.push(text);
         }
         assert!(hint.len() > 1);
