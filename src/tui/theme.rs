@@ -42,6 +42,8 @@ pub(crate) const SELECTED: Style = Style::new()
     .fg(FG)
     .bg(SELECTED_BG)
     .add_modifier(Modifier::BOLD);
+/// Inline code and commands inside plain text.
+pub(crate) const CODE: Style = Style::new().fg(BLUE).bg(BG_PANEL);
 pub(crate) const RELATED: Style = Style::new().fg(FG).bg(BG_LANE_ACTIVE);
 pub(crate) const SELECTED_INACTIVE: Style = Style::new().fg(FG_MUTED).bg(BG_PANEL);
 

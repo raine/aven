@@ -5,9 +5,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
+use super::super::inline_code::wrap_with_code;
 use crate::pairing::{PairingPresentation, PairingQr};
 use crate::tui::overlay::{dialog_area, dialog_inner_area};
-use crate::tui::text::{cell_width_ranges, str_cells};
 use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
 
 pub(crate) const NETWORK_REQUIREMENT: &str = "Anyone with this code can access all synced data.";
@@ -200,12 +200,9 @@ fn render_text(frame: &mut Frame, area: Rect, text: &str, color: Color) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let lines = wrap_text(text, area.width)
-        .into_iter()
-        .map(Line::from)
-        .collect::<Vec<_>>();
+    let style = Style::new().fg(color).bg(BG_ALT);
     frame.render_widget(
-        Paragraph::new(lines).style(Style::new().fg(color).bg(BG_ALT)),
+        Paragraph::new(wrap_text(text, area.width, style)).style(style),
         area,
     );
 }
@@ -226,57 +223,11 @@ fn footer_rect(inner: Rect) -> Rect {
 }
 
 fn wrapped_height(text: &str, width: u16) -> u16 {
-    u16::try_from(wrap_text(text, width).len()).unwrap_or(u16::MAX)
+    u16::try_from(wrap_text(text, width, Style::new()).len()).unwrap_or(u16::MAX)
 }
 
-fn wrap_text(text: &str, width: u16) -> Vec<String> {
-    let width = usize::from(width.max(1));
-    let mut lines = Vec::new();
-
-    for paragraph in text.split('\n') {
-        if paragraph.trim().is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            let word_width = str_cells(word);
-            let current_width = str_cells(&current);
-            if word_width <= width {
-                if current.is_empty() {
-                    current.push_str(word);
-                } else if current_width.saturating_add(1).saturating_add(word_width) <= width {
-                    current.push(' ');
-                    current.push_str(word);
-                } else {
-                    lines.push(std::mem::take(&mut current));
-                    current.push_str(word);
-                }
-                continue;
-            }
-
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-            }
-            let ranges = cell_width_ranges(word, width);
-            let range_count = ranges.len();
-            for (index, (start, end)) in ranges.into_iter().enumerate() {
-                let chunk = &word[start..end];
-                if index + 1 == range_count && str_cells(chunk) < width {
-                    current.push_str(chunk);
-                } else {
-                    lines.push(chunk.to_string());
-                }
-            }
-        }
-        if !current.is_empty() {
-            lines.push(current);
-        }
-    }
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
+fn wrap_text(text: &str, width: u16, style: Style) -> Vec<Line<'static>> {
+    text.split('\n')
+        .flat_map(|paragraph| wrap_with_code(paragraph, style, usize::from(width)))
+        .collect()
 }

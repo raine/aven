@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
+use super::inline_code::code_spans;
 use crate::tui::theme::{BG, BG_PANEL, BLUE, FG, FG_DIM, GREEN, ORANGE, RED};
 use crate::tui::toast::{Toast, ToastSeverity};
 
@@ -38,7 +39,7 @@ fn toast_width(content: &Line<'_>, frame_width: u16) -> u16 {
     content_width.clamp(20, frame_width.saturating_sub(5))
 }
 
-fn toast_message_spans(message: &str, fill: Color) -> Vec<Span<'_>> {
+fn toast_message_spans(message: &str, fill: Color) -> Vec<Span<'static>> {
     let message_style = Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD);
     let separator_style = Style::new()
         .fg(FG_DIM)
@@ -49,7 +50,7 @@ fn toast_message_spans(message: &str, fill: Color) -> Vec<Span<'_>> {
         if index > 0 {
             spans.push(Span::styled(" │ ", separator_style));
         }
-        spans.push(Span::styled(part, message_style));
+        spans.extend(code_spans(part, message_style));
     }
     spans
 }

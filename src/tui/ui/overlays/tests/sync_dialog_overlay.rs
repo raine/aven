@@ -930,3 +930,34 @@ fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
     assert!(confirm.contains("keeps its identity"), "{confirm}");
     assert!(confirm.contains("earlier invitation is kept"), "{confirm}");
 }
+
+#[test]
+fn commands_render_in_code_style_without_backticks() {
+    let rendered = render_invitation(InvitationKind::Setup, "");
+    assert!(rendered.contains("printed by aven server setup on your server"));
+    assert!(!rendered.contains('`'));
+
+    let failure = OperationFailure {
+        kind: OperationKind::Join,
+        message: "Start aven with `aven --db /new/path sync join` to use a new database."
+            .to_string(),
+        details: String::new(),
+    };
+    let activity = SyncActivity {
+        running: None,
+        last: Some(OperationResult::Failed(failure)),
+        devices: None,
+        join_timed_out: false,
+    };
+    let state = SyncDialogState::default();
+    let lines = sync_dialog_lines_for_test(&activity_view(&state, local_status(), activity));
+    assert!(!lines.iter().any(|line| line.to_string().contains('`')));
+    let code = lines
+        .iter()
+        .flat_map(|line| &line.spans)
+        .filter(|span| span.style.bg == crate::tui::theme::CODE.bg)
+        .map(|span| span.content.as_ref())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(code, "aven --db /new/path sync join");
+}

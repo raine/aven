@@ -105,6 +105,13 @@ fn constrained_overlay_renders_complete_actionable_fallback_without_secrets() {
     let text = region_text(&buffer, layout.content);
     assert!(text.contains("Press c to copy"));
     assert!(text.contains("aven sync invite"));
+    assert!(!text.contains('`'));
+    assert!(
+        buffer
+            .content
+            .iter()
+            .any(|cell| cell.symbol() == "v" && cell.fg == crate::tui::theme::BLUE)
+    );
     assert!(text.contains(NETWORK_REQUIREMENT));
     assert!(!text.contains("aven://pair/"));
     assert!(!buffer.content.iter().any(|cell| {

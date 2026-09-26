@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::super::dialog::{Dialog, dialog_hint_line};
+use super::super::inline_code::wrap_with_code;
 use super::super::input::cursor_cell;
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
@@ -23,7 +24,6 @@ use crate::tui::sync_operations::{
     DrainSummary, OperationFailure, OperationKind, OperationResult, RunningOperation, SyncActivity,
     short_device_ids,
 };
-use crate::tui::text::cell_width_ranges;
 use crate::tui::theme::{
     ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, RED, SELECTED,
 };
@@ -1035,43 +1035,7 @@ fn button_span(label: String, focused: bool, primary: bool) -> Span<'static> {
 }
 
 fn paragraph(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
-    wrap_words(text, width.max(1))
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, style)))
-        .collect()
-}
-
-/// Wraps at spaces, splitting only words wider than the line.
-fn wrap_words(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        let needed = if current.is_empty() {
-            word.width()
-        } else {
-            current.width() + 1 + word.width()
-        };
-        if needed > width && !current.is_empty() {
-            lines.push(std::mem::take(&mut current));
-        }
-        if word.width() > width {
-            for (start, end) in cell_width_ranges(word, width) {
-                if !current.is_empty() {
-                    lines.push(std::mem::take(&mut current));
-                }
-                current.push_str(&word[start..end]);
-            }
-            continue;
-        }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(word);
-    }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
+    wrap_with_code(text, style, width)
 }
 
 /// A list item: every wrapped line keeps the same two-cell indent.
@@ -1171,17 +1135,15 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
 
 fn wrapped_row(label: &str, value: &str, style: Style, width: usize) -> Vec<Line<'static>> {
     let value_width = width.saturating_sub(LABEL_WIDTH).max(1);
-    wrap_words(value, value_width)
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| {
-            let label = if index == 0 { label } else { "" };
-            Line::from(vec![
-                Span::styled(format!("{label:<LABEL_WIDTH$}"), Style::new().fg(FG_DIM)),
-                Span::styled(value, style),
-            ])
-        })
-        .collect()
+    let mut lines = wrap_with_code(value, style, value_width);
+    for (index, line) in lines.iter_mut().enumerate() {
+        let label = if index == 0 { label } else { "" };
+        line.spans.insert(
+            0,
+            Span::styled(format!("{label:<LABEL_WIDTH$}"), Style::new().fg(FG_DIM)),
+        );
+    }
+    lines
 }
 
 fn hint_line(view: &SyncDialogView<'_>, scrolling: bool) -> Line<'static> {
@@ -1252,17 +1214,6 @@ fn scroll_title(start: usize, total: usize, visible: usize) -> String {
 
 fn dialog_width(frame_width: u16) -> u16 {
     frame_width.saturating_sub(4).clamp(1, MAX_DIALOG_WIDTH)
-}
-
-#[cfg(test)]
-#[test]
-fn words_wrap_at_spaces_and_split_only_long_words() {
-    assert_eq!(
-        wrap_words("backup restore or import", 10),
-        ["backup", "restore or", "import"]
-    );
-    assert_eq!(wrap_words("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-    assert_eq!(wrap_words("", 4), [""]);
 }
 
 #[cfg(test)]

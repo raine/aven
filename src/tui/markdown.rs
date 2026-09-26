@@ -3,7 +3,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::tui::theme::{ACCENT, BG_PANEL, BLUE, FG_DIM, GREEN};
+use crate::tui::theme::{ACCENT, BLUE, CODE, FG_DIM, GREEN};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum MarkdownBlock {
@@ -785,7 +785,7 @@ fn attrs_to_style(attrs: &Attrs) -> Style {
         style = style.fg(FG_DIM);
     }
     if attrs.code || attrs.code_block_lang.is_some() {
-        style = style.fg(BLUE).bg(BG_PANEL);
+        style = style.patch(CODE);
     } else if attrs.quote {
         style = style.fg(GREEN);
     } else if attrs.link {

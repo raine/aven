@@ -9,6 +9,7 @@ mod footer;
 mod header;
 
 pub(crate) use self::header::{HeaderTarget, header_target_at};
+mod inline_code;
 mod input;
 mod overlays;
 mod recent_actions;
