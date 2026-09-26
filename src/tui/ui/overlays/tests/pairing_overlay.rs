@@ -174,7 +174,7 @@ fn creating_page_shows_a_spinner_in_place_of_the_qr_code() {
 
     assert!(rendered.contains("Sync › Add device"));
     assert!(rendered.contains("⠋ Creating invitation…"));
-    assert!(rendered.contains("Esc close"));
+    assert!(rendered.contains("Esc back"));
     assert!(!rendered.contains("copy invitation"));
 }
 
@@ -228,7 +228,7 @@ fn large_terminal_widens_dialog_to_text_width_and_centers_qr() {
 
 #[test]
 fn qr_fit_depends_on_terminal_width_not_text_width() {
-    let hints = "c copy invitation  Esc close".len() as u16;
+    let hints = "c copy invitation  Esc back".len() as u16;
     for glyphs in GLYPH_MODES {
         let presentation = tui_presentation(glyphs);
         // QR or footer hints, plus dialog chrome and the terminal margin.
@@ -268,7 +268,7 @@ fn qr_dialog_keeps_header_lines_whole_and_footer_untruncated() {
         let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 160, 60), &presentation);
         assert!(layout.qr.is_some(), "{glyphs:?}");
         let footer = region_text(&buffer, layout.footer);
-        assert_eq!(footer, "c copy invitation Esc close", "{glyphs:?}");
+        assert_eq!(footer, "c copy invitation Esc back", "{glyphs:?}");
         let header = region_text(&buffer, layout.content);
         assert!(
             header.contains(&format!("Server: {TEST_SERVER}")),

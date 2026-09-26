@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 use crate::pairing::PairingPresentation;
 use crate::sync::encrypted::{self, PendingInvitation};
 use crate::tui::app::App;
-use crate::tui::overlay::{OverlayState, PairingOverlay};
+use crate::tui::overlay::{OverlayState, PairingOverlay, SyncDialogState};
 
 /// Creates a device invitation and waits for its admission in the background.
 /// Dismissing the QR overlay keeps waiting, as `aven sync invite` does, until
@@ -22,6 +22,8 @@ pub(super) struct InviteController {
     admission: Option<JoinHandle<Result<encrypted::Admission>>>,
     presentation: Option<Arc<PairingPresentation>>,
     text: Option<Zeroizing<String>>,
+    /// The Sync dialog page that Esc on Add device returns to.
+    back_to: SyncDialogState,
 }
 
 impl InviteController {
@@ -34,6 +36,7 @@ impl InviteController {
             admission: None,
             presentation: None,
             text: None,
+            back_to: SyncDialogState::default(),
         }
     }
 
@@ -66,9 +69,17 @@ impl Drop for InviteController {
 }
 
 impl App {
-    /// Opens Sync › Add device at once. A new invitation is created behind a
-    /// loading state, and its QR code replaces it in place.
+    /// Opens Sync › Add device at once, with Esc returning to the Sync
+    /// dialog's first page.
     pub(in crate::tui) fn show_pairing_invitation(&mut self) {
+        self.show_pairing_invitation_from(SyncDialogState::default());
+    }
+
+    /// Opens Sync › Add device at once, with Esc returning to `back_to`. A new
+    /// invitation is created behind a loading state, and its QR code replaces
+    /// it in place.
+    pub(in crate::tui) fn show_pairing_invitation_from(&mut self, back_to: SyncDialogState) {
+        self.invite.back_to = back_to;
         let page = if let Some(presentation) = &self.invite.presentation {
             PairingOverlay::Ready(presentation.clone())
         } else if self.invite.create.is_some() {
@@ -87,6 +98,20 @@ impl App {
             }
         };
         self.overlay = Some(OverlayState::Pairing(page));
+    }
+
+    /// Retries a failed Add device, keeping the page Esc returns to.
+    pub(in crate::tui) fn retry_pairing_invitation(&mut self) {
+        let back_to = std::mem::take(&mut self.invite.back_to);
+        self.show_pairing_invitation_from(back_to);
+    }
+
+    /// Leaves Add device for the Sync dialog page it was opened from. Waiting
+    /// for admission continues, as when the page is closed.
+    pub(in crate::tui) fn leave_pairing_invitation(&mut self) {
+        self.pending_shortcut.clear();
+        let back_to = std::mem::take(&mut self.invite.back_to);
+        self.overlay = Some(OverlayState::Sync(back_to));
     }
 
     fn spawn_create_invitation(&mut self) -> JoinHandle<Result<PendingInvitation>> {

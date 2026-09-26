@@ -120,10 +120,10 @@ impl App {
                 Box::pin(self.turn_on_automatic_sync()).await?;
                 home
             }
-            // The Add device page replaces the dialog at once; admission
-            // keeps waiting after it closes.
+            // The Add device page replaces the dialog at once, and Esc
+            // returns to this page; admission keeps waiting after it closes.
             SyncAction::AddDevice => {
-                self.show_pairing_invitation();
+                self.show_pairing_invitation_from(state);
                 return Ok(());
             }
             SyncAction::CancelInvitation => {

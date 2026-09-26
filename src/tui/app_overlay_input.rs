@@ -48,10 +48,10 @@ impl App {
                 self.copy_pairing_invitation();
             }
             OverlayState::Pairing(PairingOverlay::Failed(_)) if key.code == KeyCode::Enter => {
-                self.show_pairing_invitation();
+                self.retry_pairing_invitation();
             }
-            OverlayState::Pairing(PairingOverlay::Failed(_)) if key.code == KeyCode::Esc => {
-                self.show_sync_dialog();
+            OverlayState::Pairing(_) if key.code == KeyCode::Esc => {
+                self.leave_pairing_invitation();
             }
             OverlayState::Sync(state) => {
                 self.handle_sync_dialog_key(state, key, terminal_size)

@@ -557,6 +557,59 @@ async fn add_device_shows_loading_then_the_qr_code_without_closing() {
     assert!(app.store.sync_status.invitation.is_some());
 }
 
+#[tokio::test]
+async fn esc_on_add_device_returns_to_the_sync_page_and_keeps_waiting() {
+    use crate::tui::overlay::PairingOverlay;
+    let mut app = test_app().await;
+    app.store.sync_status.set_up = true;
+    app.store.sync_status.enabled = true;
+    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetUp;
+    let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+    let pending = crate::sync::encrypted::PendingInvitation::for_test(
+        "https://sync.example.com",
+        &invitation,
+        crate::sync::encrypted::unix_now().unwrap() + 600,
+    );
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    app.invite.create_with_for_test(tokio::spawn(async move {
+        released.await.ok();
+        Ok(pending)
+    }));
+    app.show_sync_dialog();
+    select_add_device(&mut app);
+    let Some(OverlayState::Sync(origin)) = app.overlay.clone() else {
+        panic!("expected the Sync dialog");
+    };
+
+    // Back from the loading state leaves creation running.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    assert_eq!(app.overlay, Some(OverlayState::Sync(origin.clone())));
+    assert!(app.invite.work_pending());
+
+    release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while app.store.sync_status.invitation.is_none() {
+            app.poll_invite().await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("invitation is created");
+    assert_eq!(app.overlay, Some(OverlayState::Sync(origin.clone())));
+
+    // Back from the QR code keeps the invitation waiting for admission.
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(matches!(
+        app.overlay,
+        Some(OverlayState::Pairing(PairingOverlay::Ready(_)))
+    ));
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    assert_eq!(app.overlay, Some(OverlayState::Sync(origin)));
+    assert!(app.invite.work_pending());
+    assert!(app.store.sync_status.invitation.is_some());
+}
+
 fn select_sync_automatically(app: &mut App) {
     let Some(OverlayState::Sync(state)) = &mut app.overlay else {
         panic!("sync dialog is open");

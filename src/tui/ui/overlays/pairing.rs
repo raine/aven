@@ -18,7 +18,7 @@ const DIALOG_CHROME_ROWS: u16 = 2;
 const QR_GAP_ROWS: u16 = 0;
 const FOOTER_ROWS: u16 = 1;
 const FALLBACK_WIDTH: u16 = 64;
-const READY_HINTS: &[(&str, &str)] = &[("c", "copy invitation"), ("Esc", "close")];
+const READY_HINTS: &[(&str, &str)] = &[("c", "copy invitation"), ("Esc", "back")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PairingLayout {
@@ -148,7 +148,7 @@ fn render_status(frame: &mut Frame, pairing: &PairingOverlay) {
     );
     let hints: &[(&str, &str)] = match pairing {
         PairingOverlay::Failed(_) => &[("Enter", "retry"), ("Esc", "back")],
-        _ => &[("Esc", "close")],
+        _ => &[("Esc", "back")],
     };
     render_hints(frame, footer_rect(inner), hints);
 }
