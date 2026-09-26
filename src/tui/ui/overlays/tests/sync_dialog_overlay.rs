@@ -553,7 +553,6 @@ fn setup_progress_marks_reached_stages_without_counts() {
         running(OperationKind::Setup, Some(Stage::UploadingData)),
     );
 
-    assert!(rendered.contains("Setting up sync"));
     assert!(rendered.contains("✓ Prepared your data"));
     assert!(rendered.contains("Uploading encrypted data"));
     assert!(rendered.contains("· Finishing setup"));
@@ -960,4 +959,134 @@ fn commands_render_in_code_style_without_backticks() {
         .collect::<Vec<_>>()
         .join(" ");
     assert_eq!(code, "aven --db /new/path sync join");
+}
+
+/// A body line styled as a heading: flush left and every visible span bold,
+/// with no status mark or selection prefix.
+fn is_in_box_heading(line: &Line<'_>) -> bool {
+    let text = line.to_string();
+    !text.trim().is_empty()
+        && !text.starts_with([' ', '›'])
+        && line
+            .spans
+            .iter()
+            .filter(|span| !span.content.trim().is_empty())
+            .all(|span| span.style.add_modifier.contains(Modifier::BOLD))
+}
+
+#[test]
+fn no_sync_page_renders_its_title_inside_the_box() {
+    let failed = |kind| SyncActivity {
+        last: Some(OperationResult::Failed(OperationFailure {
+            kind,
+            message: "Couldn't reach the sync server.".to_string(),
+            details: String::new(),
+        })),
+        ..SyncActivity::default()
+    };
+    let phase = |phase| TuiSyncStatus {
+        set_up: phase != LocalPhase::NotSetUp,
+        phase,
+        ..TuiSyncStatus::default()
+    };
+    let mut removed = device_activity(true);
+    removed.last = Some(OperationResult::Removed(crate::sync::encrypted::Removal {
+        device: [3; 32],
+        access_revoked: true,
+        key_rotation_pending: true,
+    }));
+    let mut removing = device_activity(false);
+    removing.running = running(OperationKind::RemoveDevice([3; 32]), None).running;
+    let conflicts = TuiSyncStatus {
+        conflicts: 2,
+        ..sync_status()
+    };
+    let cases = [
+        (
+            SyncPage::Home,
+            phase(LocalPhase::NotSetUp),
+            running(OperationKind::Setup, Some(Stage::UploadingData)),
+            Some("Sync › Setting up sync"),
+        ),
+        (
+            SyncPage::Home,
+            phase(LocalPhase::SetupIncomplete),
+            running(OperationKind::Setup, Some(Stage::FinishingSetup)),
+            Some("Sync › Setting up sync"),
+        ),
+        (
+            SyncPage::Home,
+            phase(LocalPhase::JoinIncomplete),
+            running(OperationKind::Join, Some(Stage::WaitingForInviter)),
+            Some("Sync › Joining sync"),
+        ),
+        (SyncPage::Home, sync_status(), SyncActivity::default(), None),
+        (SyncPage::Home, conflicts, SyncActivity::default(), None),
+        (
+            SyncPage::Home,
+            sync_status(),
+            running(OperationKind::Sync, None),
+            None,
+        ),
+        (
+            SyncPage::Home,
+            phase(LocalPhase::SetupIncomplete),
+            failed(OperationKind::Setup),
+            None,
+        ),
+        (
+            SyncPage::Home,
+            phase(LocalPhase::SetupRecoveryRequired),
+            SyncActivity::default(),
+            None,
+        ),
+        (
+            SyncPage::Devices,
+            sync_status(),
+            removing,
+            Some("Sync › Manage devices"),
+        ),
+        (
+            SyncPage::Devices,
+            sync_status(),
+            removed,
+            Some("Sync › Manage devices"),
+        ),
+        (
+            SyncPage::Devices,
+            sync_status(),
+            failed(OperationKind::ListDevices),
+            Some("Sync › Manage devices"),
+        ),
+        (
+            SyncPage::ConfirmRemove { device: [3; 32] },
+            sync_status(),
+            device_activity(false),
+            Some("Sync › Remove device"),
+        ),
+    ];
+    for (page, status, activity, title) in cases {
+        let state = SyncDialogState::page(page);
+        let view = activity_view(&state, status, activity);
+        let heading = sync_dialog_lines_for_test(&view)
+            .into_iter()
+            .find(is_in_box_heading);
+        assert!(heading.is_none(), "in-box heading: {heading:?}");
+
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_non_help_overlay_content(frame, &OverlayView::Sync(Box::new(view)))
+            })
+            .unwrap();
+        let border = (0..40)
+            .map(|row| buffer_row(terminal.backend().buffer(), row))
+            .find(|line| line.contains(SYNC_TITLE))
+            .expect("title row");
+        match title {
+            Some(title) => assert!(border.contains(title), "{border}"),
+            None => assert!(!border.contains('›'), "{border}"),
+        }
+    }
 }

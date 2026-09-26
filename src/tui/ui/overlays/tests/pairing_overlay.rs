@@ -141,7 +141,7 @@ fn overlay_presents_only_safe_pairing_data() {
     let presentation = presentation();
     let rendered = render_overlay_view_at(OverlayView::Pairing(presentation), 160, 80);
 
-    assert!(rendered.contains("Add device"));
+    assert!(rendered.contains("Sync › Add device"));
     assert!(rendered.contains("https://sync.example.test:8443"));
     assert!(rendered.contains("c copy invitation"));
     assert!(!rendered.contains("aven://pair/"));

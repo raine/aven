@@ -194,10 +194,10 @@ pub(crate) fn sync_dialog_scroll_cap(view: &SyncDialogView<'_>, terminal: Size) 
 }
 
 /// The sub-page shown after "Sync" in the border title; the top-level page
-/// has none.
+/// has none unless it shows setup or join progress.
 fn page_title(view: &SyncDialogView<'_>) -> Option<&'static str> {
     Some(match &view.state.page {
-        SyncPage::Home => return None,
+        SyncPage::Home => return view.activity.running.as_ref().and_then(progress_title),
         SyncPage::Invitation {
             kind: InvitationKind::Setup,
             ..
@@ -424,22 +424,23 @@ fn steps(kind: OperationKind) -> &'static [(Stage, &'static str, &'static str)] 
     }
 }
 
-fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, width: usize) {
-    let heading = match running.kind {
-        OperationKind::Setup => "Setting up sync",
-        OperationKind::Join => "Joining sync",
+/// Operations with staged progress name themselves in the border title.
+fn progress_title(running: &RunningOperation) -> Option<&'static str> {
+    match running.kind {
+        OperationKind::Setup => Some("Setting up sync"),
+        OperationKind::Join => Some("Joining sync"),
         OperationKind::Sync
         | OperationKind::ListDevices
         | OperationKind::RemoveDevice(_)
-        | OperationKind::FinishRemoval => {
-            lines.push(spinner_line(running));
-            return;
-        }
-    };
-    lines.push(Line::from(Span::styled(
-        heading,
-        Style::new().fg(FG).add_modifier(Modifier::BOLD),
-    )));
+        | OperationKind::FinishRemoval => None,
+    }
+}
+
+fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, width: usize) {
+    if progress_title(running).is_none() {
+        lines.push(spinner_line(running));
+        return;
+    }
     let steps = steps(running.kind);
     let current = running
         .stage

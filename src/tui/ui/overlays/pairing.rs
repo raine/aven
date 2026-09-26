@@ -11,6 +11,7 @@ use crate::tui::overlay::{dialog_area, dialog_inner_area};
 use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
 
 pub(crate) const NETWORK_REQUIREMENT: &str = "Anyone with this code can access all synced data.";
+const PAIRING_TITLE: &str = "Sync › Add device";
 const HANDOFF: &str = "On the other device: Join existing sync, or `aven sync join`.";
 const DIALOG_CHROME_COLUMNS: u16 = 4;
 const DIALOG_CHROME_ROWS: u16 = 2;
@@ -84,7 +85,7 @@ pub(crate) fn pairing_layout(terminal: Rect, presentation: &PairingPresentation)
 
 pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &PairingPresentation) {
     let layout = pairing_layout(frame.area(), presentation);
-    let inner = Dialog::new("Add device", layout.area.width, layout.area.height)
+    let inner = Dialog::new(PAIRING_TITLE, layout.area.width, layout.area.height)
         .render_block_at(frame, layout.area);
     debug_assert_eq!(inner, layout.inner);
 
