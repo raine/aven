@@ -1114,12 +1114,6 @@ fn no_sync_page_renders_its_title_inside_the_box() {
             None,
         ),
         (
-            SyncPage::Home,
-            phase(LocalPhase::SetupRecoveryRequired),
-            SyncActivity::default(),
-            None,
-        ),
-        (
             SyncPage::Devices,
             sync_status(),
             removing,

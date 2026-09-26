@@ -245,7 +245,6 @@ pub(crate) fn sync_actions(
                 None => vec![SyncAction::SetUp, SyncAction::Join],
             },
             LocalPhase::SetupIncomplete => vec![SyncAction::ResumeSetup],
-            LocalPhase::SetupRecoveryRequired => vec![SyncAction::Back],
             LocalPhase::JoinIncomplete => {
                 vec![SyncAction::ResumeJoin, SyncAction::NewJoinInvitation]
             }

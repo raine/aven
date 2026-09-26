@@ -935,11 +935,8 @@ aven sync status
 aven sync status --json
 ```
 
-The state is `not-set-up`, `setup-incomplete`, `setup-recovery-required`,
-`join-incomplete`, `key-change-pending`, `access-refused`, or `ready`.
-`setup-recovery-required` means a fenced setup was definitely refused by storage
-that belongs to another sync; local editing and export remain available, but the
-database must be backed up and restored to a new path to become local-only.
+The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
+`key-change-pending`, `access-refused`, or `ready`.
 `key-change-pending` means an invitation expired after keys may have been sent
 to a device that never joined; the next `aven sync` changes keys before
 uploading new changes. `access-refused` records when the server refused this

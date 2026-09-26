@@ -71,10 +71,6 @@ impl App {
                 self.set_warning("setup is unfinished; resume it from :sync");
                 return;
             }
-            LocalPhase::SetupRecoveryRequired => {
-                self.set_warning("setup was refused; open :sync for recovery steps");
-                return;
-            }
             LocalPhase::JoinIncomplete => {
                 self.set_warning("joining is unfinished; resume it from :sync");
                 return;

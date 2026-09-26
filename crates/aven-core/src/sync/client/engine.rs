@@ -76,8 +76,6 @@ pub enum LocalPhase {
     NotSetUp,
     /// Setup started from this database and has not bound the server yet.
     SetupIncomplete,
-    /// A fenced setup whose database records a server refusal.
-    SetupRecoveryRequired,
     /// Joining started and the synced data has not been installed yet.
     JoinIncomplete,
     SetUp,
@@ -93,13 +91,7 @@ pub async fn local_phase(database: &Database) -> Result<LocalPhase> {
             }
         }
         Some(_) => LocalPhase::SetUp,
-        None if has_seed_setup(database).await? => {
-            if database.meta("e2ee_setup_refused").await?.is_some() {
-                LocalPhase::SetupRecoveryRequired
-            } else {
-                LocalPhase::SetupIncomplete
-            }
-        }
+        None if has_seed_setup(database).await? => LocalPhase::SetupIncomplete,
         None => LocalPhase::NotSetUp,
     })
 }
@@ -521,7 +513,7 @@ pub async fn ensure_join_available(database: &Database, host: &dyn ClientHost) -
                 .context(JOIN_REQUIRES_EMPTY)?;
             Ok(())
         }
-        LocalPhase::SetupIncomplete | LocalPhase::SetupRecoveryRequired | LocalPhase::SetUp => {
+        LocalPhase::SetupIncomplete | LocalPhase::SetUp => {
             bail!(ALREADY_SET_UP)
         }
     }
@@ -1027,15 +1019,10 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
     if !is_set_up(database).await? {
         return Ok(report);
     }
-    report.state = match local_phase(database).await? {
-        LocalPhase::SetupRecoveryRequired => "setup-recovery-required",
-        _ => "setup-incomplete",
-    };
+    report.state = "setup-incomplete";
     let store = key_store(host, database).await?;
     let _guard = coordination::acquire(database).await?;
-    if report.state != "setup-recovery-required"
-        && let Some((peer, server)) = store.association(database).await?
-    {
+    if let Some((peer, server)) = store.association(database).await? {
         report.server = Some(server.clone());
         let enrollment_ready = !peer
             || matches!(

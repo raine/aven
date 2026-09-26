@@ -969,7 +969,6 @@ async fn cli_forged_setup_refusals_keep_committed_claim_recoverable() {
         error.contains("sync-setup-fenced-storage-claimed"),
         "{error}"
     );
-    assert!(!error.contains("sync-setup-recovery-required"), "{error}");
     assert_eq!(status(&a).await["state"], "setup-incomplete");
 
     relay.mode.store(RELAY, Ordering::SeqCst);

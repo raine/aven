@@ -259,13 +259,6 @@ pub(crate) fn explain(
             },
         });
     }
-    if has("sync-setup-recovery-required") {
-        return Some(Explanation {
-            code: "sync-setup-recovery-required",
-            message: "This frozen setup was refused by server storage that belongs to another sync.",
-            next_step: "Back up this database and restore it to a new path for a local-only copy. Local editing and export still work.",
-        });
-    }
     if has("sync-setup-refused") {
         return Some(Explanation {
             code: "sync-setup-refused",

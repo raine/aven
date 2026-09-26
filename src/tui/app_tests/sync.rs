@@ -480,18 +480,6 @@ async fn a_refused_setup_invitation_offers_pasting_a_new_one() {
     }
 }
 
-#[tokio::test]
-async fn enter_on_back_closes_the_dialog_when_recovery_is_required() {
-    let mut app = test_app().await;
-    app.store.sync_status.set_up = true;
-    app.store.sync_status.phase = crate::sync::encrypted::LocalPhase::SetupRecoveryRequired;
-    app.show_sync_dialog();
-
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-
-    assert!(app.overlay.is_none());
-}
-
 fn select_add_device(app: &mut App) {
     let Some(OverlayState::Sync(state)) = &mut app.overlay else {
         panic!("expected the Sync dialog");

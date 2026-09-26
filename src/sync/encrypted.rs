@@ -376,10 +376,7 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
             error
         }
     })?;
-    let resuming = matches!(
-        local_phase(database).await?,
-        LocalPhase::SetupIncomplete | LocalPhase::SetupRecoveryRequired
-    );
+    let resuming = local_phase(database).await? == LocalPhase::SetupIncomplete;
     if !resuming {
         print_setup_preview(database, config, &invitation.server).await?;
         confirm_setup(args.yes)?;
@@ -632,7 +629,6 @@ pub(crate) fn status_state_words(state: &str) -> &'static str {
     match state {
         "not-set-up" => "not set up",
         "setup-incomplete" => "setup incomplete",
-        "setup-recovery-required" => "setup recovery required",
         "join-incomplete" => "joining incomplete",
         "key-change-pending" => "key change pending",
         "access-refused" => "access unconfirmed",
@@ -659,10 +655,6 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     }
     match report.state {
         "setup-incomplete" => println!("State: setup incomplete. Rerun `aven sync setup`."),
-        "setup-recovery-required" => println!(
-            "State: this setup was refused and cannot resume. Local editing and export still work. \
-             Back up this database, then restore it to a new path for a local-only copy."
-        ),
         "join-incomplete" => println!(
             "State: joining incomplete. Rerun `aven sync join`; if its invitation expired, \
              pass a new one from the same device with `aven sync join --new-invitation`."
