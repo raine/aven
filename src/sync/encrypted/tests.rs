@@ -10,7 +10,7 @@ use tokio::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-use super::SetupInvitation;
+use super::{InvitationLabels, SetupInvitation};
 
 const WORKER: &str = "sync::encrypted::tests::cli_worker";
 
@@ -957,4 +957,28 @@ async fn cli_forged_setup_refusals_keep_committed_claim_recoverable() {
     assert_eq!(status(&a).await["state"], "ready");
 
     relay_task.abort();
+}
+
+#[test]
+fn invitation_labels_precede_terminal_output_only() {
+    let terminal = InvitationLabels::for_streams(true, true);
+    assert_eq!(
+        terminal.invitation,
+        Some("Invitation — paste this into Aven on the other device:")
+    );
+    assert_eq!(terminal.qr, Some("Or scan this QR code:"));
+
+    let piped = InvitationLabels::for_streams(false, true);
+    assert_eq!(piped.invitation, None);
+    assert_eq!(piped.qr, Some("Scan this QR code on the other device:"));
+
+    for stdout_is_terminal in [true, false] {
+        assert_eq!(
+            InvitationLabels::for_streams(stdout_is_terminal, false),
+            InvitationLabels {
+                invitation: None,
+                qr: None
+            }
+        );
+    }
 }

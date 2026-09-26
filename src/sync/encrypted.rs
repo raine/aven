@@ -404,14 +404,26 @@ pub(crate) async fn invite(database: &Database, config: &AppConfig) -> Result<()
             format_duration(invitation.expires_at().saturating_sub(unix_now()?))
         );
     }
+    let labels = InvitationLabels::for_streams(
+        std::io::stdout().is_terminal(),
+        std::io::stderr().is_terminal(),
+    );
+    if let Some(label) = labels.invitation {
+        eprintln!("{label}");
+    }
     println!("{}", invitation.text());
     std::io::stdout().flush()?;
-    print_invitation_qr(
-        &invitation,
-        crate::pairing::qr_glyphs(config.sync.qr_glyphs),
-    );
+    if let Some(label) = labels.qr {
+        print_invitation_qr(
+            &invitation,
+            label,
+            crate::pairing::qr_glyphs(config.sync.qr_glyphs),
+        );
+    }
     eprintln!("Anyone with this invitation can access all your synced data and manage devices.");
-    eprintln!("Run `aven sync join` on the other device. Waiting for it to join...");
+    eprintln!(
+        "On the other device, open Aven and scan the QR code or paste the invitation. Waiting for the other device to join..."
+    );
     match await_admission_until_interrupt(database, config, &invitation).await? {
         Some(Admission::Admitted) => {
             eprintln!("Device added");
@@ -454,24 +466,50 @@ pub(crate) fn format_expiry(expires_at: u64) -> String {
         .unwrap_or_else(|| expires_at.to_string())
 }
 
-/// Shows the invitation QR on an interactive standard error; standard output
-/// keeps only the invitation text for scripts.
-fn print_invitation_qr(invitation: &PendingInvitation, glyphs: crate::pairing::QrGlyphs) {
-    let stderr_is_terminal = std::io::stderr().is_terminal();
-    if !stderr_is_terminal {
-        return;
+/// Labels written to standard error around `aven sync invite` output. Standard
+/// output keeps only the invitation text, so labels never reach scripts.
+#[derive(Debug, PartialEq, Eq)]
+struct InvitationLabels {
+    invitation: Option<&'static str>,
+    qr: Option<&'static str>,
+}
+
+impl InvitationLabels {
+    fn for_streams(stdout_is_terminal: bool, stderr_is_terminal: bool) -> Self {
+        match (stdout_is_terminal, stderr_is_terminal) {
+            (true, true) => Self {
+                invitation: Some("Invitation — paste this into Aven on the other device:"),
+                qr: Some("Or scan this QR code:"),
+            },
+            (false, true) => Self {
+                invitation: None,
+                qr: Some("Scan this QR code on the other device:"),
+            },
+            (_, false) => Self {
+                invitation: None,
+                qr: None,
+            },
+        }
     }
-    let (columns, styled) = crate::pairing::output_options(
-        stderr_is_terminal,
-        std::env::var_os("NO_COLOR").is_some(),
-        || crossterm::terminal::size().ok().map(|(columns, _)| columns),
-    );
+}
+
+/// Shows the invitation QR on an interactive standard error.
+fn print_invitation_qr(
+    invitation: &PendingInvitation,
+    label: &str,
+    glyphs: crate::pairing::QrGlyphs,
+) {
+    let (columns, styled) =
+        crate::pairing::output_options(true, std::env::var_os("NO_COLOR").is_some(), || {
+            crossterm::terminal::size().ok().map(|(columns, _)| columns)
+        });
     match presentation(invitation, glyphs).and_then(|presentation| {
         crate::pairing::render_terminal_qr(presentation.qr(), columns, styled)
     }) {
         Ok(qr) => {
+            eprintln!();
+            eprintln!("{label}");
             eprint!("{qr}");
-            eprintln!("Scan this code on the other device, or paste the invitation.");
         }
         Err(error) => eprintln!("QR code unavailable: {error:#}"),
     }
