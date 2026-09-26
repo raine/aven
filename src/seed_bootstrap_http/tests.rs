@@ -4,6 +4,7 @@ use crate::{
     test_support::e2ee_http::{self, fixture, setup},
 };
 use aven_core::sync::bootstrap_format::Package;
+use aven_core::sync::client::bootstrap::components;
 use axum::body::to_bytes;
 use std::{
     path::{Path, PathBuf},

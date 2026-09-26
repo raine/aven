@@ -1,11 +1,8 @@
 //! Removal, withdrawal of an expired possibly disclosed invitation, and one
 //! bounded automatic finish, using the protected candidate owner.
 use super::*;
-use crate::protected_local_keys::{
-    peer::{ActiveInputs, Disclosure},
-    rotation::Action,
-};
-use aven_core::sync::seed_claim::membership::{CancelStatus, MAX_CUTOFF};
+use crate::sync::client::keys::{peer::Disclosure, rotation::Action};
+use crate::sync::seed_claim::membership::{CancelStatus, MAX_CUTOFF};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemovalStatus {
@@ -26,7 +23,7 @@ impl Client {
     ) -> Result<RemovalStatus> {
         Box::pin(self.manage(store, db, Some(target), None)).await
     }
-    pub(crate) async fn finish_pending_management(
+    pub async fn finish_pending_management(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
@@ -35,7 +32,7 @@ impl Client {
         Box::pin(self.withdraw_expired_disclosure(store, db)).await
     }
     /// Continues a retained removal or rotation.
-    pub(crate) async fn finish_pending_removal(
+    pub async fn finish_pending_removal(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
@@ -75,7 +72,7 @@ impl Client {
     /// candidate finishes `ready`; otherwise the local fence and server
     /// cancellation precede a targetless freeze and rotation, and `withdrawn`
     /// needs the chain proof. Expiry never proves withdrawal by itself.
-    pub(crate) async fn withdraw_expired_disclosure(
+    pub async fn withdraw_expired_disclosure(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
@@ -112,7 +109,7 @@ impl Client {
         }
         Ok(())
     }
-    pub(crate) async fn cancel(
+    pub async fn cancel(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
@@ -140,7 +137,7 @@ impl Client {
         }
         unreachable!()
     }
-    pub(super) async fn manage(
+    pub async fn manage(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,

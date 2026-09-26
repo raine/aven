@@ -29,6 +29,7 @@ pub mod seed_bootstrap_http;
 mod signals;
 mod status;
 mod sync;
+pub mod sync_http;
 mod task_intake;
 mod task_render;
 mod time_input;

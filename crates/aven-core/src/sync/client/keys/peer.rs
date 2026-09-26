@@ -1337,7 +1337,7 @@ impl ProtectedLocalKeyStore {
     pub async fn install_peer_snapshot(
         &self,
         db: &Database,
-        transport: &impl SnapshotDownload,
+        transport: &crate::sync::client::enrollment::Client,
         locator: &str,
     ) -> Result<crate::sync::SharedStateInstallReport> {
         let guard = InstallationGuard::acquire(db.path())?;
@@ -1520,19 +1520,6 @@ impl ProtectedLocalKeyStore {
         }
         Ok(EnrollmentReadiness::Enrolled { head: m.head() })
     }
-}
-/// Downloads the published snapshot a verified peer enrollment installs.
-pub trait SnapshotDownload {
-    fn download(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-        identity: Hash,
-        peer: &Joiner,
-        verified: &VerifiedEnrollment,
-        descriptor: &[u8],
-    ) -> impl std::future::Future<Output = Result<crate::sync::bootstrap_format::download::Metadata>>
-    + Send;
 }
 /// The attempt whose exact request a mailbox response answers. Its grant
 /// binds that attempt's invitation, handle and request hash.

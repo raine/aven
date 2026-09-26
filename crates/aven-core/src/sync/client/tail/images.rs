@@ -1,0 +1,423 @@
+use super::*;
+use crate::sync::encrypted_tail::attachments::{
+    self as images, Operation as ImageOperation, Reply as ImageReply, Ticket,
+};
+use std::path::Path;
+pub const IMAGES_PATH: &str = "/e2ee/images/v1";
+
+/// Bounds serial append work in one round while allowing a large offline backlog
+/// to clear well within the drain's round budget.
+const PUSH_LIMIT: usize = 2048;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageTransfer {
+    Complete,
+    Pending,
+    Failed,
+    Unavailable,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Round {
+    /// The server has no further page and no local change waits to upload.
+    /// While publishing is blocked, withheld local changes do not count.
+    pub metadata_caught_up: bool,
+    pub images: ImageTransfer,
+    /// Metadata records appended by this device during the round.
+    pub sent_changes: usize,
+    /// Metadata records applied from the server during the round.
+    pub received_changes: usize,
+    /// New encrypted content waits for a withdrawal rotation; this round
+    /// uploaded nothing but still pulled and downloaded.
+    pub publishing_blocked: bool,
+}
+
+pub struct DrainSnapshot {
+    tail: TailSnapshot,
+    /// Why this drain's withdrawal rotation failed, if it did.
+    withdrawal: Option<anyhow::Error>,
+}
+impl DrainSnapshot {
+    /// The error reported for a drain that ended with publishing blocked.
+    pub fn publishing_blocked_error(&mut self) -> anyhow::Error {
+        match self.withdrawal.take() {
+            Some(error) => error.context(PublishingBlocked),
+            None => PublishingBlocked.into(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct RoundProgress {
+    pushes: usize,
+    preflight_local_seq: Option<i64>,
+    push_complete: bool,
+    publishing_blocked: bool,
+    page_complete: Option<bool>,
+    image_state: Option<ImageTransfer>,
+    selected: bool,
+    download: Option<images::Download>,
+}
+impl Client {
+    pub async fn image_exchange(
+        &self,
+        context: &Context,
+        bearer: &Secret,
+        operation: ImageOperation,
+    ) -> Result<ImageReply> {
+        let request_limit = if matches!(operation, ImageOperation::Put { .. }) {
+            images::HTTP_LIMIT
+        } else {
+            tail::CONTROL_LIMIT
+        };
+        let response_limit = if matches!(operation, ImageOperation::Read { .. }) {
+            images::HTTP_LIMIT
+        } else {
+            tail::CONTROL_LIMIT
+        };
+        self.exchange_to(
+            IMAGES_PATH,
+            context,
+            bearer,
+            operation,
+            request_limit,
+            response_limit,
+        )
+        .await
+    }
+    pub async fn start_drain(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<DrainSnapshot> {
+        let enrollment = self.enrollment()?;
+        enrollment.finish_pending_removal(store, db).await?;
+        // A failed withdrawal keeps publishing blocked without stopping pulls.
+        let withdrawal = Box::pin(enrollment.withdraw_expired_disclosure(store, db))
+            .await
+            .err();
+        Ok(DrainSnapshot {
+            tail: store.tail_inputs(db, &self.locator).await?,
+            withdrawal,
+        })
+    }
+    /// Resolves at most one ordered local head, applies one metadata page and
+    /// downloads at most one image. The caller owns the local blob root;
+    /// committed metadata is independent of image transfer success.
+    pub async fn round(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+    ) -> Result<Round> {
+        let mut drain = Box::pin(self.start_drain(store, db)).await?;
+        Box::pin(self.round_in_drain(store, db, blob_dir, &mut drain)).await
+    }
+    pub async fn round_in_drain(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+        drain: &mut DrainSnapshot,
+    ) -> Result<Round> {
+        if !drain.tail.is_current(db).await? {
+            drain.tail = store.tail_inputs(db, &self.locator).await?;
+        }
+        let mut progress = RoundProgress::default();
+        match self
+            .round_once(&drain.tail, db, blob_dir, &mut progress)
+            .await
+        {
+            Err(error) if is_stale(&error) => {
+                let enrollment = self.enrollment()?;
+                enrollment.refresh(store, db).await?;
+                drain.tail = store.tail_inputs(db, &self.locator).await?;
+                progress.preflight_local_seq = None;
+                self.round_once(&drain.tail, db, blob_dir, &mut progress)
+                    .await
+            }
+            result => result,
+        }
+    }
+    async fn round_once(
+        &self,
+        inputs: &TailSnapshot,
+        db: &Database,
+        blob_dir: &Path,
+        progress: &mut RoundProgress,
+    ) -> Result<Round> {
+        let a = &inputs.authority;
+        while !progress.push_complete && progress.pushes < PUSH_LIMIT {
+            let (step, preflight_local_seq) = match self
+                .push_in_run(inputs, db, blob_dir, progress.preflight_local_seq)
+                .await
+            {
+                Err(error) if error.is::<PublishingBlocked>() => {
+                    progress.publishing_blocked = true;
+                    break;
+                }
+                result => result?,
+            };
+            progress.preflight_local_seq = preflight_local_seq;
+            match step {
+                PushStep::Appended => progress.pushes += 1,
+                PushStep::Image(state) => {
+                    progress.image_state = state;
+                    progress.push_complete = true;
+                }
+                PushStep::Empty => progress.push_complete = true,
+            }
+        }
+        // Reaching the cap completes only this round's push phase. The next
+        // bounded round resumes from the next ordered singleton head.
+        progress.push_complete = true;
+        let cursor_before_pull = db.encrypted_round_state(a).await?.cursor;
+        if progress.page_complete.is_none() {
+            progress.page_complete = Some(self.pull(a, &inputs.bearer, db).await?);
+        }
+        let state = db.encrypted_round_state(a).await?;
+        let images = if state.downloads.is_some() {
+            if !progress.selected {
+                progress.download = db.prepare_encrypted_image_download(a).await?;
+                progress.selected = true;
+            }
+            match self
+                .download_image(a, &inputs.bearer, db, blob_dir, progress.download.as_ref())
+                .await
+            {
+                Ok(true) => settled(
+                    &db.encrypted_round_state(a).await?,
+                    progress.publishing_blocked,
+                ),
+                Ok(false) => ImageTransfer::Unavailable,
+                Err(error) if is_stale(&error) => return Err(error),
+                Err(_) => ImageTransfer::Failed,
+            }
+        } else {
+            ImageTransfer::Pending
+        };
+        Ok(Round {
+            metadata_caught_up: progress.page_complete == Some(true)
+                && (state.idle || progress.publishing_blocked),
+            // A failed push outranks later download outcomes in this round.
+            images: progress.image_state.unwrap_or(images),
+            sent_changes: progress.pushes,
+            received_changes: state.cursor.saturating_sub(cursor_before_pull) as usize,
+            publishing_blocked: progress.publishing_blocked,
+        })
+    }
+    pub async fn upload_prepared_image(
+        &self,
+        inputs: &TailSnapshot,
+        upload: images::Upload,
+    ) -> Result<Ticket> {
+        let (a, bearer) = (&inputs.authority, &inputs.bearer);
+        inputs.require_publishing_ready()?;
+        let ImageReply::Status(status) = self
+            .image_exchange(
+                &a.context,
+                bearer,
+                ImageOperation::Declare {
+                    workspace: upload.workspace.clone(),
+                    descriptor: upload.descriptor.clone(),
+                },
+            )
+            .await?
+        else {
+            anyhow::bail!("error encrypted-image-reply")
+        };
+        let mut indices = std::collections::HashSet::new();
+        ensure!(
+            status.missing.len() <= upload.records.len()
+                && (!status.complete || status.missing.is_empty())
+                && status.expires_at.is_some(),
+            "error encrypted-image-status"
+        );
+        ensure!(
+            status
+                .missing
+                .iter()
+                .all(|i| *i < upload.records.len() && indices.insert(*i)),
+            "error encrypted-image-status"
+        );
+        let ticket = Ticket {
+            reservation: status
+                .reservation
+                .ok_or_else(|| anyhow::anyhow!("error encrypted-image-ticket"))?,
+        };
+        for index in status.missing {
+            inputs.require_publishing_ready()?;
+            let record = upload
+                .records
+                .get(index)
+                .ok_or_else(|| anyhow::anyhow!("error encrypted-image-index"))?
+                .clone();
+            ensure!(
+                matches!(
+                    self.image_exchange(
+                        &a.context,
+                        bearer,
+                        ImageOperation::Put {
+                            workspace: upload.workspace.clone(),
+                            object: upload.object,
+                            descriptor_commitment: upload.commitment,
+                            reservation: ticket.reservation,
+                            index,
+                            record
+                        }
+                    )
+                    .await?,
+                    ImageReply::Done
+                ),
+                "error encrypted-image-reply"
+            );
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        if std::env::var("AVEN_TAIL_CRASH").as_deref() == Ok("image-put") {
+            std::process::exit(84);
+        }
+        inputs.require_publishing_ready()?;
+        ensure!(
+            matches!(
+                self.image_exchange(
+                    &a.context,
+                    bearer,
+                    ImageOperation::Complete {
+                        workspace: upload.workspace,
+                        object: upload.object,
+                        descriptor_commitment: upload.commitment,
+                        reservation: ticket.reservation
+                    }
+                )
+                .await?,
+                ImageReply::Done
+            ),
+            "error encrypted-image-reply"
+        );
+        Ok(ticket)
+    }
+    /// Repairs one known reference without changing its descriptor or metadata.
+    pub async fn repair_attachment(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+        workspace: &str,
+        reference: &str,
+    ) -> Result<()> {
+        let enrollment = self.enrollment()?;
+        enrollment.refresh(store, db).await?;
+        match self
+            .repair_attachment_once(store, db, blob_dir, workspace, reference)
+            .await
+        {
+            Err(error) if is_stale(&error) => {
+                enrollment.refresh(store, db).await?;
+                self.repair_attachment_once(store, db, blob_dir, workspace, reference)
+                    .await
+            }
+            result => result,
+        }
+    }
+    async fn repair_attachment_once(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+        workspace: &str,
+        reference: &str,
+    ) -> Result<()> {
+        let inputs = store.tail_inputs(db, &self.locator).await?;
+        let upload = db
+            .repair_encrypted_image(&inputs.authority, blob_dir, workspace, reference)
+            .await?;
+        let object = upload.object;
+        let commitment = upload.commitment;
+        let ticket = self.upload_prepared_image(&inputs, upload).await?;
+        ensure!(
+            matches!(
+                self.image_exchange(
+                    &inputs.authority.context,
+                    &inputs.bearer,
+                    ImageOperation::Release {
+                        workspace: workspace.into(),
+                        object,
+                        descriptor_commitment: commitment,
+                        reservation: ticket.reservation
+                    }
+                )
+                .await?,
+                ImageReply::Done
+            ),
+            "error encrypted-image-release"
+        );
+        Ok(())
+    }
+    /// False means the server no longer holds the selected object's bytes.
+    async fn download_image(
+        &self,
+        a: &tail::Authority,
+        bearer: &Secret,
+        db: &Database,
+        blob_dir: &Path,
+        selected: Option<&images::Download>,
+    ) -> Result<bool> {
+        if let Some(download) = selected
+            && !db
+                .complete_encrypted_image_from_local(
+                    a,
+                    blob_dir,
+                    download,
+                    crate::attachments::LifecyclePolicy::default(),
+                )
+                .await?
+        {
+            let mut records = Vec::new();
+            let mut total = 0;
+            for index in 0..download.chunk_count {
+                match self
+                    .image_exchange(
+                        &a.context,
+                        bearer,
+                        ImageOperation::Read {
+                            workspace: download.workspace.clone(),
+                            object: download.object,
+                            descriptor_commitment: download.descriptor_commitment,
+                            index,
+                        },
+                    )
+                    .await?
+                {
+                    ImageReply::Chunk(record) => {
+                        total += record.len();
+                        ensure!(
+                            total <= images::TRANSFER_BYTES,
+                            "error encrypted-image-limit"
+                        );
+                        records.push(record);
+                    }
+                    ImageReply::Unavailable => return Ok(false),
+                    _ => anyhow::bail!("error encrypted-image-reply"),
+                }
+            }
+            db.install_encrypted_image(
+                a,
+                blob_dir,
+                download,
+                &records,
+                crate::attachments::LifecyclePolicy::default(),
+            )
+            .await?;
+        }
+        Ok(true)
+    }
+}
+/// Image availability after this round's transfer step. Uploads withheld
+/// while publishing is blocked do not keep the drain going.
+fn settled(state: &tail::RoundState, publishing_blocked: bool) -> ImageTransfer {
+    match state.downloads {
+        Some(d) if d.pending => ImageTransfer::Pending,
+        Some(d) if d.unavailable => ImageTransfer::Unavailable,
+        Some(_) if !state.upload_pending || publishing_blocked => ImageTransfer::Complete,
+        _ => ImageTransfer::Pending,
+    }
+}

@@ -1,10 +1,12 @@
 use super::*;
 use crate::{protected_local_keys::tests::isolated_store, test_support::e2ee_http};
+use aven_core::sync::encrypted_tail::Accepted;
 use aven_core::{
     choices::TaskSource,
     operations::{TaskDraft, TaskUpdate},
 };
 use axum::body::to_bytes;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 struct Fixture {
     root: tempfile::TempDir,

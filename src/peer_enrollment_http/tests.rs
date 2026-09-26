@@ -10,6 +10,7 @@ use crate::{
     test_support::e2ee_http::{self, fixture, setup},
 };
 use aven_core::db::installation::InstallationGuard;
+use aven_core::sync::seed_claim::{membership::Mailbox, peer};
 use axum::{
     body::{Body, to_bytes},
     extract::Request,
