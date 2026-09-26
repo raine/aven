@@ -1,6 +1,5 @@
 //! Isolated repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
-use crate::protected_local_keys::peer::ActiveInputs;
 use crate::{
     http_admission::{self, Outcome},
     protected_local_keys::ProtectedLocalKeyStore,
@@ -11,15 +10,17 @@ use anyhow::{Result, ensure};
 pub(crate) use aven_core::sync::client::enrollment::Context;
 pub use aven_core::sync::client::enrollment::RemovalStatus;
 pub(crate) use aven_core::sync::client::enrollment::{
-    CONTROL_LIMIT, CreatedInvitation, Operation, PATH, PUBLISHED_RESPONSE_LIMIT, Reply,
+    CONTROL_LIMIT, Operation, PATH, PUBLISHED_RESPONSE_LIMIT, Reply,
 };
 #[cfg(test)]
 use aven_core::sync::seed_claim::Secret;
+#[cfg(test)]
+use aven_core::sync::seed_claim::membership::Joiner;
 use aven_core::{
     db::Database,
     sync::{
         client::enrollment,
-        seed_claim::membership::{self, CancelStatus, Invitation, Joiner},
+        seed_claim::membership::{self, Invitation},
     },
 };
 use axum::{
@@ -311,21 +312,6 @@ impl Client {
     ) -> Result<aven_core::sync::SharedStateInstallReport> {
         run!(self, |client| client.install(store, db))
     }
-    pub(crate) async fn refresh_inputs(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-        inputs: &mut ActiveInputs,
-    ) -> Result<()> {
-        run!(self, |client| client.refresh_inputs(store, db, inputs))
-    }
-    pub(crate) async fn refresh(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-    ) -> Result<()> {
-        run!(self, |client| client.refresh(store, db))
-    }
     pub async fn invite(
         &self,
         store: &ProtectedLocalKeyStore,
@@ -333,14 +319,6 @@ impl Client {
         expires: u64,
     ) -> Result<Invitation> {
         run!(self, |client| client.invite(store, db, expires))
-    }
-    pub(crate) async fn invite_with_status(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-        expires: u64,
-    ) -> Result<CreatedInvitation> {
-        run!(self, |client| client.invite_with_status(store, db, expires))
     }
     pub async fn request(
         &self,
@@ -360,31 +338,8 @@ impl Client {
     ) -> Result<()> {
         run!(self, |client| client.replace(store, db, invitation))
     }
-    pub(crate) async fn prepare(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-        invitation: Option<Invitation>,
-        replace: bool,
-    ) -> Result<Joiner> {
-        run!(self, |client| client
-            .prepare(store, db, invitation, replace))
-    }
-    pub(crate) async fn has_other_attempts(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-    ) -> Result<bool> {
-        run!(self, |client| client.has_other_attempts(store, db))
-    }
-    pub(crate) async fn post(&self, peer: &Joiner) -> Result<()> {
-        run!(self, |client| client.post(peer))
-    }
     pub async fn admit(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         run!(self, |client| client.admit(store, db))
-    }
-    pub(crate) async fn join_requested(&self, vault: [u8; 32], handle: [u8; 32]) -> Result<bool> {
-        run!(self, |client| client.join_requested(vault, handle))
     }
     pub async fn admit_handle(
         &self,
@@ -404,13 +359,6 @@ impl Client {
         target: [u8; 32],
     ) -> Result<RemovalStatus> {
         run!(self, |client| client.remove_device(store, db, target))
-    }
-    pub(crate) async fn finish_pending_management(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-    ) -> Result<()> {
-        run!(self, |client| client.finish_pending_management(store, db))
     }
     #[cfg(test)]
     async fn manage(
@@ -433,14 +381,21 @@ impl Client {
     ) -> Result<bool> {
         run!(self, |client| client.finish(store, db, peer, mail, grant))
     }
-    pub(crate) async fn cancel(
+    #[cfg(test)]
+    pub(crate) async fn finish_pending_management(
         &self,
         store: &ProtectedLocalKeyStore,
         db: &Database,
-        inputs: &mut ActiveInputs,
-        handle: [u8; 32],
-    ) -> Result<CancelStatus> {
-        run!(self, |client| client.cancel(store, db, inputs, handle))
+    ) -> Result<()> {
+        run!(self, |client| client.finish_pending_management(store, db))
+    }
+    #[cfg(test)]
+    pub(crate) async fn refresh(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<()> {
+        run!(self, |client| client.refresh(store, db))
     }
 }
 fn is_stale(error: &anyhow::Error) -> bool {

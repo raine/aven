@@ -15,20 +15,11 @@ use super::SetupInvitation;
 const WORKER: &str = "sync::encrypted::tests::cli_worker";
 
 #[test]
-fn seed_claim_only_labels_a_real_setup_mismatch_as_invitation_mismatch() {
+fn protected_key_storage_failures_explain_setup_errors() {
     use crate::protected_local_keys::{
         ProtectedLocalKeyStoreError, ProtectedLocalKeyStoreErrorKind,
     };
     use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
-
-    let mismatch = anyhow::Error::new(ProtectedLocalKeyStoreError::new(
-        ProtectedLocalKeyStoreErrorKind::SetupMismatch,
-    ));
-    let mismatch = super::explain_seed_claim_error(mismatch);
-    assert!(
-        error_explanations::has_code(&mismatch, "sync-setup-invitation-mismatch"),
-        "{mismatch:#}"
-    );
 
     for (kind, code, message) in [
         (
@@ -43,11 +34,6 @@ fn seed_claim_only_labels_a_real_setup_mismatch_as_invitation_mismatch() {
         ),
     ] {
         let error = anyhow::Error::new(ProtectedLocalKeyStoreError::new(kind));
-        let error = super::explain_seed_claim_error(error);
-        assert!(
-            !error_explanations::has_code(&error, "sync-setup-invitation-mismatch"),
-            "{error:#}"
-        );
         let explanation =
             error_explanations::explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(explanation.code, code);
@@ -820,37 +806,6 @@ async fn cli_join_continues_with_a_new_invitation_after_expiry() {
     success(&b.run_with_input(&args, &fresh).await, &args);
     assert!(invite.wait_with_output().await.unwrap().status.success());
     assert!(b.ok(&["sync", "status"]).await.contains("State: ready"));
-}
-
-#[test]
-fn join_timeout_hint_covers_expiry_without_suggesting_discarding_data() {
-    let hint = super::JOIN_TIMEOUT;
-    assert!(hint.starts_with("error sync-join-timeout hint="));
-    assert!(hint.contains("rerun `aven sync join`"));
-    assert!(hint.contains("If the invitation expired"));
-    assert!(hint.contains("`aven sync join --new-invitation`"));
-    assert!(hint.contains("an admission from the earlier invitation still completes"));
-    for word in ["delete", "reset", "disposable", "is empty"] {
-        assert!(!hint.contains(word), "{hint}");
-    }
-}
-
-#[test]
-fn device_change_limit_hint_points_to_starting_a_new_sync() {
-    let error = super::explain_change_limit(anyhow::anyhow!("error membership-change-limit"));
-    let hint = error.to_string();
-    assert!(
-        hint.starts_with("error sync-device-change-limit hint="),
-        "{hint}"
-    );
-    assert!(
-        hint.contains("reached its limit on device changes"),
-        "{hint}"
-    );
-    assert!(hint.contains("start a new sync"), "{hint}");
-    assert!(hint.contains("#recover-from-device-loss"), "{hint}");
-    let other = super::explain_change_limit(anyhow::anyhow!("error membership-invalid"));
-    assert_eq!(other.to_string(), "error membership-invalid");
 }
 
 /// Relays every request to a real server and, depending on `mode`, replaces

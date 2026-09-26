@@ -13,10 +13,7 @@ pub use aven_core::sync::client::keys::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aven_core::db::Database;
-#[cfg(not(test))]
-use aven_core::sync::client::keys::ProtectedStorage;
-use aven_core::sync::client::keys::{FileProtectedStorage, StoreResult};
+use aven_core::sync::client::keys::{FileProtectedStorage, ProtectedStorage, StoreResult};
 
 #[cfg_attr(test, allow(dead_code))]
 const STORE_DIRECTORY: &str = "protected-keys";
@@ -24,18 +21,17 @@ const STORE_DIRECTORY: &str = "protected-keys";
 #[cfg_attr(test, allow(dead_code))]
 const KEYCHAIN_SERVICE: &str = "fi.zendit.Aven.local-package-keyring";
 
-/// Opens the protected key store for `database`.
-pub async fn for_database(database: &Database) -> StoreResult<ProtectedLocalKeyStore> {
+/// This installation's protected key storage.
+pub fn storage() -> StoreResult<Arc<dyn ProtectedStorage>> {
     #[cfg(not(test))]
-    let storage: Arc<dyn ProtectedStorage> = production_storage(protected_store_directory()?)?;
+    return production_storage(protected_store_directory()?);
     // Tests never reach the login Keychain; CLI test workers name isolated files.
     #[cfg(test)]
-    let storage = Arc::new(FileProtectedStorage::new(
+    Ok(Arc::new(FileProtectedStorage::new(
         std::env::var_os("AVEN_TEST_PROTECTED_KEYS")
             .map(PathBuf::from)
             .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?,
-    ));
-    ProtectedLocalKeyStore::open(database, storage).await
+    )))
 }
 
 fn error(kind: ProtectedLocalKeyStoreErrorKind) -> ProtectedLocalKeyStoreError {
@@ -241,6 +237,7 @@ mod keychain {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use aven_core::db::Database;
 
         struct Cleanup(KeychainStorage, String);
         impl Drop for Cleanup {

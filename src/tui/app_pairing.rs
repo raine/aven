@@ -165,9 +165,10 @@ impl App {
                 .context("invitation task stopped")
                 .and_then(|result| result)
             {
-                Ok(invitation) => match invitation.tui_presentation(crate::pairing::qr_glyphs(
-                    self.intake.config().sync.qr_glyphs,
-                )) {
+                Ok(invitation) => match encrypted::tui_presentation(
+                    &invitation,
+                    crate::pairing::qr_glyphs(self.intake.config().sync.qr_glyphs),
+                ) {
                     Ok(presentation) => {
                         let presentation = Arc::new(presentation);
                         self.store.sync_status.invitation = Some(encrypted::InvitationStatus {
@@ -183,8 +184,9 @@ impl App {
                                 Some(OverlayState::Pairing(PairingOverlay::Ready(presentation)));
                         }
                         let database = self.store.database();
+                        let config = self.intake.config().clone();
                         self.invite.admission = Some(tokio::spawn(async move {
-                            encrypted::await_admission(&database, &invitation).await
+                            encrypted::await_admission(&database, &config, &invitation).await
                         }));
                     }
                     Err(error) => {
@@ -232,7 +234,9 @@ impl App {
             Ok(encrypted::Admission::Cancelled) => self.set_info("invitation cancelled"),
             Err(error) => {
                 self.store.refresh_sync_status().await?;
-                let status = encrypted::invitation_status(&self.store.database()).await?;
+                let status =
+                    encrypted::invitation_status(&self.store.database(), self.intake.config())
+                        .await?;
                 if status.is_some_and(|state| state.keys_may_have_been_sent) {
                     self.set_warning("invitation expired; the next sync changes keys");
                 } else if error
@@ -251,7 +255,7 @@ impl App {
             }
         }
         self.store.sync_status.invitation =
-            encrypted::invitation_status(&self.store.database()).await?;
+            encrypted::invitation_status(&self.store.database(), self.intake.config()).await?;
         Ok(true)
     }
 

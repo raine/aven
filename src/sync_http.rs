@@ -44,14 +44,21 @@ impl HttpDriver {
             match session.next().await? {
                 Step::Done(value) => return Ok(value),
                 Step::Wait(delay) => tokio::time::sleep(delay).await,
-                Step::Request(request) => {
-                    let context = request.context;
-                    match self.send(request).await {
-                        Some(response) => session.accept_response(context, response)?,
-                        None => session.register_transport_failure(context)?,
-                    }
-                }
+                Step::Request(request) => self.answer(&mut session, request).await?,
             }
+        }
+    }
+
+    /// Sends one request of `session` and hands it the outcome.
+    pub async fn answer<T>(
+        &self,
+        session: &mut Session<'_, T>,
+        request: PreparedRequest,
+    ) -> Result<()> {
+        let context = request.context;
+        match self.send(request).await {
+            Some(response) => session.accept_response(context, response),
+            None => session.register_transport_failure(context),
         }
     }
 

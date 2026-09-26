@@ -136,6 +136,9 @@ impl Client {
     pub fn locator(&self) -> &str {
         &self.locator
     }
+    pub(crate) fn link(&self) -> &Link {
+        &self.link
+    }
     pub async fn exchange(&self, op: Operation, secret: Option<&Secret>) -> Result<Reply> {
         let response_limit = if matches!(&op, Operation::Published { .. }) {
             PUBLISHED_RESPONSE_LIMIT

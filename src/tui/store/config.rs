@@ -40,7 +40,8 @@ impl TuiStore {
             Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),
         };
         let phase = crate::sync::encrypted::local_phase(&self.database).await?;
-        let association = crate::sync::encrypted::association_status(&self.database).await?;
+        let association =
+            crate::sync::encrypted::association_status(&self.database, config).await?;
         let access_refused_at = self
             .database
             .sync_access_refusal()

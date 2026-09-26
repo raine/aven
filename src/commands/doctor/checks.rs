@@ -144,7 +144,7 @@ pub(super) async fn add_runtime_database_sections(
             },
         );
         if let Some(database) = database {
-            match crate::sync::encrypted::status_report(database).await {
+            match crate::sync::encrypted::status_report(database, config).await {
                 Ok(status) => {
                     sync_section.info(
                         "sync.set_up",

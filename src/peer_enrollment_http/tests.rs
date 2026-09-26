@@ -1475,7 +1475,7 @@ async fn expired_sent_invitation_withdraws_by_rotation_unless_admission_won() {
 
 #[tokio::test]
 async fn only_authentication_refusals_read_as_access_refusals() {
-    use crate::sync::error_explanations::is_access_refusal;
+    use aven_core::sync::client::errors::is_access_refusal;
     use axum::routing::post;
 
     let cases = [

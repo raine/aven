@@ -39,27 +39,7 @@ impl Explanation {
     }
 }
 
-/// The stable error codes in the chain, outermost first.
-pub(crate) fn codes(error: &Error) -> impl Iterator<Item = String> + '_ {
-    error.chain().filter_map(|cause| {
-        cause
-            .to_string()
-            .strip_prefix("error ")
-            .and_then(|rest| rest.split_whitespace().next())
-            .map(str::to_string)
-    })
-}
-
-pub(crate) fn has_code(error: &Error, expected: &str) -> bool {
-    codes(error).any(|code| code == expected)
-}
-
-pub(crate) fn is_access_refusal(error: &Error) -> bool {
-    has_code(error, "sync-server-refused")
-        || has_code(error, "enrollment-unauthorized")
-        || has_code(error, "enrollment-revoked")
-        || has_code(error, "sync-device-removed")
-}
+pub(crate) use aven_core::sync::client::errors::{codes, has_code};
 
 pub(crate) fn explain(
     action: ErrorAction,

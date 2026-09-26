@@ -8,8 +8,10 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 #[cfg(test)]
+pub(crate) use aven_core::sync::client::tail::DrainSnapshot;
+#[cfg(test)]
 use aven_core::sync::client::tail::PushStep;
-pub(crate) use aven_core::sync::client::tail::{DrainSnapshot, Envelope, PATH};
+pub(crate) use aven_core::sync::client::tail::{Envelope, PATH};
 pub use aven_core::sync::client::tail::{ImageTransfer, Round};
 #[cfg(test)]
 use aven_core::sync::{encrypted_tail::Context, seed_claim::Secret};
@@ -123,7 +125,7 @@ async fn dispatch(
 }
 /// Encrypted tail exchanges with one server over HTTP.
 pub struct Client {
-    transport: seed_bootstrap_http::Client,
+    pub(crate) transport: seed_bootstrap_http::Client,
     pub(crate) locator: String,
 }
 
@@ -186,13 +188,6 @@ impl Client {
     ) -> Result<bool> {
         run!(self, |client| client.pull_only_round(store, db))
     }
-    pub(crate) async fn start_drain(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-    ) -> Result<DrainSnapshot> {
-        run!(self, |client| client.start_drain(store, db))
-    }
     /// Resolves at most one ordered local head, applies one metadata page and
     /// downloads at most one image.
     pub async fn round(
@@ -202,16 +197,6 @@ impl Client {
         blob_dir: &Path,
     ) -> Result<Round> {
         run!(self, |client| client.round(store, db, blob_dir))
-    }
-    pub(crate) async fn round_in_drain(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        db: &Database,
-        blob_dir: &Path,
-        drain: &mut DrainSnapshot,
-    ) -> Result<Round> {
-        run!(self, |client| client
-            .round_in_drain(store, db, blob_dir, drain))
     }
     /// Repairs one known reference without changing its descriptor or metadata.
     pub async fn repair_attachment(
@@ -224,6 +209,25 @@ impl Client {
     ) -> Result<()> {
         run!(self, |client| client
             .repair_attachment(store, db, blob_dir, workspace, reference))
+    }
+    #[cfg(test)]
+    pub(crate) async fn start_drain(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+    ) -> Result<DrainSnapshot> {
+        run!(self, |client| client.start_drain(store, db))
+    }
+    #[cfg(test)]
+    pub(crate) async fn round_in_drain(
+        &self,
+        store: &ProtectedLocalKeyStore,
+        db: &Database,
+        blob_dir: &Path,
+        drain: &mut DrainSnapshot,
+    ) -> Result<Round> {
+        run!(self, |client| client
+            .round_in_drain(store, db, blob_dir, drain))
     }
 }
 

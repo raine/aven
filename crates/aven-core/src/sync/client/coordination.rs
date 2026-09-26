@@ -1,21 +1,23 @@
+//! One sync operation per database at a time, across processes.
 use std::ffi::OsString;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::db::Database;
 use anyhow::{Context, Result, bail};
-use aven_core::db::Database;
 use tokio::time::Instant;
 
 const MANUAL_SYNC_LOCK_WAIT: Duration = Duration::from_secs(2);
 const SYNC_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const LOCK_SUFFIX: &str = ".aven-sync.lock";
 
-pub(super) struct SyncProcessGuard {
+pub struct SyncProcessGuard {
     _file: Option<File>,
 }
 
-pub(super) async fn acquire(database: &Database) -> Result<SyncProcessGuard> {
+/// Waits briefly for another sync on this database to finish.
+pub async fn acquire(database: &Database) -> Result<SyncProcessGuard> {
     let Some(file) = open_lock(database)? else {
         return Ok(SyncProcessGuard { _file: None });
     };
@@ -35,7 +37,8 @@ pub(super) async fn acquire(database: &Database) -> Result<SyncProcessGuard> {
     }
 }
 
-pub(super) fn try_acquire(database: &Database) -> Result<Option<SyncProcessGuard>> {
+/// The lock, or `None` while another sync holds it.
+pub fn try_acquire(database: &Database) -> Result<Option<SyncProcessGuard>> {
     let Some(file) = open_lock(database)? else {
         return Ok(Some(SyncProcessGuard { _file: None }));
     };
@@ -51,7 +54,7 @@ fn open_lock(database: &Database) -> Result<Option<File>> {
         return Ok(None);
     };
     let path = lock_path(database_path);
-    aven_core::private_fs::open_lock_file(&path)
+    crate::private_fs::open_lock_file(&path)
         .with_context(|| format!("open sync lock {}", path.display()))
         .map(Some)
 }
