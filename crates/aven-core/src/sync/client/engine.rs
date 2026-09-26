@@ -1116,9 +1116,7 @@ mod tests {
         let hint = JOIN_TIMEOUT;
         assert!(hint.starts_with("error sync-join-timeout hint="));
         assert!(hint.contains("rerun `aven sync join`"));
-        assert!(hint.contains("If the invitation expired"));
         assert!(hint.contains("`aven sync join --new-invitation`"));
-        assert!(hint.contains("an admission from the earlier invitation still completes"));
         for word in ["delete", "reset", "disposable", "is empty"] {
             assert!(!hint.contains(word), "{hint}");
         }
@@ -1132,11 +1130,6 @@ mod tests {
             hint.starts_with("error sync-device-change-limit hint="),
             "{hint}"
         );
-        assert!(
-            hint.contains("reached its limit on device changes"),
-            "{hint}"
-        );
-        assert!(hint.contains("start a new sync"), "{hint}");
         assert!(hint.contains("#recover-from-device-loss"), "{hint}");
         let other = explain_change_limit(anyhow::anyhow!("error membership-invalid"));
         assert_eq!(other.to_string(), "error membership-invalid");

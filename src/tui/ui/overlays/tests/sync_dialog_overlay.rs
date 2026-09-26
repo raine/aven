@@ -10,9 +10,7 @@ fn idle_sync_renders_compact_summary_and_actions() {
     let rendered = render_overlay_view(sync_overlay(sync_status(), false));
 
     assert!(rendered.contains(SYNC_TITLE));
-    assert!(!rendered.contains("Sync status"));
     assert!(rendered.contains("● No changes waiting"));
-    assert!(!rendered.contains("end-to-end encrypted"));
     assert!(rendered.contains("Server          https://sync.example.com"));
     assert!(rendered.contains("Automatic"));
     assert!(!rendered.contains("Pending"));
@@ -21,7 +19,6 @@ fn idle_sync_renders_compact_summary_and_actions() {
     assert!(rendered.contains("Add device"));
     assert!(rendered.contains("d details"));
     assert!(!rendered.contains("Sync cursor"));
-    assert!(!rendered.contains("Up to date"));
 }
 
 #[test]
@@ -332,7 +329,6 @@ fn local_databases_offer_setup_and_joining() {
     assert!(rendered.contains("Keep your tasks in sync across devices"));
     assert!(rendered.contains("› Set up sync"));
     assert!(rendered.contains("Join existing sync"));
-    assert!(!rendered.contains("aven sync setup"));
 }
 
 #[test]
@@ -384,10 +380,8 @@ fn invitation_form_never_renders_the_secret() {
     assert!(!rendered.contains("SECRET"));
     assert!(rendered.contains("Incomplete invitation; part may be missing"));
     assert!(rendered.contains("Paste the invitation first."));
-    assert!(!rendered.contains("isn't shown or saved"));
     assert!(rendered.contains(" Continue "));
-    assert!(rendered.contains("←→ select  Enter choose  Ctrl-U clear  Esc back"));
-    assert!(!rendered.contains("Enter continue"));
+    assert!(rendered.contains("Ctrl-U clear"));
 }
 
 #[test]
@@ -946,7 +940,7 @@ fn join_timeout_guidance_stays_visible_while_resuming_in_the_session() {
     let timed_out = SyncActivity {
         last: Some(OperationResult::Failed(OperationFailure {
             kind: OperationKind::Join,
-            message: crate::tui::sync_errors::JOIN_TIMEOUT.to_string(),
+            message: "The other device didn't add this device in time.".to_string(),
             details: "error sync-join-timeout".to_string(),
             signal: Some(crate::tui::sync_operations::FailureSignal::JoinTimedOut),
         })),

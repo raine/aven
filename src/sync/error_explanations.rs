@@ -669,6 +669,7 @@ mod tests {
         let error = anyhow!("error enrollment-refused").context("error sync-join-command");
         let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
         assert!(explanation.next_step.contains("been cancelled"));
+        assert!(!explanation.combined().contains("removed"));
     }
 
     #[test]

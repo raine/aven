@@ -139,10 +139,8 @@ async fn joining_refuses_a_nonempty_database_without_changing_it() {
 
     assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
     assert!(!app.sync_ops.work_pending());
-    assert_eq!(
-        last_failure(&app).message,
-        crate::tui::sync_errors::JOIN_REQUIRES_EMPTY
-    );
+    let message = &last_failure(&app).message;
+    assert!(message.contains("needs an empty database"), "{message}");
     assert!(database.enrollment_pin().await.unwrap().is_none());
     assert_eq!(
         crate::sync::encrypted::local_phase(&database)

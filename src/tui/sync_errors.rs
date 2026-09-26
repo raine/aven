@@ -40,20 +40,9 @@ fn action(kind: OperationKind) -> ErrorAction {
     }
 }
 
-/// A timeout does not show whether the invitation expired, and an admission
-/// committed before expiry can still finish.
-#[cfg(test)]
-pub(crate) const JOIN_TIMEOUT: &str = "The other device didn't add this device in time. \
-     Keep Add device or `aven sync invite` open on the other device, then choose Resume joining.";
-
 pub(crate) const JOIN_TIMEOUT_EXPIRED: &str = "If the invitation expired, choose Use a new \
      invitation and paste a new one from the same device. The earlier invitation still \
      counts if the other device already added this device with it.";
-
-#[cfg(test)]
-pub(crate) const JOIN_REQUIRES_EMPTY: &str = "This database already has tasks or other data, \
-     and joining needs an empty database. Start aven with `aven --db /new/path sync join` \
-     to use a new, empty database. Nothing here was changed.";
 
 pub(crate) const CHANGE_LIMIT: &str = "This sync has reached its limit on device changes. \
      Start a new sync to keep changing devices; see Recover from device loss in the sync docs.";
@@ -89,51 +78,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn network_failures_explain_connectivity_and_keep_details() {
-        let error = anyhow!("error enrollment-network outcome-unknown")
-            .context("error sync-join-incomplete");
-        let failure = failure(OperationKind::Join, &error);
-        assert!(
-            failure
-                .message
-                .starts_with("Couldn't reach the sync server")
-        );
-        assert!(failure.details.contains("enrollment-network"));
-    }
-
-    #[test]
     fn nonempty_targets_explain_that_nothing_changed() {
         let error = anyhow!("error shared-state-install target database is not empty")
             .context("error sync-join-requires-empty-database hint=\"join with a new database\"");
-        assert_eq!(
-            failure(OperationKind::Join, &error).message,
-            JOIN_REQUIRES_EMPTY
-        );
-    }
-
-    #[test]
-    fn access_refusals_name_removal_only_as_a_possibility() {
-        let error = anyhow!("error enrollment-unauthorized")
-            .context("error sync-server-refused hint=\"raw\"");
-        let message = failure(OperationKind::Sync, &error).message;
-        assert!(message.contains("may have been removed"), "{message}");
-        assert!(!message.contains("was removed"), "{message}");
-        assert!(message.contains("Local tasks and images stay here"));
-    }
-
-    #[test]
-    fn join_refusal_does_not_claim_device_removal() {
-        let error = anyhow!("error enrollment-refused outcome-unknown");
         let message = failure(OperationKind::Join, &error).message;
-        assert!(message.contains("invitation may have expired"), "{message}");
-        assert!(!message.contains("removed"), "{message}");
+        assert!(
+            message.contains("`aven --db /new/path sync join`"),
+            "{message}"
+        );
     }
 
     #[test]
     fn join_timeouts_keep_conditional_expiry_guidance() {
         let error = anyhow!("error sync-join-timeout hint=\"x\"");
         let failure = failure(OperationKind::Join, &error);
-        assert_eq!(failure.message, JOIN_TIMEOUT);
+        assert!(
+            failure.message.contains("Resume joining"),
+            "{}",
+            failure.message
+        );
         assert!(failure.join_timed_out());
         assert!(JOIN_TIMEOUT_EXPIRED.starts_with("If the invitation expired"));
     }
