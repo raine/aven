@@ -1774,7 +1774,7 @@ async fn concurrent_clients_exceeding_tail_permits_complete_drains() {
 }
 
 #[tokio::test]
-async fn checkpoint_overlapping_rounds_repeated_offline_edits_and_reinstall() {
+async fn overlapping_rounds_repeated_offline_edits_and_reinstall() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -1823,7 +1823,7 @@ async fn checkpoint_overlapping_rounds_repeated_offline_edits_and_reinstall() {
 }
 
 #[tokio::test]
-async fn checkpoint_creation_undo_pending_frozen_and_accepted() {
+async fn creation_undo_pending_frozen_and_accepted() {
     use aven_core::operations::TaskCreationUndo;
     let f = fixture().await;
     converge(&f).await;
@@ -1879,7 +1879,7 @@ async fn checkpoint_creation_undo_pending_frozen_and_accepted() {
 }
 
 #[tokio::test]
-async fn checkpoint_overlapping_conflicts_and_frozen_pending_change() {
+async fn overlapping_conflicts_and_frozen_pending_change() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -1960,7 +1960,7 @@ async fn checkpoint_overlapping_conflicts_and_frozen_pending_change() {
 }
 
 #[tokio::test]
-async fn checkpoint_server_files_exclude_authored_content_and_client_secrets() {
+async fn server_files_exclude_authored_content_and_client_secrets() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -1997,7 +1997,7 @@ async fn checkpoint_server_files_exclude_authored_content_and_client_secrets() {
 }
 
 #[tokio::test]
-async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
+async fn observed_mapping_and_stale_page_contradictions() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -2073,7 +2073,7 @@ async fn checkpoint_observed_mapping_and_stale_page_contradictions() {
 }
 
 #[tokio::test]
-async fn checkpoint_snapshot_shared_image_survives_parent_delete_restore() {
+async fn snapshot_shared_image_survives_parent_delete_restore() {
     let f = fixture_with(FixtureOptions {
         shared_image: true,
         ..Default::default()
@@ -2140,7 +2140,7 @@ async fn checkpoint_snapshot_shared_image_survives_parent_delete_restore() {
 }
 
 #[tokio::test]
-async fn checkpoint_metadata_resolution_rejects_unsendable_value() {
+async fn metadata_resolution_rejects_unsendable_value() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -2290,7 +2290,7 @@ async fn drain_note_order(f: &Fixture, seed_first: bool) {
 }
 
 #[tokio::test]
-async fn checkpoint_concurrent_note_edits_follow_accepted_order() {
+async fn concurrent_note_edits_follow_accepted_order() {
     for seed_first in [true, false] {
         let edits = 3;
         let f = fixture().await;
@@ -2318,7 +2318,7 @@ async fn checkpoint_concurrent_note_edits_follow_accepted_order() {
 }
 
 #[tokio::test]
-async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
+async fn note_pending_edit_survives_frozen_acceptance_and_restart() {
     let f = fixture().await;
     let (w, task, note) = shared_note(&f).await;
     f.peer
@@ -2430,7 +2430,7 @@ async fn checkpoint_note_pending_edit_survives_frozen_acceptance_and_restart() {
 }
 
 #[tokio::test]
-async fn checkpoint_note_delete_wins_over_edits_and_undo_restores() {
+async fn note_delete_wins_over_edits_and_undo_restores() {
     for seed_first in [true, false] {
         let f = fixture().await;
         let (w, task, note) = shared_note(&f).await;
@@ -2465,7 +2465,7 @@ async fn checkpoint_note_delete_wins_over_edits_and_undo_restores() {
 }
 
 #[tokio::test]
-async fn checkpoint_note_undo_preserves_frozen_history_and_pending_restoration() {
+async fn note_undo_preserves_frozen_history_and_pending_restoration() {
     let f = fixture().await;
     let (w, task, note) = shared_note(&f).await;
     f.seed
@@ -2509,7 +2509,7 @@ async fn checkpoint_note_undo_preserves_frozen_history_and_pending_restoration()
 }
 
 #[tokio::test]
-async fn checkpoint_note_creation_undo_respects_history_ownership() {
+async fn note_creation_undo_respects_history_ownership() {
     let f = fixture().await;
     let (w, task, _) = shared_note(&f).await;
     let pending = f
@@ -2557,7 +2557,7 @@ async fn checkpoint_note_creation_undo_respects_history_ownership() {
 }
 
 #[tokio::test]
-async fn checkpoint_round_pushes_every_creation_and_keeps_later_undo() {
+async fn round_pushes_every_creation_and_keeps_later_undo() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -2625,7 +2625,7 @@ async fn checkpoint_round_pushes_every_creation_and_keeps_later_undo() {
 }
 
 #[tokio::test]
-async fn checkpoint_idle_check_preserves_frozen_work_and_checks_authority() {
+async fn idle_check_preserves_frozen_work_and_checks_authority() {
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
@@ -2751,12 +2751,12 @@ async fn assert_snapshot_note_edits_converge(edit_after_capture: bool) {
 }
 
 #[tokio::test]
-async fn checkpoint_snapshot_note_concurrent_edits_follow_accepted_order() {
+async fn snapshot_note_concurrent_edits_follow_accepted_order() {
     assert_snapshot_note_edits_converge(false).await;
 }
 
 #[tokio::test]
-async fn checkpoint_snapshot_note_keeps_source_edit_between_capture_and_adoption() {
+async fn snapshot_note_keeps_source_edit_between_capture_and_adoption() {
     assert_snapshot_note_edits_converge(true).await;
 }
 
