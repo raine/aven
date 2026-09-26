@@ -482,12 +482,10 @@ impl ProtectedLocalKeyStore {
                 journal.handle == invitation.handle(),
                 "error enrollment-journal-corrupt"
             );
-            for (phase, size) in [("registered", 128), ("bound", 2048), ("ready", 128)] {
-                self.phase(db, &journal.name(phase), size).await?;
-            }
-            let mut gap = false;
+            self.phase(db, &journal.name("registered"), 128).await?;
             let bound = self.phase(db, &journal.name("bound"), 2048).await?;
             let ready = self.phase(db, &journal.name("ready"), 128).await?;
+            let mut gap = false;
             let mut resolved = ready.is_none();
             for candidate in 0..membership::MAX_CANDIDATES {
                 let bytes = self

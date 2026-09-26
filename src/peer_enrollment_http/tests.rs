@@ -2,7 +2,11 @@ use sha2::Digest;
 
 use super::*;
 use crate::{
-    protected_local_keys::{EnrollmentReadiness, peer::OutboundInvitation, tests::isolated_store},
+    protected_local_keys::{
+        EnrollmentReadiness,
+        peer::OutboundInvitation,
+        tests::{BACKEND_LOADS, isolated_store},
+    },
     test_support::e2ee_http::{self, fixture, setup},
 };
 use aven_core::db::installation::InstallationGuard;
@@ -232,6 +236,22 @@ async fn adopted_inner(
     };
     e2ee_http::adopt(&origin, &db, &store, &seed).await;
     (db, store, server, origin, task)
+}
+
+#[tokio::test]
+async fn journal_scan_loads_bound_and_ready_once() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, store, _, origin, task) = adopted(root.path()).await;
+    let client = Client::new(&origin).unwrap();
+    client.invite(&store, &db, expiry()).await.unwrap();
+
+    let (invitation, loads) = BACKEND_LOADS.measure(store.outbound_invitation(&db)).await;
+    assert_eq!(invitation.unwrap(), Some(OutboundInvitation::Pending));
+    // One journal walk uses 128 outbound probes, three phase reads, and eight
+    // candidate/sent pairs. Invitation status then performs eleven targeted
+    // reads. Bound and ready must not be loaded a second time during the walk.
+    assert_eq!(loads, 158);
+    task.abort();
 }
 
 #[tokio::test]
