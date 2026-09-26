@@ -395,7 +395,7 @@ impl App {
                 OverlayViewContext {
                     sync_status: &self.store.sync_status,
                     sync_activity: &self.sync_ops.activity,
-                    syncing: self.sync.work_pending(),
+                    syncing: self.sync.started_at(),
                     status_prefix_active: self.pending_shortcut.has_add_task_status_prefix(),
                     priority_prefix_active: self.pending_shortcut.has_add_task_priority_prefix(),
                 },
@@ -492,7 +492,7 @@ impl App {
                 OverlayViewContext {
                     sync_status: &self.store.sync_status,
                     sync_activity: &self.sync_ops.activity,
-                    syncing: self.sync.work_pending(),
+                    syncing: self.sync.started_at(),
                     status_prefix_active: self.pending_shortcut.has_add_task_status_prefix(),
                     priority_prefix_active: self.pending_shortcut.has_add_task_priority_prefix(),
                 },
@@ -825,6 +825,7 @@ impl App {
 
     pub(super) fn has_time_based_redraw(&self) -> bool {
         self.notification.is_some()
+            || self.sync.work_pending()
             || self.sync_ops.work_pending()
             || self.refresh_is_due()
             || self.onboarding_intro.is_some()

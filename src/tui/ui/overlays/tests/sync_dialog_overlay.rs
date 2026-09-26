@@ -11,11 +11,12 @@ fn idle_sync_renders_compact_summary_and_actions() {
 
     assert!(rendered.contains(SYNC_TITLE));
     assert!(!rendered.contains("Sync status"));
-    assert!(rendered.contains("No changes waiting"));
-    assert!(rendered.contains("end-to-end encrypted"));
+    assert!(rendered.contains("● No changes waiting"));
+    assert!(!rendered.contains("end-to-end encrypted"));
+    assert!(rendered.contains("Server          https://sync.example.com"));
     assert!(rendered.contains("Automatic"));
-    assert!(rendered.contains("Pending"));
-    assert!(rendered.contains("Conflicts"));
+    assert!(!rendered.contains("Pending"));
+    assert!(!rendered.contains("Conflicts"));
     assert!(rendered.contains("› Sync now"));
     assert!(rendered.contains("Add device"));
     assert!(rendered.contains("d details"));
@@ -175,7 +176,7 @@ fn activity_view(
         state,
         status: borrow_value(status),
         activity: borrow_value(activity),
-        syncing: false,
+        syncing: None,
     }
 }
 
@@ -605,8 +606,63 @@ fn results_distinguish_images_from_tasks() {
         },
     );
 
-    assert!(rendered.contains("Joined sync with https://sync.example.com"));
+    assert!(rendered.contains("✓ Joined sync"));
     assert!(rendered.contains("Some images are unavailable on the server"));
+}
+
+#[test]
+fn complete_results_leave_only_the_status_and_server() {
+    let rendered = render_page(
+        SyncPage::Home,
+        sync_status(),
+        SyncActivity {
+            last: Some(OperationResult::SetUp {
+                server: "https://sync.example.com".to_string(),
+                drain: DrainSummary {
+                    tasks_current: true,
+                    images: "complete",
+                },
+            }),
+            ..SyncActivity::default()
+        },
+    );
+
+    assert!(rendered.contains("No changes waiting"));
+    assert!(!rendered.contains("Sync is set up"));
+    assert!(!rendered.contains("in sync"));
+    assert_eq!(rendered.matches("https://sync.example.com").count(), 1);
+}
+
+#[test]
+fn manual_sync_spins_in_the_status_line_without_moving_rows() {
+    let state = SyncDialogState::default();
+    let idle = sync_dialog_lines_for_test(&sync_view(&state, sync_status()));
+    let mut view = sync_view(&state, sync_status());
+    view.syncing = Some(std::time::Instant::now());
+    let syncing = sync_dialog_lines_for_test(&view);
+
+    assert_eq!(idle.len(), syncing.len());
+    assert!(idle[0].to_string().contains("No changes waiting"));
+    assert!(syncing[0].to_string().ends_with("Syncing…"));
+    assert_eq!(syncing[0].spans[1].style.fg, Some(ACCENT));
+    for (before, after) in idle.iter().zip(&syncing).skip(1) {
+        assert_eq!(before.to_string(), after.to_string());
+    }
+}
+
+#[test]
+fn nonzero_counts_show_as_attention_rows() {
+    let status = TuiSyncStatus {
+        pending_changes: 3,
+        ..sync_status()
+    };
+    let lines = sync_dialog_lines_for_test(&sync_view(&SyncDialogState::default(), status));
+    let pending = lines
+        .iter()
+        .find(|line| line.to_string().starts_with("Pending"))
+        .expect("pending row");
+    assert!(pending.to_string().ends_with('3'));
+    assert_eq!(pending.spans[1].style.fg, Some(ORANGE));
 }
 
 #[test]
@@ -720,6 +776,7 @@ fn sync_status() -> TuiSyncStatus {
         daemon_wake: SyncStatusCheck::new(true, "127.0.0.1:3746"),
         sync_cursor: Some("42".to_string()),
         local_sequence: Some("45".to_string()),
+        server: Some("https://sync.example.com".to_string()),
         ..TuiSyncStatus::default()
     }
 }

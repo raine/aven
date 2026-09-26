@@ -40,7 +40,7 @@ impl TuiStore {
             Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),
         };
         let phase = crate::sync::encrypted::local_phase(&self.database).await?;
-        let invitation = crate::sync::encrypted::invitation_status(&self.database).await?;
+        let association = crate::sync::encrypted::association_status(&self.database).await?;
         let access_refused_at = self
             .database
             .sync_access_refusal()
@@ -57,7 +57,8 @@ impl TuiStore {
             conflicts: persistence.conflicts,
             sync_cursor: persistence.sync_cursor,
             local_sequence: persistence.local_sequence,
-            invitation,
+            server: association.server,
+            invitation: association.invitation,
             access_refused_at,
         })
     }

@@ -132,7 +132,8 @@ pub(crate) struct SyncDialogView<'a> {
     pub(crate) state: &'a super::sync_dialog::SyncDialogState,
     pub(crate) status: &'a TuiSyncStatus,
     pub(crate) activity: &'a crate::tui::sync_operations::SyncActivity,
-    pub(crate) syncing: bool,
+    /// When a manual sync started, while it runs.
+    pub(crate) syncing: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -484,7 +485,7 @@ impl<'a> RecurrenceHistoryView<'a> {
 pub(crate) struct OverlayViewContext<'a> {
     pub(crate) sync_status: &'a TuiSyncStatus,
     pub(crate) sync_activity: &'a crate::tui::sync_operations::SyncActivity,
-    pub(crate) syncing: bool,
+    pub(crate) syncing: Option<std::time::Instant>,
     pub(crate) status_prefix_active: bool,
     pub(crate) priority_prefix_active: bool,
 }
@@ -632,7 +633,7 @@ mod tests {
             OverlayViewContext {
                 sync_status: &sync_status,
                 sync_activity: &sync_activity,
-                syncing: false,
+                syncing: None,
                 status_prefix_active: false,
                 priority_prefix_active: false,
             },
@@ -674,7 +675,7 @@ mod tests {
                 OverlayViewContext {
                     sync_status: &sync_status,
                     sync_activity: &sync_activity,
-                    syncing: false,
+                    syncing: None,
                     status_prefix_active: false,
                     priority_prefix_active: false,
                 },

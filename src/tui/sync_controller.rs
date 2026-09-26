@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 use aven_core::db::Database;
 use tokio::task::JoinHandle;
@@ -8,11 +10,15 @@ use crate::tui::app::{App, Notification};
 
 pub(super) struct SyncController {
     task: Option<JoinHandle<Result<Outcome>>>,
+    started_at: Option<Instant>,
 }
 
 impl SyncController {
     pub(super) fn new() -> Self {
-        Self { task: None }
+        Self {
+            task: None,
+            started_at: None,
+        }
     }
 
     pub(super) fn start(&mut self, database: &Database, config: &AppConfig) -> Result<bool> {
@@ -25,11 +31,17 @@ impl SyncController {
         self.task = Some(tokio::spawn(async move {
             encrypted::run_to_completion(&database, &config).await
         }));
+        self.started_at = Some(Instant::now());
         Ok(true)
     }
 
     pub(super) fn work_pending(&self) -> bool {
         self.task.is_some()
+    }
+
+    /// When the running sync started; `None` while idle.
+    pub(super) fn started_at(&self) -> Option<Instant> {
+        self.task.as_ref().and(self.started_at)
     }
 
     pub(super) async fn poll(&mut self) -> Option<Result<Outcome>> {

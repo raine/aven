@@ -674,6 +674,8 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) conflicts: i64,
     pub(crate) sync_cursor: Option<String>,
     pub(crate) local_sequence: Option<String>,
+    /// The associated sync server, once setup or joining has recorded it.
+    pub(crate) server: Option<String>,
     pub(crate) invitation: Option<crate::sync::encrypted::InvitationStatus>,
     /// Time of the latest server authentication refusal, cleared by a successful sync.
     pub(crate) access_refused_at: Option<String>,
@@ -692,6 +694,7 @@ impl Default for TuiSyncStatus {
             conflicts: 0,
             sync_cursor: None,
             local_sequence: None,
+            server: None,
             invitation: None,
             access_refused_at: None,
         }

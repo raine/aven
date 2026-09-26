@@ -489,23 +489,39 @@ pub(crate) async fn create_invitation(
     })
 }
 
-pub(crate) async fn invitation_status(database: &Database) -> Result<Option<InvitationStatus>> {
+/// The sync server this database is associated with, and its open
+/// invitation. Local observation only; contacts no server.
+#[derive(Debug, Default)]
+pub(crate) struct AssociationStatus {
+    pub(crate) server: Option<String>,
+    pub(crate) invitation: Option<InvitationStatus>,
+}
+
+pub(crate) async fn association_status(database: &Database) -> Result<AssociationStatus> {
     if !is_set_up(database).await? {
-        return Ok(None);
+        return Ok(AssociationStatus::default());
     }
     let store = key_store(database)?;
     let _guard = super::coordination::acquire(database).await?;
     let Some((_, server)) = store.association(database).await? else {
-        return Ok(None);
+        return Ok(AssociationStatus::default());
     };
     let inputs = store.active_inputs(database, &server).await?;
-    Ok(store
+    let invitation = store
         .open_invitation(database, &inputs)
         .await?
         .map(|state| InvitationStatus {
             expires_at: state.expires_at,
             keys_may_have_been_sent: state.keys_may_have_been_sent,
-        }))
+        });
+    Ok(AssociationStatus {
+        server: Some(server),
+        invitation,
+    })
+}
+
+pub(crate) async fn invitation_status(database: &Database) -> Result<Option<InvitationStatus>> {
+    Ok(association_status(database).await?.invitation)
 }
 
 pub(crate) async fn cancel_invitation(

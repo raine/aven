@@ -398,7 +398,7 @@ impl App {
             state,
             status: &self.store.sync_status,
             activity: &self.sync_ops.activity,
-            syncing: self.sync.work_pending(),
+            syncing: self.sync.started_at(),
         }
     }
 

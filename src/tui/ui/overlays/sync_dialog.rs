@@ -297,18 +297,21 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
         return;
     }
     let summary = sync_status_summary(status);
-    let color = summary.color();
+    // A manual sync replaces the status in place, so nothing below moves.
+    let (mark, headline, color) = match view.syncing {
+        Some(started_at) => (spinner(started_at), "Syncing…", ACCENT),
+        None => ("●", summary.headline(), summary.color()),
+    };
     lines.push(Line::from(vec![
-        Span::styled("● ", Style::new().fg(color)),
+        Span::styled(format!("{mark} "), Style::new().fg(color)),
         Span::styled(
-            summary.headline(),
+            headline,
             Style::new().fg(color).add_modifier(Modifier::BOLD),
         ),
     ]));
-    lines.push(Line::from(Span::styled(
-        state_line(status, summary.health, view.syncing),
-        Style::new().fg(FG_MUTED),
-    )));
+    if let Some(state) = state_line(status, summary.health) {
+        lines.push(Line::from(Span::styled(state, Style::new().fg(FG_MUTED))));
+    }
     if status.phase == LocalPhase::SetupRecoveryRequired {
         lines.extend(paragraph(
             "Local editing and export still work. Back up this database, then restore it to a new path for a local-only copy.",
@@ -336,24 +339,32 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     }
 
     lines.push(Line::from(""));
+    if let Some(server) = &status.server {
+        lines.extend(wrapped_row("Server", server, Style::new().fg(FG), width));
+    }
     lines.extend(wrapped_row(
         "Automatic",
         if status.enabled { "on" } else { "off" },
         Style::new().fg(FG_MUTED),
         width,
     ));
-    lines.extend(wrapped_row(
-        "Pending",
-        &status.pending_changes.to_string(),
-        attention_style(status.pending_changes > 0),
-        width,
-    ));
-    lines.extend(wrapped_row(
-        "Conflicts",
-        &status.conflicts.to_string(),
-        attention_style(status.conflicts > 0),
-        width,
-    ));
+    // Counts appear only when they need attention; the status covers zero.
+    if status.pending_changes > 0 {
+        lines.extend(wrapped_row(
+            "Pending",
+            &status.pending_changes.to_string(),
+            Style::new().fg(ORANGE),
+            width,
+        ));
+    }
+    if status.conflicts > 0 {
+        lines.extend(wrapped_row(
+            "Conflicts",
+            &status.conflicts.to_string(),
+            Style::new().fg(ORANGE),
+            width,
+        ));
+    }
     if let Some(invitation) = status.invitation {
         lines.extend(wrapped_row(
             "Invitation",
@@ -529,22 +540,25 @@ fn push_last_result(lines: &mut Vec<Line<'static>>, activity: &SyncActivity, wid
     else {
         return;
     };
-    lines.push(Line::from(""));
     match result {
-        OperationResult::SetUp { server, drain } | OperationResult::Joined { server, drain } => {
-            let headline = match result {
-                OperationResult::SetUp { .. } => format!("Sync is set up with {server}"),
-                _ => format!("Joined sync with {server}"),
+        // A complete result says nothing the status and server rows don't.
+        OperationResult::SetUp { drain, .. } | OperationResult::Joined { drain, .. } => {
+            let Some(text) = drain_text(drain) else {
+                return;
             };
-            lines.extend(paragraph_with_mark("✓", GREEN, &headline, width));
-            lines.extend(paragraph(
-                drain_text(drain),
-                Style::new().fg(FG_MUTED),
-                width,
-            ));
+            let headline = match result {
+                OperationResult::SetUp { .. } => "Sync is set up",
+                _ => "Joined sync",
+            };
+            lines.push(Line::from(""));
+            lines.extend(paragraph_with_mark("✓", GREEN, headline, width));
+            lines.extend(paragraph(text, Style::new().fg(FG_MUTED), width));
         }
         OperationResult::Removed(_) | OperationResult::RemovalFinished { .. } => {}
-        OperationResult::Failed(failure) => failure_lines(lines, failure, width),
+        OperationResult::Failed(failure) => {
+            lines.push(Line::from(""));
+            failure_lines(lines, failure, width);
+        }
     }
 }
 
@@ -823,17 +837,18 @@ fn action_line_owned(label: String, focused: bool) -> Line<'static> {
     }
 }
 
-/// Distinguishes task synchronization from image availability.
-fn drain_text(drain: &DrainSummary) -> &'static str {
+/// Distinguishes task synchronization from image availability; `None` when
+/// both are complete.
+fn drain_text(drain: &DrainSummary) -> Option<&'static str> {
     if !drain.tasks_current {
-        return "Some changes are still waiting. Sync now continues.";
+        return Some("Some changes are still waiting. Sync now continues.");
     }
-    match drain.images {
-        "complete" => "Tasks and images are in sync.",
+    Some(match drain.images {
+        "complete" => return None,
         "pending" => "Tasks are in sync. Images are still transferring; Sync now continues.",
         "unavailable" => "Tasks are in sync. Some images are unavailable on the server.",
         _ => "Tasks are in sync. Some image transfers failed; Sync now retries them.",
-    }
+    })
 }
 
 fn invitation_lines(
@@ -1073,15 +1088,9 @@ fn action_line(label: &'static str, focused: bool) -> Line<'static> {
     }
 }
 
-fn attention_style(attention: bool) -> Style {
-    Style::new().fg(if attention { ORANGE } else { FG_MUTED })
-}
-
-fn state_line(status: &TuiSyncStatus, health: SyncHealth, syncing: bool) -> &'static str {
-    if syncing {
-        return "Syncing now";
-    }
-    match (health, status.phase) {
+/// Explains the status headline; a set-up database needs no explanation.
+fn state_line(status: &TuiSyncStatus, health: SyncHealth) -> Option<&'static str> {
+    Some(match (health, status.phase) {
         (SyncHealth::AccessRefused, _) => "Access unconfirmed",
         (SyncHealth::RuntimeDisabled, _) => "Sync is disabled by the runtime override",
         (_, LocalPhase::NotSetUp) => "This database is local only",
@@ -1090,8 +1099,8 @@ fn state_line(status: &TuiSyncStatus, health: SyncHealth, syncing: bool) -> &'st
             "This refused setup needs backup and restore to a new path"
         }
         (_, LocalPhase::JoinIncomplete) => "Joining started here and didn't finish",
-        (_, LocalPhase::SetUp) => "Sync is end-to-end encrypted",
-    }
+        (_, LocalPhase::SetUp) => return None,
+    })
 }
 
 fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {

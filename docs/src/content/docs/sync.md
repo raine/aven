@@ -14,8 +14,11 @@ A database that has not been set up or joined stays local. Everything except
 sync keeps working.
 
 In the TUI, the **Sync** dialog covers the same steps: open it with `:sync`,
-`C s`, or a click on the sync indicator in the header. Press `S` to sync
-immediately without opening it.
+`C s`, or a click on the sync indicator in the header. Once sync is set up, it
+shows the sync status, the server, and whether automatic sync is on, plus
+pending changes and conflicts when there are any. **Sync now** shows its
+progress in the status line, as the header does. Press `d` for diagnostic
+details. Press `S` to sync immediately without opening the dialog.
 
 Use [Configuration](/configuration/) for `sync.*` and `daemon.*` settings. See
 [Back up and restore](/backups/) when you need to preserve, move, or recover
