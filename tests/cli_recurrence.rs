@@ -322,6 +322,58 @@ fn edit_changes_future_template_without_rewriting_current_occurrence() {
 }
 
 #[test]
+fn edit_project_requires_an_existing_project_in_the_selected_workspace() {
+    let env = TestEnv::new();
+    let db = env.db("recurrence-edit-project-workspace.sqlite");
+    let today = Utc::now().date_naive().to_string();
+
+    ok(env.aven(&db, ["workspace", "create", "alpha"]));
+    ok(env.aven(&db, ["workspace", "create", "beta"]));
+    ok(env.aven(&db, ["--workspace", "alpha", "project", "create", "inboxp"]));
+    ok(env.aven(&db, ["--workspace", "beta", "project", "create", "homelab"]));
+    let created = ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "alpha",
+            "add",
+            "Workspace recurrence",
+            "--project",
+            "inboxp",
+            "--repeat",
+            "daily",
+            "--time-zone",
+            "UTC",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    let series_ref = created.split_whitespace().nth(1).unwrap();
+
+    for project in ["homelab", "missing"] {
+        let error = fail(env.aven(
+            &db,
+            [
+                "--workspace",
+                "alpha",
+                "recur",
+                "edit",
+                series_ref,
+                "--project",
+                project,
+            ],
+        ));
+        contains_all(&error, &[&format!("error unknown-project input={project}")]);
+    }
+
+    let alpha_projects = ok(env.aven(&db, ["--workspace", "alpha", "project", "list"]));
+    contains_all(&alpha_projects, &["inboxp"]);
+    contains_none(&alpha_projects, &["homelab", "missing"]);
+    let series = ok(env.aven(&db, ["--workspace", "alpha", "recur", "show", series_ref]));
+    contains_all(&series, &["Workspace recurrence", "project=inboxp"]);
+}
+
+#[test]
 fn pause_resume_stop_and_delete_follow_recurrence_lifecycle() {
     let env = TestEnv::new();
     let db = env.db("recurrence-lifecycle.sqlite");

@@ -371,7 +371,7 @@ aven recur edit <recurring-or-task-ref> [options]
 | `--description <text>` | Change the future description inline. |
 | `--description-file <path>` | Read the future description from a UTF-8 file. |
 | `--description-stdin` | Read the future description from standard input. |
-| `--project <project>` | Change the project used by future tasks. |
+| `--project <project>` | Change future tasks to an existing project. |
 | `--status <status>` | Change the starting status used by future tasks. |
 | `--priority <priority>` | Change the priority used by future tasks. |
 | `--label <label>` | Replace future labels. Repeat for multiple labels. |

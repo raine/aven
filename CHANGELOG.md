@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Moving tasks or recurring schedules to a project now requires that project to exist in the selected workspace, preventing accidental duplicate projects. ([#29](https://github.com/raine/aven/issues/29))
+
 ## v0.1.42 (2026-09-24)
 
 - Navigate TUI task lists by page with Page Up/Page Down and by half-page with Ctrl-U/Ctrl-D.

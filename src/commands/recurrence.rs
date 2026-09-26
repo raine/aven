@@ -282,6 +282,16 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
     let series = database
         .resolve_recurrence_ref(workspace, &args.series_ref)
         .await?;
+    let project = if let Some(project) = args.project.as_deref() {
+        Some(
+            database
+                .resolve_existing_project(&workspace.id, project)
+                .await?
+                .key,
+        )
+    } else {
+        None
+    };
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -306,7 +316,7 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
             UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
                 title: args.title,
                 description,
-                project: args.project,
+                project,
                 priority: args.priority,
                 initial_status: args.status,
                 labels: (!args.label.is_empty()).then_some(args.label),

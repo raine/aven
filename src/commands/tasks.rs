@@ -614,6 +614,16 @@ pub(crate) async fn cmd_edit(
     args: TaskEditArgs,
 ) -> Result<()> {
     let task = database.resolve_task_ref(workspace, &args.task_ref).await?;
+    let project = if let Some(project) = args.project.as_deref() {
+        Some(
+            database
+                .resolve_existing_project(&workspace.id, project)
+                .await?
+                .key,
+        )
+    } else {
+        None
+    };
     let description = read_optional_text(
         args.description,
         args.description_file.as_deref(),
@@ -658,7 +668,7 @@ pub(crate) async fn cmd_edit(
                 require_metadata_fields: Vec::new(),
                 title: args.title,
                 description,
-                project: args.project,
+                project,
                 status: args.status,
                 priority: args.priority,
                 cycle_priority: None,
