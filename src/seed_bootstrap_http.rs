@@ -1,14 +1,7 @@
-//! Isolated seed bootstrap transport, not ordinary sync or a setup command.
-//!
-//! Provisional HTTP framing: POST /e2ee/bootstrap/v1, application/json, one
-//! externally tagged operation in a context envelope. Base64 strings carry exact
-//! existing codec bytes, never a second encrypted package representation. Setup
-//! and device credentials use Authorization: Bearer <64 lowercase hex digits>;
-//! only ClaimSetup uses setup authority. IDs and payloads never enter URLs.
-//! Requests are bounded at the base64 length of one chunk plus 4096 bytes of
-//! framing. Status responses are bounded at 1 MiB. One active request per router
-//! bounds concurrent core materialization; busy callers retry a bounded number
-//! of times. No request tracing, credential redirects or cancellation.
+//! Server side of seed bootstrap: claiming a server and publishing the seed's
+//! frozen snapshot. The wire framing is documented in
+//! `aven_core::sync::client::bootstrap`. One active request per router bounds
+//! concurrent core materialization.
 
 use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, sync_http::HttpDriver};
 use anyhow::{Result, ensure};
@@ -42,8 +35,7 @@ struct Server {
     admission: http_admission::Admission,
 }
 
-/// A dedicated router with no plaintext routes or legacy-token authentication.
-/// Its database must be isolated from a plaintext server and other routers.
+/// A router serving only the bootstrap route.
 /// Claims use the storage's unexpired issued setup verifier.
 /// Bind loopback for local construction, or terminate TLS before remote access.
 pub fn router(database: Database, policy: staging::PublicationPolicy) -> Router {

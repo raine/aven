@@ -6,7 +6,7 @@
 //! verify it and persist exact authority outside replaceable databases before use.
 //! A fixed signed publication successor preserves genesis authority. Neither
 //! preparation nor server acceptance enables client sync or advances a local
-//! protected checkpoint. Exact profiles remain provisional format boundaries.
+//! protected checkpoint.
 
 mod codec;
 pub mod membership;
@@ -457,7 +457,7 @@ impl fmt::Display for ClaimRefusal {
 
 impl std::error::Error for ClaimRefusal {}
 
-/// Server setup refused storage that already holds plaintext sync history.
+/// Server setup refused storage that already holds sync history.
 #[derive(Debug)]
 pub struct StorageNotEmpty;
 

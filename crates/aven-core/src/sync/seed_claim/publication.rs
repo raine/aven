@@ -1,5 +1,4 @@
-//! Fixed genesis-to-PublishBootstrap signed profile. These exact format versions
-//! are provisional protocol boundaries, not a released interoperability contract.
+//! Fixed genesis-to-PublishBootstrap signed profile.
 //! Signing prepares intent only; it neither persists dispatch ownership nor adopts
 //! membership. Hosts must not dispatch from a never-dispatched capture journal.
 //!
@@ -155,8 +154,7 @@ impl Publication {
 }
 
 impl SeedAuthority {
-    /// Authenticates the frozen package before signing bounded publication intent.
-    /// No persistence, dispatch, checkpoint advancement or local adoption occurs.
+    /// Authenticates the frozen package and signs bounded publication intent.
     pub fn prepare_bootstrap_publication(
         &self,
         package: &bootstrap_format::Package,

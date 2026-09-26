@@ -1,8 +1,7 @@
 //! Complete commitment-checked key coverage, independent of host readiness.
 use super::*;
 
-/// Construction requires every generation in authenticated ancestry order.
-/// This value does not assert protected persistence, server commit or freshness.
+/// Every generation key, verified in authenticated ancestry order.
 /// Cloning preserves the verified coverage and zeroizes each owned copy on drop.
 #[derive(Clone)]
 pub struct VerifiedKeys {

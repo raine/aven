@@ -1,7 +1,7 @@
 //! Seed bootstrap: claiming a server for a new sync and publishing the
 //! seed's frozen snapshot.
 //!
-//! Provisional HTTP framing: POST /e2ee/bootstrap/v1, application/json, one
+//! HTTP framing: POST /e2ee/bootstrap/v1, application/json, one
 //! externally tagged operation in a context envelope. Base64 strings carry exact
 //! existing codec bytes, never a second encrypted package representation. Setup
 //! and device credentials use Authorization: Bearer <64 lowercase hex digits>;

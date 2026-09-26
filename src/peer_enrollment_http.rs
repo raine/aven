@@ -1,4 +1,4 @@
-//! Isolated repeatable device enrollment and published snapshot retrieval.
+//! Repeatable device enrollment and published snapshot retrieval.
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
 use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};
 use anyhow::{Result, ensure};
@@ -39,7 +39,6 @@ struct Server {
     #[cfg(test)]
     enrollment_clock: Option<Arc<AtomicU64>>,
 }
-/// Merge only into an isolated E2EE router, never the legacy plaintext server.
 pub fn router(db: Database) -> Router {
     router_with_clock_inner(db, None)
 }

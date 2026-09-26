@@ -27,7 +27,7 @@ const STATE_COMPONENT: &str = "state";
 const MANIFEST_COMPONENT: &str = "manifest";
 const IMAGE_COMPONENT: &str = "image";
 
-/// Public cryptographic context supplied by the future vault owner.
+/// Public cryptographic context supplied by the vault owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LocalSharedStatePackageContext {
     pub vault_id: [u8; 32],
@@ -79,9 +79,8 @@ impl Drop for LocalSharedStatePackageKey {
 /// Exact frozen upload components for the one never-dispatched local package.
 ///
 /// The descriptor commits to the catalogs, and the catalogs commit to every
-/// encrypted record, so this value has no separately stored metadata. It has
-/// no dispatch or publication behavior. Upload components use the experimental
-/// publication codec; this is not a security-approved production wire contract.
+/// encrypted record, so this value has no separately stored metadata. Upload
+/// components use the publication codec.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EncryptedLocalSharedStatePackage {
     candidate_id: String,

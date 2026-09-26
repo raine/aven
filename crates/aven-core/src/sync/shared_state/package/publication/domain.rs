@@ -1,4 +1,4 @@
-// This schema is owned by the experimental bootstrap profile, not export JSON.
+// This schema is owned by the bootstrap profile, not export JSON.
 use super::codec::*;
 use super::{Error, Result};
 use crate::data_safety::export_types as local;

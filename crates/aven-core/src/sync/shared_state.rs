@@ -19,14 +19,12 @@ pub use package::{
     EncryptedLocalSharedStatePackage, LocalSharedStatePackageContext, LocalSharedStatePackageKey,
 };
 
-/// A consistent, installation-ready copy of shared domain state and retained history.
-///
-/// This value deliberately has no serialized wire representation. Encryption and
-/// publication layers can package it later without making this local interchange
-/// type a protocol contract.
 const LOCAL_CAPTURE_VERSION: i64 = 1;
 
-/// A transient consistent copy used by installation and future packaging layers.
+/// A consistent, installation-ready copy of shared domain state and retained history.
+///
+/// This value has no serialized wire representation; the encrypted package
+/// layer defines the protocol format.
 #[derive(Debug)]
 pub struct SharedStateCapture {
     snapshot: AvenExport,
@@ -276,7 +274,7 @@ impl Database {
         Ok(capture)
     }
 
-    /// Cancels only this slice's never-dispatched capture and releases its pins.
+    /// Cancels only the given candidate's never-dispatched capture and releases its pins.
     ///
     /// Repeating cancellation after success is harmless. A different active
     /// candidate fails closed. Domain rows and later edits are never removed.

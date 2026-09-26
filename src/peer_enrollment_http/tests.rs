@@ -275,7 +275,7 @@ async fn invitation_loads_scale_with_existing_items() {
         loads.push(count);
     }
     // Loads follow existing items, not slot capacity (257 membership floors,
-    // 128 outbound journals), which used to cost thousands of loads.
+    // 128 outbound journals).
     assert_eq!(loads, [15, 10, 10]);
     task.abort();
 }
@@ -445,7 +445,7 @@ async fn loopback_independent_peer_exact_reopen_and_current_authorization() {
     );
     assert!(client.complete(&peer_store, &peer_db).await.unwrap());
     assert!(client.admit(&store, &db).await.unwrap());
-    // This slice deliberately installs no captured task rows.
+    // Completing enrollment leaves the peer with no task rows.
     let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", peer_db.path().display()))
         .await
         .unwrap();

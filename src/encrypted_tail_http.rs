@@ -1,4 +1,4 @@
-//! Isolated encrypted ordinary-task transport, not shipping sync configuration.
+//! Encrypted ordinary-task sync transport.
 #[cfg(test)]
 use crate::protected_local_keys::peer::TailSnapshot;
 use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, seed_bootstrap_http};

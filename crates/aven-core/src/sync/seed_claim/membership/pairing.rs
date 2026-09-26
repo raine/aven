@@ -1,8 +1,7 @@
 use super::super::peer::{PeerAuthority, open, request_parts, seal};
 use super::*;
 
-/// Borrowed installation keys. Membership matching is mandatory before signing.
-/// This value does not assert protected storage, installation or server readiness.
+/// Borrowed installation keys, matched against membership before signing.
 pub struct Device<'a> {
     pub(super) device: Hash,
     pub(super) signing: &'a Secret,

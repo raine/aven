@@ -4,11 +4,9 @@
 //! candidate ID is the bootstrap ID, not a freshly minted specimen identity.
 //! This codec provides no authorization: membership predecessor bytes are context
 //! only. `seed_claim::Publication` authenticates that context and the descriptor;
-//! `bootstrap_staging` owns server publication. No production local dispatcher or
-//! adoption is provided. Security review, cross-platform interoperability and
-//! platform durability validation remain required.
+//! `bootstrap_staging` owns server publication.
 //!
-//! # Profile 1 byte contract (provisional, not released or security-approved)
+//! # Profile 1 byte contract
 //!
 //! Integers are unsigned big-endian. Byte strings use a U64 length. IDs in
 //! descriptor/chunk context are raw 32 bytes; catalog domain IDs are nonempty
