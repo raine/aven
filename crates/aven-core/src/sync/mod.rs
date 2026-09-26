@@ -2,6 +2,7 @@ mod apply;
 pub mod base64_bytes;
 mod blob;
 pub mod bootstrap_staging;
+pub mod client;
 pub mod device_invitation;
 mod device_labels;
 pub mod encrypted_tail;

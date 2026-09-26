@@ -28,15 +28,14 @@ use crate::render::print_json_pretty;
 use crate::seed_bootstrap_http;
 
 mod devices;
+#[cfg(test)]
+pub(crate) use aven_core::sync::client::invitation::sample_invitations;
+pub(super) use aven_core::sync::client::server_origin;
+pub(crate) use aven_core::sync::client::{DeviceInvitation, InvitationCheck, SetupInvitation};
 pub(crate) use devices::{
     Device, DeviceListing, Removal, finish_removal, list as list_devices, load_devices,
     remove as remove_device, remove_other_device,
 };
-mod invitation;
-#[cfg(test)]
-pub(crate) use invitation::sample_invitations;
-pub(super) use invitation::server_origin;
-pub(crate) use invitation::{DeviceInvitation, InvitationCheck, SetupInvitation};
 
 #[cfg(test)]
 mod tests;

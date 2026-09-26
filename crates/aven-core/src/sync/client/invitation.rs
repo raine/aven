@@ -1,29 +1,33 @@
 //! Text handoff for setup and device invitations. Debug output is redacted.
 //!
-//! Device invitation text is defined in `aven_core::sync::device_invitation`;
+//! Device invitation text is defined in `crate::sync::device_invitation`;
 //! this module adds server origin validation. Setup invitations are
 //! provisional: `aven-sync-setup-1:` and base64url of the setup ID and secret
 //! followed by the server origin.
 use std::fmt;
 
-use anyhow::{Context, Result, ensure};
-use aven_core::sync::device_invitation;
-use aven_core::sync::seed_claim::{Secret, membership::Invitation};
+use anyhow::Result;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use zeroize::Zeroizing;
+
+use super::origin::server_origin;
+use crate::sync::device_invitation;
+use crate::sync::seed_claim::{Secret, membership::Invitation};
 
 const SETUP_PREFIX: &str = "aven-sync-setup-1:";
 const MAX_SERVER_BYTES: usize = 2048;
 
-pub(crate) struct SetupInvitation {
-    pub(crate) server: String,
-    pub(in crate::sync) setup_id: [u8; 32],
-    pub(in crate::sync) secret: Secret,
+/// Authority to claim an unclaimed server's storage and start a sync.
+pub struct SetupInvitation {
+    pub server: String,
+    pub setup_id: [u8; 32],
+    pub secret: Secret,
 }
 
-pub(crate) struct DeviceInvitation {
-    pub(crate) server: String,
-    pub(in crate::sync) invitation: Invitation,
+/// Authority to join the sync whose device issued it.
+pub struct DeviceInvitation {
+    pub server: String,
+    pub invitation: Invitation,
 }
 
 impl fmt::Debug for SetupInvitation {
@@ -38,27 +42,14 @@ impl fmt::Debug for DeviceInvitation {
     }
 }
 
-/// Validates a server URL for encrypted transport and returns its origin.
-pub(in crate::sync) fn server_origin(url: &str) -> Result<String> {
-    crate::seed_bootstrap_http::Client::new(url).context(
-        "error sync-server-url-invalid hint=\"use an origin such as https://sync.example.com, or http:// only with a loopback address; no path, query or credentials\"",
-    )?;
-    let origin = reqwest::Url::parse(url)?.origin().ascii_serialization();
-    ensure!(
-        origin.len() <= MAX_SERVER_BYTES,
-        "error sync-server-url-too-long"
-    );
-    Ok(origin)
-}
-
 impl SetupInvitation {
-    pub(in crate::sync) fn encode(&self) -> Zeroizing<String> {
+    pub fn encode(&self) -> Zeroizing<String> {
         let mut secret = Zeroizing::new(self.setup_id.to_vec());
         secret.extend_from_slice(self.secret.expose());
         encode(SETUP_PREFIX, &secret, &self.server)
     }
 
-    pub(crate) fn decode(text: &str) -> Result<Self> {
+    pub fn decode(text: &str) -> Result<Self> {
         let (secret, server) = decode(SETUP_PREFIX, text, 64)
             .ok_or_else(|| anyhow::anyhow!("error sync-setup-invitation-invalid"))?;
         Ok(Self {
@@ -70,7 +61,7 @@ impl SetupInvitation {
 }
 
 impl DeviceInvitation {
-    pub(in crate::sync) fn encode(&self) -> Result<Zeroizing<String>> {
+    pub fn encode(&self) -> Result<Zeroizing<String>> {
         // Protected storage order is vault, inviter HPKE public key, PSK,
         // matching the invitation text.
         let fields = self.invitation.protected_storage_bytes();
@@ -78,7 +69,7 @@ impl DeviceInvitation {
         device_invitation::encode(&self.server, secret)
     }
 
-    pub(crate) fn decode(text: &str) -> Result<Self> {
+    pub fn decode(text: &str) -> Result<Self> {
         Self::decode_fields(text)
             .ok_or_else(|| anyhow::anyhow!("error sync-device-invitation-invalid"))
     }
@@ -98,7 +89,7 @@ impl DeviceInvitation {
 /// What pasted text looks like as an invitation. Holds only the server
 /// origin, never the secret.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) enum InvitationCheck {
+pub enum InvitationCheck {
     #[default]
     Empty,
     Setup(String),
@@ -109,7 +100,7 @@ pub(crate) enum InvitationCheck {
 }
 
 impl InvitationCheck {
-    pub(crate) fn of(text: &str) -> Self {
+    pub fn of(text: &str) -> Self {
         let text = text.trim();
         if text.is_empty() {
             Self::Empty
@@ -150,8 +141,8 @@ fn decode(prefix: &str, text: &str, secret_len: usize) -> Option<(Zeroizing<Vec<
 
 /// Encoded setup and device invitations for `server`, for tests outside
 /// this module.
-#[cfg(test)]
-pub(crate) fn sample_invitations(server: &str) -> (Zeroizing<String>, Zeroizing<String>) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn sample_invitations(server: &str) -> (Zeroizing<String>, Zeroizing<String>) {
     let setup = SetupInvitation {
         server: server.into(),
         setup_id: [3; 32],
