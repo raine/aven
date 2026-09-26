@@ -78,7 +78,9 @@ pub(crate) fn build_daemon_status(
     };
     let mut guidance = Vec::new();
     if state == StatusState::Unavailable {
-        guidance.push("The managed daemon is supported on macOS.".to_string());
+        guidance.push(
+            "The managed daemon is supported on macOS and on Linux with systemd.".to_string(),
+        );
     } else if state == StatusState::Unconfigured {
         guidance.push("Install it with `aven daemon install`.".to_string());
     } else {
@@ -97,7 +99,7 @@ pub(crate) fn build_daemon_status(
                     .to_string(),
             );
         } else if state == StatusState::Degraded {
-            guidance.push("Run `aven doctor` for additional launchd diagnostics.".to_string());
+            guidance.push("Run `aven doctor` for additional service diagnostics.".to_string());
         }
     }
     DaemonStatusReport {
@@ -113,7 +115,7 @@ pub(crate) fn build_daemon_status(
         sync_enabled: config.automatic_sync_is_enabled(),
         wake_address_valid,
         paths: DaemonPaths {
-            service: nonempty_path(service.plist_path),
+            service: nonempty_path(service.service_path),
             program: service.program,
             current_executable: nonempty_path(service.current_executable),
             stdout_log: service.stdout_path,
@@ -137,7 +139,7 @@ mod tests {
             installed,
             loaded: Some(installed),
             running: Some(installed),
-            plist_path: PathBuf::from("/service.plist"),
+            service_path: PathBuf::from("/service.plist"),
             program: installed.then(|| PathBuf::from("/bin/aven")),
             current_executable: PathBuf::from("/bin/aven"),
             program_matches_current: installed.then_some(true),

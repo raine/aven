@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- `aven daemon install`, `uninstall`, `restart`, `repair`, and `status` now work on Linux, managing a systemd user service. See [Sync across devices](https://aventasks.dev/sync/).
+
 - Fix: Encrypted sync setup no longer discards its setup keys when a server storage error follows an accepted claim, and recovers from an interrupted cancellation of a refused setup. Server timeouts and failures no longer mark a device's access as refused, any accepted request clears the refusal, and the TUI keeps invitation cancellation available while access is refused.
 
 - Sync now reports sent and received changes plus open and newly created conflicts. Conflict values in the TUI are labeled current and incoming without exposing variant IDs. Setup and join hide pasted invitations, join confirms the server and resumes without another invitation, and `aven sync invite` keeps standard output script-safe by writing **Device added** to standard error.

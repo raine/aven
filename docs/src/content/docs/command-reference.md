@@ -1027,7 +1027,8 @@ aven conflict resolve APP-7KQ9 description --value-file ./merged.md
 
 ### `aven daemon`
 
-Run synchronization continuously or manage the macOS LaunchAgent service.
+Run synchronization continuously or manage it as a background service on macOS
+or on Linux with systemd.
 
 ```sh
 aven daemon
@@ -1045,12 +1046,16 @@ loaded and running state, executable consistency, configuration validity,
 service and log paths, and a recovery action. Its JSON states are
 `unavailable`, `unconfigured`, `healthy`, `degraded`, `blocked`, and `failed`.
 
-Service management is available on macOS:
+Service management is available on macOS, as a LaunchAgent, and on Linux, as a
+systemd user service named `aven-daemon.service`:
 
-- `install` writes, enables, and loads the LaunchAgent. It records the resolved database, config directory, executable, wake address, and log paths. `--program` stores an explicit executable path instead of the running binary.
-- `uninstall` unloads and removes the LaunchAgent plist.
-- `restart` asks `launchctl` to restart the loaded service.
-- `repair` rewrites and reloads an existing LaunchAgent from active configuration. `--if-installed` succeeds without changes when the service is absent. `--program` selects the stored executable path.
+- `install` writes, enables, and starts the service. It records the resolved database, config directory, and executable. On macOS it also records log paths; on Linux output goes to the journal (`journalctl --user -u aven-daemon.service`). `--program` stores an explicit executable path instead of the running binary.
+- `uninstall` stops and removes the service file.
+- `restart` restarts the service.
+- `repair` rewrites and restarts an installed service from active configuration. `--if-installed` succeeds without changes when the service is absent. `--program` selects the stored executable path.
+
+On Linux, a systemd user service stops when you log out unless lingering is
+enabled with `loginctl enable-linger`.
 
 ```sh
 aven daemon
@@ -1178,7 +1183,7 @@ Doctor has a standalone bootstrap path. It can report malformed or invalid confi
 
 Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, network request, or repair. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
 
-The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and macOS service status. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
+The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
 
 Normal doctor checks attachment records and local image availability. `--integrity` also runs read-only SQLite and relationship checks, verifies recurring schedules, generated tasks, history, pauses, and lifecycle state, verifies stored image hashes and sizes, decodes images, and confirms formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup.
 

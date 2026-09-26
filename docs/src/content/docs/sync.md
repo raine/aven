@@ -288,7 +288,9 @@ aven daemon status
 aven daemon status --json
 ```
 
-On macOS, install it as a user LaunchAgent:
+Install it as a background service. On macOS this is a user LaunchAgent; on
+Linux it is a systemd user service, `aven-daemon.service`, which logs to the
+journal:
 
 ```sh
 aven daemon install
@@ -296,13 +298,16 @@ aven daemon restart
 aven daemon uninstall
 ```
 
-Package scripts can refresh an installed LaunchAgent after replacing the binary:
+On Linux, the service stops when you log out unless lingering is enabled with
+`loginctl enable-linger`.
+
+Package scripts can refresh an installed service after replacing the binary:
 
 ```sh
 aven daemon repair --if-installed --program /path/to/aven
 ```
 
-The repair command succeeds without changes when the LaunchAgent is absent.
+The repair command succeeds without changes when the service is absent.
 
 ## Recover from device loss
 

@@ -121,19 +121,19 @@ pub(crate) struct DaemonInstallArgs {
     #[arg(
         long,
         value_name = "PATH",
-        help = "Write this executable path into the LaunchAgent"
+        help = "Write this executable path into the service file"
     )]
     pub(crate) program: Option<PathBuf>,
 }
 
 #[derive(Args)]
 pub(crate) struct DaemonRepairArgs {
-    #[arg(long, help = "Succeed without changes when the LaunchAgent is absent")]
+    #[arg(long, help = "Succeed without changes when the service is absent")]
     pub(crate) if_installed: bool,
     #[arg(
         long,
         value_name = "PATH",
-        help = "Write this executable path into the LaunchAgent"
+        help = "Write this executable path into the service file"
     )]
     pub(crate) program: Option<PathBuf>,
 }
