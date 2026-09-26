@@ -168,6 +168,7 @@ async fn record_epic_change(
     workspace: &Workspace,
     pair: &EpicPair,
     op_type: &'static str,
+    at: &str,
 ) -> Result<()> {
     append_change(
         conn,
@@ -177,7 +178,7 @@ async fn record_epic_change(
         op_type,
         ChangePayload::workspace(workspace)
             .set("epic_task_id", pair.epic.id.clone())
-            .set("created_at", now()),
+            .set("created_at", at),
     )
     .await?;
     Ok(())
@@ -284,7 +285,7 @@ pub(crate) async fn add_task_to_epic_in_transaction(
     let changed = insert_epic_link_if_absent(conn, &pair, &ts).await?;
 
     if changed {
-        record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_ADD).await?;
+        record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_ADD, &ts).await?;
     }
 
     Ok(EpicLinkOutcome {
@@ -307,7 +308,7 @@ pub(crate) async fn restore_task_to_epic_in_transaction(
     let ts = now();
     let changed = insert_epic_link_if_absent(conn, &pair, &ts).await?;
     if changed {
-        record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_ADD).await?;
+        record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_ADD, &ts).await?;
     }
     Ok(EpicLinkOutcome {
         epic: pair.epic,
@@ -356,7 +357,14 @@ pub(crate) async fn remove_task_from_epic_in_transaction(
         > 0;
 
     if changed {
-        record_epic_change(conn, workspace, &pair, op_type::EPIC_LINK_REMOVE).await?;
+        record_epic_change(
+            conn,
+            workspace,
+            &pair,
+            op_type::EPIC_LINK_REMOVE,
+            &mutation_at,
+        )
+        .await?;
     }
 
     Ok(EpicLinkOutcome {
