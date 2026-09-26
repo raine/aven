@@ -194,3 +194,86 @@ fn failed_page_offers_retry_and_back() {
     assert!(rendered.contains("Enter retry"));
     assert!(rendered.contains("Esc back"));
 }
+
+fn tui_presentation(glyphs: crate::pairing::QrGlyphs) -> crate::pairing::PairingPresentation {
+    let (_, invitation) = crate::sync::encrypted::sample_invitations("https://sync.example.com");
+    crate::pairing::PairingPresentation::new_tui(
+        TEST_SERVER,
+        &invitation,
+        crate::sync::encrypted::unix_now().unwrap() + 600,
+        glyphs,
+    )
+    .unwrap()
+}
+
+const GLYPH_MODES: [crate::pairing::QrGlyphs; 2] = [
+    crate::pairing::QrGlyphs::HalfBlock,
+    crate::pairing::QrGlyphs::Sextant,
+];
+
+#[test]
+fn large_terminal_widens_dialog_to_text_width_and_centers_qr() {
+    for glyphs in GLYPH_MODES {
+        let presentation = tui_presentation(glyphs);
+        let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 200, 60), &presentation);
+        let qr = layout.qr.expect("QR fits a large terminal");
+
+        assert!(layout.area.width >= 64, "{glyphs:?}");
+        assert!(layout.area.width >= qr.width + 4, "{glyphs:?}");
+        let left = qr.x - layout.inner.x;
+        let right = layout.inner.right() - qr.right();
+        assert!(left.abs_diff(right) <= 1, "{glyphs:?}: {left} vs {right}");
+    }
+}
+
+#[test]
+fn qr_fit_depends_on_terminal_width_not_text_width() {
+    let hints = "c copy invitation  Esc close".len() as u16;
+    for glyphs in GLYPH_MODES {
+        let presentation = tui_presentation(glyphs);
+        // QR or footer hints, plus dialog chrome and the terminal margin.
+        let needed = (presentation.qr().width() as u16).max(hints) + 4 + 2;
+        assert!(needed < 64, "{glyphs:?} should fit below the text width");
+        let fits = pairing_layout(ratatui::layout::Rect::new(0, 0, needed, 200), &presentation);
+        assert!(fits.qr.is_some(), "{glyphs:?}");
+        let narrow = pairing_layout(
+            ratatui::layout::Rect::new(0, 0, needed - 1, 200),
+            &presentation,
+        );
+        assert!(narrow.qr.is_none(), "{glyphs:?}");
+    }
+}
+
+#[test]
+fn qr_fit_depends_on_terminal_height() {
+    for glyphs in GLYPH_MODES {
+        let presentation = tui_presentation(glyphs);
+        let tall = pairing_layout(ratatui::layout::Rect::new(0, 0, 160, 100), &presentation);
+        let needed = tall.area.height + 2;
+        let exact = pairing_layout(ratatui::layout::Rect::new(0, 0, 160, needed), &presentation);
+        assert!(exact.qr.is_some(), "{glyphs:?}");
+        let short = pairing_layout(
+            ratatui::layout::Rect::new(0, 0, 160, needed - 1),
+            &presentation,
+        );
+        assert!(short.qr.is_none(), "{glyphs:?}");
+    }
+}
+
+#[test]
+fn qr_dialog_keeps_header_lines_whole_and_footer_untruncated() {
+    for glyphs in GLYPH_MODES {
+        let presentation = std::sync::Arc::new(tui_presentation(glyphs));
+        let buffer = rendered_buffer(&presentation, 160, 60);
+        let layout = pairing_layout(ratatui::layout::Rect::new(0, 0, 160, 60), &presentation);
+        assert!(layout.qr.is_some(), "{glyphs:?}");
+        let footer = region_text(&buffer, layout.footer);
+        assert_eq!(footer, "c copy invitation Esc close", "{glyphs:?}");
+        let header = region_text(&buffer, layout.content);
+        assert!(
+            header.contains(&format!("Server: {TEST_SERVER}")),
+            "{glyphs:?}"
+        );
+        assert!(header.contains("aven sync join"), "{glyphs:?}");
+    }
+}

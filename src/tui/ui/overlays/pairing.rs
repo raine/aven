@@ -18,6 +18,7 @@ const DIALOG_CHROME_ROWS: u16 = 2;
 const QR_GAP_ROWS: u16 = 0;
 const FOOTER_ROWS: u16 = 1;
 const FALLBACK_WIDTH: u16 = 64;
+const READY_HINTS: &[(&str, &str)] = &[("c", "copy invitation"), ("Esc", "close")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PairingLayout {
@@ -31,23 +32,29 @@ pub(crate) struct PairingLayout {
 pub(crate) fn pairing_layout(terminal: Rect, presentation: &PairingPresentation) -> PairingLayout {
     let qr_width = u16::try_from(presentation.qr().width()).unwrap_or(u16::MAX);
     let qr_height = u16::try_from(presentation.qr().rows().len()).unwrap_or(u16::MAX);
-    let header_height = qr_header_height(presentation, qr_width);
-    let required_width = qr_width.saturating_add(DIALOG_CHROME_COLUMNS);
+    let available_width = terminal.width.saturating_sub(2);
+    // The dialog is as wide as the other Sync pages so the copy reads well,
+    // widens to hold the QR, and never cuts off the footer hints.
+    let min_width = qr_width
+        .max(hint_width(READY_HINTS))
+        .saturating_add(DIALOG_CHROME_COLUMNS);
+    let width = min_width.max(FALLBACK_WIDTH).min(available_width);
+    let inner_width = width.saturating_sub(DIALOG_CHROME_COLUMNS);
+    let header_height = qr_header_height(presentation, inner_width);
     let required_height = header_height
         .saturating_add(QR_GAP_ROWS)
         .saturating_add(qr_height)
         .saturating_add(QR_GAP_ROWS)
         .saturating_add(FOOTER_ROWS)
         .saturating_add(DIALOG_CHROME_ROWS);
-    let fits = required_width <= terminal.width.saturating_sub(2)
-        && required_height <= terminal.height.saturating_sub(2);
+    let fits = min_width <= available_width && required_height <= terminal.height.saturating_sub(2);
 
     if fits {
-        let area = dialog_area(terminal, required_width, required_height);
+        let area = dialog_area(terminal, width, required_height);
         let inner = dialog_inner_area(area);
         let content = Rect::new(inner.x, inner.y, inner.width, header_height);
         let qr = Rect::new(
-            inner.x,
+            inner.x + inner.width.saturating_sub(qr_width) / 2,
             content.bottom().saturating_add(QR_GAP_ROWS),
             qr_width,
             qr_height,
@@ -158,11 +165,7 @@ fn render_presentation(frame: &mut Frame, presentation: &PairingPresentation) {
     } else {
         render_text(frame, layout.content, &fallback_text(), FG);
     }
-    render_hints(
-        frame,
-        layout.footer,
-        &[("c", "copy invitation"), ("Esc", "close")],
-    );
+    render_hints(frame, layout.footer, READY_HINTS);
 }
 
 fn waiting_text(presentation: &PairingPresentation) -> String {
@@ -261,6 +264,10 @@ fn render_hints(frame: &mut Frame, area: Rect, hints: &[(&str, &str)]) {
         Paragraph::new(dialog_hint_line(hints)).style(Style::new().bg(BG_ALT)),
         area,
     );
+}
+
+fn hint_width(hints: &[(&str, &str)]) -> u16 {
+    u16::try_from(dialog_hint_line(hints).width()).unwrap_or(u16::MAX)
 }
 
 fn render_text(frame: &mut Frame, area: Rect, text: &str, color: Color) {
