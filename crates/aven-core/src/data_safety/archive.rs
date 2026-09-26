@@ -728,9 +728,11 @@ mod tests {
         .await
         .unwrap();
         drop(conn);
-        let staged_modes = staged_modes.lock().unwrap();
-        assert!(!staged_modes.is_empty());
-        assert!(staged_modes.iter().all(|mode| *mode == 0o700));
+        {
+            let staged_modes = staged_modes.lock().unwrap();
+            assert!(!staged_modes.is_empty());
+            assert!(staged_modes.iter().all(|mode| *mode == 0o700));
+        }
         assert_eq!(mode(&archive_path), 0o600);
         assert_eq!(mode(archive_path.parent().unwrap()), 0o700);
         let archive = fs::File::open(&archive_path).unwrap();

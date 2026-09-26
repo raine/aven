@@ -68,19 +68,15 @@ fn detect_qr_glyphs(
             .any(|terminal| name.contains(terminal))
     };
     let in_tmux = env("TMUX").is_some_and(|value| !value.is_empty());
-    let supported = if in_tmux && tmux_client_terminal().is_some_and(|name| known(&name)) {
-        true
-    } else if !in_tmux
-        && ["TERM_PROGRAM", "TERM"]
+    let supported = if in_tmux {
+        tmux_client_terminal().is_some_and(|name| known(&name))
+    } else {
+        ["TERM_PROGRAM", "TERM"]
             .iter()
             .any(|name| env(name).is_some_and(|value| known(&value)))
-    {
-        true
-    } else {
-        SEXTANT_TERMINAL_VARIABLES
-            .iter()
-            .any(|name| env(name).is_some_and(|value| !value.is_empty()))
-    };
+    } || SEXTANT_TERMINAL_VARIABLES
+        .iter()
+        .any(|name| env(name).is_some_and(|value| !value.is_empty()));
     if supported {
         QrGlyphs::Sextant
     } else {
