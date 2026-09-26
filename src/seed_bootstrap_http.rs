@@ -3,7 +3,9 @@
 //! `aven_core::sync::client::bootstrap`. One active request per router bounds
 //! concurrent core materialization.
 
-use crate::{http_admission, protected_local_keys::ProtectedLocalKeyStore, sync_http::HttpDriver};
+use crate::http_admission;
+#[cfg(test)]
+use crate::{protected_local_keys::ProtectedLocalKeyStore, sync_http::HttpDriver};
 use anyhow::{Result, ensure};
 pub(crate) use aven_core::sync::client::bootstrap::{
     Envelope, Operation, PATH, REQUEST_LIMIT, RESPONSE_LIMIT, Reply,
@@ -12,7 +14,6 @@ use aven_core::{
     db::Database,
     sync::{
         bootstrap_staging as staging,
-        client::bootstrap,
         seed_claim::{ClaimAuthentication, ClaimRefusal, Genesis, Secret},
     },
 };
@@ -31,14 +32,13 @@ const CODES: http_admission::Codes = http_admission::codes!("bootstrap");
 
 struct Server {
     database: Database,
-    policy: staging::PublicationPolicy,
     admission: http_admission::Admission,
 }
 
 /// A router serving only the bootstrap route.
 /// Claims use the storage's unexpired issued setup verifier.
 /// Bind loopback, a trusted VPN interface, or a TLS-protected private hop.
-pub fn router(database: Database, policy: staging::PublicationPolicy) -> Router {
+pub fn router(database: Database) -> Router {
     Router::new()
         .route(PATH, post(handle))
         .fallback(|| async { http_admission::refusal(StatusCode::NOT_FOUND, "not-found") })
@@ -47,7 +47,6 @@ pub fn router(database: Database, policy: staging::PublicationPolicy) -> Router 
         })
         .with_state(Arc::new(Server {
             database,
-            policy,
             admission: http_admission::Admission::new(1),
         }))
 }
@@ -201,7 +200,7 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
                     descriptor_commitment: commitment,
                     record: &record,
                 },
-                server.policy,
+                staging::PublicationPolicy::default(),
             )
             .await?
             .publication()
@@ -211,77 +210,10 @@ async fn dispatch(server: &Server, secret: &Secret, e: Envelope) -> Result<Reply
     })
 }
 
-/// Seed bootstrap exchanges with one server over HTTP.
-pub struct Client {
-    #[cfg(test)]
-    pub(crate) http: reqwest::Client,
-    pub(crate) endpoint: reqwest::Url,
-    pub(crate) driver: HttpDriver,
-    origin: String,
-}
-
-impl Client {
-    pub fn new(origin: &str) -> Result<Self> {
-        let driver = HttpDriver::new()?;
-        let _ = bootstrap::Client::new(origin, Default::default())?;
-        let mut endpoint =
-            reqwest::Url::parse(origin).map_err(|_| anyhow::anyhow!("error bootstrap-origin"))?;
-        endpoint.set_path(PATH);
-        Ok(Self {
-            #[cfg(test)]
-            http: driver.http.clone(),
-            endpoint,
-            driver,
-            origin: origin.into(),
-        })
-    }
-
-    #[cfg(test)]
-    async fn exchange(
-        &self,
-        genesis: &Genesis,
-        secret: &Secret,
-        operation: Operation,
-    ) -> Result<Reply> {
-        self.driver
-            .run(|link| async move {
-                bootstrap::Client::new(&self.origin, link)?
-                    .exchange(genesis, secret, operation)
-                    .await
-            })
-            .await
-    }
-
-    /// Initial setup claim or exact bearer-authorized claim resumption.
-    pub async fn claim(
-        &self,
-        genesis: &Genesis,
-        authentication: ClaimAuthentication<'_>,
-    ) -> Result<()> {
-        self.driver
-            .run(|link| async move {
-                bootstrap::Client::new(&self.origin, link)?
-                    .claim(genesis, authentication)
-                    .await
-            })
-            .await
-    }
-
-    /// Resume one frozen candidate, then validate outcome, adopt and clean up.
-    pub async fn resume(
-        &self,
-        store: &ProtectedLocalKeyStore,
-        database: &Database,
-    ) -> Result<bool> {
-        self.driver
-            .run(|link| async move {
-                bootstrap::Client::new(&self.origin, link)?
-                    .resume(store, database)
-                    .await
-            })
-            .await
-    }
-}
+#[cfg(test)]
+mod client;
+#[cfg(test)]
+pub(crate) use client::Client;
 
 #[cfg(test)]
 pub(crate) mod tests;

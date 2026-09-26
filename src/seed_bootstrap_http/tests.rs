@@ -65,7 +65,7 @@ async fn client_retries_retryable_busy_response() {
 
 async fn serve(db: Database) -> (Client, tokio::task::JoinHandle<()>) {
     e2ee_http::issue_setup(&db).await;
-    let app = router(db, Default::default());
+    let app = router(db);
     let (origin, task) = e2ee_http::serve(app, "127.0.0.1:0").await;
     (Client::new(&origin).unwrap(), task)
 }
@@ -662,7 +662,7 @@ async fn server_worker() {
     let fault = std::env::var("AVEN_HTTP_TEST_FAULT").unwrap();
     let database = Database::open(&root.join("server.sqlite")).await.unwrap();
     e2ee_http::issue_setup(&database).await;
-    let app = router(database, Default::default()).layer(axum::middleware::from_fn(
+    let app = router(database).layer(axum::middleware::from_fn(
         move |request: Request, next: axum::middleware::Next| {
             let fault = fault.clone();
             async move {
@@ -721,7 +721,7 @@ async fn invalid_http_outcome_preserves_sealed_intent_and_capture_until_verified
         .await
         .unwrap();
     e2ee_http::issue_setup(&server).await;
-    let app = router(server.clone(), Default::default()).layer(axum::middleware::from_fn(
+    let app = router(server.clone()).layer(axum::middleware::from_fn(
         |request: Request, next: axum::middleware::Next| async move {
             let response = next.run(request).await;
             let (parts, body) = response.into_parts();

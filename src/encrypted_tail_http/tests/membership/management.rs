@@ -235,7 +235,7 @@ async fn install_fault(
         records: Default::default(),
     });
     let app = peer_enrollment_http::router(f.server.clone())
-        .merge(router(f.server.clone()))
+        .merge(e2ee_http::tail_router(f.server.clone()))
         .layer(axum::middleware::from_fn_with_state(
             fault.clone(),
             management_fault,

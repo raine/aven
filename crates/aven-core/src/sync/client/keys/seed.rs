@@ -74,6 +74,7 @@ impl ProtectedLocalKeyStore {
 
     /// Removes only the provisional seed authority for an exact, unfenced
     /// claim. Package keys remain available for ordinary local data.
+    #[cfg(test)]
     pub async fn rollback_seed_claim(
         &self,
         database: &Database,

@@ -103,6 +103,7 @@ impl Client {
     /// Resolves at most one ordered local head, applies one metadata page and
     /// downloads at most one image. The caller owns the local blob root;
     /// committed metadata is independent of image transfer success.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn round(
         &self,
         store: &ProtectedLocalKeyStore,

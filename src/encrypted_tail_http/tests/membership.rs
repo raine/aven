@@ -403,7 +403,7 @@ async fn restart_fault_server(f: &mut Fixture, fault: Arc<HttpFault>) {
     f.task.abort();
     let _ = (&mut f.task).await;
     let app = peer_enrollment_http::router(f.server.clone())
-        .merge(router(f.server.clone()))
+        .merge(e2ee_http::tail_router(f.server.clone()))
         .layer(axum::middleware::from_fn_with_state(fault, fault_request));
     (_, f.task) = e2ee_http::serve(app, f.origin.strip_prefix("http://").unwrap()).await;
 }

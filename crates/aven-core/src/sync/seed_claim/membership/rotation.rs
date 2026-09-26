@@ -190,6 +190,7 @@ impl Device<'_> {
     }
     /// A new candidate always generates independent key and generation identities.
     /// The cutoff is a proposal; server admission must compare its frozen allocator.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn prepare_rotation(
         &self,
         m: &Membership,

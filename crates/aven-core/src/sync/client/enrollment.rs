@@ -132,9 +132,6 @@ impl Client {
             locator: origin.into(),
         })
     }
-    pub fn locator(&self) -> &str {
-        &self.locator
-    }
     pub(crate) fn link(&self) -> &Link {
         &self.link
     }
@@ -358,6 +355,7 @@ impl Client {
         let mut inputs = store.active_inputs(db, &self.locator).await?;
         self.refresh_inputs(store, db, &mut inputs).await
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn invite(
         &self,
         store: &ProtectedLocalKeyStore,
@@ -415,6 +413,7 @@ impl Client {
         }
         unreachable!()
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn request(
         &self,
         store: &ProtectedLocalKeyStore,
@@ -427,6 +426,7 @@ impl Client {
     /// Requests admission with a replacement invitation from the same inviter
     /// while joining is unfinished. Earlier attempts stay retained and can
     /// still complete the join.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn replace(
         &self,
         store: &ProtectedLocalKeyStore,
@@ -478,6 +478,7 @@ impl Client {
         );
         Ok(())
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn admit(&self, store: &ProtectedLocalKeyStore, db: &Database) -> Result<bool> {
         self.admit_handle(store, db, None).await
     }

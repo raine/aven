@@ -29,7 +29,7 @@ pub(crate) async fn publish_if_missing(
 }
 
 /// Drops control characters and bounds the label for display and the wire.
-pub fn clean_label(value: &str) -> Option<String> {
+fn clean_label(value: &str) -> Option<String> {
     let mut label = String::new();
     for character in value.trim().chars() {
         if character.is_control() {

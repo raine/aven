@@ -82,6 +82,7 @@ impl Database {
     /// The source database is not acknowledged, renumbered, or associated with a
     /// different server. Device-private metadata and attachment availability are
     /// excluded from the captured value.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn capture_shared_state(&self) -> Result<SharedStateCapture> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = db::begin_immediate(&mut conn).await?;

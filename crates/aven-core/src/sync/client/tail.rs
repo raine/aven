@@ -40,9 +40,6 @@ impl Client {
             locator: origin.into(),
         })
     }
-    pub fn locator(&self) -> &str {
-        &self.locator
-    }
     fn enrollment(&self) -> Result<super::enrollment::Client> {
         super::enrollment::Client::new(&self.locator, self.link.clone())
     }
@@ -257,6 +254,7 @@ impl Client {
     }
     /// Reads one authorized page without preparing uploads. True refers only to
     /// this remote watermark, never to unresolved local work or overall readiness.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn pull_only_round(
         &self,
         store: &ProtectedLocalKeyStore,
@@ -272,6 +270,7 @@ impl Client {
             result => result,
         }
     }
+    #[cfg(any(test, feature = "test-support"))]
     async fn pull_only_round_once(
         &self,
         store: &ProtectedLocalKeyStore,

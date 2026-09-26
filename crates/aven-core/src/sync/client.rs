@@ -16,7 +16,6 @@ pub mod keys;
 mod origin;
 pub mod tail;
 
-pub use device_label::clean_label;
 pub use exchange::{
     HttpHeader, HttpResponse, Link, PreparedRequest, RequestContext, Session, Step,
 };

@@ -176,12 +176,9 @@ async fn serve(
         .map_err(|error| error.context(INVALID_MEMBERSHIP))?;
     let image_policy = config.local.attachment_lifecycle.server_policy();
     tokio::spawn(prune_images(database.clone(), image_policy.grace));
-    let app = crate::seed_bootstrap_http::router(database.clone(), Default::default())
+    let app = crate::seed_bootstrap_http::router(database.clone())
         .merge(crate::peer_enrollment_http::router(database.clone()))
-        .merge(crate::encrypted_tail_http::router_with_policy(
-            database,
-            image_policy,
-        ));
+        .merge(crate::encrypted_tail_http::router(database, image_policy));
     let listener = TcpListener::bind(bind).await?;
     let addr = listener.local_addr()?;
     info!(bind = %addr, "sync server starting");

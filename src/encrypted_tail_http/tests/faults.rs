@@ -88,7 +88,7 @@ async fn restart_server_with_policy(
     f.task.abort();
     let _ = (&mut f.task).await;
     let app = peer_enrollment_http::router(f.server.clone())
-        .merge(router_with_policy(f.server.clone(), image_policy))
+        .merge(router(f.server.clone(), image_policy))
         .layer(axum::middleware::from_fn_with_state(fault, fault_request));
     (_, f.task) = e2ee_http::serve(app, f.origin.strip_prefix("http://").unwrap()).await;
 }

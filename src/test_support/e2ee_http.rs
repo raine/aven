@@ -195,13 +195,21 @@ async fn representative_domain(
 /// Every encrypted sync route, with `tail` serving the tail and image routes.
 pub(crate) async fn router_with_tail(db: Database, tail: Router) -> Router {
     issue_setup(&db).await;
-    crate::seed_bootstrap_http::router(db.clone(), Default::default())
+    crate::seed_bootstrap_http::router(db.clone())
         .merge(crate::peer_enrollment_http::router(db))
         .merge(tail)
 }
 
 pub(crate) async fn router(db: Database) -> Router {
-    router_with_tail(db.clone(), crate::encrypted_tail_http::router(db)).await
+    router_with_tail(db.clone(), tail_router(db)).await
+}
+
+/// The encrypted tail router with the default image lifecycle.
+pub(crate) fn tail_router(db: Database) -> Router {
+    crate::encrypted_tail_http::router(
+        db,
+        crate::config::AttachmentLifecycleConfig::default().server_policy(),
+    )
 }
 
 /// Serves `app` on `address` and returns its origin.
