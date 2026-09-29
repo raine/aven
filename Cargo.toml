@@ -65,6 +65,7 @@ url.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 qrcode = { version = "0.14.1", default-features = false }
+terminal-colorsaurus = "1.0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
