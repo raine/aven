@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app_onboarding::OnboardingIntroVisual;
-use crate::tui::theme::BG;
+use crate::tui::theme::{self, BG};
 
 const LOGO_WIDTH: usize = 60;
 const LOGO_HEIGHT: usize = 28;
@@ -124,8 +124,9 @@ fn splash_cell(
     let white_mask = pixel_mask(&pixels, Pixel::White);
     let purple_mask = pixel_mask(&pixels, Pixel::Purple);
     let occupied_mask = white_mask | purple_mask;
-    let purple = purple_at(cell_y * 2, height * 2);
-    let purple = dim_color(purple, visual.dim);
+    let colors = theme::splash();
+    let purple = purple_at(colors.gradient, cell_y * 2, height * 2);
+    let purple = dim_color(purple, colors.dim_toward, visual.dim);
     let purple = afterglow_color(
         purple,
         cell_x * 2,
@@ -135,7 +136,7 @@ fn splash_cell(
         source,
         visual.afterglow,
     );
-    let white = dim_color(Color::White, visual.dim);
+    let white = dim_color(colors.check, colors.dim_toward, visual.dim);
 
     if white_mask > 0 {
         let mut style = Style::new().fg(white);
@@ -268,16 +269,13 @@ fn quadrant_glyph(mask: usize) -> char {
     }
 }
 
-fn purple_at(y: usize, height: usize) -> Color {
+fn purple_at(gradient: [Color; 3], y: usize, height: usize) -> Color {
     let progress = y as f32 / height.saturating_sub(1).max(1) as f32;
+    let [top, middle, bottom] = gradient.map(rgb_channels);
     let (start, end, mix) = if progress < 0.52 {
-        ((135.0, 40.0, 250.0), (150.0, 63.0, 255.0), progress / 0.52)
+        (top, middle, progress / 0.52)
     } else {
-        (
-            (150.0, 63.0, 255.0),
-            (176.0, 108.0, 255.0),
-            (progress - 0.52) / 0.48,
-        )
+        (middle, bottom, (progress - 0.52) / 0.48)
     };
     let rgb = mix_rgb(start, end, mix);
     Color::Rgb(rgb.0 as u8, rgb.1 as u8, rgb.2 as u8)
@@ -313,7 +311,7 @@ fn afterglow_color(
         Color::Rgb(red, green, blue) => {
             let rgb = mix_rgb(
                 (red as f32, green as f32, blue as f32),
-                (232.0, 213.0, 255.0),
+                rgb_channels(theme::splash().afterglow),
                 amount,
             );
             Color::Rgb(rgb.0 as u8, rgb.1 as u8, rgb.2 as u8)
@@ -322,19 +320,29 @@ fn afterglow_color(
     }
 }
 
-fn dim_color(color: Color, amount: f32) -> Color {
+/// Fully dimmed, a color keeps one third of itself and takes two thirds of
+/// `toward`.
+fn dim_color(color: Color, toward: Color, amount: f32) -> Color {
     let amount = amount.clamp(0.0, 1.0);
+    let (Color::Rgb(red, green, blue), Color::Rgb(to_red, to_green, to_blue)) = (color, toward)
+    else {
+        return color;
+    };
+    Color::Rgb(
+        mix_channel(red, dimmed_channel(red, to_red), amount),
+        mix_channel(green, dimmed_channel(green, to_green), amount),
+        mix_channel(blue, dimmed_channel(blue, to_blue), amount),
+    )
+}
+
+fn dimmed_channel(channel: u8, toward: u8) -> u8 {
+    channel / 3 + (u16::from(toward) * 2 / 3) as u8
+}
+
+fn rgb_channels(color: Color) -> (f32, f32, f32) {
     match color {
-        Color::Rgb(red, green, blue) => Color::Rgb(
-            mix_channel(red, red / 3, amount),
-            mix_channel(green, green / 3, amount),
-            mix_channel(blue, blue / 3, amount),
-        ),
-        Color::White => {
-            let channel = mix_channel(255, 85, amount);
-            Color::Rgb(channel, channel, channel)
-        }
-        _ => color,
+        Color::Rgb(red, green, blue) => (red as f32, green as f32, blue as f32),
+        _ => (0.0, 0.0, 0.0),
     }
 }
 
@@ -353,6 +361,7 @@ fn mix_rgb(start: (f32, f32, f32), end: (f32, f32, f32), amount: f32) -> (f32, f
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::theme::{Background, Theme};
 
     #[test]
     fn splash_scales_within_terminal() {
@@ -384,6 +393,22 @@ mod tests {
         let color = Color::Rgb(50, 21, 85);
         assert_eq!(afterglow_color(color, 60, 28, 120, 56, logo, 0.0), color);
         assert_eq!(afterglow_color(color, 60, 28, 120, 56, logo, 1.0), color);
+    }
+
+    #[test]
+    fn dimming_moves_colors_toward_the_background() {
+        let dark = Theme::DEFAULT.palette(Background::Dark).splash;
+        assert_eq!(
+            dim_color(dark.check, dark.dim_toward, 1.0),
+            Color::Rgb(85, 85, 85)
+        );
+
+        let light = Theme::DEFAULT.palette(Background::Light).splash;
+        assert_eq!(
+            dim_color(Color::Rgb(135, 40, 250), light.dim_toward, 1.0),
+            Color::Rgb(211, 179, 247)
+        );
+        assert_eq!(dim_color(light.check, light.dim_toward, 0.0), light.check);
     }
 
     #[test]

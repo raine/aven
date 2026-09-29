@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
@@ -207,7 +207,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, d
         lines.push(fit_line_to_width(
             Line::from(Span::styled(
                 format!("  Schedule: {guidance}"),
-                Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::red()).add_modifier(Modifier::BOLD),
             )),
             content.width as usize,
         ));
@@ -270,7 +270,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, d
     if state.title_error {
         lines.push(Line::from(Span::styled(
             "  Title is required",
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::red()).add_modifier(Modifier::BOLD),
         )));
     } else {
         lines.push(Line::from(""));
@@ -297,8 +297,7 @@ fn render_add_task_body(frame: &mut Frame, state: &AddTaskView, content: Rect, d
         state.create_more_available,
     ));
     frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         content,
     );
     render_add_task_child(frame, state, content, dialog_area);
@@ -760,7 +759,7 @@ fn schedule_editor_lines(editor: &ScheduleEditorState) -> Vec<Line<'static>> {
         };
         lines.push(Line::from(Span::styled(
             format!("  {message}"),
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::red()).add_modifier(Modifier::BOLD),
         )));
     }
     lines.push(Line::from(""));
@@ -1034,7 +1033,7 @@ fn placeholder_input_line(
 pub(in crate::tui::ui) fn add_task_field_label(label: &'static str, active: bool) -> Line<'static> {
     let style = if active {
         Style::new()
-            .fg(Color::Rgb(194, 174, 255))
+            .fg(theme::accent_strong())
             .add_modifier(Modifier::BOLD)
     } else {
         Style::new()
@@ -1318,7 +1317,7 @@ pub(in crate::tui::ui) fn add_task_metadata_title(
     let status_style = theme::status_style(status);
     let priority_style = theme::priority_style(priority);
     let labels = labels_display(labels);
-    let label_style = Style::new().fg(Color::Rgb(133, 222, 255));
+    let label_style = Style::new().fg(theme::cyan());
     if width < 60 {
         return Line::from(vec![
             Span::styled(" status: ", Style::new().fg(theme::fg_muted())),

@@ -25,7 +25,9 @@ pub(crate) struct Palette {
     pub(crate) border: Color,
     pub(crate) selected_bg: Color,
     pub(crate) accent: Color,
+    pub(crate) accent_strong: Color,
     pub(crate) blue: Color,
+    pub(crate) cyan: Color,
     pub(crate) orange: Color,
     pub(crate) custom_command_name: Color,
     pub(crate) custom_command_tag: Color,
@@ -34,7 +36,20 @@ pub(crate) struct Palette {
     pub(crate) yellow: Color,
     pub(crate) purple: Color,
     pub(crate) green: Color,
+    pub(crate) badge_bg: Color,
     pub(crate) project_colors: [Color; 14],
+    pub(crate) splash: SplashColors,
+}
+
+/// Colors for the onboarding splash logo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SplashColors {
+    /// The logo gradient runs from top to middle to bottom.
+    pub(crate) gradient: [Color; 3],
+    pub(crate) check: Color,
+    pub(crate) afterglow: Color,
+    /// Dimmed logo colors move toward this color.
+    pub(crate) dim_toward: Color,
 }
 
 /// A theme holds one palette for each terminal background.
@@ -71,7 +86,9 @@ const DARK: Palette = Palette {
     border: Color::Rgb(88, 88, 83),
     selected_bg: Color::Rgb(50, 45, 78),
     accent: Color::Rgb(166, 139, 255),
+    accent_strong: Color::Rgb(194, 174, 255),
     blue: Color::Rgb(70, 128, 203),
+    cyan: Color::Rgb(133, 222, 255),
     orange: Color::Rgb(244, 166, 54),
     custom_command_name: Color::Rgb(224, 151, 92),
     custom_command_tag: Color::Rgb(190, 126, 82),
@@ -80,6 +97,7 @@ const DARK: Palette = Palette {
     yellow: Color::Rgb(255, 207, 87),
     purple: Color::Rgb(137, 124, 232),
     green: Color::Rgb(137, 199, 82),
+    badge_bg: Color::Rgb(55, 56, 52),
     project_colors: [
         Color::Rgb(174, 127, 255),
         Color::Rgb(60, 203, 162),
@@ -96,6 +114,16 @@ const DARK: Palette = Palette {
         Color::Rgb(123, 156, 255),
         Color::Rgb(232, 128, 214),
     ],
+    splash: SplashColors {
+        gradient: [
+            Color::Rgb(135, 40, 250),
+            Color::Rgb(150, 63, 255),
+            Color::Rgb(176, 108, 255),
+        ],
+        check: Color::Rgb(255, 255, 255),
+        afterglow: Color::Rgb(232, 213, 255),
+        dim_toward: Color::Rgb(0, 0, 0),
+    },
 };
 
 const LIGHT: Palette = Palette {
@@ -111,7 +139,9 @@ const LIGHT: Palette = Palette {
     border: Color::Rgb(174, 174, 166),
     selected_bg: Color::Rgb(219, 211, 248),
     accent: Color::Rgb(104, 72, 220),
+    accent_strong: Color::Rgb(78, 44, 188),
     blue: Color::Rgb(36, 96, 176),
+    cyan: Color::Rgb(0, 118, 148),
     orange: Color::Rgb(196, 112, 8),
     custom_command_name: Color::Rgb(178, 96, 34),
     custom_command_tag: Color::Rgb(150, 86, 44),
@@ -120,6 +150,7 @@ const LIGHT: Palette = Palette {
     yellow: Color::Rgb(168, 124, 0),
     purple: Color::Rgb(96, 82, 200),
     green: Color::Rgb(52, 128, 24),
+    badge_bg: Color::Rgb(218, 218, 211),
     project_colors: [
         Color::Rgb(118, 64, 212),
         Color::Rgb(16, 138, 104),
@@ -136,6 +167,16 @@ const LIGHT: Palette = Palette {
         Color::Rgb(56, 92, 208),
         Color::Rgb(176, 56, 156),
     ],
+    splash: SplashColors {
+        gradient: [
+            Color::Rgb(135, 40, 250),
+            Color::Rgb(150, 63, 255),
+            Color::Rgb(176, 108, 255),
+        ],
+        check: Color::Rgb(40, 16, 72),
+        afterglow: Color::Rgb(88, 28, 196),
+        dim_toward: Color::Rgb(250, 250, 247),
+    },
 };
 
 thread_local! {
@@ -175,7 +216,9 @@ palette_colors!(
     border,
     selected_bg,
     accent,
+    accent_strong,
     blue,
+    cyan,
     orange,
     custom_command_name,
     custom_command_tag,
@@ -184,7 +227,12 @@ palette_colors!(
     yellow,
     purple,
     green,
+    badge_bg,
 );
+
+pub(crate) fn splash() -> SplashColors {
+    ACTIVE.with(|active| active.get().splash)
+}
 
 /// The main surface uses the terminal's own background in both palettes.
 pub(crate) const BG: Color = Color::Reset;

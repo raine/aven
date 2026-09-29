@@ -1,7 +1,7 @@
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Span, Text};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
@@ -12,8 +12,6 @@ use crate::tui::changelog::changelog_dialog_size;
 use crate::tui::markdown::render_markdown_reflowed_without_link_urls;
 use crate::tui::overlay::dialog_area;
 use crate::tui::theme;
-
-const INSTALLED_BADGE_BG: Color = Color::Rgb(55, 56, 52);
 
 pub(in crate::tui::ui) fn render_changelog(frame: &mut Frame, markdown: &str, scroll: u16) {
     let terminal_size = Size::new(frame.area().width, frame.area().height);
@@ -138,13 +136,13 @@ pub(in crate::tui::ui) fn changelog_lines(
         for span in std::mem::take(&mut line.spans) {
             if span.content == "installed" {
                 spans.extend([
-                    Span::styled("", Style::new().fg(INSTALLED_BADGE_BG).bg(theme::bg_alt())),
-                    Span::styled(" ●", Style::new().fg(theme::blue()).bg(INSTALLED_BADGE_BG)),
+                    Span::styled("", Style::new().fg(theme::badge_bg()).bg(theme::bg_alt())),
+                    Span::styled(" ●", Style::new().fg(theme::blue()).bg(theme::badge_bg())),
                     Span::styled(
                         " installed ",
-                        Style::new().fg(theme::fg_muted()).bg(INSTALLED_BADGE_BG),
+                        Style::new().fg(theme::fg_muted()).bg(theme::badge_bg()),
                     ),
-                    Span::styled("", Style::new().fg(INSTALLED_BADGE_BG).bg(theme::bg_alt())),
+                    Span::styled("", Style::new().fg(theme::badge_bg()).bg(theme::bg_alt())),
                 ]);
             } else {
                 spans.push(span);
