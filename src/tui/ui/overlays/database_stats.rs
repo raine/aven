@@ -9,7 +9,7 @@ use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::timestamps::optional_local_timestamp_display;
 use crate::tui::config_overlay::DATABASE_STATS_TITLE;
 use crate::tui::store::TuiDatabaseStats;
-use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
+use crate::tui::theme;
 
 pub(in crate::tui::ui) fn render_database_stats(
     frame: &mut Frame,
@@ -29,8 +29,10 @@ pub(in crate::tui::ui) fn render_database_stats(
         .cloned()
         .collect::<Vec<_>>();
     let dialog = if let Some(title) = scroll_title(scroll, lines.len(), visible_rows) {
-        Dialog::new(DATABASE_STATS_TITLE, width, height)
-            .right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))))
+        Dialog::new(DATABASE_STATS_TITLE, width, height).right_title(Line::from(Span::styled(
+            title,
+            Style::new().fg(theme::fg_muted()),
+        )))
     } else {
         Dialog::new(DATABASE_STATS_TITLE, width, height)
     };
@@ -46,7 +48,7 @@ pub(in crate::tui::ui) fn render_database_stats(
     };
 
     frame.render_widget(
-        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(Text::from(visible)).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         stats_area,
     );
     frame.render_widget(
@@ -54,7 +56,7 @@ pub(in crate::tui::ui) fn render_database_stats(
             ("j/k", "scroll"),
             ("Enter/Esc", "close"),
         ]))
-        .style(Style::new().fg(FG).bg(BG_ALT)),
+        .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         hint_area,
     );
     render_vertical_scrollbar(frame, stats_area, lines.len(), scroll);
@@ -65,11 +67,15 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
         section(
             "workspace",
             vec![
-                value_row("name", stats.workspace_name.clone(), Style::new().fg(FG)),
+                value_row(
+                    "name",
+                    stats.workspace_name.clone(),
+                    Style::new().fg(theme::fg()),
+                ),
                 value_row(
                     "key",
                     stats.workspace_key.clone(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),
@@ -79,17 +85,17 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "total",
                     stats.total_tasks.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "open",
                     stats.open_tasks.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "deleted",
                     stats.deleted_tasks.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),
@@ -99,32 +105,32 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "inbox",
                     stats.statuses.inbox.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "backlog",
                     stats.statuses.backlog.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "todo",
                     stats.statuses.todo.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "active",
                     stats.statuses.active.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "done",
                     stats.statuses.done.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "canceled",
                     stats.statuses.canceled.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),
@@ -134,27 +140,27 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "none",
                     stats.priorities.none.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "low",
                     stats.priorities.low.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "medium",
                     stats.priorities.medium.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "high",
                     stats.priorities.high.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "urgent",
                     stats.priorities.urgent.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),
@@ -164,18 +170,22 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "projects",
                     stats.projects.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "labels",
                     stats.labels.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
-                value_row("notes", stats.notes.to_string(), Style::new().fg(FG_MUTED)),
+                value_row(
+                    "notes",
+                    stats.notes.to_string(),
+                    Style::new().fg(theme::fg_muted()),
+                ),
                 value_row(
                     "task labels",
                     stats.task_labels.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),
@@ -188,12 +198,12 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "min server_seq",
                     format_optional_i64(stats.sync_history.min_server_seq),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "max server_seq",
                     format_optional_i64(stats.sync_history.max_server_seq),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 count_row("payload bytes", stats.sync_history.payload_bytes),
                 count_row("conflicts", stats.conflicts),
@@ -205,27 +215,27 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "page size",
                     format!("{} bytes", stats.sqlite_page_size),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "pages",
                     stats.sqlite_page_count.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "free pages",
                     stats.sqlite_freelist_count.to_string(),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "main db size",
                     format_bytes(stats.sqlite_page_size * stats.sqlite_page_count),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "free",
                     format_bytes(stats.sqlite_page_size * stats.sqlite_freelist_count),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),
@@ -235,12 +245,12 @@ fn database_stats_lines(stats: &TuiDatabaseStats) -> Vec<Line<'static>> {
                 value_row(
                     "created",
                     optional_local_timestamp_display(stats.latest_created_at.as_deref(), "none"),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
                 value_row(
                     "updated",
                     optional_local_timestamp_display(stats.latest_updated_at.as_deref(), "none"),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ],
         ),

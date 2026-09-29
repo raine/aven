@@ -22,12 +22,14 @@ pub(in crate::tui::ui) fn tail_viewport_start(cursor_row: usize, visible_rows: u
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::tui::theme::{ACCENT, FG_DIM, GREEN, ORANGE};
+use crate::tui::theme;
 
 pub(super) fn section_line(label: &str) -> Line<'static> {
     Line::from(Span::styled(
         label.to_ascii_uppercase(),
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::accent())
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -38,16 +40,19 @@ pub(super) fn value_row(
     value_style: Style,
 ) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{label:<label_width$}"), Style::new().fg(FG_DIM)),
+        Span::styled(
+            format!("{label:<label_width$}"),
+            Style::new().fg(theme::fg_dim()),
+        ),
         Span::styled(value.into(), value_style),
     ])
 }
 
 pub(super) fn count_row(label_width: usize, label: &str, value: i64) -> Line<'static> {
     let style = if value > 0 {
-        Style::new().fg(ORANGE)
+        Style::new().fg(theme::orange())
     } else {
-        Style::new().fg(GREEN)
+        Style::new().fg(theme::green())
     };
     value_row(label_width, label, value.to_string(), style)
 }

@@ -82,15 +82,15 @@ fn blocker_picker_styles_task_reference_and_title() {
     assert_eq!(line.spans[1].content, "DCS");
     assert_eq!(line.spans[1].style.fg, Some(theme::project_color("docs")));
     assert_eq!(line.spans[2].content, "-");
-    assert_eq!(line.spans[2].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[2].style.fg, Some(theme::fg_dim()));
     assert_eq!(line.spans[3].content, "5283");
-    assert_eq!(line.spans[3].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[3].style.fg, Some(theme::fg_dim()));
     assert_eq!(line.spans[5].content, "BNV Multi Blocker Alpha");
-    assert_eq!(line.spans[5].style.fg, Some(crate::tui::theme::FG_MUTED));
+    assert_eq!(line.spans[5].style.fg, Some(crate::tui::theme::fg_muted()));
 
     let selected = super::picker::blocker_picker_line(&item, true, 8);
     assert_eq!(selected.spans[0].content, "▸ ");
-    assert_eq!(selected.spans[5].style.fg, Some(FG));
+    assert_eq!(selected.spans[5].style.fg, Some(theme::fg()));
 }
 
 #[test]

@@ -3,7 +3,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::tui::theme::{ACCENT, BG_PANEL, BLUE, FG_DIM, GREEN};
+use crate::tui::theme;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum MarkdownBlock {
@@ -737,7 +737,7 @@ fn line_with_ellipsis(line: &Line<'_>, max_width: usize) -> Line<'static> {
             spans.push(Span::styled(content, span.style));
         }
     }
-    spans.push(Span::styled("…", Style::new().fg(FG_DIM)));
+    spans.push(Span::styled("…", Style::new().fg(theme::fg_dim())));
     Line::from(spans)
 }
 
@@ -782,16 +782,16 @@ fn attrs_to_style(attrs: &Attrs) -> Style {
         style = style.add_modifier(Modifier::CROSSED_OUT);
     }
     if attrs.dimmed {
-        style = style.fg(FG_DIM);
+        style = style.fg(theme::fg_dim());
     }
     if attrs.code || attrs.code_block_lang.is_some() {
-        style = style.fg(BLUE).bg(BG_PANEL);
+        style = style.fg(theme::blue()).bg(theme::bg_panel());
     } else if attrs.quote {
-        style = style.fg(GREEN);
+        style = style.fg(theme::green());
     } else if attrs.link {
-        style = style.fg(BLUE).add_modifier(Modifier::UNDERLINED);
+        style = style.fg(theme::blue()).add_modifier(Modifier::UNDERLINED);
     } else if attrs.heading {
-        style = style.fg(ACCENT).add_modifier(Modifier::BOLD);
+        style = style.fg(theme::accent()).add_modifier(Modifier::BOLD);
     }
     style
 }
@@ -1075,7 +1075,7 @@ mod tests {
             lines[5]
                 .spans
                 .iter()
-                .any(|span| span.content == "two" && span.style.fg == Some(BLUE))
+                .any(|span| span.content == "two" && span.style.fg == Some(theme::blue()))
         );
     }
 

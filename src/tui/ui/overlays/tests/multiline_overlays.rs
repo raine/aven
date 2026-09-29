@@ -21,13 +21,13 @@ fn overlay_render_includes_multiline_submit_hints() {
 fn edit_description_empty_input_shows_placeholder() {
     let line = description_input_line("", 0, true);
     assert_eq!(line.spans[0].content.as_ref(), "E");
-    assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[0].style.bg, Some(FG));
+    assert_eq!(line.spans[0].style.fg, Some(theme::bg_alt()));
+    assert_eq!(line.spans[0].style.bg, Some(theme::fg()));
     assert_eq!(
         line.spans[1].content.as_ref(),
         "nter task description here..."
     );
-    assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg_dim()));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn edit_description_blank_line_does_not_show_placeholder() {
     let (lines, _) = description_editor_lines(&state, 80);
     assert!(!lines[1].to_string().contains("Enter task description here"));
     assert_eq!(lines[1].spans[1].content.as_ref(), " ");
-    assert_eq!(lines[1].spans[1].style.bg, Some(FG));
+    assert_eq!(lines[1].spans[1].style.bg, Some(theme::fg()));
 }
 
 #[test]
@@ -156,10 +156,10 @@ fn overlay_render_omits_empty_multiline_prompt() {
 fn add_note_empty_input_shows_placeholder() {
     let line = add_note_input_line("", Some(0), true);
     assert_eq!(line.spans[0].content.as_ref(), "E");
-    assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[0].style.bg, Some(FG));
+    assert_eq!(line.spans[0].style.fg, Some(theme::bg_alt()));
+    assert_eq!(line.spans[0].style.bg, Some(theme::fg()));
     assert_eq!(line.spans[1].content.as_ref(), "nter note body here...");
-    assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg_dim()));
 }
 
 #[test]

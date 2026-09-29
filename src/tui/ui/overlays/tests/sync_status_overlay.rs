@@ -51,7 +51,7 @@ fn failures_are_visible_without_expanding_details() {
     assert!(lines.iter().any(|line| {
         line.spans
             .iter()
-            .any(|span| span.style.fg == Some(RED) && span.content.contains("connection"))
+            .any(|span| span.style.fg == Some(theme::red()) && span.content.contains("connection"))
     }));
     assert!(!lines.iter().any(|line| line.to_string() == "DETAILS"));
 }
@@ -90,7 +90,7 @@ fn conflicts_use_attention_color() {
     status.conflicts = 2;
     let lines = sync_status_lines_for_test(&sync_status_view(status, false));
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(ORANGE));
+    assert_eq!(lines[0].spans[0].style.fg, Some(theme::orange()));
     assert!(lines.iter().any(|line| {
         let text = line.to_string();
         text.starts_with("conflicts") && text.ends_with('2')

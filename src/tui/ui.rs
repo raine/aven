@@ -89,7 +89,7 @@ use crate::tui::overlay::{
     TextInputView,
 };
 use crate::tui::store::{TaskOrder, TaskQuery, TuiStore};
-use crate::tui::theme::{ACCENT, BG, BG_ALT, BG_PANEL, FG, FG_DIM, GREEN, PINK, SELECTED};
+use crate::tui::theme::{self, BG};
 use crate::tui::toast::Toast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +128,7 @@ pub(crate) struct ViewState<'a> {
     pub(crate) routing_domain: crate::tui::event::RoutingDomain,
     pub(crate) has_primary_task: bool,
     pub(crate) undo_description: String,
+    pub(crate) background: crate::tui::theme::Background,
 }
 
 impl ViewState<'_> {
@@ -206,6 +207,7 @@ pub(crate) fn render(
     list: &mut ListSurface,
     view: &ViewState,
 ) {
+    theme::activate(theme::Theme::DEFAULT.palette(view.background));
     render_surface(frame, store, widgets, list, view);
     widgets.text_cursor = self::input::text_cursor_position(frame.buffer_mut());
 }
@@ -233,7 +235,7 @@ fn render_surface(
         frame.render_widget(
             Paragraph::new("terminal too small for aven tui")
                 .alignment(Alignment::Center)
-                .style(Style::new().fg(FG).bg(BG)),
+                .style(Style::new().fg(theme::fg()).bg(BG)),
             frame.area(),
         );
         return;
@@ -473,7 +475,7 @@ fn render_add_task_surface(frame: &mut Frame, view: &ViewState) {
         frame.render_widget(
             Paragraph::new("terminal too small for add task")
                 .alignment(Alignment::Center)
-                .style(Style::new().fg(FG).bg(BG)),
+                .style(Style::new().fg(theme::fg()).bg(BG)),
             frame.area(),
         );
         return;
@@ -559,7 +561,8 @@ fn render_add_task_multiline_full_frame(
     }
     lines.push(hint_line);
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+        Paragraph::new(Text::from(lines))
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         content,
     );
 }
@@ -613,8 +616,8 @@ fn render_header_menu(frame: &mut Frame, state: &HeaderMenuView<'_>) {
         .title(menu_title(header_menu_title(state.kind)))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .style(Style::new().bg(BG_ALT));
+        .border_style(Style::new().fg(theme::accent()))
+        .style(Style::new().bg(theme::bg_alt()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let prefix_width = if matches!(state.kind, HeaderMenuKind::Scope) {
@@ -644,7 +647,7 @@ fn render_header_menu(frame: &mut Frame, state: &HeaderMenuView<'_>) {
         })
         .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         inner,
     );
 }
@@ -663,8 +666,8 @@ fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
         .title(menu_title("order"))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .style(Style::new().bg(BG_ALT));
+        .border_style(Style::new().fg(theme::accent()))
+        .style(Style::new().bg(theme::bg_alt()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let mut lines = Vec::new();
@@ -672,20 +675,26 @@ fn render_order_menu(frame: &mut Frame, state: &OrderMenuView) {
         lines.push(order_menu_line(order, key, label, state.selected));
     }
     lines.push(Line::from(vec![
-        Span::styled("Esc", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" close", Style::new().fg(FG_DIM)),
+        Span::styled(
+            "Esc",
+            Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" close", Style::new().fg(theme::fg_dim())),
     ]));
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(Text::from(lines)).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         inner,
     );
 }
 
 fn menu_title(title: &'static str) -> Line<'static> {
     Line::from(vec![
-        Span::styled("─ ", Style::new().fg(ACCENT)),
-        Span::styled(title, Style::new().fg(FG).add_modifier(Modifier::BOLD)),
-        Span::styled(" ", Style::new().fg(ACCENT)),
+        Span::styled("─ ", Style::new().fg(theme::accent())),
+        Span::styled(
+            title,
+            Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::new().fg(theme::accent())),
     ])
 }
 
@@ -705,9 +714,9 @@ fn header_menu_line(
     prefix_width: usize,
 ) -> Line<'static> {
     let row_style = if selected {
-        SELECTED
+        theme::selected()
     } else {
-        Style::new().fg(FG).bg(BG_PANEL)
+        Style::new().fg(theme::fg()).bg(theme::bg_panel())
     };
     let marker = if selected { "▸" } else { " " };
     let mut spans = vec![
@@ -723,7 +732,7 @@ fn header_menu_line(
             Span::styled(
                 format!("{prefix}{}", " ".repeat(padding)),
                 row_style
-                    .fg(crate::tui::theme::project_color(name))
+                    .fg(theme::project_color(name))
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ", row_style),
@@ -745,11 +754,11 @@ fn header_menu_label_style(
     selected: bool,
 ) -> Style {
     if matches!(kind, HeaderMenuKind::View) {
-        let bg = row_style.bg.unwrap_or(BG_PANEL);
+        let bg = row_style.bg.unwrap_or(theme::bg_panel());
         let style = match label {
-            "queue" => Style::new().fg(ACCENT).bg(bg),
-            "open" => Style::new().fg(GREEN).bg(bg),
-            "conflicts" => Style::new().fg(PINK).bg(bg),
+            "queue" => Style::new().fg(theme::accent()).bg(bg),
+            "open" => Style::new().fg(theme::green()).bg(bg),
+            "conflicts" => Style::new().fg(theme::pink()).bg(bg),
             _ => row_style,
         };
         if selected {
@@ -775,9 +784,9 @@ fn order_menu_line(
     selected: TaskOrder,
 ) -> Line<'static> {
     let row_style = if order == selected {
-        SELECTED
+        theme::selected()
     } else {
-        Style::new().fg(FG).bg(BG_PANEL)
+        Style::new().fg(theme::fg()).bg(theme::bg_panel())
     };
     let marker = if order == selected { "▸" } else { " " };
     Line::from(vec![

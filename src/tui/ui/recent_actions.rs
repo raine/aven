@@ -14,10 +14,7 @@ use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::TuiStore;
 use crate::tui::text::truncate_width;
-use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, PINK, RED, SELECTED,
-    SELECTED_INACTIVE, YELLOW,
-};
+use crate::tui::theme::{self, BG};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RecentActionHit {
@@ -164,8 +161,8 @@ fn render_action_list(
 
 fn render_header(frame: &mut Frame, area: Rect) {
     let style = Style::new()
-        .fg(FG_DIM)
-        .bg(BG_ALT)
+        .fg(theme::fg_dim())
+        .bg(theme::bg_alt())
         .add_modifier(Modifier::BOLD);
     let columns = action_columns(area.width);
     let cells = Layout::horizontal(columns).areas::<5>(area);
@@ -187,7 +184,11 @@ fn render_action_row(
     focused: bool,
 ) {
     let style = if selected {
-        if focused { SELECTED } else { SELECTED_INACTIVE }
+        if focused {
+            theme::selected()
+        } else {
+            theme::selected_inactive()
+        }
     } else {
         Style::new().bg(BG)
     };
@@ -207,7 +208,9 @@ fn render_action_row(
     let values = [
         Line::from(vec![Span::styled(
             format!(" {when}"),
-            Style::new().fg(FG_MUTED).bg(row_style.bg.unwrap_or(BG)),
+            Style::new()
+                .fg(theme::fg_muted())
+                .bg(row_style.bg.unwrap_or(BG)),
         )]),
         Line::from(vec![
             Span::styled(" ", row_style),
@@ -220,16 +223,18 @@ fn render_action_row(
             Span::styled(" ", row_style),
             Span::styled(
                 truncate_width(&action.verb, cells[1].width.saturating_sub(4) as usize),
-                row_style.fg(FG),
+                row_style.fg(theme::fg()),
             ),
         ]),
         ref_cell,
         project,
         Line::from(vec![
-            Span::styled(summary, row_style.fg(FG)),
+            Span::styled(summary, row_style.fg(theme::fg())),
             Span::styled(
                 format!(" {sync_marker}"),
-                Style::new().fg(FG_DIM).bg(row_style.bg.unwrap_or(BG)),
+                Style::new()
+                    .fg(theme::fg_dim())
+                    .bg(row_style.bg.unwrap_or(BG)),
             ),
         ]),
     ];
@@ -242,13 +247,13 @@ fn action_ref_cell(action: &RecentActionItem, bg: ratatui::style::Color) -> Line
     let Some(display_ref) = &action.target.display_ref else {
         return Line::from(Span::styled(
             format!(" {}", short_id(&action.entity_id)),
-            Style::new().fg(FG_MUTED).bg(bg),
+            Style::new().fg(theme::fg_muted()).bg(bg),
         ));
     };
     let Some((project, suffix)) = display_ref.split_once('-') else {
         return Line::from(Span::styled(
             format!(" {display_ref}"),
-            Style::new().fg(FG_MUTED).bg(bg),
+            Style::new().fg(theme::fg_muted()).bg(bg),
         ));
     };
     let project_key = action.target.project_key.as_deref().unwrap_or(project);
@@ -258,8 +263,11 @@ fn action_ref_cell(action: &RecentActionItem, bg: ratatui::style::Color) -> Line
             project.to_string(),
             Style::new().fg(theme::project_color(project_key)).bg(bg),
         ),
-        Span::styled("-", Style::new().fg(FG_DIM).bg(bg)),
-        Span::styled(suffix.to_string(), Style::new().fg(FG_MUTED).bg(bg)),
+        Span::styled("-", Style::new().fg(theme::fg_dim()).bg(bg)),
+        Span::styled(
+            suffix.to_string(),
+            Style::new().fg(theme::fg_muted()).bg(bg),
+        ),
     ])
 }
 
@@ -273,7 +281,7 @@ fn action_project_cell(
     };
     let project = truncate_width(project_key, max_width.saturating_sub(1));
     Line::from(vec![
-        Span::styled(project, Style::new().fg(FG_MUTED).bg(bg)),
+        Span::styled(project, Style::new().fg(theme::fg_muted()).bg(bg)),
         Span::styled(" ", Style::new().bg(bg)),
     ])
 }
@@ -291,57 +299,65 @@ fn render_action_detail(frame: &mut Frame, store: &TuiStore, selected: Option<us
             Span::raw(" "),
             Span::styled(
                 &action.summary,
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("at ", Style::new().fg(FG_DIM)),
+            Span::styled("at ", Style::new().fg(theme::fg_dim())),
             Span::styled(
                 local_timestamp_display(&action.created_at),
-                Style::new().fg(FG_MUTED),
+                Style::new().fg(theme::fg_muted()),
             ),
-            Span::styled("  kind ", Style::new().fg(FG_DIM)),
-            Span::styled(action.entity_type.clone(), Style::new().fg(FG_MUTED)),
-            Span::styled("  id ", Style::new().fg(FG_DIM)),
-            Span::styled(short_id(&action.change_id), Style::new().fg(FG_MUTED)),
+            Span::styled("  kind ", Style::new().fg(theme::fg_dim())),
+            Span::styled(
+                action.entity_type.clone(),
+                Style::new().fg(theme::fg_muted()),
+            ),
+            Span::styled("  id ", Style::new().fg(theme::fg_dim())),
+            Span::styled(
+                short_id(&action.change_id),
+                Style::new().fg(theme::fg_muted()),
+            ),
         ]),
     ];
     lines.push(Line::from(vec![
-        Span::styled("op ", Style::new().fg(FG_DIM)),
-        Span::styled(action.op_type.clone(), Style::new().fg(FG_MUTED)),
+        Span::styled("op ", Style::new().fg(theme::fg_dim())),
+        Span::styled(action.op_type.clone(), Style::new().fg(theme::fg_muted())),
     ]));
     if let Some(display_ref) = &action.target.display_ref {
         lines.push(Line::from(vec![
-            Span::styled("task ", Style::new().fg(FG_DIM)),
+            Span::styled("task ", Style::new().fg(theme::fg_dim())),
             Span::styled(
                 display_ref.clone(),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  title ", Style::new().fg(FG_DIM)),
+            Span::styled("  title ", Style::new().fg(theme::fg_dim())),
             Span::styled(
                 action.target.title.clone().unwrap_or_default(),
-                Style::new().fg(FG_MUTED),
+                Style::new().fg(theme::fg_muted()),
             ),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("status ", Style::new().fg(FG_DIM)),
+            Span::styled("status ", Style::new().fg(theme::fg_dim())),
             Span::styled(
                 action.target.status.clone().unwrap_or_default(),
-                Style::new().fg(FG_MUTED),
+                Style::new().fg(theme::fg_muted()),
             ),
         ]));
     }
     if let Some(field) = &action.field {
         lines.push(Line::from(vec![
-            Span::styled("field ", Style::new().fg(FG_DIM)),
-            Span::styled(field.clone(), Style::new().fg(FG_MUTED)),
+            Span::styled("field ", Style::new().fg(theme::fg_dim())),
+            Span::styled(field.clone(), Style::new().fg(theme::fg_muted())),
         ]));
     }
     if let Some(detail) = &action.detail {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             detail.clone(),
-            Style::new().fg(FG_MUTED),
+            Style::new().fg(theme::fg_muted()),
         )));
     }
     let title = if action.target.deleted {
@@ -355,10 +371,10 @@ fn render_action_detail(frame: &mut Frame, store: &TuiStore, selected: Option<us
                 Block::new()
                     .title(title)
                     .borders(Borders::TOP)
-                    .border_style(Style::new().fg(BORDER)),
+                    .border_style(Style::new().fg(theme::border())),
             )
             .wrap(Wrap { trim: false })
-            .style(Style::new().fg(FG).bg(BG)),
+            .style(Style::new().fg(theme::fg()).bg(BG)),
         area,
     );
 }
@@ -431,12 +447,12 @@ fn fallback_action_icon(action: &RecentActionItem) -> &'static str {
 
 pub(super) fn action_style(action: &RecentActionItem) -> Style {
     let color = match action.accent.as_str() {
-        "green" => GREEN,
-        "blue" => BLUE,
-        "yellow" => YELLOW,
-        "pink" => PINK,
-        "red" => RED,
-        _ => FG_DIM,
+        "green" => theme::green(),
+        "blue" => theme::blue(),
+        "yellow" => theme::yellow(),
+        "pink" => theme::pink(),
+        "red" => theme::red(),
+        _ => theme::fg_dim(),
     };
     Style::new().fg(color)
 }
@@ -469,8 +485,8 @@ fn render_scrollbar(
         .end_symbol(None)
         .thumb_symbol("┃")
         .track_symbol(Some("│"))
-        .thumb_style(Style::new().fg(ACCENT).bg(BG))
-        .track_style(Style::new().fg(BORDER).bg(BG));
+        .thumb_style(Style::new().fg(theme::accent()).bg(BG))
+        .track_style(Style::new().fg(theme::border()).bg(BG));
     let mut state = ScrollbarState::new(row_count)
         .position(scroll)
         .viewport_content_length(viewport_rows);
@@ -580,11 +596,11 @@ mod tests {
         let verb = &buffer[(11, 0)];
 
         assert_eq!(icon.symbol(), "×");
-        assert_eq!(icon.style().fg, Some(RED));
-        assert_eq!(icon.style().bg, SELECTED.bg);
+        assert_eq!(icon.style().fg, Some(theme::red()));
+        assert_eq!(icon.style().bg, theme::selected().bg);
         assert!(!icon.style().add_modifier.contains(Modifier::BOLD));
         assert_eq!(verb.symbol(), "d");
-        assert_eq!(verb.style().bg, SELECTED.bg);
+        assert_eq!(verb.style().bg, theme::selected().bg);
         assert!(verb.style().add_modifier.contains(Modifier::BOLD));
     }
 
@@ -600,9 +616,9 @@ mod tests {
             Some(theme::project_color("app"))
         );
         assert_eq!(buffer[(25, 0)].symbol(), "-");
-        assert_eq!(buffer[(25, 0)].style().fg, Some(FG_DIM));
+        assert_eq!(buffer[(25, 0)].style().fg, Some(theme::fg_dim()));
         assert_eq!(buffer[(26, 0)].symbol(), "1");
-        assert_eq!(buffer[(26, 0)].style().fg, Some(FG_MUTED));
+        assert_eq!(buffer[(26, 0)].style().fg, Some(theme::fg_muted()));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::tui::config_overlay::CONFIG_STATUS_TITLE;
 use crate::tui::overlay::SyncStatusView;
 use crate::tui::store::{SyncStatusCheck, TuiSyncStatus};
 use crate::tui::text::cell_width_ranges;
-use crate::tui::theme::{BG_ALT, FG, FG_DIM, FG_MUTED, ORANGE, RED};
+use crate::tui::theme;
 
 const LABEL_WIDTH: usize = 16;
 const MAX_DIALOG_WIDTH: u16 = 64;
@@ -37,7 +37,7 @@ pub(in crate::tui::ui) fn render_sync_status(frame: &mut Frame, view: &SyncStatu
     let dialog = if lines.len() > visible_rows {
         Dialog::new(CONFIG_STATUS_TITLE, width, height).right_title(Line::from(Span::styled(
             scroll_title(start, lines.len(), visible_rows),
-            Style::new().fg(FG_MUTED),
+            Style::new().fg(theme::fg_muted()),
         )))
     } else {
         Dialog::new(CONFIG_STATUS_TITLE, width, height)
@@ -54,12 +54,12 @@ pub(in crate::tui::ui) fn render_sync_status(frame: &mut Frame, view: &SyncStatu
     };
 
     frame.render_widget(
-        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
+        Paragraph::new(Text::from(visible)).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         body,
     );
     frame.render_widget(
         Paragraph::new(hint_line(view, lines.len() > visible_rows))
-            .style(Style::new().fg(FG).bg(BG_ALT)),
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         footer,
     );
     if lines.len() > visible_rows {
@@ -82,7 +82,7 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
 
     lines.push(Line::from(Span::styled(
         recency_line(status, summary.health, view.syncing, view.now),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
     )));
 
     lines.push(Line::from(""));
@@ -90,9 +90,9 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
         "server",
         summary.server.as_deref().unwrap_or("not configured"),
         Style::new().fg(if summary.server.is_some() {
-            FG
+            theme::fg()
         } else {
-            FG_MUTED
+            theme::fg_muted()
         }),
         width,
     ));
@@ -100,9 +100,9 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
         "pending",
         &status.pending_changes.to_string(),
         if status.pending_changes > 0 {
-            Style::new().fg(ORANGE)
+            Style::new().fg(theme::orange())
         } else {
-            Style::new().fg(FG_MUTED)
+            Style::new().fg(theme::fg_muted())
         },
         width,
     ));
@@ -110,9 +110,9 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
         "conflicts",
         &status.conflicts.to_string(),
         if status.conflicts > 0 {
-            Style::new().fg(ORANGE)
+            Style::new().fg(theme::orange())
         } else {
-            Style::new().fg(FG_MUTED)
+            Style::new().fg(theme::fg_muted())
         },
         width,
     ));
@@ -123,7 +123,11 @@ fn sync_status_lines(view: &SyncStatusView<'_>, width: usize) -> Vec<Line<'stati
             lines.extend(wrapped_row(
                 issue.label,
                 &issue.value,
-                Style::new().fg(if issue.error { RED } else { ORANGE }),
+                Style::new().fg(if issue.error {
+                    theme::red()
+                } else {
+                    theme::orange()
+                }),
                 width,
             ));
         }
@@ -174,7 +178,7 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
     lines.extend(wrapped_row(
         "database pin",
         status.pinned_server.as_deref().unwrap_or("none"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     append_check(
@@ -198,13 +202,13 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
         } else {
             "not configured"
         },
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "interval",
         &format!("{} seconds", status.interval_seconds),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     append_check(
@@ -217,43 +221,43 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
     lines.extend(wrapped_row(
         "sync cursor",
         status.sync_cursor.as_deref().unwrap_or("missing"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "local sequence",
         status.local_sequence.as_deref().unwrap_or("missing"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "last attempt",
         &optional_local_timestamp_display(status.last_attempt.as_deref(), "never"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "last success",
         &optional_local_timestamp_display(status.last_success.as_deref(), "never"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "last pushed",
         status.last_pushed.as_deref().unwrap_or("unknown"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "last pulled",
         status.last_pulled.as_deref().unwrap_or("unknown"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines.extend(wrapped_row(
         "last cursor",
         status.last_cursor.as_deref().unwrap_or("unknown"),
-        Style::new().fg(FG_MUTED),
+        Style::new().fg(theme::fg_muted()),
         width,
     ));
     lines
@@ -267,9 +271,9 @@ fn append_check(
     width: usize,
 ) {
     let (value, style) = match check {
-        Some(check) if check.ok => (check.value.as_str(), Style::new().fg(FG_MUTED)),
-        Some(check) => (check.value.as_str(), Style::new().fg(RED)),
-        None => (fallback, Style::new().fg(FG_MUTED)),
+        Some(check) if check.ok => (check.value.as_str(), Style::new().fg(theme::fg_muted())),
+        Some(check) => (check.value.as_str(), Style::new().fg(theme::red())),
+        None => (fallback, Style::new().fg(theme::fg_muted())),
     };
     lines.extend(wrapped_row(label, value, style, width));
 }
@@ -283,7 +287,10 @@ fn wrapped_row(label: &str, value: &str, style: Style, width: usize) -> Vec<Line
         .map(|(index, (start, end))| {
             let label = if index == 0 { label } else { "" };
             Line::from(vec![
-                Span::styled(format!("{label:<LABEL_WIDTH$}"), Style::new().fg(FG_DIM)),
+                Span::styled(
+                    format!("{label:<LABEL_WIDTH$}"),
+                    Style::new().fg(theme::fg_dim()),
+                ),
                 Span::styled(value[start..end].to_string(), style),
             ])
         })

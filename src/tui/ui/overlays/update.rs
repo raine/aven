@@ -8,9 +8,7 @@ use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::changelog::{changelog_lines, changelog_link_at_in_area};
 use crate::tui::overlay::{UpdateActionFocus, UpdateNotesState, UpdateOverlayState, dialog_area};
-use crate::tui::theme::{
-    ACCENT, BG_ALT, BG_PANEL, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, RED,
-};
+use crate::tui::theme;
 
 pub(in crate::tui::ui) fn render_update(frame: &mut Frame, state: &UpdateOverlayState) {
     let terminal_size = Size::new(frame.area().width, frame.area().height);
@@ -40,7 +38,7 @@ pub(in crate::tui::ui) fn render_update(frame: &mut Frame, state: &UpdateOverlay
 
     frame.render_widget(
         Paragraph::new(Text::from(update_lines(state)))
-            .style(Style::new().fg(FG).bg(BG_ALT))
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt()))
             .wrap(Wrap { trim: false }),
         content,
     );
@@ -202,13 +200,18 @@ fn render_available_update(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("↑ ", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "↑ ",
+                Style::new()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!("Aven v{version} is available"),
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::new().bg(BG_ALT)),
+        .style(Style::new().bg(theme::bg_alt())),
         headline,
     );
     let metadata_text = format!(
@@ -217,7 +220,7 @@ fn render_available_update(
         install_label(plan)
     );
     frame.render_widget(
-        Paragraph::new(metadata_text).style(Style::new().fg(FG_DIM).bg(BG_ALT)),
+        Paragraph::new(metadata_text).style(Style::new().fg(theme::fg_dim()).bg(theme::bg_alt())),
         metadata,
     );
     if let Some(lines) = plan.guidance() {
@@ -229,7 +232,7 @@ fn render_available_update(
             })
             .unwrap_or_else(|| lines.into_iter().skip(1).collect::<Vec<_>>().join(" "));
         frame.render_widget(
-            Paragraph::new(detail).style(Style::new().fg(FG_MUTED).bg(BG_ALT)),
+            Paragraph::new(detail).style(Style::new().fg(theme::fg_muted()).bg(theme::bg_alt())),
             Rect::new(content.x, content.y.saturating_add(2), content.width, 1),
         );
     }
@@ -241,13 +244,17 @@ fn render_available_update(
     {
         frame.render_widget(
             Paragraph::new("Server update: older apps may stop syncing.")
-                .style(Style::new().fg(ORANGE).bg(BG_ALT)),
+                .style(Style::new().fg(theme::orange()).bg(theme::bg_alt())),
             Rect::new(content.x, content.y.saturating_add(2), content.width, 1),
         );
     }
     frame.render_widget(
-        Paragraph::new("Changelog")
-            .style(Style::new().fg(FG).bg(BG_ALT).add_modifier(Modifier::BOLD)),
+        Paragraph::new("Changelog").style(
+            Style::new()
+                .fg(theme::fg())
+                .bg(theme::bg_alt())
+                .add_modifier(Modifier::BOLD),
+        ),
         section,
     );
 
@@ -255,13 +262,13 @@ fn render_available_update(
         UpdateNotesState::Loading => frame.render_widget(
             Paragraph::new("◌ Loading release notes…")
                 .alignment(Alignment::Center)
-                .style(Style::new().fg(FG_DIM).bg(BG_ALT)),
+                .style(Style::new().fg(theme::fg_dim()).bg(theme::bg_alt())),
             notes_text_area,
         ),
         UpdateNotesState::Failed => frame.render_widget(
             Paragraph::new("Release notes could not be loaded. You can still update Aven.")
                 .alignment(Alignment::Center)
-                .style(Style::new().fg(ORANGE).bg(BG_ALT)),
+                .style(Style::new().fg(theme::orange()).bg(theme::bg_alt())),
             notes_text_area,
         ),
         UpdateNotesState::Ready(markdown) => {
@@ -276,7 +283,7 @@ fn render_available_update(
                         .cloned()
                         .collect::<Vec<_>>(),
                 ))
-                .style(Style::new().fg(FG).bg(BG_ALT)),
+                .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
                 notes_text_area,
             );
             render_vertical_scrollbar(frame, notes_area, rendered.len(), scroll);
@@ -306,13 +313,13 @@ fn render_available_update(
     };
     frame.render_widget(
         Paragraph::new(dialog_hint_line(&[("j/k", "scroll"), ("Tab", "action")]))
-            .style(Style::new().fg(FG_MUTED).bg(BG_ALT)),
+            .style(Style::new().fg(theme::fg_muted()).bg(theme::bg_alt())),
         hints_area,
     );
     frame.render_widget(
         Paragraph::new(Line::from(vec![later, Span::raw(" "), primary]))
             .alignment(Alignment::Right)
-            .style(Style::new().bg(BG_ALT)),
+            .style(Style::new().bg(theme::bg_alt())),
         actions_area,
     );
 }
@@ -326,7 +333,7 @@ fn render_compatibility_warning(
 ) {
     let mut lines = match result {
         crate::update::CompatibilityResult::Incompatible { target, server } => vec![
-            status_line("!", "This update may interrupt sync", ORANGE),
+            status_line("!", "This update may interrupt sync", theme::orange()),
             Line::from(""),
             Line::from(format!(
                 "This update speaks sync protocol {target}, but the server speaks protocol {server}."
@@ -336,7 +343,11 @@ fn render_compatibility_warning(
             ),
         ],
         crate::update::CompatibilityResult::Unverified { reason, .. } => vec![
-            status_line("!", "Sync compatibility could not be verified", ORANGE),
+            status_line(
+                "!",
+                "Sync compatibility could not be verified",
+                theme::orange(),
+            ),
             Line::from(""),
             Line::from(reason.explanation()),
         ],
@@ -349,7 +360,7 @@ fn render_compatibility_warning(
         Line::from(""),
         Line::from(Span::styled(
             "To keep sync working, update the sync server before installing this update.",
-            Style::new().fg(ORANGE),
+            Style::new().fg(theme::orange()),
         )),
     ]);
     let footer = Rect::new(
@@ -366,7 +377,7 @@ fn render_compatibility_warning(
     );
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .style(Style::new().fg(FG).bg(BG_ALT))
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt()))
             .wrap(Wrap { trim: false }),
         body,
     );
@@ -377,7 +388,7 @@ fn render_compatibility_warning(
             action_span(" Update anyway ", focus == UpdateActionFocus::Primary, true),
         ]))
         .alignment(Alignment::Right)
-        .style(Style::new().bg(BG_ALT)),
+        .style(Style::new().bg(theme::bg_alt())),
         footer,
     );
 }
@@ -403,13 +414,17 @@ fn install_label(plan: &crate::update::InstallPlan) -> &'static str {
 }
 
 fn action_span(label: &'static str, focused: bool, primary: bool) -> Span<'static> {
-    let fill = if focused { ACCENT } else { BG_PANEL };
-    let foreground = if focused {
-        INVERSE_FG
-    } else if primary {
-        ACCENT
+    let fill = if focused {
+        theme::accent()
     } else {
-        FG_MUTED
+        theme::bg_panel()
+    };
+    let foreground = if focused {
+        theme::inverse_fg()
+    } else if primary {
+        theme::accent()
+    } else {
+        theme::fg_muted()
     };
     let mut style = Style::new().fg(foreground).bg(fill);
     if focused {
@@ -433,7 +448,11 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
     match state {
         UpdateOverlayState::Available { .. } => Vec::new(),
         UpdateOverlayState::Checking => vec![
-            status_line("●", "Checking GitHub for the latest stable release", ACCENT),
+            status_line(
+                "●",
+                "Checking GitHub for the latest stable release",
+                theme::accent(),
+            ),
             Line::from(""),
             dialog_hint_line(&[("Esc", "cancel")]),
         ],
@@ -441,7 +460,7 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
             status_line(
                 "●",
                 &format!("Checking sync compatibility for v{version}"),
-                ACCENT,
+                theme::accent(),
             ),
             Line::from(""),
             dialog_hint_line(&[("Esc", "cancel")]),
@@ -454,8 +473,8 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
         } => {
             let mut lines = vec![
                 Line::from(vec![
-                    Span::styled("target  ", Style::new().fg(FG_DIM)),
-                    Span::styled(format!("v{version}"), Style::new().fg(ACCENT)),
+                    Span::styled("target  ", Style::new().fg(theme::fg_dim())),
+                    Span::styled(format!("v{version}"), Style::new().fg(theme::accent())),
                 ]),
                 Line::from(""),
                 status_line(
@@ -465,7 +484,11 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
                     } else {
                         phase.label()
                     },
-                    if *cancelling { ORANGE } else { ACCENT },
+                    if *cancelling {
+                        theme::orange()
+                    } else {
+                        theme::accent()
+                    },
                 ),
                 Line::from(""),
             ];
@@ -474,7 +497,7 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
             } else {
                 Line::from(Span::styled(
                     "Finishing the installation. Keep aven open.",
-                    Style::new().fg(FG_DIM),
+                    Style::new().fg(theme::fg_dim()),
                 ))
             });
             lines
@@ -483,7 +506,7 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
             let mut lines = vec![status_line(
                 "✓",
                 &format!("Aven v{version} is up to date"),
-                GREEN,
+                theme::green(),
             )];
             if *cached {
                 lines.push(cached_line(true));
@@ -493,7 +516,7 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
             lines
         }
         UpdateOverlayState::Success { version } => vec![
-            status_line("✓", &format!("Installed aven v{version}"), GREEN),
+            status_line("✓", &format!("Installed aven v{version}"), theme::green()),
             Line::from(""),
             Line::from("Restart aven to use the installed version."),
             Line::from("Your tasks and current database are unchanged."),
@@ -501,17 +524,17 @@ fn update_lines(state: &UpdateOverlayState) -> Vec<Line<'static>> {
             dialog_hint_line(&[("q", "quit"), ("Esc", "continue")]),
         ],
         UpdateOverlayState::Failed { message } => vec![
-            status_line("×", message, RED),
+            status_line("×", message, theme::red()),
             Line::from(""),
             Line::from(Span::styled(
                 "The existing aven executable is unchanged.",
-                Style::new().fg(FG_DIM),
+                Style::new().fg(theme::fg_dim()),
             )),
             Line::from(""),
             dialog_hint_line(&[("Enter", "retry"), ("Esc", "close")]),
         ],
         UpdateOverlayState::Cancelled => vec![
-            status_line("○", "The update was cancelled", ORANGE),
+            status_line("○", "The update was cancelled", theme::orange()),
             Line::from(""),
             Line::from("The existing aven executable is unchanged."),
             Line::from(""),
@@ -526,7 +549,7 @@ fn status_line(icon: &str, message: &str, color: ratatui::style::Color) -> Line<
             format!("{icon} "),
             Style::new().fg(color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(message.to_string(), Style::new().fg(FG)),
+        Span::styled(message.to_string(), Style::new().fg(theme::fg())),
     ])
 }
 
@@ -534,7 +557,7 @@ fn cached_line(cached: bool) -> Line<'static> {
     if cached {
         Line::from(Span::styled(
             "Showing cached release information because a live check was unavailable.",
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         ))
     } else {
         Line::from("")
@@ -554,8 +577,8 @@ mod tests {
     fn focused_action_uses_a_filled_accent_without_text_decoration() {
         let action = action_span(" Update ", true, true);
 
-        assert_eq!(action.style.bg, Some(ACCENT));
-        assert_eq!(action.style.fg, Some(INVERSE_FG));
+        assert_eq!(action.style.bg, Some(theme::accent()));
+        assert_eq!(action.style.fg, Some(theme::inverse_fg()));
         assert_eq!(action.style.add_modifier, Modifier::BOLD);
     }
 }

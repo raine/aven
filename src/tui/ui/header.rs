@@ -6,9 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::store::{TaskLayout, TaskQuery, TaskScope, TuiStore};
-use crate::tui::theme::{
-    self, ACCENT, BG, BG_PANEL, BLUE, BORDER, FG, FG_DIM, FG_MUTED, GREEN, INVERSE_FG, ORANGE, PINK,
-};
+use crate::tui::theme::{self, BG};
 
 const HEADER_STATUS_GAP: u16 = 2;
 
@@ -42,7 +40,7 @@ pub(super) fn render_header(
     frame.render_widget(
         Block::new()
             .borders(Borders::BOTTOM)
-            .border_style(Style::new().fg(BORDER))
+            .border_style(Style::new().fg(theme::border()))
             .style(Style::new().bg(BG)),
         area,
     );
@@ -116,7 +114,8 @@ fn header_line(
     update: Option<&crate::tui::app_update::UpdateBadgeView>,
     width: u16,
 ) -> Paragraph<'static> {
-    Paragraph::new(Line::from(header_spans(store, update, width))).style(Style::new().fg(FG).bg(BG))
+    Paragraph::new(Line::from(header_spans(store, update, width)))
+        .style(Style::new().fg(theme::fg()).bg(BG))
 }
 
 fn header_spans(
@@ -191,13 +190,16 @@ fn header_layout(
     let compact = width < 120;
     let mut layout = HeaderLayout::new();
     layout.push_text(
-        Span::styled(" aven", Style::new().fg(FG).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " aven",
+            Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
+        ),
         Some(HeaderTarget::Home),
     );
     layout.push_text(
         Span::styled(
             format!(" v{}", crate::update::CURRENT_VERSION),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         ),
         Some(HeaderTarget::Changelog),
     );
@@ -210,21 +212,21 @@ fn header_layout(
         vec![
             Span::styled(
                 if compact { "ws " } else { "workspace " },
-                Style::new().fg(FG_DIM),
+                Style::new().fg(theme::fg_dim()),
             ),
             Span::styled(
                 store.active_workspace.key.clone(),
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
             ),
         ],
         Some(HeaderTarget::Workspace { column: 0 }),
     );
     layout.push_text(separator(), None);
-    let mut scope = vec![Span::styled("scope ", Style::new().fg(FG_DIM))];
+    let mut scope = vec![Span::styled("scope ", Style::new().fg(theme::fg_dim()))];
     scope.extend(scope_badge(store));
     layout.push(scope, Some(HeaderTarget::Scope { column: 0 }));
     layout.push_text(separator(), None);
-    let mut view = vec![Span::styled("view ", Style::new().fg(FG_DIM))];
+    let mut view = vec![Span::styled("view ", Style::new().fg(theme::fg_dim()))];
     view.extend(view_badge(store));
     layout.push(view, Some(HeaderTarget::Query { column: 0 }));
     layout.push_text(separator(), None);
@@ -236,11 +238,11 @@ fn header_layout(
     };
     let layout_style = if columns_supported {
         Style::new()
-            .fg(FG)
-            .bg(BG_PANEL)
+            .fg(theme::fg())
+            .bg(theme::bg_panel())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(FG_MUTED).bg(BG_PANEL)
+        Style::new().fg(theme::fg_muted()).bg(theme::bg_panel())
     };
     layout.push(
         vec![Span::styled(layout_label, layout_style)],
@@ -315,35 +317,35 @@ fn header_metric_entries(
         (
             "queue",
             store.counts.open,
-            ACCENT,
+            theme::accent(),
             view == TaskQuery::Queue,
             TaskQuery::Queue,
         ),
         (
             "open",
             store.counts.open,
-            GREEN,
+            theme::green(),
             view == TaskQuery::Open,
             TaskQuery::Open,
         ),
         (
             "todo",
             store.counts.todo,
-            BLUE,
+            theme::blue(),
             view == TaskQuery::Todo,
             TaskQuery::Todo,
         ),
         (
             "inbox",
             store.counts.inbox,
-            FG_MUTED,
+            theme::fg_muted(),
             view == TaskQuery::Inbox,
             TaskQuery::Inbox,
         ),
         (
             "conflicts",
             store.counts.conflicts,
-            PINK,
+            theme::pink(),
             view == TaskQuery::Conflicts,
             TaskQuery::Conflicts,
         ),
@@ -355,14 +357,18 @@ fn header_metric_entries(
 }
 
 fn separator() -> Span<'static> {
-    Span::styled(separator_text(), Style::new().fg(BORDER))
+    Span::styled(separator_text(), Style::new().fg(theme::border()))
 }
 
 fn update_badge(update: &crate::tui::app_update::UpdateBadgeView) -> Vec<Span<'static>> {
-    let fill = if update.restart { ORANGE } else { ACCENT };
+    let fill = if update.restart {
+        theme::orange()
+    } else {
+        theme::accent()
+    };
     let edge = Style::new().fg(fill).bg(BG);
     let label = Style::new()
-        .fg(INVERSE_FG)
+        .fg(theme::inverse_fg())
         .bg(fill)
         .add_modifier(Modifier::BOLD);
     vec![
@@ -374,8 +380,8 @@ fn update_badge(update: &crate::tui::app_update::UpdateBadgeView) -> Vec<Span<'s
 
 fn scope_badge(store: &TuiStore) -> Vec<Span<'static>> {
     let badge_style = Style::new()
-        .fg(FG)
-        .bg(BG_PANEL)
+        .fg(theme::fg())
+        .bg(theme::bg_panel())
         .add_modifier(Modifier::BOLD);
     match &store.view_state.scope {
         TaskScope::Workspace => vec![Span::styled(" workspace ", badge_style)],
@@ -392,8 +398,8 @@ fn scope_badge(store: &TuiStore) -> Vec<Span<'static>> {
 
 fn view_badge(store: &TuiStore) -> Vec<Span<'static>> {
     let badge_style = Style::new()
-        .fg(FG)
-        .bg(BG_PANEL)
+        .fg(theme::fg())
+        .bg(theme::bg_panel())
         .add_modifier(Modifier::BOLD);
     vec![Span::styled(
         format!(" {} ", active_view_label(store)),
@@ -424,8 +430,8 @@ fn active_view_label(store: &TuiStore) -> &'static str {
 }
 
 fn metric(label: &str, count: i64, color: Color, active: bool) -> Vec<Span<'static>> {
-    let fill = if active { color } else { BG_PANEL };
-    let fg = if active { INVERSE_FG } else { color };
+    let fill = if active { color } else { theme::bg_panel() };
+    let fg = if active { theme::inverse_fg() } else { color };
     let style = Style::new().fg(fg).bg(fill).add_modifier(Modifier::BOLD);
     let edge_style = Style::new().fg(fill).bg(BG);
     vec![
@@ -441,10 +447,12 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
     }
     let mut spans = vec![
         separator(),
-        Span::styled("order ", Style::new().fg(FG_DIM)),
+        Span::styled("order ", Style::new().fg(theme::fg_dim())),
         Span::styled(
             store.sort_label(),
-            Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(theme::fg_muted())
+                .add_modifier(Modifier::BOLD),
         ),
     ];
     if !matches!(
@@ -453,7 +461,7 @@ fn active_order_spans(store: &TuiStore) -> Vec<Span<'static>> {
     ) {
         spans.push(Span::styled(
             format!(" {}", store.sort_direction_label()),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         ));
     }
     spans
@@ -470,7 +478,7 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
         }
         let mut spans = vec![
             separator(),
-            Span::styled("filter ", Style::new().fg(FG_DIM)),
+            Span::styled("filter ", Style::new().fg(theme::fg_dim())),
         ];
         spans.extend(join_filter_parts(parts));
         return spans;
@@ -505,7 +513,7 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
     } else {
         let mut spans = vec![
             separator(),
-            Span::styled("filter ", Style::new().fg(FG_DIM)),
+            Span::styled("filter ", Style::new().fg(theme::fg_dim())),
         ];
         spans.extend(join_filter_parts(parts));
         spans
@@ -515,7 +523,9 @@ fn active_filter_spans(store: &TuiStore) -> Vec<Span<'static>> {
 fn filter_part(content: impl Into<std::borrow::Cow<'static, str>>) -> Span<'static> {
     Span::styled(
         content,
-        Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::fg_muted())
+            .add_modifier(Modifier::BOLD),
     )
 }
 
@@ -540,11 +550,11 @@ fn header_status(store: &TuiStore) -> Paragraph<'static> {
     let spans = vec![
         Span::raw(" "),
         Span::styled("●", Style::new().fg(dot_color)),
-        Span::styled(format!(" {label}"), Style::new().fg(FG_DIM)),
+        Span::styled(format!(" {label}"), Style::new().fg(theme::fg_dim())),
     ];
     Paragraph::new(Line::from(spans))
         .alignment(Alignment::Right)
-        .style(Style::new().fg(FG_DIM).bg(BG))
+        .style(Style::new().fg(theme::fg_dim()).bg(BG))
 }
 
 fn sync_status_label(store: &TuiStore) -> (Color, String) {
@@ -552,7 +562,7 @@ fn sync_status_label(store: &TuiStore) -> (Color, String) {
         && !store.sync_status.runtime_allowed
         && store.database_path().file_name() == Some(std::ffi::OsStr::new("demo.sqlite"))
     {
-        return (GREEN, "sync".to_string());
+        return (theme::green(), "sync".to_string());
     }
     super::sync_status_model::sync_status_summary(&store.sync_status).badge()
 }
@@ -606,16 +616,22 @@ mod tests {
         store.sync_status.last_error = Some("connection refused".to_string());
         assert_eq!(
             sync_status_label(&store),
-            (crate::tui::theme::RED, "sync!".to_string())
+            (theme::red(), "sync!".to_string())
         );
 
         store.sync_status.last_error = None;
         store.sync_status.conflicts = 2;
-        assert_eq!(sync_status_label(&store), (ORANGE, "sync!".to_string()));
+        assert_eq!(
+            sync_status_label(&store),
+            (theme::orange(), "sync!".to_string())
+        );
 
         store.sync_status.conflicts = 0;
         store.sync_status.runtime_allowed = false;
-        assert_eq!(sync_status_label(&store), (FG_DIM, "sync off".to_string()));
+        assert_eq!(
+            sync_status_label(&store),
+            (theme::fg_dim(), "sync off".to_string())
+        );
     }
 
     #[tokio::test]
@@ -688,7 +704,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(layout_span.content, " 󰉹 list only ");
-        assert_eq!(layout_span.style.fg, Some(FG_MUTED));
+        assert_eq!(layout_span.style.fg, Some(theme::fg_muted()));
         assert!(!layout_span.style.add_modifier.contains(Modifier::BOLD));
     }
 

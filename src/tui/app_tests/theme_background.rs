@@ -53,3 +53,19 @@ async fn popover_menu_keeps_main_surface_underlay_bright() {
     assert_eq!(underlay.bg, Color::Reset);
     assert!(!underlay.modifier.contains(Modifier::DIM));
 }
+
+#[tokio::test]
+async fn light_background_renders_with_light_palette() {
+    use crate::tui::theme::{Background, Theme};
+
+    let mut app = test_app().await;
+    app.set_background(Background::Light);
+
+    let buf = render_app_buffer(&mut app, 120, 30);
+    let light = Theme::DEFAULT.light;
+    let dark = Theme::DEFAULT.dark;
+
+    assert!(buf.content.iter().any(|cell| cell.fg == light.fg));
+    assert!(!buf.content.iter().any(|cell| cell.fg == dark.fg));
+    assert_eq!(buf[(119, 10)].bg, Color::Reset);
+}

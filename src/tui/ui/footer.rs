@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::event::{Action, CommandContext};
 
-use crate::tui::theme::{self, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, YELLOW};
+use crate::tui::theme::{self, BG};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FooterMode {
@@ -62,9 +62,9 @@ pub(super) fn footer_bar(
         .block(
             Block::new()
                 .borders(Borders::TOP)
-                .border_style(Style::new().fg(BORDER)),
+                .border_style(Style::new().fg(theme::border())),
         )
-        .style(Style::new().fg(FG).bg(BG))
+        .style(Style::new().fg(theme::fg()).bg(BG))
 }
 
 struct BulkFooterSegment {
@@ -77,7 +77,9 @@ fn bulk_footer_segments(count: usize) -> Vec<BulkFooterSegment> {
         BulkFooterSegment {
             spans: vec![Span::styled(
                 format!(" ● {count} marked  "),
-                Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(theme::yellow())
+                    .add_modifier(Modifier::BOLD),
             )],
             action: None,
         },
@@ -98,7 +100,10 @@ fn bulk_action_segment(label: &str, action: Action) -> BulkFooterSegment {
             .map_or("", |keys| keys.label)
     };
     let mut spans = key(keys);
-    spans.push(Span::styled(format!(" {label}  "), Style::new().fg(FG_DIM)));
+    spans.push(Span::styled(
+        format!(" {label}  "),
+        Style::new().fg(theme::fg_dim()),
+    ));
     BulkFooterSegment {
         spans,
         action: Some(action),
@@ -156,7 +161,9 @@ fn marked_task_indicator(count: usize) -> Vec<Span<'static>> {
     }
     vec![Span::styled(
         format!(" ● {count} marked  "),
-        Style::new().fg(YELLOW).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::yellow())
+            .add_modifier(Modifier::BOLD),
     )]
 }
 
@@ -463,11 +470,11 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
 
 fn key(label: &str) -> Vec<Span<'static>> {
     let key_style = Style::new()
-        .fg(FG_MUTED)
-        .bg(BG_PANEL)
+        .fg(theme::fg_muted())
+        .bg(theme::bg_panel())
         .add_modifier(Modifier::BOLD);
-    let separator_style = Style::new().fg(FG_DIM).bg(BG_PANEL);
-    let edge_style = Style::new().fg(BG_PANEL).bg(BG);
+    let separator_style = Style::new().fg(theme::fg_dim()).bg(theme::bg_panel());
+    let edge_style = Style::new().fg(theme::bg_panel()).bg(BG);
     let mut spans = vec![Span::styled("".to_string(), edge_style)];
     for (index, part) in label.split('/').enumerate() {
         if index > 0 {
@@ -498,7 +505,7 @@ fn cmd(mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::DetailAttachment
         | FooterMode::DetailEpicChild
         | FooterMode::AttachmentPreview
-        | FooterMode::DetailSelection => Style::new().fg(FG_DIM),
+        | FooterMode::DetailSelection => Style::new().fg(theme::fg_dim()),
     };
     Span::styled(format!(" {label}  "), style)
 }
@@ -565,7 +572,7 @@ mod tests {
             .find(|&column| buffer[(column, 1)].symbol() == ":")
             .expect("expected command key");
 
-        assert_eq!(buffer[(key_column, 1)].bg, BG_PANEL);
+        assert_eq!(buffer[(key_column, 1)].bg, theme::bg_panel());
         assert_eq!(buffer[(key_column - 1, 1)].bg, BG);
         assert_eq!(buffer[(key_column + 1, 1)].bg, BG);
     }

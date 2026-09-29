@@ -111,17 +111,17 @@ fn detail_attachment_row_styles_filename_and_metadata() {
             "4 B",
         ]
     );
-    assert_eq!(line.spans[0].style.fg, Some(FG_MUTED));
-    assert_eq!(line.spans[1].style.fg, Some(FG));
-    assert_eq!(line.spans[2].style.fg, Some(FG_DIM));
-    assert_eq!(line.spans[3].style.fg, Some(FG_MUTED));
+    assert_eq!(line.spans[0].style.fg, Some(theme::fg_muted()));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg()));
+    assert_eq!(line.spans[2].style.fg, Some(theme::fg_dim()));
+    assert_eq!(line.spans[3].style.fg, Some(theme::fg_muted()));
 
     let focused = attachment_detail_line(&attachment, 80, true);
     assert!(
         focused
             .spans
             .iter()
-            .all(|span| span.style.fg == Some(ACCENT))
+            .all(|span| span.style.fg == Some(theme::accent()))
     );
 }
 

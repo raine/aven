@@ -13,7 +13,7 @@ pub(crate) use document::{DetailDocument, DetailInteractiveRow, DetailRenderCont
 pub(crate) use metadata::{DetailMetadataTarget, detail_copy_target_at, detail_metadata_target_at};
 
 #[cfg(test)]
-use crate::tui::theme::{BORDER, FG_MUTED};
+use crate::tui::theme;
 #[cfg(test)]
 use attachments::{DetailBodyAttachmentPlacement, DetailBodyImagePlacement};
 #[cfg(test)]
@@ -523,8 +523,11 @@ fn dependency_branch_lines(
 
     if hidden > 0 {
         lines.push(Line::from(vec![
-            Span::styled("└─ ", Style::new().fg(BORDER)),
-            Span::styled(format!("+{hidden} more"), Style::new().fg(FG_MUTED)),
+            Span::styled("└─ ", Style::new().fg(theme::border())),
+            Span::styled(
+                format!("+{hidden} more"),
+                Style::new().fg(theme::fg_muted()),
+            ),
         ]));
     }
 

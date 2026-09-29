@@ -8,13 +8,12 @@ use super::super::task_display::labels_display;
 use super::super::timestamps::local_timestamp_display;
 use crate::query::TaskListItem;
 use crate::tui::text::truncate_width;
-use crate::tui::theme::{ACCENT, BG, BORDER, FG, FG_DIM, FG_MUTED, INVERSE_FG, ORANGE, RED};
+use crate::tui::theme::{self, BG};
 use crate::tui::widgets::{priority_short, status_chip};
 
 use super::DetailCopyHit;
 use super::document::{detail_body_area, detail_content_layout};
 use super::relationships::{DetailEpicChild, epic_child_counts};
-use crate::tui::theme;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +42,7 @@ pub(super) fn render_detail_metadata(
 ) {
     let block = Block::new()
         .borders(Borders::LEFT)
-        .border_style(Style::new().fg(BORDER))
+        .border_style(Style::new().fg(theme::border()))
         .padding(Padding::horizontal(1))
         .style(Style::new().bg(BG));
     let inner = block.inner(area);
@@ -54,7 +53,7 @@ pub(super) fn render_detail_metadata(
             epic_children,
             inner.width as usize,
         )))
-        .style(Style::new().fg(FG).bg(BG)),
+        .style(Style::new().fg(theme::fg()).bg(BG)),
         inner,
     );
 }
@@ -72,8 +71,8 @@ pub(super) fn detail_metadata_lines_with_children(
                 " TASK "
             },
             Style::new()
-                .fg(INVERSE_FG)
-                .bg(BORDER)
+                .fg(theme::inverse_fg())
+                .bg(theme::border())
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -85,7 +84,7 @@ pub(super) fn detail_metadata_lines_with_children(
             ),
             Span::styled(
                 item.task.project_key.clone(),
-                Style::new().fg(FG).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(""),
@@ -108,9 +107,11 @@ pub(super) fn detail_metadata_lines_with_children(
         now_seconds,
     );
     let availability_style = if availability.is_some() {
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(theme::accent())
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(FG_MUTED)
+        Style::new().fg(theme::fg_muted())
     };
     lines.extend([Line::from(""), metadata_label("AVAILABILITY")]);
     for value in availability
@@ -125,14 +126,14 @@ pub(super) fn detail_metadata_lines_with_children(
     let due =
         crate::tui::time::due_summary_lines(item.task.due_on.as_deref().unwrap_or(""), now_seconds);
     let due_color = if item.task.due_on.is_none() || !item.task.status.is_open() {
-        FG_MUTED
+        theme::fg_muted()
     } else {
         match crate::tui::time::due_state_at(item.task.due_on.as_deref().unwrap_or(""), now_seconds)
         {
-            crate::due::DueState::Overdue(_) => RED,
-            crate::due::DueState::Today => ORANGE,
-            crate::due::DueState::Future(_) => ACCENT,
-            crate::due::DueState::None => FG_MUTED,
+            crate::due::DueState::Overdue(_) => theme::red(),
+            crate::due::DueState::Today => theme::orange(),
+            crate::due::DueState::Future(_) => theme::accent(),
+            crate::due::DueState::None => theme::fg_muted(),
         }
     };
     let due_style = Style::new().fg(due_color).add_modifier(Modifier::BOLD);
@@ -151,19 +152,19 @@ pub(super) fn detail_metadata_lines_with_children(
         metadata_label("REF"),
         Line::from(Span::styled(
             item.display_ref.clone(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         metadata_label("CREATED"),
         Line::from(Span::styled(
             local_timestamp_display(&item.task.created_at),
-            Style::new().fg(FG_MUTED),
+            Style::new().fg(theme::fg_muted()),
         )),
         Line::from(""),
         metadata_label("UPDATED"),
         Line::from(Span::styled(
             local_timestamp_display(&item.task.updated_at),
-            Style::new().fg(FG_MUTED),
+            Style::new().fg(theme::fg_muted()),
         )),
     ]);
     if let Some(recurrence) = item.recurrence.as_ref() {
@@ -176,7 +177,9 @@ pub(super) fn detail_metadata_lines_with_children(
             metadata_label("RECURRENCE"),
             Line::from(Span::styled(
                 format!("↻ {}", recurrence.series_ref),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(format!("schedule {}", recurrence.rule_label)),
             Line::from(format!("slot {}", recurrence.slot_on)),
@@ -187,7 +190,10 @@ pub(super) fn detail_metadata_lines_with_children(
                 "projection {}",
                 recurrence.projection_state.as_str()
             )),
-            Line::from(Span::styled("history t r h", Style::new().fg(FG_MUTED))),
+            Line::from(Span::styled(
+                "history t r h",
+                Style::new().fg(theme::fg_muted()),
+            )),
         ]);
     }
     if let Some(group) = item.recurrence_group.as_ref() {
@@ -206,7 +212,9 @@ pub(super) fn detail_metadata_lines_with_children(
             metadata_label("CONFLICTS"),
             Line::from(Span::styled(
                 "yes",
-                Style::new().fg(ORANGE).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(theme::orange())
+                    .add_modifier(Modifier::BOLD),
             )),
         ]);
     }
@@ -216,7 +224,7 @@ pub(super) fn detail_metadata_lines_with_children(
             metadata_label("DELETED"),
             Line::from(Span::styled(
                 "yes",
-                Style::new().fg(RED).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::red()).add_modifier(Modifier::BOLD),
             )),
         ]);
     }
@@ -244,7 +252,7 @@ fn detail_epic_metadata_lines(
     let mut lines = vec![
         Line::from(""),
         metadata_label("CHILDREN"),
-        Line::from(Span::styled(progress, Style::new().fg(FG_DIM))),
+        Line::from(Span::styled(progress, Style::new().fg(theme::fg_dim()))),
     ];
     if let Some(rollup) = item.epic_rollup.as_ref()
         && rollup.total > 0
@@ -254,7 +262,7 @@ fn detail_epic_metadata_lines(
                 "{} overdue · {} blocked · {} ready",
                 rollup.overdue, rollup.blocked, rollup.ready
             ),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         )));
     }
 
@@ -263,7 +271,7 @@ fn detail_epic_metadata_lines(
             .into_iter()
             .chain(std::iter::once(Line::from(Span::styled(
                 "none",
-                Style::new().fg(FG_MUTED),
+                Style::new().fg(theme::fg_muted()),
             ))))
             .collect();
     }
@@ -274,7 +282,9 @@ fn detail_epic_metadata_lines(
 pub(super) fn metadata_label(label: &'static str) -> Line<'static> {
     Line::from(Span::styled(
         label,
-        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::fg_dim())
+            .add_modifier(Modifier::BOLD),
     ))
 }
 

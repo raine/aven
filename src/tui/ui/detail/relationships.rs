@@ -11,7 +11,6 @@ use crate::query::TaskListItem;
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::text::truncate_width;
 use crate::tui::theme;
-use crate::tui::theme::{ACCENT, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED, YELLOW};
 use crate::tui::widgets::{priority_short, status_span};
 
 #[derive(Debug, Clone, Copy)]
@@ -114,7 +113,9 @@ pub(super) fn extend_epic_parent_section(
     };
     lines.push(Line::from(Span::styled(
         "EPIC PARENT",
-        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::fg_dim())
+            .add_modifier(Modifier::BOLD),
     )));
     let target = DetailTargetId::Task {
         section: DetailSection::EpicParent,
@@ -166,16 +167,21 @@ pub(super) fn extend_epic_children_section(
     lines.push(Line::from(vec![
         Span::styled(
             "CHILD TASKS",
-            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(theme::fg_dim())
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" open={} total={}", counts.open, counts.total),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         ),
     ]));
     let links = ordered_epic_children(children);
     if links.is_empty() {
-        lines.push(Line::from(Span::styled("none", Style::new().fg(FG_MUTED))));
+        lines.push(Line::from(Span::styled(
+            "none",
+            Style::new().fg(theme::fg_muted()),
+        )));
         return;
     }
     let visible = if expanded {
@@ -228,16 +234,16 @@ pub(super) fn push_disclosure_row(
 pub(super) fn disclosure_line(label: &str, active: bool) -> Line<'static> {
     let style = if active {
         Style::new()
-            .fg(ACCENT)
-            .bg(BG_PANEL)
+            .fg(theme::accent())
+            .bg(theme::bg_panel())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(FG_MUTED)
+        Style::new().fg(theme::fg_muted())
     };
     let tree_style = if active {
-        Style::new().fg(BORDER).bg(BG_PANEL)
+        Style::new().fg(theme::border()).bg(theme::bg_panel())
     } else {
-        Style::new().fg(BORDER)
+        Style::new().fg(theme::border())
     };
     Line::from(vec![
         Span::styled("└─ ", tree_style),
@@ -257,28 +263,30 @@ pub(super) fn epic_child_tree_item_lines(
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
     let removed = state == EpicChildState::Removed;
     let title_style = if hovered {
-        Style::new().fg(FG).bg(BG_PANEL)
+        Style::new().fg(theme::fg()).bg(theme::bg_panel())
     } else if removed {
-        Style::new().fg(FG_MUTED).add_modifier(Modifier::DIM)
+        Style::new()
+            .fg(theme::fg_muted())
+            .add_modifier(Modifier::DIM)
     } else {
-        Style::new().fg(FG)
+        Style::new().fg(theme::fg())
     };
     let tree_style = if hovered {
-        Style::new().fg(BORDER).bg(BG_PANEL)
+        Style::new().fg(theme::border()).bg(theme::bg_panel())
     } else {
-        Style::new().fg(BORDER)
+        Style::new().fg(theme::border())
     };
     let gap_style = if hovered {
-        Style::new().fg(FG_DIM).bg(BG_PANEL)
+        Style::new().fg(theme::fg_dim()).bg(theme::bg_panel())
     } else {
-        Style::new().fg(FG_DIM)
+        Style::new().fg(theme::fg_dim())
     };
     let mut prefix = vec![Span::styled(tree_glyph, tree_style)];
     if show_epic_marker {
         let marker_style = if hovered {
-            Style::new().fg(YELLOW).bg(BG_PANEL)
+            Style::new().fg(theme::yellow()).bg(theme::bg_panel())
         } else {
-            Style::new().fg(YELLOW)
+            Style::new().fg(theme::yellow())
         };
         prefix.extend([
             Span::styled(EPIC_MARKER, marker_style),
@@ -288,9 +296,12 @@ pub(super) fn epic_child_tree_item_lines(
     let mut reference = linked_task_ref_spans(&link.display_ref, &link.project_key);
     for span in &mut reference {
         if hovered {
-            span.style = span.style.bg(BG_PANEL).add_modifier(Modifier::BOLD);
+            span.style = span
+                .style
+                .bg(theme::bg_panel())
+                .add_modifier(Modifier::BOLD);
         } else if removed {
-            span.style = span.style.fg(FG_MUTED).add_modifier(Modifier::DIM);
+            span.style = span.style.fg(theme::fg_muted()).add_modifier(Modifier::DIM);
         }
     }
     prefix.extend(reference);
@@ -359,10 +370,10 @@ pub(super) fn epic_child_dependency_lines(
             break;
         }
     }
-    let rail_style = Style::new().fg(BORDER);
-    let dependency_style = Style::new().fg(FG_DIM);
+    let rail_style = Style::new().fg(theme::border());
+    let dependency_style = Style::new().fg(theme::fg_dim());
     let background = if hovered {
-        Style::new().bg(BG_PANEL)
+        Style::new().bg(theme::bg_panel())
     } else {
         Style::new()
     };
@@ -496,9 +507,14 @@ pub(super) fn extend_related_section(
     lines.push(Line::from(vec![
         Span::styled(
             "RELATED",
-            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(theme::fg_dim())
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" total={}", links.len()), Style::new().fg(FG_DIM)),
+        Span::styled(
+            format!(" total={}", links.len()),
+            Style::new().fg(theme::fg_dim()),
+        ),
     ]));
     let visible = if expanded {
         links.len()
@@ -517,13 +533,13 @@ pub(super) fn extend_related_section(
         };
         let available = width.saturating_sub(glyph.width() + link.display_ref.width() + 4);
         let title = truncate_width(&link.title, available);
-        let mut spans = vec![Span::styled(glyph, Style::new().fg(BORDER))];
+        let mut spans = vec![Span::styled(glyph, Style::new().fg(theme::border()))];
         spans.extend(linked_task_ref_spans(&link.display_ref, &link.project_key));
         spans.extend([
             Span::raw("  "),
             status_span(link.status.as_str()),
             Span::raw("  "),
-            Span::styled(title, Style::new().fg(FG)),
+            Span::styled(title, Style::new().fg(theme::fg())),
         ]);
         let mut rendered = vec![Line::from(spans)];
         if active_target == Some(&target) {
@@ -547,7 +563,7 @@ pub(super) fn extend_related_section(
 pub(super) fn apply_link_row_style(lines: &mut [Line<'static>]) {
     for line in lines {
         for span in &mut line.spans {
-            span.style = span.style.bg(BG_PANEL);
+            span.style = span.style.bg(theme::bg_panel());
         }
     }
 }
@@ -558,10 +574,15 @@ pub(super) fn dependency_heading(
 ) -> Line<'static> {
     let open = links.iter().filter(|link| link.unresolved).count();
     Line::from(vec![
-        Span::styled(label, Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            label,
+            Style::new()
+                .fg(theme::fg_dim())
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!(" open={open} total={}", links.len()),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         ),
     ])
 }
@@ -574,12 +595,12 @@ pub(super) fn dependency_tree_item_lines(
 ) -> Vec<Line<'static>> {
     let tree_glyph = if is_last { "└─ " } else { "├─ " };
     let mut prefix = vec![
-        Span::styled(tree_glyph, Style::new().fg(BORDER)),
-        Span::styled(direction.marker(), Style::new().fg(FG_DIM)),
-        Span::styled(" ", Style::new().fg(FG_DIM)),
+        Span::styled(tree_glyph, Style::new().fg(theme::border())),
+        Span::styled(direction.marker(), Style::new().fg(theme::fg_dim())),
+        Span::styled(" ", Style::new().fg(theme::fg_dim())),
     ];
     prefix.extend(linked_task_ref_spans(&link.display_ref, &link.project_key));
-    prefix.push(Span::styled("  ", Style::new().fg(FG_DIM)));
+    prefix.push(Span::styled("  ", Style::new().fg(theme::fg_dim())));
     dependency_node_lines(prefix, &link.title, &link.status, &link.priority, width)
 }
 
@@ -596,7 +617,7 @@ pub(super) fn dependency_node_lines(
         status,
         priority,
         width,
-        Style::new().fg(FG),
+        Style::new().fg(theme::fg()),
     )
 }
 
@@ -614,9 +635,9 @@ pub(super) fn dependency_node_lines_with_title_style(
             truncate_width(title, title_width),
             title_style,
         ));
-        spans.push(Span::styled("  ", Style::new().fg(FG_DIM)));
+        spans.push(Span::styled("  ", Style::new().fg(theme::fg_dim())));
         spans.push(status_span(status));
-        spans.push(Span::styled("  ", Style::new().fg(FG_DIM)));
+        spans.push(Span::styled("  ", Style::new().fg(theme::fg_dim())));
         spans.push(Span::styled(
             priority_short(priority),
             theme::priority_style(priority).add_modifier(Modifier::BOLD),
@@ -627,16 +648,22 @@ pub(super) fn dependency_node_lines_with_title_style(
     let continuation_prefix = dependency_continuation_prefix(&spans);
     let mut lines = vec![Line::from(spans)];
     lines.push(Line::from(vec![
-        Span::styled(continuation_prefix.clone(), Style::new().fg(BORDER)),
+        Span::styled(
+            continuation_prefix.clone(),
+            Style::new().fg(theme::border()),
+        ),
         Span::styled(
             truncate_width(title, width.saturating_sub(continuation_prefix.width())),
             title_style,
         ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled(continuation_prefix.clone(), Style::new().fg(BORDER)),
+        Span::styled(
+            continuation_prefix.clone(),
+            Style::new().fg(theme::border()),
+        ),
         status_span(status),
-        Span::styled("  ", Style::new().fg(FG_DIM)),
+        Span::styled("  ", Style::new().fg(theme::fg_dim())),
         Span::styled(
             priority_short(priority),
             theme::priority_style(priority).add_modifier(Modifier::BOLD),

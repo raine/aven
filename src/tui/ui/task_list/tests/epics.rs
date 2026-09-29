@@ -2,7 +2,7 @@ use super::super::layout::TableLayout;
 use super::super::preview::task_preview_lines;
 use super::super::sizing::*;
 use super::*;
-use crate::tui::theme::{FG, FG_MUTED, RED, YELLOW};
+use crate::tui::theme;
 use chrono::TimeZone;
 
 #[tokio::test]
@@ -83,7 +83,7 @@ async fn reordered_epics_keep_summary_and_inline_editing_in_semantic_cells() {
                 Rect::new(0, selected as u16 + 1, width, 1),
             );
             assert!(text_in_cell(buffer, title).contains("edit"));
-            assert_eq!(buffer[(title.x + 4, title.y)].style().bg, Some(FG));
+            assert_eq!(buffer[(title.x + 4, title.y)].style().bg, Some(theme::fg()));
             let summary = model
                 .layout
                 .cell(TableColumn::Labels, Rect::new(0, 1, width, 1));
@@ -212,7 +212,7 @@ async fn empty_epic_row_uses_standard_placeholders() {
 
     let cell = epic_summary_cell(&rollup, 24);
     assert_eq!(cell.to_string(), "-");
-    assert_eq!(cell.spans[0].style.fg, Some(FG_MUTED));
+    assert_eq!(cell.spans[0].style.fg, Some(theme::fg_muted()));
     assert!(preview.contains("children none"));
 }
 
@@ -244,7 +244,7 @@ fn epic_summary_preserves_outcome_and_signal_semantics() {
                 .unwrap()
                 .style
                 .fg,
-            Some(RED)
+            Some(theme::red())
         );
         assert!(
             summary
@@ -297,7 +297,7 @@ fn epic_summary_preserves_outcome_and_signal_semantics() {
     };
     let canceled = epic_summary_cell(&canceled, 24);
     assert_eq!(canceled.to_string(), "resolved · 0/2 done ×2");
-    assert_eq!(canceled.spans[3].style.fg, Some(RED));
+    assert_eq!(canceled.spans[3].style.fg, Some(theme::red()));
 
     let stalled = crate::query::EpicRollup {
         total: 3,
@@ -306,7 +306,7 @@ fn epic_summary_preserves_outcome_and_signal_semantics() {
     };
     let stalled = epic_summary_cell(&stalled, 24);
     assert_eq!(stalled.to_string(), "0 ready · 0/3 done");
-    assert_eq!(stalled.spans[0].style.fg, Some(YELLOW));
+    assert_eq!(stalled.spans[0].style.fg, Some(theme::yellow()));
 }
 
 #[test]

@@ -2,7 +2,7 @@ use ratatui::style::Color;
 
 use crate::status::{StatusState, SyncStateInput, classify_sync_state};
 use crate::tui::store::TuiSyncStatus;
-use crate::tui::theme::{FG_DIM, GREEN, ORANGE, RED};
+use crate::tui::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SyncHealth {
@@ -45,22 +45,24 @@ impl SyncStatusSummary {
 
     pub(super) fn color(&self) -> Color {
         match self.health {
-            SyncHealth::Error => RED,
-            SyncHealth::Attention | SyncHealth::Pending(_) => ORANGE,
-            SyncHealth::Synced => GREEN,
-            SyncHealth::RuntimeDisabled | SyncHealth::LocalOnly | SyncHealth::NeverSynced => FG_DIM,
+            SyncHealth::Error => theme::red(),
+            SyncHealth::Attention | SyncHealth::Pending(_) => theme::orange(),
+            SyncHealth::Synced => theme::green(),
+            SyncHealth::RuntimeDisabled | SyncHealth::LocalOnly | SyncHealth::NeverSynced => {
+                theme::fg_dim()
+            }
         }
     }
 
     pub(super) fn badge(&self) -> (Color, String) {
         match self.health {
-            SyncHealth::Error => (RED, "sync!".to_string()),
-            SyncHealth::Attention => (ORANGE, "sync!".to_string()),
-            SyncHealth::RuntimeDisabled => (FG_DIM, "sync off".to_string()),
-            SyncHealth::LocalOnly => (FG_DIM, "local".to_string()),
-            SyncHealth::Pending(count) => (ORANGE, format!("sync {count}")),
-            SyncHealth::Synced => (GREEN, "sync".to_string()),
-            SyncHealth::NeverSynced => (GREEN, "sync".to_string()),
+            SyncHealth::Error => (theme::red(), "sync!".to_string()),
+            SyncHealth::Attention => (theme::orange(), "sync!".to_string()),
+            SyncHealth::RuntimeDisabled => (theme::fg_dim(), "sync off".to_string()),
+            SyncHealth::LocalOnly => (theme::fg_dim(), "local".to_string()),
+            SyncHealth::Pending(count) => (theme::orange(), format!("sync {count}")),
+            SyncHealth::Synced => (theme::green(), "sync".to_string()),
+            SyncHealth::NeverSynced => (theme::green(), "sync".to_string()),
         }
     }
 }
@@ -174,7 +176,7 @@ mod tests {
         let summary = sync_status_summary(&status);
 
         assert_eq!(summary.health, SyncHealth::Error);
-        assert_eq!(summary.badge(), (RED, "sync!".to_string()));
+        assert_eq!(summary.badge(), (theme::red(), "sync!".to_string()));
     }
 
     #[test]
@@ -188,7 +190,7 @@ mod tests {
         let summary = sync_status_summary(&status);
 
         assert_eq!(summary.health, SyncHealth::Attention);
-        assert_eq!(summary.badge(), (ORANGE, "sync!".to_string()));
+        assert_eq!(summary.badge(), (theme::orange(), "sync!".to_string()));
     }
 
     #[test]

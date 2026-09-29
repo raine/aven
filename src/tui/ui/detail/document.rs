@@ -26,7 +26,7 @@ use super::{
     TextInputView, WidgetState, detail_target_is_actionable,
 };
 use crate::tui::detail_selection::text_cell_at_column;
-use crate::tui::theme::{ACCENT, BG, BG_PANEL, BORDER, FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{self, BG};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -660,11 +660,11 @@ pub(super) fn apply_active_style(model: &mut DetailContentRenderModel, target: &
         DetailTargetId::CustomMetadata | DetailTargetId::Expand { .. } => {
             for line in lines {
                 for (index, span) in line.spans.iter_mut().enumerate() {
-                    span.style = span.style.bg(BG_PANEL);
+                    span.style = span.style.bg(theme::bg_panel());
                     if index == 0 {
-                        span.style = span.style.fg(BORDER);
+                        span.style = span.style.fg(theme::border());
                     } else {
-                        span.style = span.style.fg(ACCENT).add_modifier(Modifier::BOLD);
+                        span.style = span.style.fg(theme::accent()).add_modifier(Modifier::BOLD);
                     }
                 }
             }
@@ -672,14 +672,14 @@ pub(super) fn apply_active_style(model: &mut DetailContentRenderModel, target: &
         DetailTargetId::Note { .. } => {
             for line in lines {
                 for span in &mut line.spans {
-                    span.style = span.style.bg(BG_PANEL);
+                    span.style = span.style.bg(theme::bg_panel());
                 }
             }
         }
         DetailTargetId::Attachment { .. } => {
             for line in lines {
                 for span in line.spans.iter_mut().skip(1) {
-                    span.style = span.style.fg(ACCENT);
+                    span.style = span.style.fg(theme::accent());
                 }
             }
         }
@@ -689,13 +689,14 @@ pub(super) fn apply_active_style(model: &mut DetailContentRenderModel, target: &
         } => {
             for line in lines {
                 for (index, span) in line.spans.iter_mut().enumerate() {
-                    span.style = span.style.bg(BG_PANEL);
+                    span.style = span.style.bg(theme::bg_panel());
                     match index {
-                        0 => span.style = span.style.fg(BORDER),
+                        0 => span.style = span.style.fg(theme::border()),
                         1 => {
-                            span.style = span.style.fg(ACCENT).add_modifier(Modifier::BOLD);
+                            span.style =
+                                span.style.fg(theme::accent()).add_modifier(Modifier::BOLD);
                         }
-                        2 => span.style = span.style.fg(FG_DIM),
+                        2 => span.style = span.style.fg(theme::fg_dim()),
                         _ => {}
                     }
                 }
@@ -712,7 +713,7 @@ pub(super) fn apply_hover_style(model: &mut DetailContentRenderModel, target: &D
     for line in lines {
         for span in &mut line.spans {
             if matches!(target, DetailTargetId::Note { .. }) {
-                span.style = span.style.bg(BG_PANEL);
+                span.style = span.style.bg(theme::bg_panel());
             } else {
                 span.style = span.style.add_modifier(Modifier::UNDERLINED);
             }
@@ -772,19 +773,19 @@ pub(super) fn render_detail_content_from_model(
         })
         .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(Text::from(model.sticky_lines)).style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(model.sticky_lines)).style(Style::new().fg(theme::fg()).bg(BG)),
         sticky_area,
     );
     frame.render_widget(
-        Paragraph::new(Text::from(model.lines)).style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(Text::from(model.lines)).style(Style::new().fg(theme::fg()).bg(BG)),
         body_area,
     );
     let body_visible = body_area.height as usize;
     if model.content_height > body_visible {
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .style(Style::new().fg(FG_DIM).bg(BG))
-                .thumb_style(Style::new().fg(FG_MUTED)),
+                .style(Style::new().fg(theme::fg_dim()).bg(BG))
+                .thumb_style(Style::new().fg(theme::fg_muted())),
             body_area,
             &mut ScrollbarState::new(model.content_height)
                 .position(model.scrollbar_position)

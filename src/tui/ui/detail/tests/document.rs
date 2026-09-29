@@ -84,7 +84,11 @@ fn detail_selection_maps_and_highlights_across_wrapped_title_lines() {
         None,
     );
     for line in &model.sticky_lines[..2] {
-        assert!(line.spans.iter().any(|span| span.style.bg == Some(ACCENT)));
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.style.bg == Some(theme::accent()))
+        );
     }
 }
 

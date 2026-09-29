@@ -502,14 +502,17 @@ fn inactive_composer_headers_stay_distinct_from_placeholders() {
     let header = add_task_field_label("Title", false);
     let placeholder = add_task_title_input_line("", None, 40);
 
-    assert_eq!(header.spans[1].style.fg, Some(crate::tui::theme::FG_MUTED));
+    assert_eq!(
+        header.spans[1].style.fg,
+        Some(crate::tui::theme::fg_muted())
+    );
     assert!(
         header.spans[1]
             .style
             .add_modifier
             .contains(ratatui::style::Modifier::BOLD)
     );
-    assert_eq!(placeholder.spans[0].style.fg, Some(FG_DIM));
+    assert_eq!(placeholder.spans[0].style.fg, Some(theme::fg_dim()));
     assert!(
         !placeholder.spans[0]
             .style
@@ -570,11 +573,11 @@ fn composer_help_uses_muted_keys_and_dim_descriptions() {
     let long = composer_help_line("Ctrl-Enter / Ctrl-s", "create from any field");
     let docs = composer_help_line("Docs", "https://aven.raine.dev/tui/#capture-tasks");
 
-    assert_eq!(line.spans[0].style.fg, Some(crate::tui::theme::FG_MUTED));
-    assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[0].style.fg, Some(crate::tui::theme::fg_muted()));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg_dim()));
     assert!(long.to_string().contains("Ctrl-s   create"));
-    assert_eq!(docs.spans[0].style.fg, Some(ACCENT));
-    assert_eq!(docs.spans[1].style.fg, Some(ACCENT));
+    assert_eq!(docs.spans[0].style.fg, Some(theme::accent()));
+    assert_eq!(docs.spans[1].style.fg, Some(theme::accent()));
     assert!(
         docs.spans[1]
             .style
@@ -770,7 +773,7 @@ fn add_task_overlay_omits_title_placeholder_cursor_when_description_focused() {
     let row = buffer_row(&buffer, title_row);
     assert!(row.contains(ADD_TASK_TITLE_PLACEHOLDER));
     for column in 0..buffer.area.width {
-        assert_ne!(buffer[(column, title_row)].style().bg, Some(FG));
+        assert_ne!(buffer[(column, title_row)].style().bg, Some(theme::fg()));
     }
 }
 
@@ -859,10 +862,10 @@ fn hint_lines_style_keys() {
 fn add_task_empty_title_input_shows_placeholder() {
     let line = add_task_title_input_line("", Some(0), 20);
     assert_eq!(line.spans[0].content.as_ref(), "E");
-    assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[0].style.bg, Some(FG));
+    assert_eq!(line.spans[0].style.fg, Some(theme::bg_alt()));
+    assert_eq!(line.spans[0].style.bg, Some(theme::fg()));
     assert_eq!(line.spans[1].content.as_ref(), "nter title here...");
-    assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg_dim()));
     assert_eq!(line.to_string(), ADD_TASK_TITLE_PLACEHOLDER);
 }
 
@@ -871,7 +874,7 @@ fn add_task_empty_title_input_without_focus_omits_cursor() {
     let line = add_task_title_input_line("", None, 20);
     assert_eq!(line.to_string(), ADD_TASK_TITLE_PLACEHOLDER);
     assert_eq!(line.spans.len(), 1);
-    assert_eq!(line.spans[0].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[0].style.fg, Some(theme::fg_dim()));
     assert_eq!(line.spans[0].style.bg, None);
 }
 
@@ -880,8 +883,8 @@ fn add_task_title_input_draws_cursor_as_cell() {
     let line = add_task_title_input_line("abc", Some(1), 20);
     assert_eq!(line.spans[0].content.as_ref(), "a");
     assert_eq!(line.spans[1].content.as_ref(), "b");
-    assert_eq!(line.spans[1].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[1].style.bg, Some(FG));
+    assert_eq!(line.spans[1].style.fg, Some(theme::bg_alt()));
+    assert_eq!(line.spans[1].style.bg, Some(theme::fg()));
     assert_eq!(line.spans[2].content.as_ref(), "c");
 }
 
@@ -890,7 +893,7 @@ fn add_task_title_input_draws_end_cursor_as_blank_cell() {
     let line = add_task_title_input_line("abc", Some(3), 20);
     assert_eq!(line.spans[0].content.as_ref(), "abc");
     assert_eq!(line.spans[1].content.as_ref(), " ");
-    assert_eq!(line.spans[1].style.bg, Some(FG));
+    assert_eq!(line.spans[1].style.bg, Some(theme::fg()));
 }
 
 #[test]
@@ -941,13 +944,13 @@ fn add_task_metadata_title_labels_values() {
 fn add_task_description_empty_input_shows_placeholder() {
     let line = add_task_description_input_line("", Some(0), true);
     assert_eq!(line.spans[0].content.as_ref(), "O");
-    assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[0].style.bg, Some(FG));
+    assert_eq!(line.spans[0].style.fg, Some(theme::bg_alt()));
+    assert_eq!(line.spans[0].style.bg, Some(theme::fg()));
     assert_eq!(
         line.spans[1].content.as_ref(),
         "ptional details, links, or handoff context..."
     );
-    assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg_dim()));
 }
 
 #[test]
@@ -957,7 +960,7 @@ fn add_task_description_empty_unfocused_shows_placeholder() {
         line.to_string(),
         "Optional details, links, or handoff context..."
     );
-    assert_eq!(line.spans[0].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[0].style.fg, Some(theme::fg_dim()));
 }
 
 #[test]
@@ -1055,7 +1058,7 @@ fn once_schedule_dialog_aligns_type_and_field_values() {
         buffer[(type_column as u16, type_row_index as u16)]
             .style()
             .bg,
-        Some(ACCENT)
+        Some(theme::accent())
     );
 }
 
