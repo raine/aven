@@ -7,8 +7,16 @@ use ratatui::style::{Color, Modifier, Style};
 pub(crate) enum Background {
     #[default]
     Dark,
-    #[cfg_attr(not(test), allow(dead_code))]
     Light,
+}
+
+impl Background {
+    pub(crate) const fn opposite(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

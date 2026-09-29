@@ -361,9 +361,12 @@ impl App {
     /// colors stay readable on the terminal background.
     ///
     /// [`Theme::DEFAULT`]: crate::tui::theme::Theme::DEFAULT
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_background(&mut self, background: crate::tui::theme::Background) {
         self.background = background;
+    }
+
+    pub(crate) fn toggle_background(&mut self) {
+        self.set_background(self.background.opposite());
     }
 
     pub(crate) fn open_task_on_start(&mut self, task_id: &crate::ids::TaskId) -> Result<()> {

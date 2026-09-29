@@ -612,6 +612,13 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         }],
         Action::ToggleColumnsPreview,
     ),
+    BuiltInCommand::implemented_global_in_detail(
+        "toggle-background",
+        "switch between the light and dark palette",
+        "General",
+        &[],
+        Action::ToggleBackground,
+    ),
     BuiltInCommand::implemented_in_detail(
         "delete",
         "confirm deleting selected task",

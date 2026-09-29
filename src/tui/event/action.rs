@@ -65,6 +65,7 @@ pub(crate) enum Action {
     ToggleSidebar,
     ToggleDetail,
     ToggleColumnsPreview,
+    ToggleBackground,
     GoBack,
     GoForward,
     GoToBlocker,
