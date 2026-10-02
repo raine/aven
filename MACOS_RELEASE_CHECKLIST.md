@@ -5,6 +5,43 @@ an existing installation's Keychain credentials. Use disposable databases and
 accounts for qualification. Never lock the maintainer's login Keychain, change
 its search list, print credentials, or copy protected state into evidence logs.
 
+## Qualification without releasing E2EE
+
+`.github/workflows/macos-qualification.yml` runs on pushes to the exact
+`e2ee-macos-release` branch. It builds the pinned E2EE baseline
+`e3c2bcb0891340479f9a5a674a60665eccfeec87` and the pushed candidate, signs both
+macOS architectures using the release signing script, and uploads archives as
+Actions artifacts for 14 days. Its continuity jobs require different binaries
+with equal, mutually satisfied designated requirements. All jobs have read-only
+repository permissions; there are no GitHub release or tap publishing steps.
+Do not use `v*` tags for this workflow: they trigger the public release workflow.
+
+To run it, temporarily permit the exact qualification **branch** in the
+`macos-signing` environment alongside the existing `v*` **tag** policy. Do not
+permit arbitrary branches or remove the tag restriction. Push the reviewed
+qualification branch with hooks enabled, record its commit and run URL, then
+remove the temporary branch permission after the signing jobs finish.
+
+Download a specific artifact with:
+
+```sh
+gh run download RUN_ID --name qualification-baseline-aven-darwin-arm64 --dir baseline
+gh run download RUN_ID --name qualification-candidate-aven-darwin-arm64 --dir candidate
+```
+
+Each directory contains the archive, archive checksum, `binary.sha256`,
+`signature.txt` and `commit-sha`. Check the provenance against the requested
+revisions and independently verify the extracted bytes/signature. Use `amd64`
+in artifact names and `x86_64` in verifier arguments for Intel.
+
+Use these exact signed bytes for isolated CLI/daemon and local test-tap upgrades.
+Never replace the user's installed executable or production tap for qualification.
+Both revisions can report the same version; these tests prove changed-code
+credential continuity, not latest-release selection. The unchanged installer
+and `aven update` cannot consume Actions artifacts directly. Testing a local
+copy/rename or a local tap therefore leaves their production download/discovery
+paths open, as does bypassing version selection in an updater-internals test.
+
 ## Signing and packaged artifacts
 
 - The `macos-signing` GitHub environment must restrict deployments to `v*` tags

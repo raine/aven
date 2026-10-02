@@ -1,0 +1,184 @@
+name: macOS qualification
+run-name: macOS qualification ${{ github.sha }}
+
+on:
+  push:
+    branches: [e2ee-macos-release]
+  workflow_dispatch:
+
+# Qualification uploads Actions artifacts only; it cannot publish releases or taps.
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BIN_NAME: aven
+
+jobs:
+  signing-preflight:
+    if: github.ref == 'refs/heads/e2ee-macos-release'
+    runs-on: ubuntu-latest
+    environment: macos-signing
+    steps:
+      - name: Check signing configuration
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+        run: |
+          missing=0
+          for name in APPLE_DEVELOPER_ID_CERT_BASE64 APPLE_DEVELOPER_ID_CERT_PASSWORD APPLE_DEVELOPER_ID_IDENTITY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set in the macos-signing environment"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+  build:
+    needs: signing-preflight
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [baseline, candidate]
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        include:
+          - target: aarch64-apple-darwin
+            artifact: aven-darwin-arm64
+          - target: x86_64-apple-darwin
+            artifact: aven-darwin-amd64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ matrix.revision == 'baseline' && 'e3c2bcb0891340479f9a5a674a60665eccfeec87' || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: qualification-${{ matrix.target }}
+      - name: Build exact revision
+        env:
+          SQLX_OFFLINE: 'true'
+        run: |
+          cargo build --release --locked --target "${{ matrix.target }}"
+          mkdir unsigned
+          cp "target/${{ matrix.target }}/release/${BIN_NAME}" "unsigned/${BIN_NAME}"
+          git rev-parse HEAD > unsigned/commit-sha
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unsigned-${{ matrix.revision }}-${{ matrix.artifact }}
+          path: unsigned/
+          if-no-files-found: error
+          retention-days: 14
+
+  # Only the signing step sees certificate secrets; its trap removes the key
+  # before any packaged binary is executed. This job runs no build scripts.
+  sign-macos:
+    needs: build
+    runs-on: macos-15
+    environment: macos-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [baseline, candidate]
+        artifact: [aven-darwin-arm64, aven-darwin-amd64]
+        include:
+          - artifact: aven-darwin-arm64
+            architecture: arm64
+          - artifact: aven-darwin-amd64
+            architecture: x86_64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: unsigned-${{ matrix.revision }}-${{ matrix.artifact }}
+          path: unsigned
+      - name: Check artifact revision
+        env:
+          EXPECTED_SHA: ${{ matrix.revision == 'baseline' && 'e3c2bcb0891340479f9a5a674a60665eccfeec87' || github.sha }}
+        run: test "$(cat unsigned/commit-sha)" = "$EXPECTED_SHA"
+      - name: Sign
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+        run: |
+          chmod 755 "unsigned/${BIN_NAME}"
+          scripts/sign-macos-release "unsigned/${BIN_NAME}"
+      - name: Package and qualify
+        run: |
+          mkdir qualified extracted
+          tar -C unsigned -czf "qualified/${{ matrix.artifact }}.tar.gz" "$BIN_NAME"
+          (cd qualified && shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256")
+          (cd qualified && shasum -a 256 -c "${{ matrix.artifact }}.sha256")
+          tar -xzf "qualified/${{ matrix.artifact }}.tar.gz" -C extracted
+          cmp "unsigned/${BIN_NAME}" "extracted/${BIN_NAME}"
+          scripts/verify-macos-release "extracted/${BIN_NAME}" "${{ matrix.architecture }}" > qualified/signature.txt
+          scripts/test-verify-macos-release "extracted/${BIN_NAME}"
+          "extracted/${BIN_NAME}" --version </dev/null
+          "extracted/${BIN_NAME}" --help </dev/null
+          (cd extracted && shasum -a 256 "$BIN_NAME") > qualified/binary.sha256
+          cp unsigned/commit-sha qualified/commit-sha
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: qualification-${{ matrix.revision }}-${{ matrix.artifact }}
+          path: qualified/
+          if-no-files-found: error
+          retention-days: 14
+
+  continuity:
+    needs: sign-macos
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: aven-darwin-arm64
+            architecture: arm64
+          - artifact: aven-darwin-amd64
+            architecture: x86_64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: qualification-baseline-${{ matrix.artifact }}
+          path: baseline
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: qualification-candidate-${{ matrix.artifact }}
+          path: candidate
+      - name: Verify independently built upgrade identities
+        run: |
+          for revision in baseline candidate; do
+            (cd "$revision" && shasum -a 256 -c "${{ matrix.artifact }}.sha256")
+            tar -xzf "$revision/${{ matrix.artifact }}.tar.gz" -C "$revision"
+            (cd "$revision" && shasum -a 256 -c binary.sha256)
+            scripts/verify-macos-release "$revision/${BIN_NAME}" "${{ matrix.architecture }}" > "$revision/verified-signature.txt"
+            sed -n 's/^designated => //p' "$revision/verified-signature.txt" > "$revision/requirement.txt"
+            test -s "$revision/requirement.txt"
+          done
+          # Equal signed bytes would not exercise a changed-code upgrade.
+          if cmp -s "baseline/${BIN_NAME}" "candidate/${BIN_NAME}"; then
+            echo '::error::qualification requires two different built binaries'
+            exit 1
+          fi
+          cmp baseline/requirement.txt candidate/requirement.txt
+          codesign --verify --strict -R="$(cat baseline/requirement.txt)" "candidate/${BIN_NAME}"
+          codesign --verify --strict -R="$(cat candidate/requirement.txt)" "baseline/${BIN_NAME}"
+          {
+            echo '### macOS artifact identity continuity: ${{ matrix.architecture }}'
+            echo "Baseline: $(cat baseline/commit-sha)"
+            echo "Candidate: $(cat candidate/commit-sha)"
+            echo 'Different signed binaries have equal, mutually satisfied designated requirements.'
+            echo 'Actions artifacts only: no GitHub release or Homebrew tap update.'
+          } >> "$GITHUB_STEP_SUMMARY"
