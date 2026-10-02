@@ -6,7 +6,7 @@ use ratatui::text::{Line, Text};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use crate::tui::overlay::RecurrenceHistoryView;
-use crate::tui::theme::{FG, FG_MUTED, SELECTED_BG};
+use crate::tui::theme;
 
 const HISTORY_WIDTH: u16 = 112;
 
@@ -121,7 +121,7 @@ pub(in crate::tui::ui) fn render_recurrence_history(
     if lines.is_empty() {
         lines.push(Line::styled(
             "No recurrence history",
-            Style::new().fg(FG_MUTED),
+            Style::new().fg(theme::fg_muted()),
         ));
     }
     lines.push(Line::default());
@@ -170,11 +170,11 @@ fn history_lines(
     .join(",");
     let style = if is_selected {
         Style::new()
-            .fg(FG)
-            .bg(SELECTED_BG)
+            .fg(theme::fg())
+            .bg(theme::selected_bg())
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(FG)
+        Style::new().fg(theme::fg())
     };
     let prefix = if is_selected { "> " } else { "  " };
     if entry_height == 2 {

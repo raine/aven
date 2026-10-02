@@ -194,9 +194,9 @@ fn project_path_input_uses_wide_labeled_dialog() {
 fn empty_placeholder_text_input_shows_placeholder() {
     let line = placeholder_text_input_line("", 0, 20, ADD_PROJECT_NAME_PLACEHOLDER);
     assert_eq!(line.spans[0].content.as_ref(), "E");
-    assert_eq!(line.spans[0].style.fg, Some(BG_ALT));
-    assert_eq!(line.spans[0].style.bg, Some(FG));
+    assert_eq!(line.spans[0].style.fg, Some(theme::bg_alt()));
+    assert_eq!(line.spans[0].style.bg, Some(theme::fg()));
     assert_eq!(line.spans[1].content.as_ref(), "nter project name here...");
-    assert_eq!(line.spans[1].style.fg, Some(FG_DIM));
+    assert_eq!(line.spans[1].style.fg, Some(theme::fg_dim()));
     assert_eq!(line.to_string(), ADD_PROJECT_NAME_PLACEHOLDER);
 }

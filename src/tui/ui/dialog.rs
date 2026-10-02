@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wr
 
 use crate::tui::overlay::dialog_area;
 use crate::tui::text::truncate_width;
-use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_MUTED};
+use crate::tui::theme;
 
 pub(super) struct Dialog<'a> {
     title: &'a str,
@@ -68,7 +68,8 @@ impl<'a> Dialog<'a> {
     ) {
         let wrap = self.wrap;
         let inner = self.render_block_at(frame, area);
-        let mut paragraph = Paragraph::new(text).style(Style::new().fg(FG).bg(BG_ALT));
+        let mut paragraph =
+            Paragraph::new(text).style(Style::new().fg(theme::fg()).bg(theme::bg_alt()));
         if wrap {
             paragraph = paragraph.wrap(Wrap { trim: false });
         }
@@ -81,27 +82,27 @@ fn overlay_block(title: &str, width: u16) -> Block<'_> {
         .title(edge_title(title, width))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
+        .border_style(Style::new().fg(theme::accent()))
         .padding(Padding::horizontal(1))
-        .style(Style::new().bg(BG_ALT))
+        .style(Style::new().bg(theme::bg_alt()))
 }
 
 fn edge_title(title: &str, width: u16) -> Line<'_> {
     let title = truncate_width(title, width.saturating_sub(5) as usize);
     Line::from(vec![
-        Span::styled("─ ", Style::new().fg(ACCENT)),
+        Span::styled("─ ", Style::new().fg(theme::accent())),
         Span::raw(title),
-        Span::styled(" ", Style::new().fg(ACCENT)),
+        Span::styled(" ", Style::new().fg(theme::accent())),
     ])
 }
 
 fn right_edge_title(title: Option<Line<'_>>) -> Line<'_> {
     let Some(mut title) = title else {
-        return Line::from(Span::styled("─", Style::new().fg(ACCENT)));
+        return Line::from(Span::styled("─", Style::new().fg(theme::accent())));
     };
     title
         .spans
-        .push(Span::styled(" ─", Style::new().fg(ACCENT)));
+        .push(Span::styled(" ─", Style::new().fg(theme::accent())));
     title
 }
 
@@ -147,13 +148,16 @@ pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, (key, label)) in items.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled("  ", Style::new().fg(FG_MUTED)));
+            spans.push(Span::styled("  ", Style::new().fg(theme::fg_muted())));
         }
         spans.push(Span::styled(
             key.to_string(),
-            Style::new().fg(FG).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(format!(" {label}"), Style::new().fg(FG_MUTED)));
+        spans.push(Span::styled(
+            format!(" {label}"),
+            Style::new().fg(theme::fg_muted()),
+        ));
     }
     Line::from(spans)
 }
@@ -161,7 +165,7 @@ pub(super) fn dialog_hint_line(items: &[(&str, &str)]) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::theme::FG;
+    use crate::tui::theme;
 
     #[test]
     fn dimming_darkens_rgb_and_preserves_default_backgrounds() {
@@ -196,7 +200,7 @@ mod tests {
     fn styled_key_contents(line: Line<'static>) -> Vec<String> {
         line.spans
             .iter()
-            .filter(|span| span.style.fg == Some(FG))
+            .filter(|span| span.style.fg == Some(theme::fg()))
             .map(|span| span.content.to_string())
             .collect()
     }

@@ -10,7 +10,7 @@ use crate::tui::event::{Action, CommandContext, preferred_shortcut_label};
 use crate::tui::store::{
     ClosedTaskVisibility, RefreshHealth, TaskProjectionOrigin, TaskQuery, TaskScope, TuiStore,
 };
-use crate::tui::theme::{ACCENT, BG, BG_ALT, FG, FG_DIM, FG_MUTED, RED};
+use crate::tui::theme::{self, BG};
 
 use crate::tui::text::truncate_width;
 
@@ -406,7 +406,10 @@ pub(crate) fn render_empty_state(frame: &mut Frame, area: Rect, state: EmptyStat
             Line::from(vec![
                 Span::styled(
                     format!(" {key} "),
-                    Style::new().fg(FG).bg(BG_ALT).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(theme::fg())
+                        .bg(theme::bg_alt())
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!(
@@ -416,7 +419,7 @@ pub(crate) fn render_empty_state(frame: &mut Frame, area: Rect, state: EmptyStat
                             max_width.saturating_sub(UnicodeWidthStr::width(key) + 4),
                         )
                     ),
-                    Style::new().fg(FG_MUTED),
+                    Style::new().fg(theme::fg_muted()),
                 ),
             ])
         })
@@ -429,17 +432,17 @@ pub(crate) fn render_empty_state(frame: &mut Frame, area: Rect, state: EmptyStat
             title,
             Style::new()
                 .fg(if state.reason == EmptyStateReason::LoadFailed {
-                    RED
+                    theme::red()
                 } else {
-                    FG
+                    theme::fg()
                 })
                 .add_modifier(Modifier::BOLD),
         ))
     } else {
         let (marker, accent) = if state.reason == EmptyStateReason::LoadFailed {
-            ("!  ", RED)
+            ("!  ", theme::red())
         } else {
-            ("◆  ", ACCENT)
+            ("◆  ", theme::accent())
         };
         Line::from(vec![
             Span::styled(marker, Style::new().fg(accent).add_modifier(Modifier::BOLD)),
@@ -447,9 +450,9 @@ pub(crate) fn render_empty_state(frame: &mut Frame, area: Rect, state: EmptyStat
                 title,
                 Style::new()
                     .fg(if state.reason == EmptyStateReason::LoadFailed {
-                        RED
+                        theme::red()
                     } else {
-                        FG
+                        theme::fg()
                     })
                     .add_modifier(Modifier::BOLD),
             ),
@@ -466,7 +469,7 @@ pub(crate) fn render_empty_state(frame: &mut Frame, area: Rect, state: EmptyStat
     } else {
         vec![
             title_line.clone(),
-            Line::from(Span::styled(detail, Style::new().fg(FG_DIM))),
+            Line::from(Span::styled(detail, Style::new().fg(theme::fg_dim()))),
         ]
     };
     if area.height >= 5 && action_line.is_some() {
@@ -618,6 +621,6 @@ mod tests {
             .unwrap();
 
         assert!(text.contains("Could not load this view"));
-        assert_eq!(marker.style().fg, Some(RED));
+        assert_eq!(marker.style().fg, Some(theme::red()));
     }
 }

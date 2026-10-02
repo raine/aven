@@ -12,6 +12,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
+use crate::tui::theme::Background;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum KeyboardEnhancementMode {
     Kitty,
@@ -116,6 +118,34 @@ impl Drop for KeyboardEnhancementGuard {
     fn drop(&mut self) {
         let _ = self.disable();
     }
+}
+
+/// Asks the terminal for its colors with OSC 10 and OSC 11. When the terminal
+/// does not answer, falls back to `COLORFGBG`, then to a dark background.
+///
+/// Call this before the TUI starts to read input, so the reply cannot reach
+/// the event stream as key presses.
+pub(crate) fn detect_background() -> Background {
+    use terminal_colorsaurus::{QueryOptions, ThemeMode, theme_mode};
+
+    match theme_mode(QueryOptions::default()) {
+        Ok(ThemeMode::Light) => Background::Light,
+        Ok(ThemeMode::Dark) => Background::Dark,
+        Err(_) => std::env::var("COLORFGBG")
+            .ok()
+            .and_then(|value| colorfgbg_background(&value))
+            .unwrap_or_default(),
+    }
+}
+
+/// `COLORFGBG` holds `fg;bg` (sometimes `fg;default;bg`) as ANSI color
+/// indexes. Index 7 and the bright colors except 8 are light backgrounds.
+fn colorfgbg_background(value: &str) -> Option<Background> {
+    let background: u8 = value.rsplit(';').next()?.parse().ok()?;
+    Some(match background {
+        7 | 9..=15 => Background::Light,
+        _ => Background::Dark,
+    })
 }
 
 pub(crate) trait TerminalTransition {
@@ -290,6 +320,16 @@ mod tests {
             assert_eq!(transition.suspended, 1);
             assert_eq!(transition.restored, 1);
         }
+    }
+
+    #[test]
+    fn colorfgbg_uses_the_last_field_as_the_background() {
+        assert_eq!(colorfgbg_background("0;15"), Some(Background::Light));
+        assert_eq!(colorfgbg_background("0;default;7"), Some(Background::Light));
+        assert_eq!(colorfgbg_background("15;0"), Some(Background::Dark));
+        assert_eq!(colorfgbg_background("7;8"), Some(Background::Dark));
+        assert_eq!(colorfgbg_background("15;default"), None);
+        assert_eq!(colorfgbg_background(""), None);
     }
 
     #[test]

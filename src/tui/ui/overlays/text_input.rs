@@ -11,7 +11,7 @@ use super::add_task::{
 use crate::tui::authoring::AddTaskStep;
 use crate::tui::overlay::{TextInputKind, TextInputView};
 use crate::tui::text::{char_boundary_at_or_before, str_cells};
-use crate::tui::theme::{FG, FG_DIM};
+use crate::tui::theme;
 
 pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInputView) {
     if let Some(placeholder) = text_input_placeholder(state.kind) {
@@ -46,7 +46,8 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             add_task_hint_line(AddTaskStep::Title, false, false, false),
         ]);
         frame.render_widget(
-            Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+            Paragraph::new(text)
+                .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
             content,
         );
         return;
@@ -62,7 +63,8 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
         ]);
         frame.render_widget(
-            Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+            Paragraph::new(text)
+                .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
             content,
         );
         return;
@@ -79,7 +81,12 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         let mut lines = state
             .prompt
             .lines()
-            .map(|line| Line::from(Span::styled(line.to_string(), Style::new().fg(FG_DIM))))
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::new().fg(theme::fg_dim()),
+                ))
+            })
             .collect::<Vec<_>>();
         lines.extend([
             Line::from(""),
@@ -92,7 +99,12 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         let mut lines = state
             .prompt
             .lines()
-            .map(|line| Line::from(Span::styled(line.to_string(), Style::new().fg(FG_DIM))))
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::new().fg(theme::fg_dim()),
+                ))
+            })
             .collect::<Vec<_>>();
         let hints = if state.prompt.starts_with("Current: varies") {
             &[
@@ -107,7 +119,10 @@ pub(in crate::tui::ui) fn render_text_input(frame: &mut Frame, state: &TextInput
         lines
     } else {
         vec![
-            Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
+            Line::from(Span::styled(
+                &state.prompt,
+                Style::new().fg(theme::fg_dim()),
+            )),
             input,
             Line::from(""),
             dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
@@ -128,13 +143,16 @@ fn render_project_path_input(frame: &mut Frame, state: &TextInputView) {
     let content = dialog.render_block(frame);
     let input = project_path_input_line(&state.input, state.cursor, content.width as usize);
     let text = Text::from(vec![
-        Line::from(Span::styled(&state.prompt, Style::new().fg(FG_DIM))),
+        Line::from(Span::styled(
+            &state.prompt,
+            Style::new().fg(theme::fg_dim()),
+        )),
         input,
         Line::from(""),
         dialog_hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
     ]);
     frame.render_widget(
-        Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+        Paragraph::new(text).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         content,
     );
 }
@@ -150,7 +168,7 @@ pub(in crate::tui::ui) fn project_path_input_line(
     let cursor = char_boundary_at_or_before(input, cursor);
     let cursor_cells = str_cells(&input[..cursor]);
     let mut line = clipped_input_line(input, cursor, width.saturating_sub(1));
-    let marker = Span::styled("…", Style::new().fg(FG_DIM));
+    let marker = Span::styled("…", Style::new().fg(theme::fg_dim()));
     if cursor_cells >= width.saturating_sub(1) {
         line.spans.insert(0, marker);
     } else {
@@ -207,7 +225,7 @@ fn render_placeholder_text_input(
         dialog_hint_line(hints),
     ]);
     frame.render_widget(
-        Paragraph::new(text).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+        Paragraph::new(text).style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         content,
     );
 }
@@ -221,7 +239,7 @@ pub(in crate::tui::ui) fn placeholder_text_input_line(
     if input.is_empty() {
         return Line::from(vec![
             super::super::input::cursor_cell(&placeholder[..1]),
-            Span::styled(&placeholder[1..], Style::new().fg(FG_DIM)),
+            Span::styled(&placeholder[1..], Style::new().fg(theme::fg_dim())),
         ]);
     }
     Line::from(input_cursor_spans(

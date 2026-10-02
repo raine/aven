@@ -14,7 +14,7 @@ use crate::tui::overlay::{
 use crate::tui::text::{
     cell_width_ranges, char_boundary_at_or_before, segment_index_at, str_cells,
 };
-use crate::tui::theme::{FG, FG_DIM, FG_MUTED};
+use crate::tui::theme;
 
 pub(in crate::tui::ui) fn render_multiline_input(frame: &mut Frame, state: &MultilineInputView) {
     if state.mode == MultilineInputMode::ConfirmDiscard {
@@ -87,7 +87,8 @@ fn render_description_input(frame: &mut Frame, state: &MultilineInputView) {
     lines.push(description_hint_line(state));
 
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT)),
+        Paragraph::new(Text::from(lines))
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt())),
         content,
     );
 }
@@ -217,7 +218,10 @@ pub(in crate::tui::ui) fn description_input_line(
     if show_placeholder && line.is_empty() && cursor == 0 {
         return Line::from(vec![
             super::super::input::cursor_cell("E"),
-            Span::styled("nter task description here...", Style::new().fg(FG_DIM)),
+            Span::styled(
+                "nter task description here...",
+                Style::new().fg(theme::fg_dim()),
+            ),
         ]);
     }
     input_line("", line, cursor)
@@ -246,10 +250,10 @@ pub(in crate::tui::ui) fn add_task_free_text_input_line(
         if cursor.is_some() {
             return Line::from(vec![
                 super::super::input::cursor_cell(&placeholder[..1]),
-                Span::styled(&placeholder[1..], Style::new().fg(FG_DIM)),
+                Span::styled(&placeholder[1..], Style::new().fg(theme::fg_dim())),
             ]);
         }
-        return Line::from(Span::styled(placeholder, Style::new().fg(FG_DIM)));
+        return Line::from(Span::styled(placeholder, Style::new().fg(theme::fg_dim())));
     }
     match cursor {
         Some(cursor) => Line::from(input_cursor_spans(line, cursor, InputWidth::Full)),
@@ -348,7 +352,7 @@ fn render_tail_viewport_multiline(
         viewport_start_for_cursor(cursor_row, editor.height.max(1) as usize, visual_rows, true);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .style(Style::new().fg(FG).bg(crate::tui::theme::BG_ALT))
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_alt()))
             .scroll((scroll as u16, 0)),
         editor,
     );
@@ -363,7 +367,7 @@ pub(in crate::tui::ui) fn add_note_input_line(
     if show_placeholder && line.is_empty() && cursor.is_some() {
         return Line::from(vec![
             super::super::input::cursor_cell("E"),
-            Span::styled("nter note body here...", Style::new().fg(FG_DIM)),
+            Span::styled("nter note body here...", Style::new().fg(theme::fg_dim())),
         ]);
     }
     match cursor {
@@ -388,6 +392,6 @@ pub(in crate::tui::ui) fn description_hint_line(state: &MultilineInputView) -> L
         ("Esc", "cancel"),
     ]);
     line.spans
-        .push(Span::styled(position, Style::new().fg(FG_MUTED)));
+        .push(Span::styled(position, Style::new().fg(theme::fg_muted())));
     line
 }

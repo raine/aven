@@ -14,7 +14,7 @@ use crate::tui::store::{
     DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, SyncStatusCheck, TuiDatabaseStats,
     TuiSyncStatus,
 };
-use crate::tui::theme::{self, ACCENT, BG_ALT, FG, FG_DIM, ORANGE, RED};
+use crate::tui::theme;
 use crate::tui::widgets::priority_icon;
 use ratatui::Frame;
 use ratatui::Terminal;
@@ -124,7 +124,7 @@ fn assert_overlay_uses_dialog_chrome(overlay: OverlayView<'_>, title: &str) {
 fn styled_key_contents(line: Line<'static>) -> Vec<String> {
     line.spans
         .iter()
-        .filter(|span| span.style.fg == Some(FG))
+        .filter(|span| span.style.fg == Some(theme::fg()))
         .map(|span| span.content.to_string())
         .collect()
 }

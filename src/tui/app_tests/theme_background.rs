@@ -53,3 +53,40 @@ async fn popover_menu_keeps_main_surface_underlay_bright() {
     assert_eq!(underlay.bg, Color::Reset);
     assert!(!underlay.modifier.contains(Modifier::DIM));
 }
+
+#[tokio::test]
+async fn light_background_renders_with_light_palette() {
+    use crate::tui::theme::{Background, Theme};
+
+    let mut app = test_app().await;
+    app.set_background(Background::Light);
+
+    let buf = render_app_buffer(&mut app, 120, 30);
+    let light = Theme::DEFAULT.light;
+    let dark = Theme::DEFAULT.dark;
+
+    assert!(buf.content.iter().any(|cell| cell.fg == light.fg));
+    assert!(!buf.content.iter().any(|cell| cell.fg == dark.fg));
+    assert_eq!(buf[(119, 10)].bg, Color::Reset);
+}
+
+#[tokio::test]
+async fn command_panel_toggles_background() {
+    use crate::tui::theme::{Background, Theme};
+
+    let mut app = test_app().await;
+
+    for (expected, palette) in [
+        (Background::Light, Theme::DEFAULT.light),
+        (Background::Dark, Theme::DEFAULT.dark),
+    ] {
+        app.begin_command().await;
+        type_chars(&mut app, "toggle-background").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert_eq!(app.background, expected);
+        let buf = render_app_buffer(&mut app, 120, 30);
+        assert!(buf.content.iter().any(|cell| cell.fg == palette.fg));
+    }
+}

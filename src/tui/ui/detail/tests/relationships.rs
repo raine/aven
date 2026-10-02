@@ -26,7 +26,7 @@ fn detail_body_shows_epic_parent_relationship() {
         .iter()
         .find(|span| span.content == EPIC_MARKER)
         .expect("epic parent marker");
-    assert_eq!(marker.style.fg, Some(YELLOW));
+    assert_eq!(marker.style.fg, Some(theme::yellow()));
     assert!(
         lines
             .iter()
@@ -419,7 +419,7 @@ fn epic_child_blockers_stay_on_one_row_and_count_hidden_refs() {
             lines[0]
                 .spans
                 .iter()
-                .all(|span| span.style.bg == Some(BG_PANEL))
+                .all(|span| span.style.bg == Some(theme::bg_panel()))
         );
     }
     for blocker in &mut blockers {
@@ -510,7 +510,7 @@ fn linked_references_use_their_own_project_color_and_dim_suffix() {
             prefix.style.fg,
             Some(theme::project_color("different-project"))
         );
-        assert_eq!(suffix.style.fg, Some(FG_DIM));
+        assert_eq!(suffix.style.fg, Some(theme::fg_dim()));
     }
 }
 
@@ -573,7 +573,7 @@ fn hovered_detail_child_uses_link_style() {
         .find(|span| span.content.as_ref() == "APP")
         .unwrap();
 
-    assert_eq!(ref_span.style.bg, Some(BG_PANEL));
+    assert_eq!(ref_span.style.bg, Some(theme::bg_panel()));
 }
 
 #[test]

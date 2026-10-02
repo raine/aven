@@ -2,7 +2,7 @@ use crate::tui::overlay::metadata::{
     MetadataFocus, MetadataView, metadata_display, metadata_layout, visible_start,
 };
 use crate::tui::text::truncate_width;
-use crate::tui::theme::{ACCENT, BG_ALT, FG, FG_DIM, FG_MUTED, RED, SELECTED};
+use crate::tui::theme;
 use crate::tui::ui::dialog::{Dialog, dialog_hint_line};
 use ratatui::{
     Frame,
@@ -44,19 +44,19 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
     let dialog = if view.editor.is_none() {
         dialog.right_title(Line::styled(
             format!("{assigned} assigned"),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         ))
     } else {
         dialog
     };
     dialog.render_block_at(frame, layout.area);
-    let style = Style::new().fg(FG).bg(BG_ALT);
+    let style = Style::new().fg(theme::fg()).bg(theme::bg_alt());
     if let Some(editor) = view.editor {
         let entry = &view.entries[view.selected];
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
                 truncate_width(&entry.field.key, layout.header.width as usize),
-                Style::new().fg(FG_DIM),
+                Style::new().fg(theme::fg_dim()),
             )]))
             .style(style),
             layout.header,
@@ -95,7 +95,11 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
         });
         frame.render_widget(
             Paragraph::new(hint)
-                .style(Style::new().fg(if view.error.is_some() { RED } else { FG_DIM }))
+                .style(Style::new().fg(if view.error.is_some() {
+                    theme::red()
+                } else {
+                    theme::fg_dim()
+                }))
                 .wrap(Wrap { trim: false }),
             layout.error,
         );
@@ -107,14 +111,14 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
             let selected = editor.focus == action.focus;
             let disabled = !action.enabled;
             let mut line = if key.is_empty() {
-                Line::styled(label, Style::new().fg(FG_MUTED))
+                Line::styled(label, Style::new().fg(theme::fg_muted()))
             } else {
                 dialog_hint_line(&[(key, label)])
             };
             for span in &mut line.spans {
                 if disabled {
                     if !span.style.add_modifier.contains(Modifier::BOLD) {
-                        span.style = span.style.fg(FG_DIM);
+                        span.style = span.style.fg(theme::fg_dim());
                     }
                 } else if selected {
                     span.style = span.style.add_modifier(Modifier::UNDERLINED);
@@ -124,10 +128,10 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
         }
     } else {
         let filter = if view.filter.text.is_empty() {
-            Line::styled("Type to filter fields…", Style::new().fg(FG_DIM))
+            Line::styled("Type to filter fields…", Style::new().fg(theme::fg_dim()))
         } else {
             Line::from(vec![
-                Span::styled("/ ", Style::new().fg(ACCENT)),
+                Span::styled("/ ", Style::new().fg(theme::accent())),
                 Span::raw(truncate_width(
                     &view.filter.text,
                     layout.header.width.saturating_sub(2) as usize,
@@ -144,7 +148,7 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
             };
             frame.render_widget(
                 Paragraph::new(message)
-                    .style(Style::new().fg(FG_MUTED))
+                    .style(Style::new().fg(theme::fg_muted()))
                     .wrap(Wrap { trim: false }),
                 layout.body,
             );
@@ -182,14 +186,25 @@ pub(in crate::tui::ui) fn render(frame: &mut Frame, view: &MetadataView<'_>) {
                         })
                         .collect(),
                 };
-                let row_style = if selected { SELECTED } else { style };
-                let value_color = if entry.value.is_none() { FG_DIM } else { FG };
+                let row_style = if selected { theme::selected() } else { style };
+                let value_color = if entry.value.is_none() {
+                    theme::fg_dim()
+                } else {
+                    theme::fg()
+                };
                 let key = truncate_width(&entry.field.key, key_width);
                 let line = Line::from(vec![
-                    Span::styled(if selected { "▸ " } else { "  " }, Style::new().fg(ACCENT)),
+                    Span::styled(
+                        if selected { "▸ " } else { "  " },
+                        Style::new().fg(theme::accent()),
+                    ),
                     Span::styled(
                         format!("{key:key_width$}  "),
-                        Style::new().fg(if selected { FG } else { FG_MUTED }),
+                        Style::new().fg(if selected {
+                            theme::fg()
+                        } else {
+                            theme::fg_muted()
+                        }),
                     ),
                     Span::styled(
                         truncate_width(&value, value_width),

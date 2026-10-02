@@ -14,9 +14,7 @@ use crate::queue::now_seconds;
 use crate::tui::app::Focus;
 use crate::tui::overlay::TextInputView;
 use crate::tui::store::{TaskListRenderMode, TuiStore};
-use crate::tui::theme::{
-    ACCENT, BG, BG_ALT, BORDER, INVERSE_FG, RELATED, SELECTED, SELECTED_INACTIVE,
-};
+use crate::tui::theme::{self, BG};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -340,8 +338,8 @@ pub(super) fn render_task_scrollbar(
         .end_symbol(None)
         .thumb_symbol("┃")
         .track_symbol(Some("│"))
-        .thumb_style(Style::new().fg(ACCENT).bg(BG))
-        .track_style(Style::new().fg(BORDER).bg(BG));
+        .thumb_style(Style::new().fg(theme::accent()).bg(BG))
+        .track_style(Style::new().fg(theme::border()).bg(BG));
     let mut scrollbar_state = ScrollbarState::new(row_count)
         .position(scrollbar_position(
             scroll,
@@ -371,8 +369,8 @@ pub(super) fn render_task_header(
     compact_status: bool,
 ) {
     let style = Style::new()
-        .fg(INVERSE_FG)
-        .bg(BORDER)
+        .fg(theme::inverse_fg())
+        .bg(theme::border())
         .add_modifier(Modifier::BOLD);
     frame.render_widget(Block::new().style(style), area);
     let time_header = match render_mode {
@@ -422,16 +420,16 @@ pub(super) fn status_header(compact_status: bool) -> &'static str {
 pub(super) fn render_group_row(frame: &mut Frame, label: &str, count: usize, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" ▸ ", Style::new().fg(ACCENT).bg(BG_ALT)),
+            Span::styled(" ▸ ", Style::new().fg(theme::accent()).bg(theme::bg_alt())),
             Span::styled(
                 format!("{} ({count})", label.to_uppercase()),
                 Style::new()
-                    .fg(ACCENT)
-                    .bg(BG_ALT)
+                    .fg(theme::accent())
+                    .bg(theme::bg_alt())
                     .add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::new().bg(BG_ALT)),
+        .style(Style::new().bg(theme::bg_alt())),
         area,
     );
 }
@@ -444,11 +442,15 @@ pub(super) fn row_style(
     blocked: bool,
 ) -> Style {
     let style = if selected {
-        if focused { SELECTED } else { SELECTED_INACTIVE }
+        if focused {
+            theme::selected()
+        } else {
+            theme::selected_inactive()
+        }
     } else if related {
-        RELATED
+        theme::related()
     } else if marked {
-        Style::new().bg(BG_ALT)
+        Style::new().bg(theme::bg_alt())
     } else {
         Style::new().bg(BG)
     };
@@ -499,7 +501,7 @@ pub(super) fn render_task_row_cells(
 mod tests {
     use super::super::tests::*;
     use super::*;
-    use crate::tui::theme::FG;
+    use crate::tui::theme;
 
     #[test]
     fn label_header_cell_aligns_with_label_column_content() {
@@ -609,7 +611,7 @@ mod tests {
         item.task.due_on = Some("2999-01-01".to_string());
         let cell = task_time_cell(&item, 0, TaskListRenderMode::Flat, true, true);
         assert_eq!(cell.to_string(), "Jan1");
-        assert_eq!(cell.spans[0].style.fg, Some(ACCENT));
+        assert_eq!(cell.spans[0].style.fg, Some(theme::accent()));
     }
 
     #[tokio::test]
@@ -680,7 +682,7 @@ mod tests {
         let buffer = render_task_row_buffer(&item, Some(&editor));
 
         assert_eq!(buffer[(18, 0)].symbol(), " ");
-        assert_eq!(buffer[(18, 0)].style().bg, Some(FG));
+        assert_eq!(buffer[(18, 0)].style().bg, Some(theme::fg()));
     }
 
     #[test]
@@ -698,6 +700,6 @@ mod tests {
         let blocked = row_style(false, true, false, false, true);
         assert!(blocked.add_modifier.contains(Modifier::DIM));
 
-        assert_eq!(row_style(true, true, false, false, true), SELECTED);
+        assert_eq!(row_style(true, true, false, false, true), theme::selected());
     }
 }

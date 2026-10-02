@@ -12,10 +12,7 @@ use crate::tui::store::{
     SidebarEntry, SidebarEntryTarget, TaskQuery, TaskScope, TaskScopeTarget, TuiStore,
 };
 use crate::tui::text::truncate_width;
-use crate::tui::theme::{
-    self, ACCENT, BG, BG_ALT, BORDER, FG, FG_DIM, FG_MUTED, PINK, RED, SELECTED_BG,
-    SELECTED_INACTIVE, YELLOW,
-};
+use crate::tui::theme::{self, BG};
 
 const QUEUE_MARKER: &str = "\u{f03a}";
 const READY_MARKER: &str = "\u{f04b}";
@@ -188,17 +185,19 @@ pub(super) fn render_sidebar(
                 Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) => {
                     theme::project_color(project)
                 }
-                Some(SidebarEntryTarget::View(TaskQuery::Active)) => FG_MUTED,
-                Some(SidebarEntryTarget::View(TaskQuery::Todo)) => FG_DIM,
-                Some(SidebarEntryTarget::View(TaskQuery::Epics)) => YELLOW,
-                _ => FG,
+                Some(SidebarEntryTarget::View(TaskQuery::Active)) => theme::fg_muted(),
+                Some(SidebarEntryTarget::View(TaskQuery::Todo)) => theme::fg_dim(),
+                Some(SidebarEntryTarget::View(TaskQuery::Epics)) => theme::yellow(),
+                _ => theme::fg(),
             };
             let label_style = if is_active_view {
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+                Style::new()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD)
             } else if selected {
-                Style::new().fg(FG).add_modifier(Modifier::BOLD)
+                Style::new().fg(theme::fg()).add_modifier(Modifier::BOLD)
             } else {
-                Style::new().fg(FG)
+                Style::new().fg(theme::fg())
             };
             let line = sidebar_entry_line(
                 entry,
@@ -222,16 +221,20 @@ pub(super) fn render_sidebar(
     items.extend([
         ListItem::new(Line::from("")),
         ListItem::new(
-            Line::from("FILTERS").style(Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD)),
+            Line::from("FILTERS").style(
+                Style::new()
+                    .fg(theme::fg_dim())
+                    .add_modifier(Modifier::BOLD),
+            ),
         ),
-        filter_item("▲", "urgent", urgent_count, RED, area.width),
-        filter_item("⚡", "conflicts", conflict_count, PINK, area.width),
+        filter_item("▲", "urgent", urgent_count, theme::red(), area.width),
+        filter_item("⚡", "conflicts", conflict_count, theme::pink(), area.width),
     ]);
 
     let highlight_style = if focus == Focus::Sidebar {
-        Style::new().bg(SELECTED_BG)
+        Style::new().bg(theme::selected_bg())
     } else {
-        SELECTED_INACTIVE
+        theme::selected_inactive()
     };
     let borders = if overlay {
         Borders::ALL
@@ -243,7 +246,7 @@ pub(super) fn render_sidebar(
             Block::new()
                 .borders(borders)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::new().fg(BORDER))
+                .border_style(Style::new().fg(theme::border()))
                 .style(Style::new().bg(BG)),
         )
         .highlight_style(highlight_style);
@@ -261,8 +264,8 @@ fn sidebar_section_line(label: &str, collapsed: bool, width: usize) -> Line<'sta
     };
     Line::from(text).style(
         Style::new()
-            .fg(FG_DIM)
-            .bg(BG_ALT)
+            .fg(theme::fg_dim())
+            .bg(theme::bg_alt())
             .add_modifier(Modifier::BOLD),
     )
 }
@@ -271,7 +274,11 @@ fn badge(count: i64, active: bool) -> Span<'static> {
     if count <= 0 {
         return Span::raw(" ");
     }
-    let color = if active { ACCENT } else { FG_MUTED };
+    let color = if active {
+        theme::accent()
+    } else {
+        theme::fg_muted()
+    };
     Span::styled(
         format!("{count:>2}"),
         Style::new().fg(color).add_modifier(Modifier::BOLD),
@@ -370,9 +377,13 @@ fn sidebar_entry_line(
     let used_width = marker_cell.width() + label.width() + count.width();
     let spacer_width = width.saturating_sub(used_width).max(1);
     let count_style = if active {
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(theme::accent())
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(FG_MUTED).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(theme::fg_muted())
+            .add_modifier(Modifier::BOLD)
     };
     Line::from(vec![
         Span::styled(marker_cell, Style::new().fg(marker_color)),
@@ -392,7 +403,10 @@ fn filter_item(icon: &str, label: &str, count: i64, color: Color, width: u16) ->
     let label_width = (width as usize).saturating_sub(icon_cell.width() + count_width + 2);
     ListItem::new(Line::from(vec![
         Span::styled(icon_cell, Style::new().fg(color)),
-        Span::styled(format!("{label:<label_width$}"), Style::new().fg(FG_MUTED)),
+        Span::styled(
+            format!("{label:<label_width$}"),
+            Style::new().fg(theme::fg_muted()),
+        ),
         badge(count, false),
     ]))
 }
@@ -409,8 +423,8 @@ mod tests {
                     let line = sidebar_section_line(label, collapsed, width);
                     let text = line.to_string();
                     assert_eq!(line.width(), width);
-                    assert_eq!(line.style.fg, Some(FG_DIM));
-                    assert_eq!(line.style.bg, Some(BG_ALT));
+                    assert_eq!(line.style.fg, Some(theme::fg_dim()));
+                    assert_eq!(line.style.bg, Some(theme::bg_alt()));
                     assert!(line.style.add_modifier.contains(Modifier::BOLD));
                     if width > 0 {
                         let indicator_column = width.saturating_sub(2);
@@ -449,8 +463,8 @@ mod tests {
             &entry,
             "●",
             "very-long-project-name",
-            Style::new().fg(FG),
-            FG,
+            Style::new().fg(theme::fg()),
+            theme::fg(),
             false,
             14,
         )

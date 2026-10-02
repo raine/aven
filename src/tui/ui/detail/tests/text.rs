@@ -101,7 +101,7 @@ fn detail_header_marks_epics_with_star() {
         .find(|span| span.content == EPIC_MARKER)
         .expect("epic marker");
 
-    assert_eq!(marker.style.fg, Some(YELLOW));
+    assert_eq!(marker.style.fg, Some(theme::yellow()));
 }
 
 #[test]
@@ -223,8 +223,8 @@ fn detail_selection_highlights_the_selected_range() {
         .find(|span| span.content.as_ref() == "Fix")
         .unwrap();
 
-    assert_eq!(selected.style.bg, Some(ACCENT));
-    assert_eq!(selected.style.fg, Some(INVERSE_FG));
+    assert_eq!(selected.style.bg, Some(theme::accent()));
+    assert_eq!(selected.style.fg, Some(theme::inverse_fg()));
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn detail_note_lines_keep_quote_rail() {
         .expect("missing rendered inline code span");
     assert_eq!(
         code_span.style.fg,
-        Some(crate::tui::theme::BLUE),
+        Some(crate::tui::theme::blue()),
         "inline code foreground style was not preserved"
     );
     assert!(

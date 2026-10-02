@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use crate::tui::theme::{BG, BG_PANEL, BLUE, FG, FG_DIM, GREEN, ORANGE, RED};
+use crate::tui::theme::{self, BG};
 use crate::tui::toast::{Toast, ToastSeverity};
 
 struct ToastTone {
@@ -16,19 +16,19 @@ fn toast_tone(severity: ToastSeverity) -> ToastTone {
     match severity {
         ToastSeverity::Info => ToastTone {
             icon: "•",
-            color: BLUE,
+            color: theme::blue(),
         },
         ToastSeverity::Warning => ToastTone {
             icon: "!",
-            color: ORANGE,
+            color: theme::orange(),
         },
         ToastSeverity::Error => ToastTone {
             icon: "!",
-            color: RED,
+            color: theme::red(),
         },
         ToastSeverity::Success => ToastTone {
             icon: "✓",
-            color: GREEN,
+            color: theme::green(),
         },
     }
 }
@@ -39,9 +39,12 @@ fn toast_width(content: &Line<'_>, frame_width: u16) -> u16 {
 }
 
 fn toast_message_spans(message: &str, fill: Color) -> Vec<Span<'_>> {
-    let message_style = Style::new().fg(FG).bg(fill).add_modifier(Modifier::BOLD);
+    let message_style = Style::new()
+        .fg(theme::fg())
+        .bg(fill)
+        .add_modifier(Modifier::BOLD);
     let separator_style = Style::new()
-        .fg(FG_DIM)
+        .fg(theme::fg_dim())
         .bg(fill)
         .add_modifier(Modifier::BOLD);
     let mut spans = Vec::new();
@@ -56,7 +59,7 @@ fn toast_message_spans(message: &str, fill: Color) -> Vec<Span<'_>> {
 
 pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
     let tone = toast_tone(toast.severity);
-    let fill = BG_PANEL;
+    let fill = theme::bg_panel();
     let mut spans = vec![
         Span::styled("", Style::new().fg(fill).bg(BG)),
         Span::styled("▌", Style::new().fg(tone.color).bg(fill)),
@@ -89,7 +92,7 @@ pub(super) fn render_toast(frame: &mut Frame, toast: &Toast) {
     };
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(content).style(Style::new().fg(FG).bg(BG)),
+        Paragraph::new(content).style(Style::new().fg(theme::fg()).bg(BG)),
         area,
     );
 }
@@ -135,10 +138,10 @@ mod tests {
 
     #[test]
     fn toast_tone_uses_severity_colors() {
-        assert_eq!(toast_tone(ToastSeverity::Info).color, BLUE);
-        assert_eq!(toast_tone(ToastSeverity::Warning).color, ORANGE);
-        assert_eq!(toast_tone(ToastSeverity::Error).color, RED);
-        assert_eq!(toast_tone(ToastSeverity::Success).color, GREEN);
+        assert_eq!(toast_tone(ToastSeverity::Info).color, theme::blue());
+        assert_eq!(toast_tone(ToastSeverity::Warning).color, theme::orange());
+        assert_eq!(toast_tone(ToastSeverity::Error).color, theme::red());
+        assert_eq!(toast_tone(ToastSeverity::Success).color, theme::green());
     }
 
     #[test]
@@ -171,7 +174,7 @@ mod tests {
 
     #[test]
     fn toast_separators_use_muted_text_color() {
-        let spans = toast_message_spans("saved · u undo · g . return", BG_PANEL);
+        let spans = toast_message_spans("saved · u undo · g . return", theme::bg_panel());
 
         assert_eq!(
             spans
@@ -180,10 +183,10 @@ mod tests {
                 .collect::<String>(),
             "saved │ u undo │ g . return"
         );
-        assert_eq!(spans[0].style.fg, Some(FG));
-        assert_eq!(spans[1].style.fg, Some(FG_DIM));
-        assert_eq!(spans[2].style.fg, Some(FG));
-        assert_eq!(spans[3].style.fg, Some(FG_DIM));
+        assert_eq!(spans[0].style.fg, Some(theme::fg()));
+        assert_eq!(spans[1].style.fg, Some(theme::fg_dim()));
+        assert_eq!(spans[2].style.fg, Some(theme::fg()));
+        assert_eq!(spans[3].style.fg, Some(theme::fg_dim()));
     }
 
     #[test]

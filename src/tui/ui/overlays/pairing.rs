@@ -8,7 +8,7 @@ use super::super::dialog::{Dialog, dialog_hint_line};
 use crate::pairing::{PairingPresentation, PairingQr};
 use crate::tui::overlay::{dialog_area, dialog_inner_area};
 use crate::tui::text::{cell_width_ranges, str_cells};
-use crate::tui::theme::{BG_ALT, FG, FG_MUTED};
+use crate::tui::theme;
 
 const SCAN_INSTRUCTION: &str = "Scan this code with Aven iOS.";
 pub(crate) const NETWORK_REQUIREMENT: &str =
@@ -93,7 +93,7 @@ pub(in crate::tui::ui) fn render_pairing(frame: &mut Frame, presentation: &Pairi
         render_qr_header(frame, layout.content, presentation.server_identity());
         render_qr(frame, qr, presentation.qr());
     } else {
-        render_text(frame, layout.content, &fallback_text(), FG);
+        render_text(frame, layout.content, &fallback_text(), theme::fg());
     }
     render_footer(frame, layout.footer);
 }
@@ -110,7 +110,7 @@ fn render_qr_header(frame: &mut Frame, area: Rect, server_identity: &str) {
         frame,
         Rect::new(area.x, area.y, area.width, scan_height.min(area.height)),
         SCAN_INSTRUCTION,
-        FG,
+        theme::fg(),
     );
 
     let server = format!("Server: {server_identity}");
@@ -125,7 +125,7 @@ fn render_qr_header(frame: &mut Frame, area: Rect, server_identity: &str) {
             server_height.min(area.bottom().saturating_sub(server_y)),
         ),
         &server,
-        FG_MUTED,
+        theme::fg_muted(),
     );
 
     let requirement_y = server_y.saturating_add(server_height);
@@ -138,7 +138,7 @@ fn render_qr_header(frame: &mut Frame, area: Rect, server_identity: &str) {
             area.bottom().saturating_sub(requirement_y),
         ),
         NETWORK_REQUIREMENT,
-        FG_MUTED,
+        theme::fg_muted(),
     );
 }
 
@@ -157,7 +157,8 @@ fn render_footer(frame: &mut Frame, area: Rect) {
         return;
     }
     frame.render_widget(
-        Paragraph::new(dialog_hint_line(&[("Esc", "close")])).style(Style::new().bg(BG_ALT)),
+        Paragraph::new(dialog_hint_line(&[("Esc", "close")]))
+            .style(Style::new().bg(theme::bg_alt())),
         area,
     );
 }
@@ -171,7 +172,7 @@ fn render_text(frame: &mut Frame, area: Rect, text: &str, color: Color) {
         .map(Line::from)
         .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(lines).style(Style::new().fg(color).bg(BG_ALT)),
+        Paragraph::new(lines).style(Style::new().fg(color).bg(theme::bg_alt())),
         area,
     );
 }

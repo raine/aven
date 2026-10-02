@@ -11,7 +11,7 @@ use super::attachments::attachment_detail_line;
 use super::text::detail_title_lines;
 use super::*;
 use crate::choices::{TaskPriority, TaskStatus};
-use crate::tui::theme::{self, ACCENT, BG_PANEL, FG, FG_DIM, FG_MUTED, INVERSE_FG, YELLOW};
+use crate::tui::theme;
 
 mod activity;
 mod attachments;

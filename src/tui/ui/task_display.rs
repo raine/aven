@@ -1,7 +1,7 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::tui::theme::{self, FG_DIM};
+use crate::tui::theme;
 
 pub(super) fn linked_task_ref_spans(display_ref: &str, project_key: &str) -> Vec<Span<'static>> {
     if let Some((prefix, suffix)) = display_ref.split_once('-') {
@@ -10,13 +10,13 @@ pub(super) fn linked_task_ref_spans(display_ref: &str, project_key: &str) -> Vec
                 prefix.to_string(),
                 Style::new().fg(theme::project_color(project_key)),
             ),
-            Span::styled("-", Style::new().fg(FG_DIM)),
-            Span::styled(suffix.to_string(), Style::new().fg(FG_DIM)),
+            Span::styled("-", Style::new().fg(theme::fg_dim())),
+            Span::styled(suffix.to_string(), Style::new().fg(theme::fg_dim())),
         ]
     } else {
         vec![Span::styled(
             display_ref.to_string(),
-            Style::new().fg(FG_DIM),
+            Style::new().fg(theme::fg_dim()),
         )]
     }
 }

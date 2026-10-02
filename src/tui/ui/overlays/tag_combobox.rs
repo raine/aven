@@ -9,7 +9,7 @@ use crate::labels::normalize_label;
 use crate::tui::overlay::{
     TAG_COMBOBOX_VIEWPORT_ROWS, TAG_COMBOBOX_WIDTH, TagComboboxView, tag_combobox_layout,
 };
-use crate::tui::theme::{ACCENT, BG_PANEL, FG, FG_DIM, INVERSE_FG, SELECTED};
+use crate::tui::theme;
 
 pub(in crate::tui::ui) fn render_tag_combobox(frame: &mut Frame, state: &TagComboboxView) {
     let layout = tag_combobox_layout(state, frame.area().as_size());
@@ -18,7 +18,7 @@ pub(in crate::tui::ui) fn render_tag_combobox(frame: &mut Frame, state: &TagComb
     let lines = tag_combobox_lines(state);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .style(Style::new().fg(FG).bg(BG_PANEL))
+            .style(Style::new().fg(theme::fg()).bg(theme::bg_panel()))
             .wrap(Wrap { trim: false }),
         content,
     );
@@ -57,10 +57,10 @@ pub(in crate::tui::ui) fn tag_combobox_lines_with_viewport(
 }
 
 fn tag_chip(label: &str) -> Vec<Span<'static>> {
-    let fill = ACCENT;
-    let edge_style = Style::new().fg(fill).bg(BG_PANEL);
+    let fill = theme::accent();
+    let edge_style = Style::new().fg(fill).bg(theme::bg_panel());
     let label_style = Style::new()
-        .fg(INVERSE_FG)
+        .fg(theme::inverse_fg())
         .bg(fill)
         .add_modifier(Modifier::BOLD);
     vec![
@@ -80,7 +80,10 @@ fn tag_combobox_input_line(state: &TagComboboxView) -> Line<'static> {
     let normalized = normalize_label(&state.input);
     if state.selected.is_empty() && normalized.is_empty() {
         spans.push(cursor_cell("E"));
-        spans.push(Span::styled("nter labels here...", Style::new().fg(FG_DIM)));
+        spans.push(Span::styled(
+            "nter labels here...",
+            Style::new().fg(theme::fg_dim()),
+        ));
     } else if (normalized.len() == state.input_cursor || state.input_cursor == state.input.len())
         && state.completion.is_some()
     {
@@ -91,7 +94,7 @@ fn tag_combobox_input_line(state: &TagComboboxView) -> Line<'static> {
             spans.push(cursor_cell(cursor.to_string()));
             let rest = chars.collect::<String>();
             if !rest.is_empty() {
-                spans.push(Span::styled(rest, Style::new().fg(FG_DIM)));
+                spans.push(Span::styled(rest, Style::new().fg(theme::fg_dim())));
             }
         }
     } else {
@@ -101,7 +104,7 @@ fn tag_combobox_input_line(state: &TagComboboxView) -> Line<'static> {
             InputWidth::Full,
         ));
     }
-    spans.push(Span::styled(" ▾", Style::new().fg(FG_DIM)));
+    spans.push(Span::styled(" ▾", Style::new().fg(theme::fg_dim())));
     Line::from(spans)
 }
 
@@ -149,9 +152,9 @@ fn option_line(state: &TagComboboxView, index: usize) -> Line<'static> {
         " "
     };
     let style = if highlighted {
-        SELECTED
+        theme::selected()
     } else {
-        Style::new().bg(BG_PANEL)
+        Style::new().bg(theme::bg_panel())
     };
     Line::from(vec![
         Span::styled(format!("{marker} {check} "), style),
@@ -162,10 +165,13 @@ fn option_line(state: &TagComboboxView, index: usize) -> Line<'static> {
 fn create_option_line(state: &TagComboboxView) -> Line<'static> {
     let value = normalize_label(&state.input);
     if value.is_empty() {
-        return Line::from(Span::styled("  no labels", Style::new().fg(FG_DIM)));
+        return Line::from(Span::styled(
+            "  no labels",
+            Style::new().fg(theme::fg_dim()),
+        ));
     }
     Line::from(vec![
-        Span::styled("▸ + ", SELECTED),
-        Span::styled(format!("create {value}"), SELECTED),
+        Span::styled("▸ + ", theme::selected()),
+        Span::styled(format!("create {value}"), theme::selected()),
     ])
 }

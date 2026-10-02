@@ -10,7 +10,7 @@ use super::super::truncate::truncate_line_width;
 use crate::query::TaskListItem;
 use crate::task_render::{AttachmentMetadataJson, attachment_state_placeholder, human_file_size};
 use crate::tui::app::WidgetState;
-use crate::tui::theme::{ACCENT, BG, BORDER, FG, FG_DIM, FG_MUTED};
+use crate::tui::theme::{self, BG};
 
 use super::body::DetailBodyBlock;
 use super::document::detail_body_area;
@@ -75,16 +75,18 @@ pub(super) fn extend_pending_attachment_section(
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "ATTACHMENTS",
-            Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(theme::fg_dim())
+                .add_modifier(Modifier::BOLD),
         )));
     }
     for attachment in pending {
         let (label, color) = match attachment.status {
             crate::tui::attachment_controller::PendingAttachmentStatus::Preparing => {
-                ("[image: preparing]", FG_MUTED)
+                ("[image: preparing]", theme::fg_muted())
             }
             crate::tui::attachment_controller::PendingAttachmentStatus::Failed => {
-                ("[image: failed]", crate::tui::theme::RED)
+                ("[image: failed]", theme::red())
             }
         };
         lines.push(quoted_line(Line::from(label), Style::new().fg(color)));
@@ -109,7 +111,9 @@ pub(super) fn extend_attachment_section(
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "ATTACHMENTS",
-        Style::new().fg(FG_DIM).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(theme::fg_dim())
+            .add_modifier(Modifier::BOLD),
     )));
     let content_width = width.saturating_sub(3).max(1);
     for attachment in live {
@@ -126,7 +130,11 @@ pub(super) fn extend_attachment_section(
                 });
                 lines.push(quoted_line(
                     line,
-                    Style::new().fg(if focused { ACCENT } else { FG_MUTED }),
+                    Style::new().fg(if focused {
+                        theme::accent()
+                    } else {
+                        theme::fg_muted()
+                    }),
                 ));
             }
             DetailBodyBlock::Image {
@@ -144,8 +152,12 @@ pub(super) fn extend_attachment_section(
                     line_index: lines.len(),
                     height: height as usize + 3,
                 });
-                let frame_style = Style::new().fg(if focused { ACCENT } else { BORDER });
-                lines.push(quoted_line(placeholder, Style::new().fg(FG_MUTED)));
+                let frame_style = Style::new().fg(if focused {
+                    theme::accent()
+                } else {
+                    theme::border()
+                });
+                lines.push(quoted_line(placeholder, Style::new().fg(theme::fg_muted())));
                 lines.push(quoted_line(
                     Line::from(format!("┌{}┐", "─".repeat(width as usize))),
                     frame_style,
@@ -158,7 +170,7 @@ pub(super) fn extend_attachment_section(
                             Span::raw(" ".repeat(width as usize)),
                             Span::styled("│", frame_style),
                         ]),
-                        Style::new().fg(FG_MUTED),
+                        Style::new().fg(theme::fg_muted()),
                     ));
                 }
                 lines.push(quoted_line(
@@ -231,10 +243,26 @@ pub(super) fn attachment_detail_line(
     content_width: usize,
     focused: bool,
 ) -> Line<'static> {
-    let state_style = Style::new().fg(if focused { ACCENT } else { FG_MUTED });
-    let filename_style = Style::new().fg(if focused { ACCENT } else { FG });
-    let separator_style = Style::new().fg(if focused { ACCENT } else { FG_DIM });
-    let metadata_style = Style::new().fg(if focused { ACCENT } else { FG_MUTED });
+    let state_style = Style::new().fg(if focused {
+        theme::accent()
+    } else {
+        theme::fg_muted()
+    });
+    let filename_style = Style::new().fg(if focused {
+        theme::accent()
+    } else {
+        theme::fg()
+    });
+    let separator_style = Style::new().fg(if focused {
+        theme::accent()
+    } else {
+        theme::fg_dim()
+    });
+    let metadata_style = Style::new().fg(if focused {
+        theme::accent()
+    } else {
+        theme::fg_muted()
+    });
     let mut spans = vec![Span::styled(
         attachment_state_placeholder(attachment),
         state_style,
@@ -295,7 +323,7 @@ pub(super) fn render_attachment_preview_message(
     frame.render_widget(
         Paragraph::new(message)
             .alignment(ratatui::layout::Alignment::Center)
-            .style(Style::new().fg(FG_MUTED).bg(BG)),
+            .style(Style::new().fg(theme::fg_muted()).bg(BG)),
         area,
     );
 }
@@ -330,7 +358,7 @@ pub(crate) fn render_attachment_preview(
         .unwrap_or("Image preview");
     let block = Block::new()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(ACCENT))
+        .border_style(Style::new().fg(theme::accent()))
         .title(format!(" {title} "))
         .style(Style::new().bg(BG));
     let inner = block.inner(area);

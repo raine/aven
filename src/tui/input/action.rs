@@ -76,6 +76,7 @@ impl App {
                     self.store.columns_preview_visible = !self.store.columns_preview_visible;
                 }
             }
+            Action::ToggleBackground => self.toggle_background(),
             Action::GoBack => self.go_back().await?,
             Action::GoForward => self.go_forward().await?,
             Action::GoToBlocker => self.go_to_blocker().await?,

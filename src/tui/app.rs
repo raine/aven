@@ -259,6 +259,7 @@ pub(crate) struct App {
     pub(super) pending_terminal_command:
         Option<crate::tui::custom_command::CustomCommandInvocation>,
     pub(super) terminal_mouse_capture: bool,
+    pub(crate) background: crate::tui::theme::Background,
     #[cfg(test)]
     pub(super) _test_database_dir: Option<tempfile::TempDir>,
 }
@@ -343,6 +344,7 @@ impl App {
             custom_commands: crate::tui::custom_command_runtime::CustomCommandController::default(),
             pending_terminal_command: None,
             terminal_mouse_capture: false,
+            background: crate::tui::theme::Background::default(),
             #[cfg(test)]
             _test_database_dir: None,
         };
@@ -353,6 +355,18 @@ impl App {
         }
         app.restore_sidebar_selection();
         Ok(app)
+    }
+
+    /// Chooses which palette of [`Theme::DEFAULT`] the TUI draws with, so its
+    /// colors stay readable on the terminal background.
+    ///
+    /// [`Theme::DEFAULT`]: crate::tui::theme::Theme::DEFAULT
+    pub(crate) fn set_background(&mut self, background: crate::tui::theme::Background) {
+        self.background = background;
+    }
+
+    pub(crate) fn toggle_background(&mut self) {
+        self.set_background(self.background.opposite());
     }
 
     pub(crate) fn open_task_on_start(&mut self, task_id: &crate::ids::TaskId) -> Result<()> {
