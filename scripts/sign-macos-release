@@ -33,15 +33,54 @@ certificate="$work_dir/certificate.p12"
 keychain="$work_dir/signing.keychain-db"
 keychain_password=$(openssl rand -hex 32)
 
+original_keychains=()
+restore_search_list=0
+keychain_created=0
+set_ci_search_list() {
+  if (( ${#original_keychains[@]} > 0 )); then
+    security list-keychains -d user -s "$@" "${original_keychains[@]}"
+  else
+    security list-keychains -d user -s "$@"
+  fi
+}
 cleanup() {
-  security delete-keychain "$keychain" >/dev/null 2>&1 || true
+  local status=$?
+  local cleanup_failed=0
+  if [[ $restore_search_list == 1 ]]; then
+    set_ci_search_list >/dev/null 2>&1 || cleanup_failed=1
+  fi
+  if [[ $keychain_created == 1 ]]; then
+    security delete-keychain "$keychain" >/dev/null 2>&1 || cleanup_failed=1
+  fi
   rm -rf "$work_dir"
+  if [[ $cleanup_failed == 1 ]]; then
+    echo "failed to restore CI keychain search list or remove the signing keychain" >&2
+    exit 1
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
+
+# Codesign can use the default search list when resolving an identity's key.
+# Only disposable GitHub runners may change it; local login settings stay intact.
+if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+  search_list=$(security list-keychains -d user)
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    keychain_path=${line#*\"}
+    keychain_path=${keychain_path%\"}
+    original_keychains+=("$keychain_path")
+  done <<<"$search_list"
+fi
 
 printf '%s' "$APPLE_DEVELOPER_ID_CERT_BASE64" | /usr/bin/base64 --decode >"$certificate"
 chmod 600 "$certificate"
 security create-keychain -p "$keychain_password" "$keychain"
+keychain_created=1
+if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+  restore_search_list=1
+  set_ci_search_list "$keychain"
+fi
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$certificate" -k "$keychain" \
