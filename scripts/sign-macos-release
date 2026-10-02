@@ -49,12 +49,23 @@ security import "$certificate" -k "$keychain" \
 security set-key-partition-list -S apple-tool:,apple:,codesign: \
   -s -k "$keychain_password" "$keychain" >/dev/null
 
-# Public certificate metadata makes missing or untrusted CI identities diagnosable.
-security find-identity -p codesigning "$keychain"
-security find-identity -v -p codesigning "$keychain"
+# Resolve the configured public name inside this keychain, then give codesign
+# the unambiguous certificate fingerprint instead of a display-name search.
+valid_identities=$(security find-identity -v -p codesigning "$keychain")
+printf '%s\n' "$valid_identities"
+identity_hash=''
+while IFS= read -r line; do
+  if [[ $line == *"\"$APPLE_DEVELOPER_ID_IDENTITY\"" ]]; then
+    identity_hash+=$(sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}) ".*"$/\1/p' <<<"$line")
+  fi
+done <<<"$valid_identities"
+if [[ ! $identity_hash =~ ^[0-9A-F]{40}$ ]]; then
+  echo "configured signing identity must match exactly one valid identity in the imported keychain" >&2
+  exit 1
+fi
 
 codesign --force --options runtime --timestamp --identifier "$identifier" \
-  --keychain "$keychain" --sign "$APPLE_DEVELOPER_ID_IDENTITY" "$binary"
+  --keychain "$keychain" --sign "$identity_hash" "$binary"
 codesign --verify --strict --verbose=2 "$binary"
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
