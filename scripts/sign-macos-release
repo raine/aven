@@ -49,6 +49,10 @@ security import "$certificate" -k "$keychain" \
 security set-key-partition-list -S apple-tool:,apple:,codesign: \
   -s -k "$keychain_password" "$keychain" >/dev/null
 
+# Public certificate metadata makes missing or untrusted CI identities diagnosable.
+security find-identity -p codesigning "$keychain"
+security find-identity -v -p codesigning "$keychain"
+
 codesign --force --options runtime --timestamp --identifier "$identifier" \
   --keychain "$keychain" --sign "$APPLE_DEVELOPER_ID_IDENTITY" "$binary"
 codesign --verify --strict --verbose=2 "$binary"

@@ -20,10 +20,13 @@ env:
 jobs:
   signing-preflight:
     if: github.ref == 'refs/heads/e2ee-macos-release'
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     environment: macos-signing
     steps:
-      - name: Check signing configuration
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check usable signing identity
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
           APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
@@ -36,7 +39,9 @@ jobs:
               missing=1
             fi
           done
-          exit "$missing"
+          test "$missing" = 0
+          cp /usr/bin/true signing-probe
+          scripts/sign-macos-release signing-probe
 
   build:
     needs: signing-preflight
