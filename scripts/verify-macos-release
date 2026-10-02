@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use only system tools to evaluate release signatures.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: verify-macos-release BINARY [arm64|x86_64]" >&2
+  exit 2
+fi
+binary=$1
+architecture=${2:-}
+if [[ ! -f $binary ]]; then
+  echo "binary not found: $binary" >&2
+  exit 2
+fi
+if [[ -n $architecture ]]; then
+  case $architecture in
+    arm64|x86_64) ;;
+    *) echo "unsupported release architecture: $architecture" >&2; exit 2 ;;
+  esac
+  if [[ $(lipo -archs "$binary") != "$architecture" ]]; then
+    echo "release binary does not have the expected architecture: $architecture" >&2
+    exit 1
+  fi
+fi
+
+# These are the identity used by login Keychain ACLs across upgrades.
+identifier=fi.zendit.Aven
+expected_team_identifier=YG824X87Y2
+codesign --verify --strict --verbose=2 "$binary"
+signature=$(codesign -d -r- --verbose=4 "$binary" 2>&1)
+actual_identifier=$(sed -n 's/^Identifier=//p' <<<"$signature")
+team_identifier=$(sed -n 's/^TeamIdentifier=//p' <<<"$signature")
+designated_requirement=$(sed -n 's/^designated => //p' <<<"$signature")
+if [[ $actual_identifier != "$identifier" ||
+      $team_identifier != "$expected_team_identifier" ||
+      $designated_requirement == *"cdhash"* ||
+      $designated_requirement != *"identifier \"$identifier\""* ]]; then
+  echo "release signature does not have the expected stable designated requirement" >&2
+  exit 1
+fi
+
+release_requirement="identifier \"$identifier\" and anchor apple generic"
+release_requirement+=" and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
+release_requirement+=" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+release_requirement+=" and certificate leaf[subject.OU] = \"$expected_team_identifier\""
+if ! codesign --verify --verbose=2 -R="$release_requirement" "$binary"; then
+  echo "release signature does not satisfy the expected Developer ID requirement" >&2
+  exit 1
+fi
+printf '%s\n' "$signature"

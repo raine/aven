@@ -104,8 +104,8 @@ jobs:
             ${{ matrix.artifact }}.tar.gz
             ${{ matrix.artifact }}.sha256
 
-  # Holds the Developer ID key. Runs no cargo or dependency code, only the
-  # repository's signing script and pinned GitHub actions.
+  # Runs no cargo or build scripts. The signing script removes the imported key
+  # before package validation and binary smoke tests; GitHub actions are pinned.
   sign-macos:
     needs: build
     runs-on: macos-15
@@ -115,7 +115,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        artifact: [aven-darwin-arm64, aven-darwin-amd64]
+        include:
+          - artifact: aven-darwin-arm64
+            architecture: arm64
+          - artifact: aven-darwin-amd64
+            architecture: x86_64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -140,8 +144,12 @@ jobs:
         run: |
           package_dir="package-${{ matrix.artifact }}"
           mkdir "$package_dir"
-          tar -xzf ${{ matrix.artifact }}.tar.gz -C "$package_dir"
-          "$package_dir/${BIN_NAME}" --help
+          shasum -a 256 -c "${{ matrix.artifact }}.sha256"
+          tar -xzf "${{ matrix.artifact }}.tar.gz" -C "$package_dir"
+          cmp "unsigned/${BIN_NAME}" "$package_dir/${BIN_NAME}"
+          scripts/verify-macos-release "$package_dir/${BIN_NAME}" "${{ matrix.architecture }}"
+          scripts/test-verify-macos-release "$package_dir/${BIN_NAME}"
+          "$package_dir/${BIN_NAME}" --help </dev/null
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.artifact }}

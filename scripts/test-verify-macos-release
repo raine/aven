@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $(uname -s) != Darwin ]]; then
+  echo "macOS signature fixtures require macOS" >&2
+  exit 2
+fi
+if [[ $# -ne 1 ]]; then
+  echo "usage: test-verify-macos-release SIGNED_BINARY" >&2
+  exit 2
+fi
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+verify="$script_dir/verify-macos-release"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+reject() {
+  if "$verify" "$@" >"$tmp/rejection.log" 2>&1; then
+    echo "FAIL: accepted invalid release: $*" >&2
+    exit 1
+  fi
+}
+
+architecture=$(/usr/bin/lipo -archs "$1")
+"$verify" "$1" "$architecture"
+case $architecture in
+  arm64) other_architecture=x86_64 ;;
+  x86_64) other_architecture=arm64 ;;
+  *) echo "expected a thin release binary" >&2; exit 1 ;;
+esac
+reject "$1" "$other_architecture"
+reject "$1" invalid
+reject "$tmp/missing"
+
+cp "$1" "$tmp/adhoc"
+/usr/bin/codesign --force --sign - --identifier fi.zendit.Aven "$tmp/adhoc"
+reject "$tmp/adhoc" "$architecture"
+
+cp "$1" "$tmp/unsigned"
+/usr/bin/codesign --remove-signature "$tmp/unsigned"
+reject "$tmp/unsigned" "$architecture"
+
+# Alter a signed code page without changing the Mach-O header or embedded signature.
+cp "$1" "$tmp/tampered"
+printf '\377\377\377\377' | /bin/dd of="$tmp/tampered" bs=1 seek=16384 conv=notrunc 2>/dev/null
+reject "$tmp/tampered" "$architecture"
+echo "ok: signed release accepted; wrong architecture, invalid argument, missing, ad-hoc, unsigned and tampered binaries rejected"

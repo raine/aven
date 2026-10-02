@@ -22,8 +22,6 @@ fi
 binary=$1
 # Login Keychain ACLs use the designated requirement, which includes this identifier.
 identifier=fi.zendit.Aven
-# Changing the team changes every user's Keychain access requirement.
-expected_team_identifier=YG824X87Y2
 if [[ ! -f $binary ]]; then
   echo "binary not found: $binary" >&2
   exit 2
@@ -55,23 +53,5 @@ codesign --force --options runtime --timestamp --identifier "$identifier" \
   --keychain "$keychain" --sign "$APPLE_DEVELOPER_ID_IDENTITY" "$binary"
 codesign --verify --strict --verbose=2 "$binary"
 
-signature=$(codesign -d -r- --verbose=4 "$binary" 2>&1)
-team_identifier=$(sed -n 's/^TeamIdentifier=//p' <<<"$signature")
-designated_requirement=$(sed -n 's/^designated => //p' <<<"$signature")
-if [[ $signature != *"Identifier=$identifier"* ||
-      $team_identifier != "$expected_team_identifier" ||
-      $designated_requirement == *"cdhash"* ||
-      $designated_requirement != *"identifier \"$identifier\""* ]]; then
-  echo "release signature does not have the expected stable designated requirement" >&2
-  exit 1
-fi
-
-release_requirement="identifier \"$identifier\" and anchor apple generic"
-release_requirement+=" and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
-release_requirement+=" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
-release_requirement+=" and certificate leaf[subject.OU] = \"$expected_team_identifier\""
-if ! codesign --verify --verbose=2 -R="$release_requirement" "$binary"; then
-  echo "release signature does not satisfy the expected Developer ID requirement" >&2
-  exit 1
-fi
-printf '%s\n' "$signature"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+"$script_dir/verify-macos-release" "$binary"

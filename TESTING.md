@@ -4,6 +4,10 @@ Use focused checks while iterating, then hand off each affected package. Run the
 full gate once on the integrated tree; this routing is a starting heuristic, not
 automatic diff-based selection.
 
+For signed desktop artifacts, upgrade paths, and disposable-account Keychain
+lifecycle checks, use [macOS release qualification](MACOS_RELEASE_CHECKLIST.md).
+These release gates are separate from the automated application tests.
+
 ## Focused iteration
 
 Focused tests use the full suite's `SQLX_OFFLINE=true`,
