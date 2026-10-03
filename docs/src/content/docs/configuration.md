@@ -167,12 +167,12 @@ requests per minute. `endpoint` is supported for llamafile, Ollama, and OpenAI.
 Set `sync.auth_token` to the shared bearer token accepted by the AI routes.
 End-to-end encrypted sync uses separate device credentials.
 
-Provider credentials are deliberately excluded from ordinary configuration and
-from `aven config get` and `aven config set`. API-key providers read protected
-server-process environment variables. OAuth providers use the owner-only
-`private/ai` directory below Aven's config directory. See [AI completion
-server](/ai-completions/) for provider setup, privacy, limits, and the HTTP
-contract.
+Do not put provider credentials in `config.yaml`. API-key providers read their
+keys from the server process environment. OAuth providers store credentials in
+the owner-only `private/ai` directory below Aven's config directory. `aven
+config get` and `aven config set` do not read or write these credentials. See
+[AI completion server](/ai-completions/) for provider setup, local credential
+removal, privacy, limits, and the HTTP contract.
 
 ## Database path
 

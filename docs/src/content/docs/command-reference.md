@@ -1072,11 +1072,12 @@ aven ai status [--json]
 aven ai check
 ```
 
-`providers` lists the Rig-backed provider registry, credential source, schema
-strategy, and explicit exclusions. `login` starts an interactive OAuth device
-flow for ChatGPT or GitHub Copilot. `status` inspects local configuration and
-credential presence without contacting a provider. `check` makes one synthetic,
-billable JSON-schema completion through the configured provider.
+`providers` lists supported providers, credential sources, JSON-schema
+strategies, and exclusions. `login` starts an interactive OAuth device flow for
+ChatGPT or GitHub Copilot. `status` inspects local configuration and credential
+presence without contacting a provider. `check` makes one synthetic, billable
+JSON-schema completion through the configured provider. A `ready` status does
+not verify that the selected model is available to the account.
 
 See [AI completion server](/ai-completions/) for configuration, limits,
 credential storage, and the HTTP contract.

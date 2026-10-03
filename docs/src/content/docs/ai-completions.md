@@ -3,7 +3,9 @@ title: AI completion server
 description: Configure Aven's generic, self-hosted AI completion service.
 ---
 
-The Aven server can expose a generic text completion service for paired clients. The service forwards caller-supplied text and a JSON schema to an administrator-selected model. It does not read tasks, projects, labels, attachments, or the sync operation log, and it does not create or modify Aven data.
+The completion server lets paired clients use an administrator-configured AI provider without storing provider credentials on each client. A client sends text and a JSON schema, and the server returns model-generated text with provider-neutral usage and finish information.
+
+Aven for iOS uses this service to turn typed or locally transcribed instructions into a structured task draft. The iOS app is not publicly released yet. It supplies the drafting instructions and validates the result. The server remains generic: it does not read tasks, projects, labels, attachments, or the sync operation log, and it does not create or modify Aven data.
 
 AI is optional. An unconfigured AI service does not prevent the sync server from starting or serving sync requests.
 
@@ -13,7 +15,7 @@ Add an `ai` section to the server's `config.yaml`:
 
 ```yaml
 sync:
-  auth_token: "shared-pairing-secret"
+  auth_token: "shared-ai-secret"
 
 ai:
   provider: ollama
@@ -27,17 +29,17 @@ ai:
 
 `sync.auth_token` is required for AI, including on loopback. It authorizes only the AI routes; end-to-end encrypted sync uses separate device credentials. Every client given this shared AI token can use configured model capacity, and Aven cannot grant AI permission to only some clients that share it.
 
-The server chooses the provider, model, endpoint, timeout, and limits. Completion requests cannot override them. `ai.endpoint` is available for llamafile, Ollama, and OpenAI-compatible test or gateway deployments; other providers use Rig's provider-specific environment and endpoint rules.
+The server chooses the provider, model, endpoint, timeout, and limits. Completion requests cannot override them. `ai.endpoint` is available for llamafile, Ollama, and custom OpenAI-compatible endpoints. Other providers use their standard endpoints.
 
 ## Providers and credentials
 
-Run this command to see providers available in the pinned Rig release, their credential environment variable, and their schema strategy:
+List the available providers, credential environment variables, and JSON-schema strategies:
 
 ```sh
 aven ai providers
 ```
 
-Aven supports the Rig 0.42.0 text-completion modules for Anthropic, Azure OpenAI, ChatGPT subscription OAuth, Cohere, GitHub Copilot, DeepSeek, Doubleword, Gemini, Groq, Hugging Face, Hyperbolic, llamafile, MiniMax, Mira, Mistral, Moonshot, Ollama, OpenAI, OpenRouter, Perplexity, Together, Venice, xAI, Xiaomi MiMo, and Z.AI. Voyage AI is excluded because its Rig module provides embeddings and reranking but no text completion model.
+The provider registry includes Anthropic, Azure OpenAI, ChatGPT subscription OAuth, Cohere, GitHub Copilot, DeepSeek, Doubleword, Gemini, Groq, Hugging Face, Hyperbolic, llamafile, MiniMax, Mira, Mistral, Moonshot, Ollama, OpenAI, OpenRouter, Perplexity, Together, Venice, xAI, Xiaomi MiMo, and Z.AI. Voyage AI is excluded because it does not provide text completions.
 
 API-key providers read the environment variable shown by `aven ai providers` from the server process. Azure also uses `AZURE_ENDPOINT` and `AZURE_API_VERSION`. Keep these values in the service manager's protected secret environment, not in `config.yaml`.
 
@@ -56,16 +58,31 @@ aven ai login chatgpt
 aven ai login copilot
 ```
 
-The long-running server disables interactive device flow. Missing OAuth material produces `authentication_required` without blocking for terminal input. Expired or invalid credentials fail the provider request without starting an interactive flow.
+Login stores credentials but does not select the server provider or model. Set `ai.provider` to `chatgpt` or `copilot`, and set `ai.model` to a model available to the authenticated account.
 
-Inspect local readiness without contacting or billing a provider:
+The long-running server does not start an interactive login. Missing OAuth material produces `authentication_required`. Expired or invalid credentials fail the provider request.
+
+### Log out locally
+
+Remove locally stored OAuth credentials with:
+
+```sh
+config_dir="${AVEN_CONFIG_DIR:-$HOME/.config/aven}"
+rm -f "$config_dir/private/ai/chatgpt/auth.json"
+rm -f "$config_dir/private/ai/copilot/access-token" \
+  "$config_dir/private/ai/copilot/api-key.json"
+```
+
+This removes Aven's local credentials. It does not revoke access at the provider. Use the provider's account settings when you also need to revoke the authorization.
+
+Inspect local configuration and credential presence without contacting or billing a provider:
 
 ```sh
 aven ai status
 aven ai status --json
 ```
 
-Make one synthetic, billable provider request after setup:
+A `ready` status does not verify that the configured model is available to the account. Make one synthetic, billable request to verify the complete setup:
 
 ```sh
 aven ai check
@@ -104,35 +121,12 @@ The server limits requests to 65,536 decoded bytes, eight messages, eight text b
 
 Aven sends the output-token request to providers that support it. It also checks provider-reported output usage before releasing content. ChatGPT subscription transport does not accept an upstream output-token cap, so Aven can reject an over-limit response but cannot prevent those tokens from being generated and billed. Missing or unverifiable usage fails closed.
 
-Stable error categories distinguish invalid requests, unsupported capabilities, unconfigured service, provider authentication failure, rate limits, timeout, malformed provider responses, canceled requests, and temporary provider failure. Responses and logs do not include provider error bodies, credentials, reasoning data, prompts, schemas, or generated content.
+Stable error categories distinguish invalid requests, unsupported capabilities, unconfigured service, provider authentication failure, rate limits, timeout, malformed provider responses, canceled requests, and temporary provider failure. Responses do not include provider error bodies, credentials, or reasoning data. Logs do not include prompts, schemas, provider responses, or generated content.
 
 Disconnecting or timing out drops the in-flight provider future. Some providers may continue generation or billing after transport cancellation.
 
 ## Privacy
 
-The service sends caller-supplied message text and the requested JSON schema to the configured provider. A future iPhone drafting client may include a transcript, project names, label names, and unsaved form context in that text. Microphone audio remains on the iPhone, but the generic server cannot inspect or enforce what a client includes in its messages.
+The service sends caller-supplied message text and the requested JSON schema to the configured provider. Clients may include transcripts, project names, label names, and unsaved form context in that text. A client that transcribes audio locally sends the transcript, not the microphone audio. The server cannot restrict which information a client includes in its messages.
 
 Aven logs bounded operational metadata such as provider category, outcome, duration, and reported token counts. It suppresses Rig's content-bearing diagnostic logs even when verbose Aven logging is enabled.
-
-## Packaging evidence
-
-The host-only Rig dependency remains in the combined `aven` executable and does not enter `aven-core`. Clean `aarch64-apple-darwin` release builds with rustc 1.96.0 measured:
-
-| Stage | Unstripped | `strip -x` | Release `.tar.gz` | Clean build |
-| --- | ---: | ---: | ---: | ---: |
-| Baseline | 34,291,504 B | 30,175,200 B | 13,821,699 B | 99.72 s |
-| Rig plus Ollama path | 34,709,712 B | 30,458,080 B | 13,989,799 B | 94.12 s |
-| Complete registry | 40,183,712 B | 35,017,880 B | 15,844,051 B | 142.70 s |
-
-The complete artifact adds about 2.0 MB, or 14.6 percent, to the compressed baseline. Clean-build timing varied from 94 to 143 seconds with machine load and was not a packaging constraint. The registry adds 27 normal dependency-list entries, introduces no second Reqwest version, and does not enable Reqwest's system-proxy or HTTP/2 features. This measured cost is modest enough to retain the existing combined executable.
-
-## Troubleshooting
-
-- `unconfigured`: set both `ai.provider` and `ai.model`.
-- `authentication_required`: provide the listed API-key environment variable or run `aven ai login` for the configured OAuth provider.
-- `temporarily_unavailable`: verify provider-specific environment, endpoint, credential-directory access, and model availability.
-- HTTP 401 on AI routes: configure `sync.auth_token` and send the matching bearer token.
-- `malformed_provider_response`: verify that the selected model returns text, reports token usage, and can follow the requested schema.
-- `rate_limit`: retry later. This category can come from Aven's local admission controls or the provider.
-
-Manual task capture and sync continue to work when AI is unavailable.
