@@ -18,12 +18,9 @@ impl DeclarationView {
         Descriptor::decode(bytes).map(Self)
     }
 
+    #[cfg(test)]
     pub(crate) fn prefix_count(&self) -> u64 {
         self.0.prefix
-    }
-
-    pub(crate) fn manifest_commitment(&self) -> [u8; 32] {
-        self.0.manifest.aggregate
     }
 
     pub(crate) fn prefix_rows(&self, bytes: &[u8]) -> Result<Vec<(u64, String)>> {

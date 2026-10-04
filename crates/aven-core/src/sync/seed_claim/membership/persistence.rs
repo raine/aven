@@ -67,7 +67,7 @@ pub(crate) async fn current(db: &Database, conn: &mut SqliteConnection) -> Resul
             .try_into()
             .map_err(|_| anyhow::anyhow!("error membership-storage"))?;
         ensure!(
-            revoked == (!admitted && current.membership.member(&inviter).is_err())
+            revoked == (!admitted && !current.membership.has_device(inviter))
                 && (!revoked || expired),
             "error membership-invitation-projection"
         );
@@ -121,8 +121,8 @@ async fn replay(conn: &mut SqliteConnection) -> Result<Current> {
                     .bind(&handle).fetch_one(&mut *conn).await?;
             let dec = Declaration::from_record(&membership, &declaration)?;
             ensure!(
-                handle == dec.handle
-                    && inviter == dec.inviter
+                handle == dec.handle()
+                    && inviter == dec.inviter()
                     && expiry >= 0
                     && expiry as u64 == dec.expiry()
                     && admitted == seq,
@@ -173,13 +173,8 @@ async fn observe(conn: &mut SqliteConnection, time: i64) -> Result<i64> {
         .bind(high).execute(&mut *conn).await?;
     Ok(high)
 }
+pub use aven_protocol::claim::membership::ManagementPreparation;
 pub use aven_protocol::wire::enrollment::CancelStatus;
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManagementPreparation {
-    pub evidence: Evidence,
-    pub high_water: u64,
-}
 async fn append_transition(
     conn: &mut SqliteConnection,
     before: &Membership,
@@ -244,8 +239,7 @@ impl Database {
         let mut tx = begin_immediate(&mut conn).await?;
         let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
-        let (core, _, _, _) = encoding::components(record)?;
-        let (signer, action) = encoding::signer_action(core)?;
+        let (signer, action) = Membership::record_action(record)?;
         ensure!(matches!(action, 4 | 5), "error membership-action");
         if !c.evidence.transitions.iter().any(|t| t.record == record) {
             ensure!(signer == auth.device, super::Unauthorized);
@@ -256,12 +250,12 @@ impl Database {
                 "error membership-cutoff"
             );
             append_transition(&mut tx, &c.membership, &next, None, record).await?;
-            for member in &c.membership.members {
-                if next.member(&member.device).is_err() {
+            for device in c.membership.devices() {
+                if !next.has_device(device) {
                     sqlx::query("UPDATE server_membership_invitations SET revoked=1,expired=1 WHERE inviter=? AND admitted_sequence IS NULL")
-                        .bind(member.device.as_slice()).execute(&mut *tx).await?;
+                        .bind(device.as_slice()).execute(&mut *tx).await?;
                     sqlx::query("DELETE FROM server_e2ee_image_tickets WHERE device=?")
-                        .bind(member.device.as_slice())
+                        .bind(device.as_slice())
                         .execute(&mut *tx)
                         .await?;
                 }
@@ -310,13 +304,13 @@ impl Database {
         let c = current(self, &mut tx).await?;
         c.membership.authenticate(auth, false)?;
         let d = Declaration::from_record(&c.membership, raw)?;
-        ensure!(d.inviter == auth.device, super::Unauthorized);
+        ensure!(d.inviter() == auth.device, super::Unauthorized);
         let expiry = i64::try_from(d.expiry()).context("error enrollment-expired")?;
         let high = observe(&mut tx, time).await?;
         let stored: Option<Vec<u8>> = sqlx::query_scalar(
             "SELECT declaration FROM server_membership_invitations WHERE handle=?",
         )
-        .bind(d.handle.as_slice())
+        .bind(d.handle().as_slice())
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(stored) = stored {
@@ -335,16 +329,16 @@ impl Database {
                 "error enrollment-expired"
             );
             let unfinished: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_membership_invitations WHERE inviter=? AND expired=0 AND admitted_sequence IS NULL)")
-                .bind(d.inviter.as_slice()).fetch_one(&mut *tx).await?;
+                .bind(d.inviter().as_slice()).fetch_one(&mut *tx).await?;
             if unfinished {
                 tx.commit().await?;
                 anyhow::bail!("error enrollment-unfinished");
             }
             sqlx::query("INSERT INTO server_membership_invitations(handle,inviter,declaration,expiry,expired) VALUES(?,?,?,?,?)")
-                .bind(d.handle.as_slice()).bind(d.inviter.as_slice()).bind(raw).bind(expiry).bind(expiry <= high).execute(&mut *tx).await?;
+                .bind(d.handle().as_slice()).bind(d.inviter().as_slice()).bind(raw).bind(expiry).bind(expiry <= high).execute(&mut *tx).await?;
         }
         let (expired, consumed): (bool, bool) = sqlx::query_as("SELECT expired,admitted_sequence IS NOT NULL FROM server_membership_invitations WHERE handle=?")
-            .bind(d.handle.as_slice()).fetch_one(&mut *tx).await?;
+            .bind(d.handle().as_slice()).fetch_one(&mut *tx).await?;
         tx.commit().await?;
         Ok(if consumed {
             RegistrationStatus::Consumed
@@ -365,7 +359,7 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let c = current(self, &mut tx).await?;
-        check(vault == c.membership.genesis.context().vault_id)?;
+        check(vault == c.membership.genesis().context().vault_id)?;
         observe(&mut tx, time).await?;
         let (stored, expired, revoked, admitted): (Option<Vec<u8>>, bool, bool, bool) = sqlx::query_as(
             "SELECT request,expired,revoked,admitted_sequence IS NOT NULL FROM server_membership_invitations WHERE handle=?",
@@ -375,7 +369,7 @@ impl Database {
         .await?
         .context("error enrollment-unavailable")?;
         ensure!(
-            !revoked && (!admitted || c.membership.members.iter().any(|m| m.admission == handle)),
+            !revoked && (!admitted || c.membership.has_admission(handle)),
             "error enrollment-revoked"
         );
         if let Some(stored) = stored {
@@ -398,17 +392,17 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let c = current(self, &mut tx).await?;
-        check(vault == c.membership.genesis.context().vault_id)?;
+        check(vault == c.membership.genesis().context().vault_id)?;
         let (declaration, request, admission): (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) = sqlx::query_as("SELECT i.declaration,i.request,a.record FROM server_membership_invitations i LEFT JOIN server_membership_transitions a ON a.handle=i.handle WHERE i.handle=?")
             .bind(handle.as_slice()).fetch_optional(&mut *tx).await?.context("error enrollment-unavailable")?;
         if admission.is_some() {
             ensure!(
-                c.membership.members.iter().any(|m| m.admission == handle),
+                c.membership.has_admission(handle),
                 "error enrollment-revoked"
             );
         } else {
             let d = Declaration::from_record(&c.membership, &declaration)?;
-            check(d.handle == handle)?;
+            check(d.handle() == handle)?;
         }
         tx.commit().await?;
         Ok(Mailbox {
@@ -438,7 +432,7 @@ impl Database {
         // The immutable stored row binds the exact declaration and its inviter.
         ensure!(
             inviter == auth.device
-                && Declaration::from_record(&c.membership, &declaration)?.handle == handle,
+                && Declaration::from_record(&c.membership, &declaration)?.handle() == handle,
             super::Unauthorized
         );
         let status = if admitted {
@@ -475,7 +469,7 @@ impl Database {
         } else {
             let d = Declaration::from_record(&c.membership, &declaration)?;
             ensure!(
-                d.handle == handle && d.inviter == auth.device,
+                d.handle() == handle && d.inviter() == auth.device,
                 super::Unauthorized
             );
             let high = observe(&mut tx, time).await?;

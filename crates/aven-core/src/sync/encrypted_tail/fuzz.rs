@@ -1,5 +1,5 @@
 //! Fuzz hooks for tail records, their decrypted operations and image objects.
-use super::attachments::codec::Descriptor;
+use super::attachments::codec::{Descriptor, DescriptorAuthority};
 use super::domain::{self, Projection};
 use super::*;
 use crate::db::{Database, begin_immediate};

@@ -1,6 +1,6 @@
 //! Bounded public transition evidence, without server or protected-store authority.
 use super::*;
-use crate::sync::base64_bytes;
+use crate::base64_bytes;
 use serde::{Deserialize, Serialize};
 
 /// Base64 of the whole chain, up to one padding group per byte field, and
@@ -70,7 +70,7 @@ fn publication_bytes<'de, D: serde::Deserializer<'de>>(
 fn descriptor_bytes<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Vec<u8>, D::Error> {
-    base64_bytes::bounded::<D, { crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES }>(d)
+    base64_bytes::bounded::<D, { crate::artifact::codec::MAX_DESCRIPTOR_BYTES }>(d)
 }
 fn records<'de, D: serde::Deserializer<'de>>(
     d: D,

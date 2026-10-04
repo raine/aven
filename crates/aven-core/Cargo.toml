@@ -9,18 +9,14 @@ repository = "https://github.com/raine/aven"
 build = "build.rs"
 
 [features]
-test-support = []
+test-support = ["aven-protocol/test-support"]
 
 [dependencies]
 aven-protocol = { path = "../aven-protocol", version = "=0.1.0" }
 anyhow.workspace = true
 base64.workspace = true
 chacha20poly1305.workspace = true
-chacha20.workspace = true
 ed25519-dalek.workspace = true
-hpke.workspace = true
-rand_core.workspace = true
-subtle.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 chrono-tz.workspace = true
 getrandom.workspace = true

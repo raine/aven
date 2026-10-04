@@ -1,6 +1,6 @@
 use super::*;
 
-pub(in crate::sync::seed_claim) use super::fixture::{descriptor, seed, signed};
+pub(crate) use super::fixture::{descriptor, seed, signed};
 
 #[test]
 fn fixed_successor_bytes_and_strict_semantics_preserve_genesis() {

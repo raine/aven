@@ -1,5 +1,5 @@
 use super::super::{Accepted, Authority, Downloads, codec, domain::Projection, hash, valid};
-use super::codec::Descriptor;
+use super::codec::{Descriptor, DescriptorAuthority};
 use crate::{
     db::{self, Database, begin_immediate},
     sync::{bootstrap_format, wire::ChangeWire},

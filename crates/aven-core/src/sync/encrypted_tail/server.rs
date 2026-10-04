@@ -76,14 +76,8 @@ impl Database {
         let mut tx = begin_immediate(&mut conn).await?;
         let current =
             crate::sync::seed_claim::membership::persistence::current(self, &mut tx).await?;
-        current
-            .membership
-            .authenticate(&context.authentication(bearer), false)?;
+        aven_protocol::tail::authenticate(&current.membership, context, bearer)?;
         let binding = current.membership.publication().binding();
-        valid(
-            context.stream == binding.stream_id
-                && context.descriptor == binding.descriptor_commitment,
-        )?;
         let n = i64::try_from(binding.prefix_count)?;
         let high = i64::try_from(
             crate::sync::seed_claim::membership::persistence::allocator(
@@ -107,11 +101,7 @@ impl Database {
                 if let Some(old) = found(&mut tx, &e.id).await? {
                     Reply::Appended(old.mapping)
                 } else {
-                    ensure!(
-                        !current.membership.rotation_pending(),
-                        "error membership-rotation-pending"
-                    );
-                    valid(e.generation == current.membership.current_generation().id)?;
+                    aven_protocol::tail::admit_generations(&current.membership, [e.generation])?;
                     let sequence = high
                         .checked_add(1)
                         .context("error encrypted-tail-sequence-exhausted")?;
@@ -220,14 +210,7 @@ impl Database {
         let mut tx = begin_immediate(&mut conn).await?;
         let current =
             crate::sync::seed_claim::membership::persistence::current(self, &mut tx).await?;
-        current
-            .membership
-            .authenticate(&context.authentication(bearer), false)?;
-        let binding = current.membership.publication().binding();
-        valid(
-            context.stream == binding.stream_id
-                && context.descriptor == binding.descriptor_commitment,
-        )?;
+        aven_protocol::tail::authenticate(&current.membership, context, bearer)?;
         let reply = match op {
             BatchOperation::Append { records } => {
                 valid((1..=BATCH_COUNT).contains(&records.len()))?;
@@ -257,15 +240,9 @@ impl Database {
                     );
                     parsed.push(envelope);
                 }
-                ensure!(
-                    !current.membership.rotation_pending(),
-                    "error membership-rotation-pending"
-                );
-                let generation = current.membership.current_generation().id;
-                valid(
-                    parsed
-                        .iter()
-                        .all(|envelope| envelope.generation == generation),
+                aven_protocol::tail::admit_generations(
+                    &current.membership,
+                    parsed.iter().map(|envelope| envelope.generation),
                 )?;
                 let high = i64::try_from(
                     crate::sync::seed_claim::membership::persistence::allocator(

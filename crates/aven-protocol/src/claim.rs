@@ -522,3 +522,8 @@ impl ClaimResult {
 
 #[cfg(test)]
 mod tests;
+
+pub mod membership;
+pub mod peer;
+pub mod publication;
+pub use publication::{PUBLICATION_BYTES, Publication, PublicationBinding, PublicationOutcome};

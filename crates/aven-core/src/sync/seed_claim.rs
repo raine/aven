@@ -19,27 +19,18 @@ pub use publication::{PUBLICATION_BYTES, Publication, PublicationBinding, Public
 use std::fmt;
 
 use anyhow::{Context, Result, ensure};
-use chacha20::ChaCha20Rng;
+#[cfg(test)]
 use ed25519_dalek::{Signer, SigningKey};
-use hpke::{Deserializable, OpModeR, OpModeS, Serializable};
-use rand_core::SeedableRng;
-use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use super::{LocalSharedStatePackageContext, LocalSharedStatePackageKey};
-use codec::{MEMBERSHIP_SIGN, Reader, bytes, cce, hash, membership_core, valid};
+#[cfg(test)]
+use codec::{bytes, cce, hash};
 
 pub use aven_protocol::claim::{
     CLAIM_BYTES, ClaimAuthentication, ClaimRefusal, ClaimResult, GENESIS_BYTES, Genesis,
     SEED_STORAGE_BYTES, Secret, SetupAuthority, StorageNotEmpty,
 };
-use aven_protocol::claim::{credential_verifier, generation_commitment};
-
-type Kem = hpke::kem::X25519HkdfSha256;
-type Aead = hpke::aead::ChaCha20Poly1305;
-type Kdf = hpke::kdf::HkdfSha256;
-type HpkePrivate = <Kem as hpke::Kem>::PrivateKey;
-type Enc = <Kem as hpke::Kem>::EncappedKey;
 
 /// Protected seed authority with local package publication operations.
 /// Construction alone is not durable; hosts must save before making a request.
@@ -48,6 +39,13 @@ pub struct SeedAuthority(aven_protocol::claim::SeedAuthority);
 impl fmt::Debug for SeedAuthority {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl std::ops::Deref for SeedAuthority {
+    type Target = aven_protocol::claim::SeedAuthority;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -63,14 +61,6 @@ impl SeedAuthority {
     /// Exact protected-storage representation, never SQLite or ordinary backups.
     pub fn protected_storage_bytes(&self) -> Zeroizing<Vec<u8>> {
         self.0.protected_storage_bytes()
-    }
-
-    fn protected_signing_seed(&self) -> &Secret {
-        self.0.protected_signing_seed()
-    }
-
-    fn protected_recipient_key(&self) -> &Secret {
-        self.0.protected_recipient_key()
     }
 
     fn validate(

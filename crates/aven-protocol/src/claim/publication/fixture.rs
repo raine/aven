@@ -1,7 +1,7 @@
 //! Fixed signed publication built from the genesis fixture.
 use super::*;
 
-pub(in crate::sync::seed_claim) fn seed() -> SeedAuthority {
+pub(crate) fn seed() -> SeedAuthority {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../fixtures/genesis.json")).unwrap();
     let field = |name: &str| hex::decode(fixture[name].as_str().unwrap()).unwrap();
@@ -21,7 +21,7 @@ pub(in crate::sync::seed_claim) fn seed() -> SeedAuthority {
 }
 
 // Public framing fixture only. It makes no ciphertext completeness claim.
-pub(in crate::sync::seed_claim) fn descriptor(g: &Genesis) -> Vec<u8> {
+pub(crate) fn descriptor(g: &Genesis) -> Vec<u8> {
     let mut d = b"AVBP\0\x02\x01".to_vec();
     for id in [
         g.context().vault_id,
@@ -50,7 +50,7 @@ pub(in crate::sync::seed_claim) fn descriptor(g: &Genesis) -> Vec<u8> {
     d
 }
 
-pub(in crate::sync::seed_claim) fn signed(
+pub(crate) fn signed(
     seed: &SeedAuthority,
     core: &[u8],
     state: &[u8],

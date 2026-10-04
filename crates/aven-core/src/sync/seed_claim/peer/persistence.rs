@@ -4,8 +4,6 @@ use anyhow::Context;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
 
-pub use aven_protocol::wire::enrollment::Authentication;
-
 impl Database {
     pub async fn peer_target_preflight(&self) -> Result<String> {
         let mut conn = self.acquire_writer().await?;
@@ -155,5 +153,3 @@ async fn fresh(conn: &mut SqliteConnection) -> Result<()> {
     ensure!(!occupied, "error enrollment-target-not-fresh");
     Ok(())
 }
-
-pub use aven_protocol::wire::enrollment::RegistrationStatus;

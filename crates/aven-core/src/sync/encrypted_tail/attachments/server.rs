@@ -1,5 +1,7 @@
 use super::super::{Context, hash, valid};
 use super::{codec::Descriptor, *};
+#[cfg(test)]
+use crate::sync::encrypted_tail::attachments::codec::DescriptorAuthority;
 use crate::sync::seed_claim::membership::Membership;
 use crate::{
     attachments::lifecycle::LifecyclePolicy,
@@ -164,12 +166,15 @@ async fn eligible_object(
     m: &Membership,
     d: &Descriptor,
 ) -> Result<()> {
+    // Unknown generations fail before querying historical provenance.
     valid(m.generations().iter().any(|g| g.id == d.generation))?;
-    if d.generation != m.current_generation().id {
-        let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_images WHERE object=? AND origin IS NOT NULL AND descriptor=?)")
-            .bind(d.object.as_slice()).bind(d.encode()?).fetch_one(conn).await?;
-        valid(admitted)?;
-    }
+    let admitted = if d.generation != m.current_generation().id {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_images WHERE object=? AND origin IS NOT NULL AND descriptor=?)")
+            .bind(d.object.as_slice()).bind(d.encode()?).fetch_one(conn).await?
+    } else {
+        false
+    };
+    aven_protocol::tail::eligible_image(m, d.generation, admitted)?;
     Ok(())
 }
 impl Database {

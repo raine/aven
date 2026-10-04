@@ -33,30 +33,11 @@ pub use crate::sync::seed_claim::{Publication, PublicationOutcome};
 #[cfg(test)]
 mod tests;
 
-use super::seed_claim::Secret;
-
-/// The credential does not authenticate current membership for staging.
-#[derive(Debug)]
-pub struct Unauthorized;
-
-impl std::fmt::Display for Unauthorized {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("error bootstrap-unauthorized")
-    }
-}
-
-impl std::error::Error for Unauthorized {}
+pub use aven_protocol::bootstrap::{Authentication, Unauthorized};
 
 pub use aven_protocol::wire::bootstrap::{
     MAX_CANDIDATES, MAX_CHUNKS, MAX_REQUEST_BYTES, MAX_STORAGE_BYTES, STAGING_TTL_SECONDS,
 };
-
-#[derive(Debug)]
-pub struct Authentication<'a> {
-    pub vault_id: [u8; 32],
-    pub genesis_commitment: [u8; 32],
-    pub bearer: &'a Secret,
-}
 
 pub use aven_protocol::wire::bootstrap::{
     Budget, Component, ComponentStatus, Presence, StagingStatus,

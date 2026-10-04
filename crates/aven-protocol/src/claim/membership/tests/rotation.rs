@@ -488,7 +488,7 @@ fn maximum_signed_chain_fits_every_bound() {
     let mut worst = Evidence {
         genesis: filled(GENESIS_BYTES),
         publication: filled(PUBLICATION_BYTES),
-        descriptor: filled(crate::sync::bootstrap_format::MAX_DESCRIPTOR_BYTES),
+        descriptor: filled(crate::artifact::codec::MAX_DESCRIPTOR_BYTES),
         transitions: vec![],
     };
     for index in 0..MAX_TRANSITIONS {

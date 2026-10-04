@@ -198,6 +198,9 @@ impl Declaration {
     pub fn handle(&self) -> Hash {
         self.handle
     }
+    pub fn inviter(&self) -> Hash {
+        self.inviter
+    }
     pub fn expiry(&self) -> u64 {
         self.expiry
     }

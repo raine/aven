@@ -16,12 +16,7 @@ pub(super) async fn authorize_current(
             .await?;
     let (record, genesis_only) = row.ok_or(crate::sync::bootstrap_staging::Unauthorized)?;
     let genesis = Genesis::from_record(&record)?;
-    ensure!(
-        genesis.authorizes_bearer(auth.bearer)
-            && genesis.context().vault_id == auth.vault_id
-            && genesis.commitment() == auth.genesis_commitment,
-        crate::sync::bootstrap_staging::Unauthorized
-    );
+    aven_protocol::bootstrap::authenticate_seed(&genesis, auth)?;
     let head: Option<(i64, Vec<u8>)> = sqlx::query_as(
         "SELECT sequence, commitment FROM server_e2ee_membership_head WHERE singleton = 1",
     )
@@ -56,7 +51,7 @@ pub(super) async fn authorize_current(
     );
     Ok((
         current.membership.genesis().clone(),
-        Some(PublicationOutcome { publication }),
+        Some(PublicationOutcome::from_publication(publication)),
     ))
 }
 
@@ -261,6 +256,6 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(PublicationOutcome { publication })
+        Ok(PublicationOutcome::from_publication(publication))
     }
 }

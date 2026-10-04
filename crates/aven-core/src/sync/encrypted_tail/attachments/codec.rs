@@ -1,5 +1,5 @@
 use super::super::{Authority, hash, valid};
-use crate::sync::bootstrap_format::{catalog::Artifact, codec::Reader};
+use crate::sync::bootstrap_format::catalog::Artifact;
 use crate::sync::shared_state::package::{self as crypto, LocalSharedStatePackageContext};
 use anyhow::{Result, ensure};
 use chacha20poly1305::{
@@ -8,67 +8,29 @@ use chacha20poly1305::{
 };
 use zeroize::Zeroizing;
 
-pub use aven_protocol::wire::images::{
-    CHUNK_BYTES, DESCRIPTOR_LIMIT, HTTP_LIMIT, IMAGE_BYTES, TRANSFER_BYTES,
-};
+pub use aven_protocol::wire::images::{CHUNK_BYTES, HTTP_LIMIT, IMAGE_BYTES, TRANSFER_BYTES};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Descriptor {
-    pub vault: [u8; 32],
-    pub stream: [u8; 32],
-    pub generation: [u8; 32],
-    pub object: [u8; 32],
-    pub artifact: Artifact,
+pub use aven_protocol::images::Descriptor;
+pub(crate) trait DescriptorAuthority {
+    fn authority(&self, a: &Authority) -> Result<()>;
+    fn seal(a: &Authority, bytes: &[u8]) -> Result<(Self, Vec<Vec<u8>>)>
+    where
+        Self: Sized;
+    fn reconstruct(
+        &self,
+        a: &Authority,
+        source: &[u8],
+        expected_hash: &str,
+    ) -> Result<Vec<Vec<u8>>>;
+    fn open(&self, a: &Authority, records: &[Vec<u8>]) -> Result<Zeroizing<Vec<u8>>>;
 }
-impl Descriptor {
-    pub fn decode(bytes: &[u8]) -> Result<Self> {
-        valid(bytes.len() <= DESCRIPTOR_LIMIT)?;
-        let mut r = Reader(bytes);
-        valid(r.take(8)? == b"AVEN\x03\x00\x01\x01")?;
-        let value = Self {
-            vault: r.array()?,
-            stream: r.array()?,
-            generation: r.array()?,
-            object: r.array()?,
-            artifact: Artifact::read(&mut r, IMAGE_BYTES as u64, true)?,
-        };
-        r.end()?;
-        Ok(value)
-    }
-    pub fn encode(&self) -> Result<Vec<u8>> {
-        self.artifact.shape(IMAGE_BYTES as u64, true)?;
-        let mut bytes = b"AVEN\x03\x00\x01\x01".to_vec();
-        for id in [&self.vault, &self.stream, &self.generation, &self.object] {
-            bytes.extend(id);
-        }
-        self.artifact.write(&mut bytes)?;
-        Ok(bytes)
-    }
-    pub fn context(&self) -> LocalSharedStatePackageContext {
-        LocalSharedStatePackageContext {
-            vault_id: self.vault,
-            generation_id: self.generation,
-        }
-    }
-    pub fn byte_size(&self) -> i64 {
-        self.artifact.chunks.iter().map(|c| c.length as i64).sum()
-    }
-    pub fn verify_chunk(&self, index: usize, bytes: &[u8]) -> Result<()> {
-        self.artifact
-            .verify_chunk(bytes, index, self.context(), self.stream, self.object, 1, 0)?;
-        Ok(())
-    }
-    pub fn verify(&self, records: &[Vec<u8>]) -> Result<()> {
-        self.artifact
-            .verify(records, self.context(), self.stream, self.object, 1, 0)?;
-        Ok(())
-    }
-    pub(super) fn authority(&self, a: &Authority) -> Result<()> {
+impl DescriptorAuthority for Descriptor {
+    fn authority(&self, a: &Authority) -> Result<()> {
         a.validate()?;
         a.key(self.generation)?;
         valid(self.vault == a.context.vault && self.stream == a.context.stream)
     }
-    pub fn seal(a: &Authority, bytes: &[u8]) -> Result<(Self, Vec<Vec<u8>>)> {
+    fn seal(a: &Authority, bytes: &[u8]) -> Result<(Self, Vec<Vec<u8>>)> {
         a.validate()?;
         ensure!(!a.rotation_pending(), "error membership-rotation-pending");
         valid(!bytes.is_empty() && bytes.len() <= IMAGE_BYTES)?;
@@ -93,7 +55,7 @@ impl Descriptor {
         Ok((descriptor, records))
     }
     /// The owned source is hashed in full before any saved nonce is used.
-    pub fn reconstruct(
+    fn reconstruct(
         &self,
         a: &Authority,
         source: &[u8],
@@ -141,7 +103,7 @@ impl Descriptor {
         self.verify(&records)?;
         Ok(records)
     }
-    pub fn open(&self, a: &Authority, records: &[Vec<u8>]) -> Result<Zeroizing<Vec<u8>>> {
+    fn open(&self, a: &Authority, records: &[Vec<u8>]) -> Result<Zeroizing<Vec<u8>>> {
         self.authority(a)?;
         self.verify(records)?;
         let key = crypto::derive_image_key(a.key(self.generation)?, self.context(), self.object)?;
