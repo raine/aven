@@ -37,3 +37,23 @@ pub fn is_access_refusal(error: &Error) -> bool {
         || has_code(error, "enrollment-revoked")
         || has_code(error, "sync-device-removed")
 }
+
+/// Hosting replies cannot authenticate the outcome of a pending operation.
+pub(crate) fn hosting_error(hosting: aven_protocol::refusal::Hosting) -> Error {
+    use aven_protocol::refusal::Hosting;
+    let code = match hosting {
+        Hosting::Blocked => "sync-hosting-blocked",
+        Hosting::Quota => "sync-hosting-quota",
+        Hosting::Unavailable => "sync-hosting-unavailable",
+    };
+    anyhow::anyhow!("error {code} outcome-unknown")
+}
+
+pub(crate) fn is_hosting_refusal(error: &Error) -> bool {
+    codes(error).any(|code| {
+        matches!(
+            code.as_str(),
+            "sync-hosting-blocked" | "sync-hosting-quota" | "sync-hosting-unavailable"
+        )
+    })
+}

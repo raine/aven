@@ -345,7 +345,11 @@ impl Client {
                         downloaded = Some(ImageTransfer::Unavailable);
                         break;
                     }
-                    Err(error) if is_stale(&error) => return Err(error),
+                    Err(error)
+                        if is_stale(&error) || super::super::errors::is_hosting_refusal(&error) =>
+                    {
+                        return Err(error);
+                    }
                     Err(_) => {
                         downloaded = Some(ImageTransfer::Failed);
                         break;

@@ -77,6 +77,7 @@ impl Client {
         let bytes = exchange::post_json(&self.link, &self.endpoint, secret, bytes, response_limit)
             .await
             .map_err(|failure| match failure {
+                exchange::Failure::Hosting(hosting) => super::errors::hosting_error(hosting),
                 exchange::Failure::Network => {
                     anyhow::anyhow!("error enrollment-network outcome-unknown")
                 }

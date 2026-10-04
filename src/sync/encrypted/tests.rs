@@ -1103,3 +1103,32 @@ fn invitation_labels_precede_terminal_output_only() {
         );
     }
 }
+
+#[tokio::test]
+async fn cli_cloud_setup_confirmation_labels_hosting_without_dispatching_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let node = Installation::new(root.path(), "cloud-confirmation");
+    for (origin, cloud) in [
+        ("https://sync.aventasks.dev", true),
+        ("https://SYNC.AVENTASKS.DEV.:443/", true),
+        ("https://sync.aventasks.dev:444", false),
+        ("http://127.0.0.1:3746", false),
+    ] {
+        let invitation = SetupInvitation {
+            server: aven_core::sync::client::server_origin(origin).unwrap(),
+            setup_id: [7; 32],
+            secret: aven_core::sync::seed_claim::Secret::new([8; 32]),
+        }
+        .encode()
+        .unwrap();
+        let error = failure(&node.run_with_input(&["sync", "setup"], &invitation).await);
+        assert!(
+            error.contains("sync-setup-confirmation-required"),
+            "{error}"
+        );
+        assert_eq!(error.contains("Hosting: Aven Cloud"), cloud, "{error}");
+        let normalized = aven_core::sync::client::server_origin(origin).unwrap();
+        assert!(error.contains(&format!("Server: {normalized}")), "{error}");
+        assert_eq!(status(&node).await["state"], "not-set-up");
+    }
+}

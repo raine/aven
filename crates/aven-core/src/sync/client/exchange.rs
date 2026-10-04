@@ -352,6 +352,8 @@ pub(crate) enum Failure {
     /// A non-success status with the `{"error":"<code>"}` body's code, if
     /// readable. A busy server was already retried.
     Refused { status: u16, code: Option<String> },
+    /// An explicit endpoint-family hosting refusal, never device authority.
+    Hosting(aven_protocol::refusal::Hosting),
     /// A success response that is not uncompressed JSON.
     Malformed,
     /// A success response over its limit.
@@ -439,6 +441,21 @@ pub(crate) async fn post(
             continue;
         }
         let code = refusal_code(&response);
+        use aven_protocol::refusal::{
+            BOOTSTRAP_HOSTING, ENROLLMENT_HOSTING, IMAGE_HOSTING, TAIL_HOSTING,
+        };
+        let hosting = match endpoint.path() {
+            "/e2ee/bootstrap/v1" => Some(&BOOTSTRAP_HOSTING),
+            "/e2ee/enrollment/v1" => Some(&ENROLLMENT_HOSTING),
+            "/e2ee/tail/v1" | "/e2ee/tail/batch/v1" => Some(&TAIL_HOSTING),
+            "/e2ee/images/v1" => Some(&IMAGE_HOSTING),
+            _ => None,
+        };
+        if let Some(hosting) =
+            hosting.and_then(|codes| codes.classify(response.status, code.as_deref()))
+        {
+            return Err(Failure::Hosting(hosting));
+        }
         if response.status == 413 && code.is_none() {
             return Err(Failure::RequestBodyLimit);
         }

@@ -36,4 +36,4 @@ pub use exchange::{
 };
 pub use host::ClientHost;
 pub use invitation::{DeviceInvitation, InvitationCheck, SetupInvitation};
-pub use origin::{MAX_SERVER_BYTES, server_origin};
+pub use origin::{MAX_SERVER_BYTES, is_aven_cloud, server_origin};

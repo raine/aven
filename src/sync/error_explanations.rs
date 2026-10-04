@@ -47,6 +47,30 @@ pub(crate) fn explain(
     // Codes that share one explanation; the first present one is displayed.
     let first = |family: &[&'static str]| family.iter().copied().find(|code| has(code));
 
+    if has("sync-cloud-https-required") {
+        return Some(Explanation {
+            code: "sync-cloud-https-required",
+            message: "Aven Cloud requires HTTPS, so this connection was refused. No sync credentials were sent.",
+            next_step: "New setups and joins need an invitation for https://sync.aventasks.dev. A setup already started with an http:// address can't continue; back up this database and restore it to a new path for a local-only copy. Local work continues.",
+        });
+    }
+    if let Some(code) = first(&[
+        "sync-hosting-blocked",
+        "sync-hosting-quota",
+        "sync-hosting-unavailable",
+    ]) {
+        return Some(Explanation {
+            code,
+            message: match code {
+                "sync-hosting-blocked" => {
+                    "Sync hosting is blocked. This does not mean this device was removed."
+                }
+                "sync-hosting-quota" => "Sync hosting has reached a capacity limit.",
+                _ => "Sync hosting is temporarily unavailable.",
+            },
+            next_step: "Local tasks and images remain available. Keep the same setup, join or pending changes; retry after hosting is available again, or contact your hosting provider.",
+        });
+    }
     if all.iter().any(|code| code.ends_with("-tls")) {
         let code =
             first(&["enrollment-tls", "bootstrap-tls", "encrypted-tail-tls"]).unwrap_or("sync-tls");
@@ -311,7 +335,7 @@ pub(crate) fn explain(
             message: "The server refused this setup invitation.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Run `aven server setup` for empty server storage and retry `aven sync setup` with its invitation."
+                    "Get an invitation for fresh storage from your hosting provider or `aven server setup`, then retry `aven sync setup` with it."
                 }
                 ErrorSurface::Tui => {
                     "Use a setup invitation for empty server storage, then retry Set up sync."
@@ -732,6 +756,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hosting_refusals_preserve_local_work_and_retry_guidance() {
+        for code in [
+            "sync-hosting-blocked",
+            "sync-hosting-quota",
+            "sync-hosting-unavailable",
+        ] {
+            for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
+                for action in [ErrorAction::General, ErrorAction::Setup, ErrorAction::Join] {
+                    let error =
+                        anyhow!("error {code} outcome-unknown").context("error sync-join-command");
+                    let explanation = explain(action, surface, &error).unwrap();
+                    assert_eq!(explanation.code, code);
+                    assert!(explanation.next_step.contains("Local tasks and images"));
+                    assert!(explanation.next_step.contains("Keep the same"));
+                    assert!(!explanation.message.contains("Access unconfirmed"));
+                    assert!(!aven_core::sync::client::errors::is_access_refusal(&error));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn unavailable_protected_storage_uses_surface_specific_recovery() {
         let error = anyhow::Error::new(ProtectedLocalKeyStoreError::new(
             ProtectedLocalKeyStoreErrorKind::Unavailable,
@@ -868,13 +914,21 @@ mod tests {
         let cli = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(cli.code, "sync-setup-invitation-expired");
         assert_eq!(cli.message, "This setup invitation expired.");
+        assert!(cli.next_step.contains("`aven server setup`"));
+        assert!(cli.next_step.contains("hosting provider"));
         assert!(cli.next_step.contains("`aven sync setup`"));
         let tui = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
+        assert!(tui.next_step.contains("`aven server setup`"));
+        assert!(tui.next_step.contains("hosting provider"));
         assert!(tui.next_step.contains("choose Set up sync"));
 
         let error = anyhow!("error sync-setup-invitation-rejected");
         let rejected = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
         assert!(rejected.message.contains("expired, was replaced"));
+        assert!(rejected.next_step.contains("`aven server setup`"));
+        assert!(rejected.next_step.contains("hosting provider"));
+        let rejected_cli = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
+        assert!(rejected_cli.next_step.contains("hosting provider"));
 
         let error = anyhow!("error sync-setup-invitation-invalid");
         let invalid = explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();

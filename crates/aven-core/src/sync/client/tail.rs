@@ -98,6 +98,7 @@ impl Client {
         let bytes = exchange::post_json(&self.link, &endpoint, Some(bearer), bytes, response_limit)
             .await
             .map_err(|failure| match failure {
+                exchange::Failure::Hosting(hosting) => super::errors::hosting_error(hosting),
                 exchange::Failure::Network => {
                     anyhow::anyhow!("error encrypted-tail-network outcome-unknown")
                 }
@@ -393,6 +394,7 @@ impl Client {
                 Ok(ticket) => Some(ticket),
                 Err(error)
                     if is_stale(&error)
+                        || super::errors::is_hosting_refusal(&error)
                         || error.is::<PublishingBlocked>()
                         || super::errors::has_code(&error, "attachment-quota-exceeded")
                         // A proxy body limit refuses every retry identically.

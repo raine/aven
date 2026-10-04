@@ -74,8 +74,8 @@ name = "aven-core"
 version = "0.1.33"
 dependencies = [
  "anyhow",
+ "aven-protocol",
  "base64",
- "chacha20",
  "chacha20poly1305",
  "chrono",
  "chrono-tz",
@@ -83,16 +83,13 @@ dependencies = [
  "getrandom",
  "hex",
  "hkdf",
- "hpke",
  "image",
  "libc",
  "oxipng",
- "rand_core",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
- "subtle",
  "tar",
  "tempfile",
  "tokio",
@@ -108,6 +105,26 @@ version = "0.0.0"
 dependencies = [
  "aven-core",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "aven-protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chacha20",
+ "ed25519-dalek",
+ "getrandom",
+ "hex",
+ "hkdf",
+ "hpke",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]

@@ -138,6 +138,7 @@ impl Client {
         )
         .await
         .map_err(|failure| match failure {
+            exchange::Failure::Hosting(hosting) => super::errors::hosting_error(hosting),
             exchange::Failure::Network => {
                 anyhow::anyhow!("error bootstrap-network outcome-unknown")
             }

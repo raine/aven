@@ -154,3 +154,87 @@ mod tests {
         );
     }
 }
+
+/// Hosting policy is not device authority. Each code belongs to exactly one
+/// endpoint family; tail batches use the tail family. Unknown codes or status
+/// combinations carry no hosting or membership assertion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hosting {
+    Blocked,
+    Quota,
+    Unavailable,
+}
+
+/// Endpoint-family hosting refusals for backend dispatch and client mapping.
+pub struct HostingCodes {
+    /// 403: reversible hosting block, without altering device membership.
+    pub blocked: &'static str,
+    /// 429: hosting capacity exhausted; no accepted history is discarded.
+    pub quota: &'static str,
+    /// 503: hosting temporarily unavailable, not a credential refusal.
+    pub unavailable: &'static str,
+}
+
+impl HostingCodes {
+    pub fn classify(&self, status: u16, code: Option<&str>) -> Option<Hosting> {
+        match (status, code) {
+            (403, Some(code)) if code == self.blocked => Some(Hosting::Blocked),
+            (429, Some(code)) if code == self.quota => Some(Hosting::Quota),
+            (503, Some(code)) if code == self.unavailable => Some(Hosting::Unavailable),
+            _ => None,
+        }
+    }
+}
+
+pub const BOOTSTRAP_HOSTING: HostingCodes = HostingCodes {
+    blocked: "bootstrap-hosting-blocked",
+    quota: "bootstrap-hosting-quota",
+    unavailable: "bootstrap-hosting-unavailable",
+};
+pub const ENROLLMENT_HOSTING: HostingCodes = HostingCodes {
+    blocked: "enrollment-hosting-blocked",
+    quota: "enrollment-hosting-quota",
+    unavailable: "enrollment-hosting-unavailable",
+};
+pub const TAIL_HOSTING: HostingCodes = HostingCodes {
+    blocked: "encrypted-tail-hosting-blocked",
+    quota: "encrypted-tail-hosting-quota",
+    unavailable: "encrypted-tail-hosting-unavailable",
+};
+pub const IMAGE_HOSTING: HostingCodes = HostingCodes {
+    blocked: "encrypted-image-hosting-blocked",
+    quota: "encrypted-image-hosting-quota",
+    unavailable: "encrypted-image-hosting-unavailable",
+};
+
+#[cfg(test)]
+mod hosting_tests {
+    use super::*;
+
+    #[test]
+    fn hosting_codes_require_their_endpoint_family_and_status() {
+        let families = [
+            &BOOTSTRAP_HOSTING,
+            &ENROLLMENT_HOSTING,
+            &TAIL_HOSTING,
+            &IMAGE_HOSTING,
+        ];
+        for (i, family) in families.iter().enumerate() {
+            for (status, code, expected) in [
+                (403, family.blocked, Hosting::Blocked),
+                (429, family.quota, Hosting::Quota),
+                (503, family.unavailable, Hosting::Unavailable),
+            ] {
+                assert_eq!(family.classify(status, Some(code)), Some(expected));
+                assert_eq!(family.classify(401, Some(code)), None);
+                for (j, other) in families.iter().enumerate() {
+                    if i != j {
+                        assert_eq!(other.classify(status, Some(code)), None);
+                    }
+                }
+            }
+            assert_eq!(family.classify(403, Some("unknown")), None);
+            assert_eq!(family.classify(503, None), None);
+        }
+    }
+}

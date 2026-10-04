@@ -9,6 +9,16 @@ pub const MAX_SERVER_BYTES: usize = 255;
 /// `path`: HTTP or HTTPS with a host and no credentials, query, fragment or
 /// path.
 pub(crate) fn endpoint(origin: &str, path: &str) -> Result<Url> {
+    // Inspect the supplied authority/path too: URL parsing erases empty
+    // userinfo and resolves dot segments before exposing those fields.
+    let (_, address) = origin
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("error bootstrap-origin"))?;
+    let (authority, suffix) = address.split_once('/').unwrap_or((address, ""));
+    ensure!(
+        !authority.contains('@') && !origin.contains('\\') && suffix.is_empty(),
+        "error bootstrap-origin"
+    );
     let mut url = Url::parse(origin).map_err(|_| anyhow::anyhow!("error bootstrap-origin"))?;
     ensure!(
         matches!(url.scheme(), "http" | "https")
@@ -26,10 +36,10 @@ pub(crate) fn endpoint(origin: &str, path: &str) -> Result<Url> {
 
 /// Validates a server URL for encrypted transport and returns its origin.
 pub fn server_origin(url: &str) -> Result<String> {
-    endpoint(url, "/").context(
+    let url = endpoint(url, "/").context(
         "error sync-server-url-invalid hint=\"use an HTTP or HTTPS origin with no path, query or credentials\"",
     )?;
-    let origin = Url::parse(url)?.origin().ascii_serialization();
+    let origin = url.origin().ascii_serialization();
     ensure!(
         origin.len() <= MAX_SERVER_BYTES,
         "error sync-server-url-too-long hint=\"use a server origin of at most 255 bytes\""
@@ -37,9 +47,52 @@ pub fn server_origin(url: &str) -> Result<String> {
     Ok(origin)
 }
 
+/// Identifies Cloud only after validating the complete server origin.
+/// The address must still be displayed alongside this hosting label.
+pub fn is_aven_cloud(origin: &str) -> bool {
+    endpoint(origin, "/").is_ok_and(|url| {
+        let host = url.host_str().unwrap_or_default();
+        host.strip_suffix('.').unwrap_or(host) == AVEN_CLOUD_HOST
+            && url.port_or_known_default() == Some(443)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_identity_uses_the_validated_origin() {
+        for origin in [
+            "https://sync.aventasks.dev",
+            "HTTPS://SYNC.AVENTASKS.DEV:443/",
+            "https://sync.aventasks.dev./",
+            "https://%73ync.aventasks.dev",
+        ] {
+            assert!(is_aven_cloud(origin), "{origin}");
+        }
+        for origin in [
+            "http://sync.aventasks.dev",
+            "https://sync.aventasks.dev:444",
+            "https://sync.aventasks.dev.evil.example",
+            "https://sync.aventasks.dev/private",
+            "https://user:secret@sync.aventasks.dev",
+            "https://sync.aventasks.dev/?x=1",
+            "https://sync.aventasks.dev/#x",
+            "https://@sync.aventasks.dev",
+            "https://sync.aventasks.dev/private/..",
+            "https://sync.aventasks.dev/.",
+        ] {
+            assert!(!is_aven_cloud(origin), "{origin}");
+        }
+        for origin in [
+            "http://SYNC.AVENTASKS.DEV:443",
+            "http://sync.aventasks.dev.:80",
+            "http://%73ync.aventasks.dev:3746",
+        ] {
+            assert!(endpoint(origin, "/e2ee/bootstrap/v1").is_err(), "{origin}");
+        }
+    }
 
     #[test]
     fn accepts_http_and_https_origins() {

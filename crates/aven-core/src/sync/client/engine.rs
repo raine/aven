@@ -1359,6 +1359,22 @@ mod tests {
     }
 
     #[test]
+    fn unfrozen_setup_refusals_offer_hosted_and_self_hosted_recovery() {
+        for code in [
+            "bootstrap-setup-invitation-rejected",
+            "bootstrap-setup-invitation-expired",
+        ] {
+            let error = explain_setup_refusal(anyhow::anyhow!("error {code}"));
+            assert!(error.to_string().contains("hosting provider"));
+            assert!(error.to_string().contains("`aven server setup`"));
+            assert!(error.to_string().contains("nothing here was changed"));
+            let frozen = explain_fenced_setup_refusal(anyhow::anyhow!("error {code}"));
+            assert!(frozen.to_string().contains("already frozen"));
+            assert!(frozen.to_string().contains("same server storage"));
+        }
+    }
+
+    #[test]
     fn seed_claim_only_labels_a_real_setup_mismatch_as_invitation_mismatch() {
         let mismatch = anyhow::Error::new(ProtectedLocalKeyStoreError::new(
             ProtectedLocalKeyStoreErrorKind::SetupMismatch,
@@ -1404,5 +1420,286 @@ mod tests {
         assert!(hint.contains("#recover-from-device-loss"), "{hint}");
         let other = explain_change_limit(anyhow::anyhow!("error membership-invalid"));
         assert_eq!(other.to_string(), "error membership-invalid");
+    }
+}
+
+#[cfg(test)]
+mod hosting_tests {
+    use super::*;
+    use crate::sync::client::keys::test_support::isolated_store;
+    use crate::sync::client::{HttpHeader, HttpResponse, Session, Step};
+    use crate::sync::seed_claim::SeedAuthority;
+    use aven_protocol::refusal::{
+        BOOTSTRAP_HOSTING, ENROLLMENT_HOSTING, IMAGE_HOSTING, TAIL_HOSTING,
+    };
+
+    async fn exchange_family(mode: usize, link: Link, seed: &SeedAuthority) -> Result<()> {
+        let origin = "http://127.0.0.1:3746";
+        let context = crate::sync::encrypted_tail::Context {
+            vault: [1; 32],
+            genesis: [2; 32],
+            device: [3; 32],
+            head: [4; 32],
+            stream: [5; 32],
+            descriptor: [6; 32],
+        };
+        match mode {
+            0 => {
+                bootstrap::Client::new(origin, link)?
+                    .exchange(
+                        seed.genesis(),
+                        seed.bearer(),
+                        bootstrap::Operation::Status { bootstrap: [7; 32] },
+                    )
+                    .await?;
+            }
+            1 => {
+                use crate::sync::bootstrap_staging::{
+                    Component,
+                    batch::{Header, Slot},
+                };
+                bootstrap::Client::new(origin, link)?
+                    .put_batch(
+                        seed.bearer(),
+                        &Header {
+                            vault: [1; 32],
+                            genesis: [2; 32],
+                            bootstrap: [7; 32],
+                            commitment: [6; 32],
+                            records: vec![Slot {
+                                component: Component::DataCatalog,
+                                index: 0,
+                                len: 1,
+                            }],
+                        },
+                        &[&[42]],
+                    )
+                    .await?;
+            }
+            2 => {
+                enrollment::Client::new(origin, link)?
+                    .exchange(
+                        enrollment::Operation::Post {
+                            vault: [1; 32],
+                            handle: [7; 32],
+                            request: vec![42],
+                        },
+                        Some(seed.bearer()),
+                    )
+                    .await?;
+            }
+            3 => {
+                tail::Client::new(origin, link)?
+                    .exchange(
+                        &context,
+                        seed.bearer(),
+                        crate::sync::encrypted_tail::Operation::Features,
+                    )
+                    .await?;
+            }
+            4 => {
+                tail::Client::new(origin, link)?
+                    .batch_exchange(
+                        &context,
+                        seed.bearer(),
+                        crate::sync::encrypted_tail::BatchOperation::Resolve {
+                            operation_ids: vec![],
+                        },
+                    )
+                    .await?;
+            }
+            5 => {
+                tail::Client::new(origin, link)?
+                    .image_exchange(
+                        &context,
+                        seed.bearer(),
+                        crate::sync::encrypted_tail::attachments::Operation::Release {
+                            workspace: "fixture".into(),
+                            object: [7; 32],
+                            descriptor_commitment: [6; 32],
+                            reservation: [8; 32],
+                        },
+                    )
+                    .await?;
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn endpoint_hosting_refusals_retain_keys_frozen_intent_and_local_access_then_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let db = Database::open(&root.path().join("client.sqlite"))
+            .await
+            .unwrap();
+        let store = isolated_store(&db, &root.path().join("keys")).await;
+        let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+        let protected = seed.protected_storage_bytes();
+        store.prepare_seed_source(&db).await.unwrap();
+        db.capture_local_shared_state_for_setup(root.path())
+            .await
+            .unwrap();
+        store
+            .package_seed_capture(&db, root.path(), [9; 32])
+            .await
+            .unwrap();
+        store.prepare_seed_adoption_intent(&db).await.unwrap();
+        let intent = db.seed_publication_intent_bytes().await.unwrap().unwrap();
+        let paths = [
+            bootstrap::PATH,
+            bootstrap::PATH,
+            enrollment::PATH,
+            tail::PATH,
+            tail::BATCH_PATH,
+            tail::IMAGES_PATH,
+        ];
+        let families = [
+            &BOOTSTRAP_HOSTING,
+            &BOOTSTRAP_HOSTING,
+            &ENROLLMENT_HOSTING,
+            &TAIL_HOSTING,
+            &TAIL_HOSTING,
+            &IMAGE_HOSTING,
+        ];
+        for (mode, family) in families.into_iter().enumerate() {
+            for (status, wire_code, client_code) in [
+                (403, family.blocked, "sync-hosting-blocked"),
+                (429, family.quota, "sync-hosting-quota"),
+                (503, family.unavailable, "sync-hosting-unavailable"),
+            ] {
+                let mut session = Session::new(|link| async {
+                    track_access_result(&db, exchange_family(mode, link, &seed).await).await
+                });
+                let Step::Request(request) = session.next().await.unwrap() else {
+                    panic!("expected request")
+                };
+                assert_eq!(url::Url::parse(&request.url).unwrap().path(), paths[mode]);
+                assert!(
+                    request
+                        .headers
+                        .iter()
+                        .any(|header| header.name == "authorization")
+                );
+                let frozen_request = request.body.clone();
+                session
+                    .accept_response(
+                        request.context,
+                        HttpResponse {
+                            status,
+                            headers: vec![HttpHeader {
+                                name: "content-type".into(),
+                                value: "application/json".into(),
+                            }],
+                            body: serde_json::to_vec(&serde_json::json!({"error": wire_code}))
+                                .unwrap(),
+                        },
+                    )
+                    .unwrap();
+                let error = session
+                    .next()
+                    .await
+                    .err()
+                    .expect("hosting must stop the exchange");
+                assert!(has_code(&error, client_code), "{error:#}");
+                assert!(!is_access_refusal(&error));
+                assert!(db.sync_access_refusal().await.unwrap().is_none());
+                assert_eq!(
+                    db.seed_publication_intent_bytes().await.unwrap().unwrap(),
+                    intent
+                );
+                assert_eq!(
+                    store
+                        .prepare_seed_claim(&db, [9; 32])
+                        .await
+                        .unwrap()
+                        .protected_storage_bytes(),
+                    protected
+                );
+                assert!(
+                    !db.list_workspaces().await.unwrap().is_empty(),
+                    "local data stays readable"
+                );
+
+                // Lifting hosting policy retries the same operation; it does not
+                // replace credentials or clear protected publication evidence.
+                let mut retry = Session::new(|link| async {
+                    track_access_result(&db, exchange_family(mode, link, &seed).await).await
+                });
+                let Step::Request(request) = retry.next().await.unwrap() else {
+                    panic!("expected retry")
+                };
+                let body = if mode < 3 {
+                    assert_eq!(request.body, frozen_request);
+                    serde_json::json!(if mode == 0 {
+                        "Missing"
+                    } else if mode == 1 {
+                        "Stored"
+                    } else {
+                        "Done"
+                    })
+                } else {
+                    let mut envelope: serde_json::Value =
+                        serde_json::from_slice(&request.body).unwrap();
+                    envelope["operation"] = match mode {
+                        3 => serde_json::json!({"Features": {"count": 128, "bytes": 1048576}}),
+                        4 => serde_json::json!({"Resolved": []}),
+                        _ => serde_json::json!("Done"),
+                    };
+                    envelope
+                };
+                retry
+                    .accept_response(
+                        request.context,
+                        HttpResponse {
+                            status: 200,
+                            headers: vec![HttpHeader {
+                                name: "content-type".into(),
+                                value: "application/json".into(),
+                            }],
+                            body: serde_json::to_vec(&body).unwrap(),
+                        },
+                    )
+                    .unwrap();
+                assert!(matches!(retry.next().await.unwrap(), Step::Done(())));
+                assert!(db.sync_access_refusal().await.unwrap().is_none());
+                assert_eq!(
+                    db.seed_publication_intent_bytes().await.unwrap().unwrap(),
+                    intent
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn official_http_is_rejected_before_a_session_can_dispatch_credentials() {
+        for origin in [
+            "http://sync.aventasks.dev",
+            "HTTP://SYNC.AVENTASKS.DEV.:443",
+            "http://%73ync.aventasks.dev:3746",
+        ] {
+            for mode in 0..3 {
+                let mut session = Session::new(|link| async move {
+                    match mode {
+                        0 => {
+                            bootstrap::Client::new(origin, link)?;
+                        }
+                        1 => {
+                            enrollment::Client::new(origin, link)?;
+                        }
+                        _ => {
+                            tail::Client::new(origin, link)?;
+                        }
+                    }
+                    Ok(())
+                });
+                let error = session
+                    .next()
+                    .await
+                    .err()
+                    .expect("must refuse before yielding a request");
+                assert!(has_code(&error, "sync-cloud-https-required"), "{error:#}");
+            }
+        }
     }
 }
