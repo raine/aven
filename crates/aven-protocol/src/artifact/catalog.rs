@@ -1,25 +1,24 @@
-use super::super::{
-    self as crypto, EncryptedArtifact, EncryptedChunk, LocalSharedStatePackageContext,
-};
 use super::codec::*;
+use super::{EncryptedArtifact, EncryptedChunk};
 use super::{Error, Result};
+use crate::{context::LocalSharedStatePackageContext, record as crypto};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Artifact {
+pub struct Artifact {
     pub total: u64,
     pub aggregate: [u8; 32],
     pub chunks: Vec<Chunk>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Chunk {
+pub struct Chunk {
     pub length: u64,
     pub hash: [u8; 32],
     pub nonce: [u8; 24],
 }
 
 impl Artifact {
-    pub(crate) fn from_encrypted(artifact: &EncryptedArtifact<'_>) -> Result<Self> {
+    pub fn from_encrypted(artifact: &EncryptedArtifact<'_>) -> Result<Self> {
         let chunks = artifact
             .chunks
             .iter()
@@ -66,7 +65,7 @@ impl Artifact {
         }
         Ok(())
     }
-    pub(crate) fn read(r: &mut Reader<'_>, maximum: u64, image: bool) -> Result<Self> {
+    pub fn read(r: &mut Reader<'_>, maximum: u64, image: bool) -> Result<Self> {
         let total = r.u64()?;
         bound(total, maximum)?;
         let aggregate = r.array()?;
@@ -120,9 +119,7 @@ impl Artifact {
         class: u8,
     ) -> Result<()> {
         let chunk = self.chunks.get(index).ok_or(Error::Invalid)?;
-        valid(
-            number(record.len())? == chunk.length && crate::sync::codec::hash(record) == chunk.hash,
-        )?;
+        valid(number(record.len())? == chunk.length && crate::codec::hash(record) == chunk.hash)?;
         let (header, _) = crypto::split_record(record).map_err(|_| Error::Invalid)?;
         let nonce = crypto::validate_chunk_header(
             header,
@@ -138,7 +135,7 @@ impl Artifact {
         .map_err(|_| Error::Invalid)?;
         valid(nonce == chunk.nonce)
     }
-    pub(crate) fn encrypted<'a>(&self, records: &'a [Vec<u8>]) -> EncryptedArtifact<'a> {
+    pub fn encrypted<'a>(&self, records: &'a [Vec<u8>]) -> EncryptedArtifact<'a> {
         EncryptedArtifact {
             total_plaintext_bytes: self.total,
             aggregate_commitment: self.aggregate,
@@ -155,7 +152,7 @@ impl Artifact {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Declaration {
+pub struct Declaration {
     pub count: u64,
     pub length: u64,
     pub hash: [u8; 32],
@@ -167,11 +164,8 @@ impl Declaration {
         Ok(Self {
             count: number(read_stream(bytes, class)?.len())?,
             length: number(bytes.len())?,
-            hash: crate::sync::codec::hash(bytes),
-            slices: bytes
-                .chunks(size(CHUNK)?)
-                .map(crate::sync::codec::hash)
-                .collect(),
+            hash: crate::codec::hash(bytes),
+            slices: bytes.chunks(size(CHUNK)?).map(crate::codec::hash).collect(),
         })
     }
     pub fn write(&self, out: &mut Vec<u8>) {
@@ -208,18 +202,18 @@ impl Declaration {
     pub fn verify_slice(&self, index: usize, bytes: &[u8]) -> Result<()> {
         valid(
             self.slice_lengths().get(index) == Some(&number(bytes.len())?)
-                && self.slices.get(index) == Some(&crate::sync::codec::hash(bytes)),
+                && self.slices.get(index) == Some(&crate::codec::hash(bytes)),
         )
     }
     /// Checks the complete catalog: slices, aggregate, length, framing and count.
     pub fn verify(&self, bytes: &[u8], class: u8) -> Result<()> {
-        valid(number(bytes.len())? == self.length && crate::sync::codec::hash(bytes) == self.hash)?;
+        valid(number(bytes.len())? == self.length && crate::codec::hash(bytes) == self.hash)?;
         valid(Self::new(bytes, class)? == *self)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Parent {
+pub struct Parent {
     pub workspace: String,
     pub task: String,
     pub deleted: bool,
@@ -228,7 +222,7 @@ pub(crate) struct Parent {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Reference {
+pub struct Reference {
     pub workspace: String,
     pub task: String,
     pub reference: String,
@@ -237,7 +231,7 @@ pub(crate) struct Reference {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Image {
+pub struct Image {
     pub id: [u8; 32],
     // 1 current selected, 2 extra selected. Both require complete bytes.
     pub selection: u8,
@@ -245,7 +239,7 @@ pub(crate) struct Image {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Images {
+pub struct Images {
     pub objects: Vec<Image>,
     pub parents: Vec<Parent>,
     pub references: Vec<Reference>,
@@ -400,7 +394,7 @@ impl Images {
     }
 }
 
-pub(super) fn prefix_encode(rows: &[(u64, String)]) -> Result<Vec<u8>> {
+pub fn prefix_encode(rows: &[(u64, String)]) -> Result<Vec<u8>> {
     let mut records = Vec::new();
     for (rank, id) in rows {
         let mut record = Vec::new();
@@ -411,7 +405,7 @@ pub(super) fn prefix_encode(rows: &[(u64, String)]) -> Result<Vec<u8>> {
     stream(2, &records)
 }
 
-pub(super) fn prefix_decode(bytes: &[u8], expected: u64) -> Result<Vec<(u64, String)>> {
+pub fn prefix_decode(bytes: &[u8], expected: u64) -> Result<Vec<(u64, String)>> {
     valid(expected < i64::MAX as u64)?;
     bound(expected, RECORD_LIMIT)?;
     let records = read_stream(bytes, 2)?;

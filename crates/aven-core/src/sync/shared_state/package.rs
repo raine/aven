@@ -74,29 +74,7 @@ impl EncryptedLocalSharedStatePackage {
     }
 }
 
-/// Encrypted records that are either freshly owned or borrowed from a package.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct EncryptedArtifact<'a> {
-    total_plaintext_bytes: u64,
-    aggregate_commitment: [u8; 32],
-    pub(crate) chunks: Vec<EncryptedChunk<'a>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct EncryptedChunk<'a> {
-    record_commitment: [u8; 32],
-    pub(crate) record: std::borrow::Cow<'a, [u8]>,
-}
-
-impl EncryptedArtifact<'_> {
-    /// Moves the records out without copying owned bytes.
-    pub(crate) fn into_records(self) -> Vec<Vec<u8>> {
-        self.chunks
-            .into_iter()
-            .map(|chunk| chunk.record.into_owned())
-            .collect()
-    }
-}
+pub(crate) use aven_protocol::artifact::{EncryptedArtifact, EncryptedChunk};
 
 /// One freshly encrypted selected image, before the package is assembled.
 pub(super) struct EncryptedImage {
@@ -638,106 +616,7 @@ fn expected_chunk_plaintext_len(index: usize, count: usize, total: usize) -> Res
     total.checked_sub(preceding).context("invalid chunk total")
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn chunk_header(
-    context: LocalSharedStatePackageContext,
-    stream_id: [u8; 32],
-    artifact_id: [u8; 32],
-    family: u8,
-    class: u8,
-    index: u32,
-    count: u32,
-    total: u64,
-    nonce: [u8; 24],
-) -> Result<Vec<u8>> {
-    let mut header = Vec::with_capacity(CHUNK_HEADER_BYTES);
-    header.extend_from_slice(b"AVEN");
-    header.push(2);
-    header.extend_from_slice(&1_u16.to_be_bytes());
-    header.push(1);
-    codec::bytes(&mut header, &context.vault_id);
-    codec::bytes(&mut header, &stream_id);
-    codec::bytes(&mut header, &context.generation_id);
-    codec::bytes(&mut header, &artifact_id);
-    header.push(family);
-    header.push(class);
-    header.extend_from_slice(&index.to_be_bytes());
-    header.extend_from_slice(&count.to_be_bytes());
-    header.extend_from_slice(&total.to_be_bytes());
-    codec::bytes(&mut header, &nonce);
-    ensure!(header.len() == CHUNK_HEADER_BYTES, "invalid chunk header");
-    Ok(header)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_chunk_header(
-    header: &[u8],
-    context: LocalSharedStatePackageContext,
-    stream_id: [u8; 32],
-    artifact_id: [u8; 32],
-    family: u8,
-    class: u8,
-    index: u32,
-    count: u32,
-    total: u64,
-) -> Result<[u8; 24]> {
-    ensure!(
-        header.len() == CHUNK_HEADER_BYTES,
-        "error encrypted-local-shared-package-header-size"
-    );
-    let nonce_offset = CHUNK_HEADER_BYTES - 28;
-    ensure!(
-        u32::from_be_bytes(header[nonce_offset..nonce_offset + 4].try_into()?) == 24,
-        "error encrypted-local-shared-package-nonce-size"
-    );
-    let nonce: [u8; 24] = header[nonce_offset + 4..].try_into()?;
-    let expected = chunk_header(
-        context,
-        stream_id,
-        artifact_id,
-        family,
-        class,
-        index,
-        count,
-        total,
-        nonce,
-    )?;
-    ensure!(
-        header == expected,
-        "error encrypted-local-shared-package-header-mismatch"
-    );
-    Ok(nonce)
-}
-
-fn split_record(record: &[u8]) -> Result<(&[u8], &[u8])> {
-    ensure!(
-        record.len() >= CHUNK_RECORD_OVERHEAD,
-        "error encrypted-local-shared-package-record-truncated"
-    );
-    let header_len = usize::try_from(u32::from_be_bytes(record[0..4].try_into()?))?;
-    ensure!(
-        header_len == CHUNK_HEADER_BYTES,
-        "error encrypted-local-shared-package-header-size"
-    );
-    let body_len_offset = 4_usize
-        .checked_add(header_len)
-        .context("record offset overflow")?;
-    let body_start = body_len_offset
-        .checked_add(4)
-        .context("record offset overflow")?;
-    ensure!(
-        record.len() >= body_start,
-        "error encrypted-local-shared-package-record-truncated"
-    );
-    let body_len = usize::try_from(u32::from_be_bytes(
-        record[body_len_offset..body_start].try_into()?,
-    ))?;
-    ensure!(
-        body_len >= 16 && body_start.checked_add(body_len) == Some(record.len()),
-        "error encrypted-local-shared-package-record-length"
-    );
-    Ok((&record[4..body_len_offset], &record[body_start..]))
-}
+pub(crate) use aven_protocol::record::{chunk_header, split_record, validate_chunk_header};
 
 fn aggregate_commitment(chunks: &[EncryptedChunk<'_>]) -> [u8; 32] {
     let mut digest = Sha256::new();

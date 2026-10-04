@@ -58,8 +58,8 @@
 //! in-memory codec has bounded multiple-copy overhead and is not a streaming
 //! installer or a measured mobile resource profile.
 
-pub(crate) mod catalog;
-pub(crate) mod codec;
+pub(crate) use aven_protocol::artifact::catalog;
+pub(crate) use aven_protocol::artifact::codec;
 mod domain;
 #[cfg(feature = "test-support")]
 pub(crate) mod fuzz;
@@ -78,26 +78,8 @@ use catalog::{Artifact, Declaration, Image, Images};
 use codec::*;
 use zeroize::Zeroizing;
 
-/// Privacy-safe failures. Resource refusal says nothing about domain validity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Error {
-    Invalid,
-    ResourceLimit,
-    Authentication,
-    Unsupported,
-}
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Invalid => "invalid bootstrap representation",
-            Self::ResourceLimit => "bootstrap codec resource limit exceeded",
-            Self::Authentication => "bootstrap authentication failed",
-            Self::Unsupported => "unsupported bootstrap format version",
-        })
-    }
-}
-impl std::error::Error for Error {}
-type Result<T> = std::result::Result<T, Error>;
+pub use aven_protocol::artifact::Error;
+use aven_protocol::artifact::Result;
 
 /// Exact upload components. Catalog array order is data, prefix, images.
 /// Records within artifacts are in canonical index order, images in object order.
@@ -126,101 +108,7 @@ pub struct Completeness {
     pub ciphertext_bytes: u64,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct Descriptor {
-    vault: [u8; 32],
-    stream: [u8; 32],
-    generation: [u8; 32],
-    bootstrap: [u8; 32],
-    // An already-known predecessor/genesis commitment, never PublishBootstrap.
-    membership: [u8; 32],
-    prefix: u64,
-    catalogs: [Declaration; 3],
-    manifest: Artifact,
-}
-
-impl Descriptor {
-    fn context(&self) -> crypto::LocalSharedStatePackageContext {
-        crypto::LocalSharedStatePackageContext {
-            vault_id: self.vault,
-            generation_id: self.generation,
-        }
-    }
-    fn binding(&self) -> Vec<u8> {
-        let mut out = b"AVBP\0\x02\x01".to_vec();
-        for id in [
-            self.vault,
-            self.stream,
-            self.generation,
-            self.bootstrap,
-            self.membership,
-        ] {
-            out.extend_from_slice(&id);
-        }
-        u64_bytes(&mut out, self.prefix);
-        for (index, declaration) in self.catalogs.iter().enumerate() {
-            out.push(index as u8 + 1);
-            declaration.write(&mut out);
-        }
-        out
-    }
-    fn encode(&self) -> Result<Vec<u8>> {
-        let mut out = self.binding();
-        self.manifest.write(&mut out)?;
-        Ok(out)
-    }
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        bound(number(bytes.len())?, MAX_DESCRIPTOR_BYTES as u64)?;
-        let mut r = Reader(bytes);
-        valid(r.take(4)? == b"AVBP")?;
-        if r.take(2)? != [0, 2] {
-            return Err(Error::Unsupported);
-        }
-        valid(r.byte()? == 1)?;
-        let vault = r.array()?;
-        let stream = r.array()?;
-        let generation = r.array()?;
-        let bootstrap = r.array()?;
-        let membership = r.array()?;
-        let prefix = r.u64()?;
-        valid(prefix < i64::MAX as u64)?;
-        bound(prefix, RECORD_LIMIT)?;
-        valid(r.byte()? == 1)?;
-        let data = Declaration::read(&mut r)?;
-        valid(r.byte()? == 2)?;
-        let ids = Declaration::read(&mut r)?;
-        valid(r.byte()? == 3)?;
-        let images = Declaration::read(&mut r)?;
-        let manifest = Artifact::read(&mut r, CHUNK, false)?;
-        r.end()?;
-        Ok(Self {
-            vault,
-            stream,
-            generation,
-            bootstrap,
-            membership,
-            prefix,
-            catalogs: [data, ids, images],
-            manifest,
-        })
-    }
-}
-
-fn state_catalog(state: &Artifact) -> Result<Vec<u8>> {
-    let mut row = vec![1];
-    state.write(&mut row)?;
-    stream(1, &[row])
-}
-
-fn decode_state_catalog(bytes: &[u8]) -> Result<Artifact> {
-    let records = read_stream(bytes, 1)?;
-    valid(records.len() == 1)?;
-    let mut r = Reader(records[0]);
-    valid(r.byte()? == 1)?;
-    let state = Artifact::read(&mut r, STATE_LIMIT, false)?;
-    r.end()?;
-    Ok(state)
-}
+use aven_protocol::artifact::{Descriptor, decode_state_catalog, state_catalog};
 
 fn manifest_plaintext(d: &Descriptor, stats: &domain::Stats) -> Vec<u8> {
     let mut out = b"AVBM\0\x01".to_vec();
