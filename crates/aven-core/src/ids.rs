@@ -29,8 +29,7 @@ pub struct MetadataFieldId(String);
 #[serde(transparent)]
 pub struct TaskId(String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidWorkspaceId;
+pub use aven_protocol::workspace::InvalidWorkspaceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidProjectId;
@@ -129,12 +128,6 @@ impl fmt::Display for TaskId {
     }
 }
 
-impl fmt::Display for InvalidWorkspaceId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("workspace ID must be 16 Crockford Base32 characters")
-    }
-}
-
 impl fmt::Display for InvalidProjectId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("project ID must be 16 Crockford Base32 characters")
@@ -153,7 +146,6 @@ impl fmt::Display for InvalidTaskId {
     }
 }
 
-impl std::error::Error for InvalidWorkspaceId {}
 impl std::error::Error for InvalidProjectId {}
 impl std::error::Error for InvalidMetadataFieldId {}
 impl std::error::Error for InvalidTaskId {}
@@ -162,11 +154,8 @@ impl FromStr for WorkspaceId {
     type Err = InvalidWorkspaceId;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.len() == 16 && value.bytes().all(|byte| BASE32.contains(&byte)) {
-            Ok(Self(value.to_string()))
-        } else {
-            Err(InvalidWorkspaceId)
-        }
+        aven_protocol::workspace::validate(value)?;
+        Ok(Self(value.to_string()))
     }
 }
 
@@ -422,6 +411,32 @@ mod tests {
         assert!("0123456789ABCDE".parse::<WorkspaceId>().is_err());
         assert!("0123456789abcdef".parse::<WorkspaceId>().is_err());
         assert!("0123456789ABCDEI".parse::<WorkspaceId>().is_err());
+    }
+
+    #[test]
+    fn workspace_parser_matches_shared_validation_and_preserves_error_type() {
+        for byte in 0..=127_u8 {
+            let mut bytes = [b'0'; 16];
+            bytes[7] = byte;
+            let value = std::str::from_utf8(&bytes).unwrap();
+            assert_eq!(
+                value.parse::<WorkspaceId>().is_ok(),
+                aven_protocol::workspace::validate(value).is_ok()
+            );
+        }
+        for value in [
+            "",
+            "0123456789ABCDE",
+            "0123456789ABCDEFG",
+            "00000000000000é",
+        ] {
+            let error = value.parse::<WorkspaceId>().unwrap_err();
+            assert_eq!(error, InvalidWorkspaceId);
+            assert_eq!(
+                error.to_string(),
+                "workspace ID must be 16 Crockford Base32 characters"
+            );
+        }
     }
 
     #[test]

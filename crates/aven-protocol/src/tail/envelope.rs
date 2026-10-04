@@ -266,10 +266,7 @@ pub fn decode_projection(input: &[u8]) -> Result<Projection> {
             let source = std::str::from_utf8(r.blob(16)?)?.to_owned();
             let target = std::str::from_utf8(r.blob(16)?)?.to_owned();
             for id in [&source, &target] {
-                ensure!(
-                    id.len() == 16 && id.bytes().all(|byte| BASE32.contains(&byte)),
-                    "workspace ID must be 16 Crockford Base32 characters"
-                );
+                crate::workspace::validate(id)?;
             }
             valid(source != target)?;
             let count = u16::from_be_bytes(r.array()?) as usize;
@@ -292,4 +289,59 @@ pub fn decode_projection(input: &[u8]) -> Result<Projection> {
     };
     valid(r.0.is_empty())?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn move_workspace_validation_keeps_fixed_bytes_and_refusals() {
+        let projection = Projection::Move {
+            source: "0123456789ABCDEF".into(),
+            target: "GHJKMNPQRSTVWXYZ".into(),
+            tasks: vec!["0000000000000000".into()],
+        };
+        let bytes = projection.encode();
+        assert_eq!(
+            hex::encode(&bytes),
+            "0400000010303132333435363738394142434445460000001047484a4b4d4e5051525354565758595a000100000000000000000000"
+        );
+        assert!(Projection::decode(&bytes).unwrap() == projection);
+        for field in [0, 1] {
+            for invalid in [
+                "0123456789ABCDE",
+                "0123456789abcdef",
+                "0123456789ABCDEI",
+                "0123456789ABCDEL",
+                "0123456789ABCDEO",
+                "0123456789ABCDEU",
+                "00000000000000é",
+            ] {
+                let mut bad = vec![4];
+                encode_text(
+                    &mut bad,
+                    if field == 0 {
+                        invalid
+                    } else {
+                        "0123456789ABCDEF"
+                    },
+                );
+                encode_text(
+                    &mut bad,
+                    if field == 1 {
+                        invalid
+                    } else {
+                        "GHJKMNPQRSTVWXYZ"
+                    },
+                );
+                bad.extend(1_u16.to_be_bytes());
+                bad.extend([0; 10]);
+                assert_eq!(
+                    Projection::decode(&bad).err().unwrap().to_string(),
+                    "workspace ID must be 16 Crockford Base32 characters"
+                );
+            }
+        }
+    }
 }

@@ -17,3 +17,5 @@ pub mod bootstrap;
 pub mod images;
 pub mod tail;
 pub use claim::{membership, peer, publication};
+
+pub mod workspace;
