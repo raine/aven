@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/aven-core", "crates/aven-protocol"]
+members = [".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -42,6 +42,7 @@ repository = "https://github.com/raine/aven"
 license = "MIT"
 
 [dependencies]
+aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
 aven-core = { path = "crates/aven-core", version = "=0.1.33" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
@@ -93,6 +94,7 @@ security-framework-sys = { version = "2.15", default-features = false }
 notify-rust = "4"
 
 [dev-dependencies]
+aven-conformance = { path = "crates/aven-conformance", version = "=0.1.0" }
 tokio = { workspace = true, features = ["test-util"] }
 aven-core = { path = "crates/aven-core", version = "=0.1.33", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }

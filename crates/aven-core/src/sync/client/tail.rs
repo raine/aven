@@ -1,6 +1,7 @@
 //! Encrypted ordinary-task transport: record rounds and image transfers.
 use anyhow::{Result, ensure};
-use serde::{Deserialize, Serialize};
+use aven_protocol::refusal::Tail as Refusal;
+use serde::Serialize;
 
 use super::errors::is_stale;
 use super::exchange::{self, Link};
@@ -12,16 +13,9 @@ use crate::sync::{
     seed_claim::Secret,
 };
 mod images;
+pub use aven_protocol::wire::tail::Envelope;
+pub use aven_protocol::wire::tail::{BATCH_PATH, PATH};
 pub use images::{DrainSnapshot, IMAGES_PATH, ImageTransfer, Round};
-pub const PATH: &str = "/e2ee/tail/v1";
-pub const BATCH_PATH: &str = "/e2ee/tail/batch/v1";
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Envelope<T> {
-    pub context: Context,
-    pub correlation: [u8; 32],
-    pub operation: T,
-}
 pub struct Client {
     link: Link,
     origin: url::Url,
@@ -115,28 +109,27 @@ impl Client {
                 exchange::Failure::RequestBodyLimit => {
                     anyhow::anyhow!("error sync-request-body-limit")
                 }
-                exchange::Failure::Refused { code, .. } => match code.as_deref() {
-                    Some("encrypted-tail-malformed") => {
+                exchange::Failure::Refused { code, .. } => match Refusal::classify(code.as_deref())
+                {
+                    Refusal::Malformed => {
                         anyhow::anyhow!("error encrypted-tail-malformed")
                     }
-                    Some("encrypted-tail-batch-known") => {
+                    Refusal::BatchKnown => {
                         anyhow::anyhow!("error encrypted-tail-batch-known")
                     }
-                    Some("membership-stale") => {
-                        crate::sync::seed_claim::membership::StaleContext.into()
-                    }
+                    Refusal::Stale => crate::sync::seed_claim::membership::StaleContext.into(),
                     // The server authenticated the credential but refused
                     // this device, as enrollment does for a removed device.
-                    Some("encrypted-tail-unauthorized") => {
+                    Refusal::Unauthorized => {
                         crate::sync::seed_claim::membership::Unauthorized.into()
                     }
-                    Some("encrypted-tail-prefix-identity-collision") => {
-                        tail::PrefixIdentityCollision.into()
-                    }
-                    Some("attachment-quota-exceeded") => {
+                    Refusal::PrefixIdentityCollision => tail::PrefixIdentityCollision.into(),
+                    Refusal::Quota => {
                         anyhow::anyhow!("error attachment-quota-exceeded")
                     }
-                    _ => anyhow::anyhow!("error encrypted-tail-refused outcome-unknown"),
+                    Refusal::Unknown => {
+                        anyhow::anyhow!("error encrypted-tail-refused outcome-unknown")
+                    }
                 },
             })?;
         let response: Envelope<R> = if compact {

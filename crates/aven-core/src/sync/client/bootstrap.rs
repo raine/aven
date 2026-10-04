@@ -14,14 +14,14 @@
 //! [`staging::batch::MAX_BYTES`]. Status responses are bounded at 1 MiB. Busy
 //! callers retry a bounded number of times.
 use anyhow::{Result, ensure};
-use serde::{Deserialize, Serialize};
+use aven_protocol::refusal::Bootstrap as Refusal;
 
 use super::exchange::{self, Link};
 use super::keys::ProtectedLocalKeyStore;
 use crate::db::Database;
 use crate::sync::shared_state::validated::{ProofCache, ValidatedSeed};
 use crate::sync::{
-    base64_bytes, bootstrap_staging as staging,
+    bootstrap_staging as staging,
     seed_claim::{ClaimAuthentication, ClaimResult, Genesis, PublicationOutcome, Secret},
 };
 
@@ -50,66 +50,9 @@ impl Drop for StageTimer {
     }
 }
 
-pub const PATH: &str = "/e2ee/bootstrap/v1";
-pub const REQUEST_LIMIT: usize = base64_bytes::encoded_len(staging::MAX_REQUEST_BYTES) + 4096;
-pub const RESPONSE_LIMIT: usize = 1_048_576;
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Envelope {
-    pub vault: [u8; 32],
-    pub genesis: [u8; 32],
-    pub operation: Operation,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Operation {
-    ClaimSetup {
-        #[serde(with = "crate::sync::base64_bytes")]
-        bytes: Vec<u8>,
-    },
-    ClaimBearer {
-        #[serde(with = "crate::sync::base64_bytes")]
-        bytes: Vec<u8>,
-    },
-    Declare {
-        #[serde(with = "crate::sync::base64_bytes")]
-        descriptor: Vec<u8>,
-        budget: staging::Budget,
-    },
-    Status {
-        bootstrap: [u8; 32],
-    },
-    Ensure {
-        bootstrap: [u8; 32],
-        commitment: [u8; 32],
-    },
-    Cancel {
-        bootstrap: [u8; 32],
-    },
-    Publish {
-        bootstrap: [u8; 32],
-        commitment: [u8; 32],
-        #[serde(with = "crate::sync::base64_bytes")]
-        record: Vec<u8>,
-    },
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Reply {
-    Claimed {
-        vault: [u8; 32],
-        claim: [u8; 32],
-        genesis: [u8; 32],
-    },
-    Missing,
-    Canceled,
-    Staging(staging::StagingStatus),
-    Stored,
-    Published(#[serde(with = "crate::sync::base64_bytes")] Vec<u8>),
-}
+pub use aven_protocol::wire::bootstrap::{
+    Envelope, Operation, PATH, REQUEST_LIMIT, RESPONSE_LIMIT, Reply,
+};
 
 impl From<staging::Status> for Reply {
     fn from(value: staging::Status) -> Self {
@@ -206,21 +149,23 @@ impl Client {
             exchange::Failure::RequestBodyLimit => {
                 anyhow::anyhow!("error sync-request-body-limit")
             }
-            exchange::Failure::Refused { code, .. } => match code.as_deref() {
-                Some("bootstrap-storage-already-claimed") => {
-                    anyhow::anyhow!("error bootstrap-storage-already-claimed")
+            exchange::Failure::Refused { code, .. } => {
+                match Refusal::classify(code.as_deref(), claim) {
+                    Refusal::Claimed => {
+                        anyhow::anyhow!("error bootstrap-storage-already-claimed")
+                    }
+                    Refusal::SetupRejected => {
+                        anyhow::anyhow!("error bootstrap-setup-invitation-rejected")
+                    }
+                    Refusal::SetupExpired => {
+                        anyhow::anyhow!("error bootstrap-setup-invitation-expired")
+                    }
+                    Refusal::Quota => {
+                        anyhow::anyhow!("error attachment-quota-exceeded")
+                    }
+                    Refusal::Unknown => anyhow::anyhow!("error bootstrap-refused outcome-unknown"),
                 }
-                Some("bootstrap-setup-invitation-rejected") if claim => {
-                    anyhow::anyhow!("error bootstrap-setup-invitation-rejected")
-                }
-                Some("bootstrap-setup-invitation-expired") if claim => {
-                    anyhow::anyhow!("error bootstrap-setup-invitation-expired")
-                }
-                Some("attachment-quota-exceeded") => {
-                    anyhow::anyhow!("error attachment-quota-exceeded")
-                }
-                _ => anyhow::anyhow!("error bootstrap-refused outcome-unknown"),
-            },
+            }
         })?;
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error bootstrap-response"))
     }

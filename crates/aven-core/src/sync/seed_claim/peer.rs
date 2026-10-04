@@ -6,7 +6,6 @@ use super::*;
 use crate::sync::bootstrap_format::DOMAIN_VERSION;
 use ed25519_dalek::{Signature, VerifyingKey};
 use hpke::PskBundle;
-use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 pub const REQUEST_BYTES: usize = 314;

@@ -4,14 +4,7 @@ use anyhow::Context;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
 
-/// Explicit current-head request context. Historical outcomes cannot authenticate it.
-pub struct Authentication<'a> {
-    pub vault: [u8; 32],
-    pub genesis: [u8; 32],
-    pub device: [u8; 32],
-    pub head: [u8; 32],
-    pub bearer: &'a Secret,
-}
+pub use aven_protocol::wire::enrollment::Authentication;
 
 impl Database {
     pub async fn peer_target_preflight(&self) -> Result<String> {
@@ -163,9 +156,4 @@ async fn fresh(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RegistrationStatus {
-    Open,
-    Expired,
-    Consumed,
-}
+pub use aven_protocol::wire::enrollment::RegistrationStatus;

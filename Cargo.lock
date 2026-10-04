@@ -273,7 +273,9 @@ name = "aven"
 version = "0.1.46"
 dependencies = [
  "anyhow",
+ "aven-conformance",
  "aven-core",
+ "aven-protocol",
  "axum",
  "base64",
  "chacha20poly1305",
@@ -321,6 +323,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aven-conformance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aven-core",
+ "aven-protocol",
+ "hex",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "aven-core"
 version = "0.1.33"
 dependencies = [
@@ -361,12 +376,14 @@ name = "aven-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "chacha20",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hex",
  "hpke",
  "rand_core 0.10.1",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "subtle",

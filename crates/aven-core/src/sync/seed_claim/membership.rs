@@ -26,7 +26,7 @@ use anyhow::Result;
 pub use pairing::{Declaration, Device, Joiner, ProvisionalGrant, VerifiedEnrollment};
 
 pub const MAX_DEVICES: usize = 32;
-pub const MAX_RECORD_BYTES: usize = 32768;
+pub use aven_protocol::wire::enrollment::MAX_RECORD_BYTES;
 /// Lifetime signed transitions after genesis; every admission, removal and
 /// rotation consumes one.
 pub const MAX_TRANSITIONS: usize = 256;

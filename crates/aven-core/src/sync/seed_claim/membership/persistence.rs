@@ -173,13 +173,7 @@ async fn observe(conn: &mut SqliteConnection, time: i64) -> Result<i64> {
         .bind(high).execute(&mut *conn).await?;
     Ok(high)
 }
-/// Serialized outcome of cancelling a registered invitation. `Admitted` is a
-/// hint only; callers resolve admission from the verified membership chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CancelStatus {
-    Admitted,
-    Cancelled,
-}
+pub use aven_protocol::wire::enrollment::CancelStatus;
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagementPreparation {

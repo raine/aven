@@ -8,11 +8,9 @@ use chacha20poly1305::{
 };
 use zeroize::Zeroizing;
 
-pub const DESCRIPTOR_LIMIT: usize = 1984;
-pub const IMAGE_BYTES: usize = 25 * 1048576;
-pub const CHUNK_BYTES: usize = 1048576 + 222;
-pub const TRANSFER_BYTES: usize = IMAGE_BYTES + 25 * 222;
-pub const HTTP_LIMIT: usize = crate::sync::base64_bytes::encoded_len(CHUNK_BYTES) + 16384;
+pub use aven_protocol::wire::images::{
+    CHUNK_BYTES, DESCRIPTOR_LIMIT, HTTP_LIMIT, IMAGE_BYTES, TRANSFER_BYTES,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Descriptor {

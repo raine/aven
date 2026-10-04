@@ -2,7 +2,7 @@
 //! The public mailbox never exposes bootstrap chunks, images or credentials.
 mod management;
 use anyhow::{Context as _, Result, ensure};
-use serde::{Deserialize, Serialize};
+use aven_protocol::refusal::Enrollment as Refusal;
 
 use super::errors::is_stale;
 use super::exchange::{self, Link};
@@ -23,22 +23,11 @@ pub struct CreatedInvitation {
     pub resumed: bool,
 }
 
-pub const PATH: &str = "/e2ee/enrollment/v1";
-pub const CONTROL_LIMIT: usize =
-    crate::sync::base64_bytes::encoded_len(membership::MAX_RECORD_BYTES) + 4096;
-pub const PUBLISHED_RESPONSE_LIMIT: usize =
-    crate::sync::base64_bytes::encoded_len(crate::sync::bootstrap_staging::MAX_REQUEST_BYTES)
-        + 4096;
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Context {
-    pub vault: [u8; 32],
-    pub genesis: [u8; 32],
-    pub device: [u8; 32],
-    pub head: [u8; 32],
-}
-impl Context {
-    pub fn active(inputs: &ActiveInputs) -> Self {
+pub use aven_protocol::wire::enrollment::Context;
+pub use aven_protocol::wire::enrollment::{CONTROL_LIMIT, PATH, PUBLISHED_RESPONSE_LIMIT};
+
+impl From<&ActiveInputs> for Context {
+    fn from(inputs: &ActiveInputs) -> Self {
         Self {
             vault: inputs.membership.genesis().context().vault_id,
             genesis: inputs.membership.genesis().commitment(),
@@ -46,75 +35,11 @@ impl Context {
             head: inputs.membership.head(),
         }
     }
-    pub fn auth<'a>(&self, bearer: &'a Secret) -> peer::Authentication<'a> {
-        peer::Authentication {
-            vault: self.vault,
-            genesis: self.genesis,
-            device: self.device,
-            head: self.head,
-            bearer,
-        }
-    }
 }
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Operation {
-    Register {
-        context: Context,
-        #[serde(with = "crate::sync::base64_bytes")]
-        declaration: Vec<u8>,
-    },
-    Post {
-        vault: [u8; 32],
-        handle: [u8; 32],
-        #[serde(with = "crate::sync::base64_bytes")]
-        request: Vec<u8>,
-    },
-    Mailbox {
-        vault: [u8; 32],
-        handle: [u8; 32],
-    },
-    Admit {
-        context: Context,
-        handle: [u8; 32],
-        #[serde(with = "crate::sync::base64_bytes")]
-        record: Vec<u8>,
-    },
-    Membership {
-        context: Context,
-    },
-    PrepareManagement {
-        context: Context,
-    },
-    Manage {
-        context: Context,
-        #[serde(with = "crate::sync::base64_bytes")]
-        record: Vec<u8>,
-    },
-    Cancel {
-        context: Context,
-        handle: [u8; 32],
-    },
-    Published {
-        context: Context,
-        descriptor: [u8; 32],
-        component: Option<crate::sync::bootstrap_staging::Component>,
-        index: u64,
-    },
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Reply {
-    Done,
-    Registered(peer::RegistrationStatus),
-    Mailbox(Mailbox),
-    Admitted(#[serde(with = "crate::sync::base64_bytes")] Vec<u8>),
-    Membership(Evidence),
-    PreparedManagement(membership::ManagementPreparation),
-    Managed(#[serde(with = "crate::sync::base64_bytes")] Vec<u8>),
-    Cancelled(membership::CancelStatus),
-    Published(#[serde(with = "crate::sync::base64_bytes")] Vec<u8>),
-}
+
+pub use aven_protocol::wire::enrollment::Operation;
+pub type Reply =
+    aven_protocol::wire::enrollment::Reply<Evidence, Mailbox, membership::ManagementPreparation>;
 /// One bounded exchange at a time; callers explicitly retry the same protected intent.
 pub struct Client {
     link: Link,
@@ -168,18 +93,22 @@ impl Client {
                 // Only an authentication refusal says anything about this
                 // device's access; timeouts and server failures stay
                 // ordinary errors.
-                exchange::Failure::Refused { status, code } => match code.as_deref() {
-                    Some("membership-stale") => membership::StaleContext.into(),
-                    Some("enrollment-busy") => anyhow::anyhow!("error enrollment-busy"),
-                    Some("enrollment-unauthorized") => membership::Unauthorized.into(),
-                    Some("enrollment-timeout") => {
-                        anyhow::anyhow!("error enrollment-timeout outcome-unknown")
+                exchange::Failure::Refused { status, code } => {
+                    match Refusal::classify(status, code.as_deref()) {
+                        Refusal::Stale => membership::StaleContext.into(),
+                        Refusal::Busy => anyhow::anyhow!("error enrollment-busy"),
+                        Refusal::Unauthorized => membership::Unauthorized.into(),
+                        Refusal::Timeout => {
+                            anyhow::anyhow!("error enrollment-timeout outcome-unknown")
+                        }
+                        Refusal::Refused => {
+                            anyhow::anyhow!("error enrollment-refused outcome-unknown")
+                        }
+                        Refusal::Server => {
+                            anyhow::anyhow!("error enrollment-server outcome-unknown")
+                        }
                     }
-                    Some(_) if (400..500).contains(&status) => {
-                        anyhow::anyhow!("error enrollment-refused outcome-unknown")
-                    }
-                    _ => anyhow::anyhow!("error enrollment-server outcome-unknown"),
-                },
+                }
             })?;
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("error enrollment-http"))
     }

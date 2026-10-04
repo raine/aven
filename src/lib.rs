@@ -39,6 +39,8 @@ mod update;
 mod workspaces;
 
 #[cfg(test)]
+mod conformance;
+#[cfg(test)]
 mod test_support;
 
 pub use cli::Cli;

@@ -141,42 +141,19 @@ impl fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
-/// Error codes of one router, each prefixed with its family name.
-pub(crate) struct Codes {
-    /// 415: the body is not uncompressed JSON.
-    pub(crate) content_type: &'static str,
-    /// 401: a required bearer credential is missing or malformed.
-    pub(crate) credential: &'static str,
-    /// 413: the body exceeds its limit.
-    pub(crate) limit: &'static str,
-    /// 400: the body does not parse as a request.
-    pub(crate) malformed: &'static str,
-    /// 400: the operation refused a well-formed request.
-    pub(crate) refused: &'static str,
-    /// 403: the credential may not perform the operation.
-    pub(crate) unauthorized: &'static str,
-    /// 408: the body or the operation did not finish in time.
-    pub(crate) timeout: &'static str,
-    /// 500: storage failed or the reply exceeded its limit.
-    pub(crate) server_error: &'static str,
-    /// 503: every permit is taken; retry after `Retry-After`.
-    pub(crate) busy: &'static str,
+/// Shared wire codes with SQLite HTTP admission helpers.
+pub(crate) struct Codes(pub(crate) aven_protocol::refusal::Codes);
+
+impl std::ops::Deref for Codes {
+    type Target = aven_protocol::refusal::Codes;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-/// The [`Codes`] of a router family, e.g. `codes!("enrollment")`.
 macro_rules! codes {
     ($family:literal) => {
-        $crate::http_admission::Codes {
-            content_type: concat!($family, "-content-type"),
-            credential: concat!($family, "-credential"),
-            limit: concat!($family, "-limit"),
-            malformed: concat!($family, "-malformed"),
-            refused: concat!($family, "-refused"),
-            unauthorized: concat!($family, "-unauthorized"),
-            timeout: concat!($family, "-timeout"),
-            server_error: concat!($family, "-server-error"),
-            busy: concat!($family, "-busy"),
-        }
+        $crate::http_admission::Codes(aven_protocol::refusal_codes!($family))
     };
 }
 pub(crate) use codes;

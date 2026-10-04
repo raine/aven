@@ -2,11 +2,11 @@ use super::*;
 use crate::sync::encrypted_tail::attachments::{
     self as images, Operation as ImageOperation, Reply as ImageReply, Ticket,
 };
+pub use aven_protocol::wire::images::PATH as IMAGES_PATH;
 use std::{
     path::Path,
     time::{Duration, Instant},
 };
-pub const IMAGES_PATH: &str = "/e2ee/images/v1";
 
 /// Bounds serial append work in one round while allowing a large offline backlog
 /// to clear well within the drain's round budget.

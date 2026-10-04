@@ -1,0 +1,17 @@
+[package]
+name = "aven-conformance"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+license = "MIT"
+
+[dependencies]
+aven-protocol = { path = "../aven-protocol", version = "=0.1.0" }
+aven-core = { path = "../aven-core", version = "=0.1.33", features = ["test-support"] }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+
+tokio.workspace = true
