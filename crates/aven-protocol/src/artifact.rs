@@ -3,6 +3,7 @@
 
 pub mod catalog;
 pub mod codec;
+pub mod staging;
 
 use crate::context::LocalSharedStatePackageContext;
 use catalog::{Artifact, Declaration};
