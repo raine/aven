@@ -39,7 +39,13 @@ fn first(f: &Fixture) -> (Invitation, Declaration, Joiner, Vec<u8>, Membership) 
         .invitation_with_psk(&f.membership, 2_000_000_000, Secret::new([31; 32]))
         .unwrap();
     let peer = joiner(&inv, 32);
-    let raw = fixed_admission(&f.membership, &d, &peer, &f.seed.signing, &f.key);
+    let raw = fixed_admission(
+        &f.membership,
+        &d,
+        &peer,
+        f.seed.protected_signing_seed(),
+        &f.key,
+    );
     let next = f
         .membership
         .append(d.record(), peer.request(), &raw)
@@ -65,7 +71,7 @@ fn exact_new_formats_from_sequence_two_and_peer_invited_third() {
         .authority()
         .invitation_with_psk(&next, 2_000_000_001, Secret::new([41; 32]))
         .unwrap();
-    assert_ne!(inv.inviter, f.seed.genesis.hpke_public);
+    assert_ne!(inv.inviter, f.seed.genesis().hpke_public());
     let third = joiner(&inv, 42);
     let third_raw = fixed_admission(&next, &third_d, &third, &peer.0.signing, &f.key);
     let final_state = next
@@ -252,7 +258,7 @@ fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
         let mut core = core.to_vec();
         core[CORE_BYTES - 32..]
             .copy_from_slice(&hash(&cce("aven-e2ee/v1/membership/state", &[&state])));
-        let bad = admission::signed(&f.seed.signing, &core, &state, attachments);
+        let bad = admission::signed(f.seed.protected_signing_seed(), &core, &state, attachments);
         assert!(
             f.membership
                 .append(d.record(), peer.request(), &bad)
@@ -263,7 +269,7 @@ fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
     for i in 0..core.len() {
         let mut core = core.to_vec();
         core[i] ^= 1;
-        let bad = admission::signed(&f.seed.signing, &core, state, attachments);
+        let bad = admission::signed(f.seed.protected_signing_seed(), &core, state, attachments);
         assert!(
             f.membership
                 .append(d.record(), peer.request(), &bad)
@@ -274,7 +280,7 @@ fn resigned_invalid_state_actions_packages_and_old_versions_refuse() {
     for i in (0..86).chain(118..122) {
         let mut attachments = attachments.to_vec();
         attachments[i] ^= 1;
-        let bad = admission::signed(&f.seed.signing, core, state, &attachments);
+        let bad = admission::signed(f.seed.protected_signing_seed(), core, state, &attachments);
         assert!(
             f.membership
                 .append(d.record(), peer.request(), &bad)
@@ -300,7 +306,14 @@ fn grant_semantics_and_psk_trust_are_not_keyless_server_acceptance() {
     for i in 0..plain.len() {
         let mut bad_plain = plain.clone();
         bad_plain[i] ^= 1;
-        let bad = reseal(&f.membership, &d, &peer, &f.seed.signing, &bad_plain, 91);
+        let bad = reseal(
+            &f.membership,
+            &d,
+            &peer,
+            f.seed.protected_signing_seed(),
+            &bad_plain,
+            91,
+        );
         assert!(
             f.membership
                 .append(d.record(), peer.request(), &bad)
@@ -345,9 +358,9 @@ fn duplicate_identity_keys_handles_and_resource_refusal_preserve_predecessor() {
         recipient.sign = [201; 32];
         recipient.hpke = [202; 32];
         match field {
-            0 => recipient.device = f.seed.genesis.device,
-            1 => recipient.sign = f.seed.genesis.signing_public,
-            _ => recipient.hpke = f.seed.genesis.hpke_public,
+            0 => recipient.device = f.seed.genesis().device_id(),
+            1 => recipient.sign = f.seed.genesis().signing_public(),
+            _ => recipient.hpke = f.seed.genesis().hpke_public(),
         }
         assert!(m.unique(&recipient, &[1; 32]).is_err());
     }
@@ -435,7 +448,7 @@ fn old_tags_cannot_be_resigned_into_the_new_profile() {
         }
         core[CORE_BYTES - 32..]
             .copy_from_slice(&hash(&cce("aven-e2ee/v1/membership/state", &[&state])));
-        let bad = admission::signed(&f.seed.signing, &core, &state, &attachments);
+        let bad = admission::signed(f.seed.protected_signing_seed(), &core, &state, &attachments);
         assert!(
             f.membership
                 .append(d.record(), peer.request(), &bad)

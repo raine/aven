@@ -32,7 +32,7 @@ pub(super) fn signer_action(core: &[u8]) -> Result<(Hash, u8)> {
 }
 pub(super) fn state(m: &Membership) -> Vec<u8> {
     let mut out = b"AVGS\0\x05\x01".to_vec();
-    out.extend(m.genesis.context.vault_id);
+    out.extend(m.genesis.context().vault_id);
     out.push(1);
     out.extend(m.publication.binding().tuple());
     out.extend([u8::from(m.pending), 0]);
@@ -50,7 +50,7 @@ pub(super) fn state(m: &Membership) -> Vec<u8> {
 }
 pub(super) fn core(m: &Membership, signer: Hash, action: u8, body: &[u8], state: &[u8]) -> Vec<u8> {
     membership_core(
-        &m.genesis.context.vault_id,
+        &m.genesis.context().vault_id,
         m.sequence() + 1,
         &m.head(),
         &signer,

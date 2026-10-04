@@ -38,7 +38,7 @@ impl RotationMaterial {
                 && generation.commitment
                     == generation_commitment(
                         LocalSharedStatePackageContext {
-                            vault_id: membership.genesis.context.vault_id,
+                            vault_id: membership.genesis.context().vault_id,
                             generation_id: self.generation,
                         },
                         self.key.protected_storage_bytes(),
@@ -85,7 +85,7 @@ fn rotate(m: &Membership, generation: Generation) -> Result<Membership> {
 pub(super) fn validate(m: &Membership, raw: &[u8]) -> Result<Membership> {
     let (core, state, attachments, signature) = encoding::components(raw)?;
     let mut r = Reader(core);
-    check(r.take(1)? == [1] && r.blob(32)? == m.genesis.context.vault_id)?;
+    check(r.take(1)? == [1] && r.blob(32)? == m.genesis.context().vault_id)?;
     check(u64::from_be_bytes(r.array()?) == m.sequence() + 1 && r.blob(32)? == m.head())?;
     check(r.take(1)? == [1])?;
     let signer: Hash = r.blob(32)?.try_into()?;
@@ -148,7 +148,7 @@ pub(super) fn info(m: &Membership, member: &Member) -> Vec<u8> {
     cce(
         "aven-e2ee/v1/membership/rotation-key",
         &[
-            &m.genesis.context.vault_id,
+            &m.genesis.context().vault_id,
             &[1],
             &member.device,
             &member.hpke,
@@ -162,7 +162,7 @@ pub(super) fn plaintext(
     key: &LocalSharedStatePackageKey,
 ) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(b"AVRK\0\x01".to_vec());
-    out.extend(m.genesis.context.vault_id);
+    out.extend(m.genesis.context().vault_id);
     out.extend(m.genesis.commitment());
     out.extend(member.device);
     out.extend(1_u16.to_be_bytes());
@@ -217,7 +217,7 @@ impl Device<'_> {
         let cutoff_bytes = cutoff.to_be_bytes();
         let commitment = generation_commitment(
             LocalSharedStatePackageContext {
-                vault_id: m.genesis.context.vault_id,
+                vault_id: m.genesis.context().vault_id,
                 generation_id: material.generation,
             },
             material.key.protected_storage_bytes(),
@@ -266,7 +266,7 @@ impl Device<'_> {
             id,
             commitment: generation_commitment(
                 LocalSharedStatePackageContext {
-                    vault_id: m.genesis.context.vault_id,
+                    vault_id: m.genesis.context().vault_id,
                     generation_id: id,
                 },
                 key.protected_storage_bytes(),

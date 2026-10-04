@@ -19,7 +19,7 @@ impl VerifiedKeys {
         Ok(&self.keys[index])
     }
     pub fn validate(&self, m: &Membership) -> Result<()> {
-        check(self.vault == m.genesis.context.vault_id && self.generations == m.generations)
+        check(self.vault == m.genesis.context().vault_id && self.generations == m.generations)
     }
     pub(super) fn write(&self, out: &mut Vec<u8>) {
         out.extend((self.keys.len() as u16).to_be_bytes());
@@ -39,7 +39,7 @@ impl VerifiedKeys {
             check(
                 generation_commitment(
                     LocalSharedStatePackageContext {
-                        vault_id: m.genesis.context.vault_id,
+                        vault_id: m.genesis.context().vault_id,
                         generation_id: g.id,
                     },
                     key.protected_storage_bytes(),
@@ -49,14 +49,14 @@ impl VerifiedKeys {
         }
         check(r.0.is_empty())?;
         Ok(Self {
-            vault: m.genesis.context.vault_id,
+            vault: m.genesis.context().vault_id,
             generations: m.generations.clone(),
             keys,
         })
     }
     pub(super) fn extended(&self, m: &Membership, key: LocalSharedStatePackageKey) -> Result<Self> {
         check(
-            self.vault == m.genesis.context.vault_id
+            self.vault == m.genesis.context().vault_id
                 && m.generations.len() == self.generations.len() + 1
                 && m.generations.starts_with(&self.generations),
         )?;
@@ -80,7 +80,7 @@ impl Membership {
     pub fn verify_initial_key(&self, key: &LocalSharedStatePackageKey) -> Result<VerifiedKeys> {
         self.validate_key(key)?;
         Ok(VerifiedKeys {
-            vault: self.genesis.context.vault_id,
+            vault: self.genesis.context().vault_id,
             generations: self.generations.clone(),
             keys: vec![key.clone()],
         })
@@ -101,7 +101,7 @@ impl VerifiedKeys {
     pub fn from_protected_storage(m: &Membership, bytes: &[u8]) -> Result<Self> {
         check(bytes.len() <= MAX_COVERAGE_BYTES)?;
         let mut r = Reader(bytes);
-        check(r.take(6)? == b"AVKC\0\x01" && r.array::<32>()? == m.genesis.context.vault_id)?;
+        check(r.take(6)? == b"AVKC\0\x01" && r.array::<32>()? == m.genesis.context().vault_id)?;
         Self::read(m, &mut r)
     }
 }

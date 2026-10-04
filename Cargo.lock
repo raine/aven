@@ -326,6 +326,7 @@ version = "0.1.33"
 dependencies = [
  "anyhow",
  "aven-core",
+ "aven-protocol",
  "base64",
  "chacha20",
  "chacha20poly1305",
@@ -353,6 +354,23 @@ dependencies = [
  "url",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "aven-protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chacha20",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "hex",
+ "hpke",
+ "rand_core 0.10.1",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]

@@ -54,8 +54,8 @@ impl PublicationBinding {
         let d = DeclarationView::decode(descriptor)?;
         let b = d.binding();
         ensure!(
-            b.vault == genesis.context.vault_id
-                && b.generation == genesis.context.generation_id
+            b.vault == genesis.context().vault_id
+                && b.generation == genesis.context().generation_id
                 && b.membership == genesis.commitment(),
             "error bootstrap-publication-context"
         );
@@ -89,9 +89,9 @@ pub(super) fn components(
     genesis: &Genesis,
     binding: &PublicationBinding,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let original = genesis.state();
+    let (_, original, _, _) = codec::components(genesis.record()).expect("verified genesis");
     let mut state = b"AVGS\0\x02\x01".to_vec();
-    state.extend(genesis.context.vault_id);
+    state.extend(genesis.context().vault_id);
     state.push(1);
     state.extend(binding.tuple());
     // The remaining authority and generation fields retain their genesis bytes.
@@ -99,10 +99,10 @@ pub(super) fn components(
     let mut body = b"AVPB\0\x01".to_vec();
     body.extend(binding.tuple());
     let core = membership_core(
-        &genesis.context.vault_id,
+        &genesis.context().vault_id,
         1,
         &genesis.commitment(),
-        &genesis.device,
+        &genesis.device_id(),
         2,
         &body,
         &state,
@@ -127,7 +127,7 @@ impl Publication {
         valid(r.blob(7)? == attachments)?;
         let signature = ed25519_dalek::Signature::from_slice(r.blob(64)?)?;
         r.end()?;
-        ed25519_dalek::VerifyingKey::from_bytes(&genesis.signing_public)?
+        ed25519_dalek::VerifyingKey::from_bytes(&genesis.signing_public())?
             .verify_strict(&cce(MEMBERSHIP_SIGN, &[&core, &attachments]), &signature)
             .map_err(|_| anyhow::anyhow!("error bootstrap-publication-signature"))?;
         Ok(Self {
@@ -154,15 +154,15 @@ impl SeedAuthority {
         package: &bootstrap_format::Package,
         key: &LocalSharedStatePackageKey,
     ) -> Result<Publication> {
-        self.validate(self.genesis.context, key)?;
-        let binding = PublicationBinding::from_descriptor(&self.genesis, &package.descriptor)?;
+        self.validate(self.genesis().context(), key)?;
+        let binding = PublicationBinding::from_descriptor(self.genesis(), &package.descriptor)?;
         bootstrap_format::authenticate(
             package,
             key,
-            self.genesis.context,
+            self.genesis().context(),
             binding.stream_id,
             binding.bootstrap_id,
-            self.genesis.commitment(),
+            self.genesis().commitment(),
         )?;
         self.sign_authenticated_publication(&package.descriptor, key)
     }
@@ -174,16 +174,16 @@ impl SeedAuthority {
         descriptor: &[u8],
         key: &LocalSharedStatePackageKey,
     ) -> Result<Publication> {
-        self.validate(self.genesis.context, key)?;
-        let binding = PublicationBinding::from_descriptor(&self.genesis, descriptor)?;
-        let (core, state, attachments) = components(&self.genesis, &binding);
-        let signature = SigningKey::from_bytes(self.signing.expose())
+        self.validate(self.genesis().context(), key)?;
+        let binding = PublicationBinding::from_descriptor(self.genesis(), descriptor)?;
+        let (core, state, attachments) = components(self.genesis(), &binding);
+        let signature = SigningKey::from_bytes(self.protected_signing_seed().expose())
             .sign(&cce(MEMBERSHIP_SIGN, &[&core, &attachments]));
         let mut record = vec![1];
         for part in [&core[..], &state, &attachments, &signature.to_bytes()] {
             bytes(&mut record, part);
         }
-        Publication::from_record(&self.genesis, descriptor, &record)
+        Publication::from_record(self.genesis(), descriptor, &record)
     }
 }
 

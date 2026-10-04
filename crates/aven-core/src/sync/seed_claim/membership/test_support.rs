@@ -369,7 +369,7 @@ fn bases() -> Bases {
         before,
         keys,
         receiver,
-        signing: Secret::new(*signed.seed.signing.expose()),
+        signing: Secret::new(*signed.seed.protected_signing_seed().expose()),
         record,
         plaintext,
     };
@@ -459,7 +459,7 @@ pub(crate) fn fuzz(data: &[u8]) {
             4 => {
                 // Re-sign fuzzed components so validation runs past the signature.
                 let signer = if input.byte() % 2 == 0 {
-                    *b.signed.seed.signing.expose()
+                    *b.signed.seed.protected_signing_seed().expose()
                 } else {
                     [33; 32]
                 };

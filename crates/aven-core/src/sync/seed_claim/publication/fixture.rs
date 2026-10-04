@@ -24,9 +24,9 @@ pub(in crate::sync::seed_claim) fn seed() -> SeedAuthority {
 pub(in crate::sync::seed_claim) fn descriptor(g: &Genesis) -> Vec<u8> {
     let mut d = b"AVBP\0\x02\x01".to_vec();
     for id in [
-        g.context.vault_id,
+        g.context().vault_id,
         [21; 32],
-        g.context.generation_id,
+        g.context().generation_id,
         [22; 32],
         g.commitment(),
     ] {
@@ -58,7 +58,7 @@ pub(in crate::sync::seed_claim) fn signed(
 ) -> Vec<u8> {
     let mut core = core.to_vec();
     core[269..301].copy_from_slice(&hash(&cce("aven-e2ee/v1/membership/state", &[state])));
-    let signature = SigningKey::from_bytes(seed.signing.expose())
+    let signature = SigningKey::from_bytes(seed.protected_signing_seed().expose())
         .sign(&cce("aven-e2ee/v1/membership/sign", &[&core, attachments]));
     let mut record = vec![1];
     for part in [&core[..], state, attachments, &signature.to_bytes()] {

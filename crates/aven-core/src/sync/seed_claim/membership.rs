@@ -118,18 +118,18 @@ impl Membership {
             heads: vec![publication.commitment()],
             publication,
             members: vec![Member {
-                device: genesis.device,
-                sign: genesis.signing_public,
-                hpke: genesis.hpke_public,
-                verifier: genesis.verifier,
-                admission: genesis.claim,
+                device: genesis.device_id(),
+                sign: genesis.signing_public(),
+                hpke: genesis.hpke_public(),
+                verifier: genesis.verifier(),
+                admission: genesis.claim_id(),
                 admitted_at: 0,
             }],
             handles: vec![],
             retired: vec![],
             generations: vec![Generation {
-                id: genesis.context.generation_id,
-                commitment: genesis.generation_commitment,
+                id: genesis.context().generation_id,
+                commitment: genesis.generation_commitment(),
                 starts_after: 0,
             }],
             pending: false,
@@ -174,7 +174,7 @@ impl Membership {
         ancestor: bool,
     ) -> Result<()> {
         ensure!(
-            auth.vault == self.genesis.context.vault_id
+            auth.vault == self.genesis.context().vault_id
                 && auth.genesis == self.genesis.commitment(),
             Unauthorized
         );
@@ -205,8 +205,8 @@ impl Membership {
     pub fn validate_key(&self, key: &LocalSharedStatePackageKey) -> Result<()> {
         check(self.generations.len() == 1)?;
         check(
-            generation_commitment(self.genesis.context, key.protected_storage_bytes())
-                == self.genesis.generation_commitment,
+            generation_commitment(self.genesis.context(), key.protected_storage_bytes())
+                == self.genesis.generation_commitment(),
         )
     }
     pub fn contains_head(&self, head: &Hash) -> bool {

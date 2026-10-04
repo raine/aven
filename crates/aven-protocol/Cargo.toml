@@ -1,0 +1,23 @@
+[package]
+name = "aven-protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+description = "Storage-independent encrypted sync protocol for Aven"
+repository = "https://github.com/raine/aven"
+
+[dependencies]
+anyhow.workspace = true
+chacha20.workspace = true
+ed25519-dalek.workspace = true
+hpke.workspace = true
+rand_core.workspace = true
+subtle.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+serde_json.workspace = true

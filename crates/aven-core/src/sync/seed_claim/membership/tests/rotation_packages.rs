@@ -21,11 +21,16 @@ fn authenticated_wrong_rotation_plaintext_and_context_never_yield_coverage() {
     let (core, state, attachments, _) = encoding::components(&raw).unwrap();
     let packages = encoding::read_packages(attachments, 0, 1, 176).unwrap();
     let p = &packages[0];
-    let private = HpkePrivate::from_bytes(f.seed.recipient.expose()).unwrap();
+    let private = HpkePrivate::from_bytes(f.seed.protected_recipient_key().expose()).unwrap();
     let enc = Enc::from_bytes(p.enc).unwrap();
     let info = cce(
         "aven-e2ee/v1/membership/rotation-key",
-        &[&f.seed.genesis.context.vault_id, &[1], &p.device, &p.public],
+        &[
+            &f.seed.genesis().context().vault_id,
+            &[1],
+            &p.device,
+            &p.public,
+        ],
     );
     let plain = hpke::single_shot_open::<Aead, Kdf, Kem>(
         &OpModeR::Base,
@@ -57,7 +62,7 @@ fn authenticated_wrong_rotation_plaintext_and_context_never_yield_coverage() {
             &enc.to_bytes(),
             &cipher,
         );
-        let bad = admission::signed(&f.seed.signing, core, state, &attachments);
+        let bad = admission::signed(f.seed.protected_signing_seed(), core, state, &attachments);
         pending.append(&[], &[], &bad).unwrap();
         assert!(
             Device::seed(&f.seed)
@@ -108,7 +113,7 @@ fn authenticated_wrong_rotation_plaintext_and_context_never_yield_coverage() {
             &enc.to_bytes(),
             &cipher,
         );
-        let bad = admission::signed(&f.seed.signing, core, state, &attachments);
+        let bad = admission::signed(f.seed.protected_signing_seed(), core, state, &attachments);
         pending.append(&[], &[], &bad).unwrap();
         assert!(
             Device::seed(&f.seed)
@@ -126,7 +131,7 @@ fn mixed_evidence_replays_historical_enrollment_after_inviter_removal() {
     let keys = m.verify_initial_key(&f.key).unwrap();
     let revoke = peer
         .authority()
-        .prepare_revoke(&m, &[f.seed.genesis.device])
+        .prepare_revoke(&m, &[f.seed.genesis().device_id()])
         .unwrap();
     let pending = m.append(&[], &[], &revoke).unwrap();
     let rotate = peer
@@ -134,7 +139,7 @@ fn mixed_evidence_replays_historical_enrollment_after_inviter_removal() {
         .prepare_rotation(&pending, &keys, 0)
         .unwrap();
     let mut evidence = Evidence {
-        genesis: f.seed.genesis.record().to_vec(),
+        genesis: f.seed.genesis().record().to_vec(),
         publication: f.membership.publication.record().to_vec(),
         descriptor: publication::tests::descriptor(f.seed.genesis()),
         transitions: vec![
@@ -195,18 +200,18 @@ fn revoke_requires_sorted_active_targets_and_predecessor_authority() {
             .is_err()
     );
     assert!(seed.prepare_revoke(&m, &[[255; 32]]).is_err());
-    let mut all = vec![peer.device(), f.seed.genesis.device];
+    let mut all = vec![peer.device(), f.seed.genesis().device_id()];
     all.sort();
     assert!(seed.prepare_revoke(&m, &all).is_err());
     assert!(
-        seed.prepare_revoke(&f.membership, &[f.seed.genesis.device])
+        seed.prepare_revoke(&f.membership, &[f.seed.genesis().device_id()])
             .is_err()
     );
     let raw = seed.prepare_revoke(&m, &[peer.device()]).unwrap();
     let next = m.append(&[], &[], &raw).unwrap();
     let auth = super::super::super::peer::Authentication {
-        vault: f.seed.genesis.context.vault_id,
-        genesis: f.seed.genesis.commitment(),
+        vault: f.seed.genesis().context().vault_id,
+        genesis: f.seed.genesis().commitment(),
         device: peer.device(),
         head: m.head(),
         bearer: peer.bearer(),
@@ -229,7 +234,7 @@ fn revoke_requires_sorted_active_targets_and_predecessor_authority() {
             m.append(
                 &[],
                 &[],
-                &admission::signed(&f.seed.signing, &core, &state, attachments)
+                &admission::signed(f.seed.protected_signing_seed(), &core, &state, attachments)
             )
             .is_err()
         );
@@ -282,7 +287,7 @@ fn signed_addition_cannot_reuse_retired_identity_or_keys() {
     let (_, _, peer, _, m) = first(&f);
     let revoke = peer
         .authority()
-        .prepare_revoke(&m, &[f.seed.genesis.device])
+        .prepare_revoke(&m, &[f.seed.genesis().device_id()])
         .unwrap();
     let m = m.append(&[], &[], &revoke).unwrap();
     let (inv, d) = peer.authority().prepare_invitation(&m, 100).unwrap();
@@ -291,15 +296,15 @@ fn signed_addition_cannot_reuse_retired_identity_or_keys() {
         let mut recipient = joiner.0.recipient().unwrap();
         let signing = match kind {
             0 => {
-                recipient.device = f.seed.genesis.device;
+                recipient.device = f.seed.genesis().device_id();
                 &joiner.0.signing
             }
             1 => {
-                recipient.sign = f.seed.genesis.signing_public;
-                &f.seed.signing
+                recipient.sign = f.seed.genesis().signing_public();
+                f.seed.protected_signing_seed()
             }
             _ => {
-                recipient.hpke = f.seed.genesis.hpke_public;
+                recipient.hpke = f.seed.genesis().hpke_public();
                 &joiner.0.signing
             }
         };

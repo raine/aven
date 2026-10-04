@@ -57,7 +57,7 @@ pub(super) fn validate(
     let (core, state, attachments, signature) = encoding::components(raw)?;
     check(core.len() == CORE_BYTES)?;
     let mut r = Reader(core);
-    check(r.take(1)? == [1] && r.blob(32)? == m.genesis.context.vault_id)?;
+    check(r.take(1)? == [1] && r.blob(32)? == m.genesis.context().vault_id)?;
     check(u64::from_be_bytes(r.array()?) == m.sequence() + 1 && r.blob(32)? == m.head())?;
     check(r.take(1)? == [1] && r.blob(32)? == d.inviter && r.take(1)? == [3])?;
     let mut a = Reader(r.blob(302)?);
@@ -84,7 +84,7 @@ pub(super) fn validate(
         pop,
     };
     m.unique(&recipient, &d.handle)?;
-    recipient.verify(&m.genesis.context.vault_id, &d.handle, &d.hpke)?;
+    recipient.verify(&m.genesis.context().vault_id, &d.handle, &d.hpke)?;
     let (expected_state, expected_core) = state_core(m, d, request, &recipient);
     check(state == expected_state && core == expected_core)?;
     grant_parts(attachments, &recipient, m.generations.len())?;
@@ -107,7 +107,7 @@ pub(super) fn grant_plaintext(
     let b = m.publication.binding();
     let mut out = Zeroizing::new(vec![3]);
     for field in [
-        m.genesis.context.vault_id,
+        m.genesis.context().vault_id,
         d.handle,
         d.commitment(),
         hash(request),

@@ -58,7 +58,7 @@ fn exact_removal_rotation_empty_interval_and_fresh_join_vectors() {
     let keys = m.verify_initial_key(&f.key).unwrap();
     let revoke = peer
         .authority()
-        .prepare_revoke(&m, &[f.seed.genesis.device])
+        .prepare_revoke(&m, &[f.seed.genesis().device_id()])
         .unwrap();
     let pending = m.append(&[], &[], &revoke).unwrap();
     assert!(pending.rotation_pending());
@@ -72,7 +72,7 @@ fn exact_removal_rotation_empty_interval_and_fresh_join_vectors() {
         pending
             .unique(
                 &Recipient {
-                    device: f.seed.genesis.device,
+                    device: f.seed.genesis().device_id(),
                     sign: [70; 32],
                     hpke: [71; 32],
                     verifier: [72; 32],
@@ -88,16 +88,16 @@ fn exact_removal_rotation_empty_interval_and_fresh_join_vectors() {
         r.sign = [211; 32];
         r.hpke = [212; 32];
         match which {
-            0 => r.device = f.seed.genesis.device,
-            1 => r.sign = f.seed.genesis.signing_public,
-            _ => r.hpke = f.seed.genesis.hpke_public,
+            0 => r.device = f.seed.genesis().device_id(),
+            1 => r.sign = f.seed.genesis().signing_public(),
+            _ => r.hpke = f.seed.genesis().hpke_public(),
         }
         assert!(pending.unique(&r, &[73; 32]).is_err());
     }
     let (rotation, rotated, keys2) = rotate_fixed(peer.authority(), &pending, &keys, 100, 10);
     assert!(!rotated.rotation_pending());
-    assert!(rotated.generation_allows(f.seed.genesis.context.generation_id, 10));
-    assert!(!rotated.generation_allows(f.seed.genesis.context.generation_id, 11));
+    assert!(rotated.generation_allows(f.seed.genesis().context().generation_id, 10));
+    assert!(!rotated.generation_allows(f.seed.genesis().context().generation_id, 11));
     assert!(!rotated.generation_allows([100; 32], 10));
     assert!(rotated.generation_allows([100; 32], 11));
     assert!(!rotated.generation_allows([99; 32], 11));
@@ -110,7 +110,7 @@ fn exact_removal_rotation_empty_interval_and_fresh_join_vectors() {
     assert!(twice.generation_allows([110; 32], 11));
     assert_eq!(
         keys3
-            .key(f.seed.genesis.context.generation_id)
+            .key(f.seed.genesis().context().generation_id)
             .unwrap()
             .protected_storage_bytes(),
         f.key.protected_storage_bytes()
@@ -204,29 +204,33 @@ fn rotation_missing_extra_reordered_or_invalid_own_packages_never_yield_keys() {
     let pending = m.append(&[], &[], &freeze).unwrap();
     let (raw, _, _) = rotate_fixed(Device::seed(&f.seed), &pending, &keys, 100, 0);
     for kind in 0..7 {
-        let bad = resign(&f.seed.signing, &raw, |_, _, p| match kind {
-            0 => {
-                p[7] = 1;
-                p.truncate(8 + 306);
-            }
-            1 => {
-                p[7] = 3;
-                p.extend_from_within(8..314);
-            }
-            2 => {
-                let first = p[8..314].to_vec();
-                let second = p[314..620].to_vec();
-                p[8..314].copy_from_slice(&second);
-                p[314..620].copy_from_slice(&first);
-            }
-            3 => {
-                let first = p[8..314].to_vec();
-                p[314..620].copy_from_slice(&first);
-            }
-            4 => p[9] = 1,
-            5 => p[14] ^= 1,
-            _ => p[50] ^= 1,
-        });
+        let bad = resign(
+            f.seed.protected_signing_seed(),
+            &raw,
+            |_, _, p| match kind {
+                0 => {
+                    p[7] = 1;
+                    p.truncate(8 + 306);
+                }
+                1 => {
+                    p[7] = 3;
+                    p.extend_from_within(8..314);
+                }
+                2 => {
+                    let first = p[8..314].to_vec();
+                    let second = p[314..620].to_vec();
+                    p[8..314].copy_from_slice(&second);
+                    p[314..620].copy_from_slice(&first);
+                }
+                3 => {
+                    let first = p[8..314].to_vec();
+                    p[314..620].copy_from_slice(&first);
+                }
+                4 => p[9] = 1,
+                5 => p[14] ^= 1,
+                _ => p[50] ^= 1,
+            },
+        );
         assert!(pending.append(&[], &[], &bad).is_err(), "shape {kind}");
         assert!(
             peer.authority()
@@ -246,7 +250,7 @@ fn rotation_missing_extra_reordered_or_invalid_own_packages_never_yield_keys() {
             }
             encoding::package(&mut changed, 0, &p.device, &p.public, p.enc, &cipher);
         }
-        let bad = admission::signed(&f.seed.signing, core, state, &changed);
+        let bad = admission::signed(f.seed.protected_signing_seed(), core, state, &changed);
         assert!(pending.append(&[], &[], &bad).is_ok());
         assert!(device.receive_rotation(&pending, &bad, &keys).is_err());
     }
@@ -273,11 +277,11 @@ fn rotation_semantics_cutoff_context_and_predecessor_signature_are_strict() {
     for i in 0..core.len() {
         let mut changed = core.to_vec();
         changed[i] ^= 1;
-        let bad = admission::signed(&f.seed.signing, &changed, state, p);
+        let bad = admission::signed(f.seed.protected_signing_seed(), &changed, state, p);
         assert!(pending.append(&[], &[], &bad).is_err(), "core {i}");
     }
     for i in 0..state.len() {
-        let bad = resign(&f.seed.signing, &raw, |_, s, _| s[i] ^= 1);
+        let bad = resign(f.seed.protected_signing_seed(), &raw, |_, s, _| s[i] ^= 1);
         assert!(pending.append(&[], &[], &bad).is_err(), "state {i}");
     }
     assert!(
@@ -467,7 +471,7 @@ fn maximum_signed_chain_fits_every_bound() {
 
     // The complete signed history verifies within the evidence and response bounds.
     let evidence = Evidence {
-        genesis: f.seed.genesis.record().to_vec(),
+        genesis: f.seed.genesis().record().to_vec(),
         publication: f.membership.publication.record().to_vec(),
         descriptor: publication::tests::descriptor(f.seed.genesis()),
         transitions,
@@ -596,7 +600,11 @@ fn rotation_cutoff_leaves_a_representable_successor_tail_rank() {
     assert!(!next.generation_allows(next.current_generation().id, MAX_CUTOFF));
     assert!(
         pending
-            .append(&[], &[], &resign(&f.seed.signing, &raw, |_, _, _| ()))
+            .append(
+                &[],
+                &[],
+                &resign(f.seed.protected_signing_seed(), &raw, |_, _, _| ())
+            )
             .is_ok()
     );
     // Peers reject a correctly signed transition whose cutoff exceeds the limit.
@@ -605,7 +613,7 @@ fn rotation_cutoff_leaves_a_representable_successor_tail_rank() {
         let at = bytes.windows(8).position(|w| w == old).unwrap();
         bytes[at..at + 8].copy_from_slice(&new);
     };
-    let bad = resign(&f.seed.signing, &raw, |c, s, _| {
+    let bad = resign(f.seed.protected_signing_seed(), &raw, |c, s, _| {
         replace(c);
         replace(s);
     });

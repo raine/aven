@@ -371,7 +371,7 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let c = current(self, &mut tx).await?;
-        check(vault == c.membership.genesis.context.vault_id)?;
+        check(vault == c.membership.genesis.context().vault_id)?;
         observe(&mut tx, time).await?;
         let (stored, expired, revoked, admitted): (Option<Vec<u8>>, bool, bool, bool) = sqlx::query_as(
             "SELECT request,expired,revoked,admitted_sequence IS NOT NULL FROM server_membership_invitations WHERE handle=?",
@@ -404,7 +404,7 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
         let c = current(self, &mut tx).await?;
-        check(vault == c.membership.genesis.context.vault_id)?;
+        check(vault == c.membership.genesis.context().vault_id)?;
         let (declaration, request, admission): (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) = sqlx::query_as("SELECT i.declaration,i.request,a.record FROM server_membership_invitations i LEFT JOIN server_membership_transitions a ON a.handle=i.handle WHERE i.handle=?")
             .bind(handle.as_slice()).fetch_optional(&mut *tx).await?.context("error enrollment-unavailable")?;
         if admission.is_some() {

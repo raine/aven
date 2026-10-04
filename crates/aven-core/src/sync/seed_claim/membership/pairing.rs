@@ -11,10 +11,10 @@ pub struct Device<'a> {
 impl<'a> Device<'a> {
     pub fn seed(seed: &'a SeedAuthority) -> Self {
         Self {
-            device: seed.genesis.device,
-            signing: &seed.signing,
-            recipient: &seed.recipient,
-            bearer: &seed.bearer,
+            device: seed.genesis().device_id(),
+            signing: seed.protected_signing_seed(),
+            recipient: seed.protected_recipient_key(),
+            bearer: seed.bearer(),
         }
     }
     pub(super) fn active<'m>(&self, membership: &'m Membership) -> Result<&'m Member> {
@@ -29,7 +29,7 @@ impl<'a> Device<'a> {
                 && member.hpke.as_slice()
                     == <Kem as hpke::Kem>::sk_to_pk(&private).to_bytes().as_slice()
                 && bool::from(member.verifier.ct_eq(&credential_verifier(
-                    membership.genesis.context.vault_id,
+                    membership.genesis.context().vault_id,
                     self.device,
                     self.bearer,
                 ))),
@@ -56,7 +56,7 @@ impl<'a> Device<'a> {
         check(membership.device_count() < MAX_DEVICES)?;
         membership.ensure_change_capacity()?;
         let inv = Invitation {
-            vault: membership.genesis.context.vault_id,
+            vault: membership.genesis.context().vault_id,
             inviter: member.hpke,
             psk,
         };
@@ -93,7 +93,7 @@ impl<'a> Device<'a> {
         let d = Declaration::from_record(membership, declaration.record())?;
         check(
             d.inviter == self.device
-                && invitation.vault == membership.genesis.context.vault_id
+                && invitation.vault == membership.genesis.context().vault_id
                 && invitation.inviter == d.hpke
                 && invitation.handle() == d.handle,
         )?;
@@ -158,7 +158,7 @@ impl Declaration {
         let mut b = Reader(body);
         check(b.take(7)? == b"AVID\0\x02\x01")?;
         check(
-            b.array::<32>()? == membership.genesis.context.vault_id
+            b.array::<32>()? == membership.genesis.context().vault_id
                 && b.array::<32>()? == membership.genesis.commitment(),
         )?;
         let anchor = b.array::<32>()?;
@@ -385,7 +385,7 @@ impl VerifiedEnrollment {
     }
     pub fn key(&self) -> &LocalSharedStatePackageKey {
         self.keys
-            .key(self.membership.genesis.context.generation_id)
+            .key(self.membership.genesis.context().generation_id)
             .expect("verified bootstrap coverage")
     }
 }
