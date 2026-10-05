@@ -149,8 +149,15 @@ mod keychain {
             match self.interaction {
                 KeychainInteraction::Allow => Ok(operation()),
                 KeychainInteraction::Deny => {
-                    let _interaction_guard = SecKeychain::disable_user_interaction()
-                        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
+                    let _interaction_guard =
+                        SecKeychain::disable_user_interaction().map_err(|source| {
+                            tracing::warn!(
+                                phase = "keychain_disable_ui",
+                                os_status = source.code(),
+                                "protected storage unavailable"
+                            );
+                            error(ProtectedLocalKeyStoreErrorKind::Unavailable)
+                        })?;
                     Ok(operation())
                 }
             }
@@ -164,7 +171,14 @@ mod keychain {
                 Ok(bytes) if bytes.len() == MASTER_KEY_BYTES => Ok(Some(Zeroizing::new(bytes))),
                 Ok(_) => Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt)),
                 Err(source) if source.code() == errSecItemNotFound => Ok(None),
-                Err(_) => Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable)),
+                Err(source) => {
+                    tracing::warn!(
+                        phase = "keychain_read",
+                        os_status = source.code(),
+                        "protected storage unavailable"
+                    );
+                    Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable))
+                }
             }
         }
 
@@ -216,11 +230,22 @@ mod keychain {
             match self.keychain_operation(|| options.add())? {
                 Ok(()) => {}
                 Err(source) if source.code() == errSecDuplicateItem => {}
-                Err(_) => return Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+                Err(source) => {
+                    tracing::warn!(
+                        phase = "keychain_add",
+                        os_status = source.code(),
+                        "protected storage write failed"
+                    );
+                    return Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed));
+                }
             }
-            let saved = self
-                .load_keychain_key(namespace)?
-                .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+            let saved = self.load_keychain_key(namespace)?.ok_or_else(|| {
+                tracing::warn!(
+                    phase = "keychain_add_readback_missing",
+                    "protected storage write failed"
+                );
+                error(ProtectedLocalKeyStoreErrorKind::WriteFailed)
+            })?;
             self.cache_key(namespace, saved.clone())?;
             Ok(saved)
         }
@@ -408,7 +433,13 @@ mod keychain {
                 .create_secret(namespace, &Self::wrapped_name(item), &wrapped)?;
             match self.load_secret(namespace, item, bytes.len())? {
                 Some(saved) if saved.as_slice() == bytes => Ok(()),
-                _ => Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+                _ => {
+                    tracing::warn!(
+                        phase = "wrapped_secret_readback_mismatch",
+                        "protected storage write failed"
+                    );
+                    Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed))
+                }
             }
         }
 
