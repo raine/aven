@@ -85,7 +85,17 @@ impl ProtectedLocalKeyStore {
             "error enrollment-protected-corrupt"
         );
         if marker.is_none() {
-            self.write_record(&marker_name, &digest)?;
+            self.write_record(&marker_name, &digest).inspect_err(|_| {
+                tracing::warn!(
+                    phase = "owned_authority_write",
+                    item = if kind == "seed-origin" {
+                        "seed_origin"
+                    } else {
+                        "owned_secret"
+                    },
+                    "protected storage operation failed"
+                );
+            })?;
         }
         let value = Zeroizing::new(frame[44..44 + len].to_vec());
         self.with_index(|index| {
@@ -114,7 +124,17 @@ impl ProtectedLocalKeyStore {
         frame[8..40].copy_from_slice(&hex::decode(&self.account)?);
         frame[40..44].copy_from_slice(&(bytes.len() as u32).to_be_bytes());
         frame[44..44 + bytes.len()].copy_from_slice(bytes);
-        self.create_secret(kind, &frame)?;
+        self.create_secret(kind, &frame).inspect_err(|_| {
+            tracing::warn!(
+                phase = "owned_secret_create",
+                item = if kind == "seed-origin" {
+                    "seed_origin"
+                } else {
+                    "owned_secret"
+                },
+                "protected storage operation failed"
+            );
+        })?;
         self.with_index(|index| {
             if let Some(listing) = &mut index.listing {
                 listing.items.insert(kind.to_string());
