@@ -649,7 +649,7 @@ mod tests {
         let layout = metadata_layout(&state.view(), size);
         let context = super::super::OverlayMouseContext {
             add_task_only: false,
-            detail_help_scroll_cap: 0,
+            help_scroll_cap: 0,
         };
         let outcome = super::super::dispatch_overlay_mouse(
             OverlayState::Metadata(state),

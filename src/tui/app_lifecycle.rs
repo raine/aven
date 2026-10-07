@@ -404,10 +404,17 @@ impl App {
         view
     }
 
-    fn view_base<'a>(&self) -> ViewState<'a> {
+    pub(super) fn undo_description(&self) -> String {
+        self.store
+            .available_undo()
+            .map(|undo| undo.undo_label())
+            .unwrap_or_else(|| "nothing to undo".to_string())
+    }
+
+    pub(super) fn help_detail_focus(&self) -> Option<&crate::tui::app::DetailTargetId> {
         let detail = self.detail.state();
         let selected_task = self.store.selected_task(self.list.selected_task());
-        let detail_focus = detail.and_then(|detail| detail.focused_target()).filter(|focused| {
+        detail.and_then(|detail| detail.focused_target()).filter(|focused| {
             selected_task.is_some_and(|item| {
                 ui::detail_target_is_actionable(item, focused)
                     || matches!(
@@ -420,12 +427,15 @@ impl App {
                         })
                     )
             })
-        });
+        })
+    }
+
+    fn view_base<'a>(&self) -> ViewState<'a> {
+        let detail = self.detail.state();
+        let selected_task = self.store.selected_task(self.list.selected_task());
+        let detail_focus = self.help_detail_focus();
         let inline_images = self.inline_image_context();
-        let available_undo = self.store.available_undo();
-        let undo_description = available_undo
-            .map(|undo| undo.undo_label())
-            .unwrap_or_else(|| "nothing to undo".to_string());
+        let undo_description = self.undo_description();
         let visible_marked_task_count = if let Some(choice) = self.footer_choice.as_ref() {
             if choice.selection.uses_marks() {
                 choice.selection.len()

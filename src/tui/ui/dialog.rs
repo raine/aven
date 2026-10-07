@@ -46,6 +46,10 @@ impl<'a> Dialog<'a> {
         self.render_block_at(frame, area)
     }
 
+    pub(super) fn content_area(area: Rect) -> Rect {
+        overlay_block("", area.width).inner(area)
+    }
+
     pub(super) fn render_block_at(self, frame: &mut Frame, area: Rect) -> Rect {
         frame.render_widget(Clear, area);
         let block = overlay_block(self.title, area.width)

@@ -12,7 +12,7 @@ use crate::tui::store::TaskOrder;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OverlayMouseContext {
     pub(crate) add_task_only: bool,
-    pub(crate) detail_help_scroll_cap: u16,
+    pub(crate) help_scroll_cap: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,12 +158,8 @@ fn scroll_overlay(
     };
     match &mut overlay {
         OverlayState::RecurrenceHistory(state) => state.move_selection(delta),
-        OverlayState::Help { scroll } => {
-            let cap = crate::tui::ui::help_scroll_cap(terminal_size.height);
-            *scroll = scroll_with_delta(*scroll, delta, cap);
-        }
-        OverlayState::DetailHelp { scroll } => {
-            *scroll = scroll_with_delta(*scroll, delta, context.detail_help_scroll_cap);
+        OverlayState::Help { scroll } | OverlayState::DetailHelp { scroll } => {
+            *scroll = scroll_with_delta(*scroll, delta, context.help_scroll_cap);
         }
         OverlayState::TextPanel(state) => {
             let cap = crate::tui::ui::text_panel_scroll_cap(&state.lines);
@@ -333,7 +329,7 @@ mod tests {
     fn context() -> OverlayMouseContext {
         OverlayMouseContext {
             add_task_only: false,
-            detail_help_scroll_cap: 4,
+            help_scroll_cap: 4,
         }
     }
 

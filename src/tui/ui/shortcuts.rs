@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
@@ -211,6 +211,7 @@ const CHILD_DETAIL_HELP_TOPICS: &[HelpTopic] = &[
 
 const HELP_DIALOG_MAX_WIDTH: u16 = 112;
 const HELP_DIALOG_MAX_HEIGHT: u16 = 28;
+#[cfg(test)]
 const DEFAULT_UNDO_DESCRIPTION: &str = "undo last TUI mutation";
 
 fn help_dialog_height(frame_height: u16) -> u16 {
@@ -224,42 +225,193 @@ fn help_dialog_size(area: Rect) -> (u16, u16) {
     )
 }
 
-pub(super) fn render_help(frame: &mut Frame, scroll: u16, undo_description: &str) {
-    let (width, height) = help_dialog_size(frame.area());
-    let visible_rows = height.saturating_sub(2);
-    let dialog = if let Some(title) = help_scroll_title(scroll, visible_rows) {
-        Dialog::new("Shortcuts", width, height)
-            .right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))))
-    } else {
-        Dialog::new("Shortcuts", width, height)
+#[derive(Clone)]
+struct HelpLayout {
+    area: Rect,
+    content: Rect,
+    columns: Vec<(Rect, Vec<Line<'static>>)>,
+}
+
+impl HelpLayout {
+    fn rows(&self) -> usize {
+        self.columns
+            .iter()
+            .map(|(_, lines)| lines.len())
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn cap(&self) -> u16 {
+        self.rows()
+            .saturating_sub(self.content.height as usize)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn render(self, frame: &mut Frame, title: &str, scroll: u16) {
+        let rows = self.rows();
+        let scroll = scroll.min(self.cap());
+        let mut dialog = Dialog::new(title, self.area.width, self.area.height);
+        if let Some(position) = detail_help_scroll_title(scroll, self.content.height, rows) {
+            dialog = dialog.right_title(Line::from(Span::styled(
+                position,
+                Style::new().fg(FG_MUTED),
+            )));
+        }
+        dialog.render_block_at(frame, self.area);
+        for (area, lines) in self.columns {
+            let visible = lines
+                .into_iter()
+                .skip(scroll as usize)
+                .take(area.height as usize)
+                .collect::<Vec<_>>();
+            frame.render_widget(
+                Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
+                area,
+            );
+        }
+        render_vertical_scrollbar(frame, self.content, rows, scroll);
+    }
+}
+
+fn help_geometry(size: Size) -> (Rect, Rect, Rect) {
+    let screen = Rect::from((ratatui::layout::Position::ORIGIN, size));
+    let (width, height) = help_dialog_size(screen);
+    let area = crate::tui::overlay::dialog_area(screen, width, height);
+    let content = Dialog::content_area(area);
+    // Leave one blank cell between descriptions and the scrollbar.
+    let text = Rect {
+        width: content.width.saturating_sub(2),
+        ..content
     };
-    let content = dialog.render_block(frame);
+    (area, content, text)
+}
+
+fn wrap_help_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let mut wrapped = Vec::new();
+    for line in lines {
+        if line.spans.len() != 2 {
+            wrapped.push(line);
+            continue;
+        }
+        let keys = &line.spans[0];
+        let description = &line.spans[1];
+        let indent = keys.width();
+        let description_width = width.saturating_sub(indent);
+        if description_width == 0 {
+            // Below the supported TUI size, preserve text in stacked rows.
+            for span in &line.spans {
+                for range in crate::tui::text::title_line_ranges(span.content.trim_end(), width) {
+                    wrapped.push(Line::from(Span::styled(
+                        span.content.trim_end()[range].to_string(),
+                        span.style,
+                    )));
+                }
+            }
+            continue;
+        }
+        for (index, range) in
+            crate::tui::text::title_line_ranges(&description.content, description_width)
+                .into_iter()
+                .enumerate()
+        {
+            wrapped.push(Line::from(vec![
+                Span::styled(
+                    if index == 0 {
+                        keys.content.to_string()
+                    } else {
+                        " ".repeat(indent)
+                    },
+                    keys.style,
+                ),
+                Span::styled(description.content[range].to_string(), description.style),
+            ]));
+        }
+    }
+    wrapped
+}
+
+fn help_layout(size: Size, undo_description: &str) -> HelpLayout {
+    let (area, content, text) = help_geometry(size);
     let [left, _, right] = Layout::horizontal([
         Constraint::Ratio(1, 2),
         Constraint::Length(4),
         Constraint::Ratio(1, 2),
     ])
-    .areas(content);
-    let columns = help_columns();
-    let content_height = columns
-        .iter()
-        .map(|sections| help_column_lines(sections, undo_description).len())
-        .max()
-        .unwrap_or(0);
-    for (column, sections) in [left, right].into_iter().zip(columns.iter()) {
-        render_help_column(frame, column, sections, scroll, undo_description);
+    .areas(text);
+    let columns = if left.width.min(right.width).saturating_sub(14) >= 30 {
+        help_columns_for_widths((left.width, right.width), undo_description)
+            .into_iter()
+            .zip([left, right])
+            .map(|(sections, area)| {
+                (
+                    area,
+                    wrap_help_lines(
+                        help_column_lines(&sections, undo_description),
+                        area.width as usize,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![(
+            text,
+            wrap_help_lines(
+                help_column_lines(CommandContext::Normal.sections(), undo_description),
+                text.width as usize,
+            ),
+        )]
+    };
+    HelpLayout {
+        area,
+        content,
+        columns,
     }
-    render_vertical_scrollbar(frame, content, content_height, scroll);
 }
 
+fn detail_help_layout(
+    size: Size,
+    focused_target: Option<&DetailTargetId>,
+    undo_description: &str,
+) -> HelpLayout {
+    let (area, content, text) = help_geometry(size);
+    let lines = wrap_help_lines(
+        detail_help_lines_for(focused_target, undo_description),
+        text.width as usize,
+    );
+    HelpLayout {
+        area,
+        content,
+        columns: vec![(text, lines)],
+    }
+}
+
+pub(super) fn render_help(frame: &mut Frame, scroll: u16, undo_description: &str) {
+    help_layout(frame.area().as_size(), undo_description).render(frame, "Shortcuts", scroll);
+}
+
+#[cfg(test)]
 fn help_columns() -> [Vec<&'static str>; 2] {
+    let layout = help_layout(Size::new(270, 30), DEFAULT_UNDO_DESCRIPTION);
+    help_columns_for_widths(
+        (layout.columns[0].0.width, layout.columns[1].0.width),
+        DEFAULT_UNDO_DESCRIPTION,
+    )
+}
+
+fn help_columns_for_widths(widths: (u16, u16), undo_description: &str) -> [Vec<&'static str>; 2] {
     let section_count = CommandContext::Normal.sections().len();
-    let section_rows = CommandContext::Normal
-        .sections()
-        .iter()
-        .map(|section| help_section_len(section))
-        .collect::<Vec<_>>();
-    let total_section_rows = section_rows.iter().sum::<usize>();
+    let section_rows = |width: u16| {
+        CommandContext::Normal
+            .sections()
+            .iter()
+            .map(|section| {
+                let lines = help_column_lines(&[*section], undo_description);
+                wrap_help_lines(lines, width as usize).len()
+            })
+            .collect::<Vec<_>>()
+    };
+    let left_section_rows = section_rows(widths.0);
+    let right_section_rows = section_rows(widths.1);
     let mut best_mask = 1;
     let mut best_score = (usize::MAX, usize::MAX, usize::MAX);
 
@@ -269,14 +421,20 @@ fn help_columns() -> [Vec<&'static str>; 2] {
         }
         let left_count = mask.count_ones() as usize;
         let right_count = section_count - left_count;
-        let left_rows = section_rows
+        let left_rows = left_section_rows
             .iter()
             .enumerate()
             .filter(|(index, _)| mask & (1usize << index) != 0)
             .map(|(_, rows)| *rows)
             .sum::<usize>()
             + left_count.saturating_sub(1);
-        let right_rows = total_section_rows + section_count - 2 - left_rows;
+        let right_rows = right_section_rows
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask & (1usize << index) == 0)
+            .map(|(_, rows)| *rows)
+            .sum::<usize>()
+            + right_count.saturating_sub(1);
         let tail_left = (section_count.saturating_sub(3)..section_count)
             .filter(|index| mask & (1usize << index) != 0)
             .count();
@@ -303,34 +461,6 @@ fn help_columns() -> [Vec<&'static str>; 2] {
     }
 
     [left, right]
-}
-
-fn help_section_len(section: &str) -> usize {
-    CommandContext::Normal
-        .commands()
-        .filter(|command| command.section == section)
-        .count()
-        + 1
-}
-
-fn render_help_column(
-    frame: &mut Frame,
-    area: Rect,
-    sections: &[&'static str],
-    scroll: u16,
-    undo_description: &str,
-) {
-    let lines = help_column_lines(sections, undo_description);
-    let start = clamp_scroll_start(scroll, lines.len(), area.height as usize);
-    let visible = lines
-        .into_iter()
-        .skip(start)
-        .take(area.height as usize)
-        .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(Text::from(visible)).style(Style::new().fg(FG).bg(BG_ALT)),
-        area,
-    );
 }
 
 fn render_scrollable_help_lines(
@@ -376,15 +506,8 @@ pub(super) fn render_detail_help(
     } else {
         "Task detail shortcuts"
     };
-    let lines = detail_help_lines_for(focused_target, undo_description);
-    let (width, height) = help_dialog_size(frame.area());
-    let mut dialog = Dialog::new(title, width, height);
-    let visible_rows = dialog.area(frame).height.saturating_sub(2);
-    if let Some(title) = detail_help_scroll_title(scroll, visible_rows, lines.len()) {
-        dialog = dialog.right_title(Line::from(Span::styled(title, Style::new().fg(FG_MUTED))));
-    }
-    let content = dialog.render_block(frame);
-    render_scrollable_help_lines(frame, content, lines, scroll);
+    detail_help_layout(frame.area().as_size(), focused_target, undo_description)
+        .render(frame, title, scroll);
 }
 
 fn detail_help_lines_for(
@@ -490,21 +613,6 @@ fn detail_help_scroll_title(scroll: u16, visible_rows: u16, max_rows: usize) -> 
     Some(format!(" {current}/{total} "))
 }
 
-fn help_scroll_title(scroll: u16, visible_rows: u16) -> Option<String> {
-    let max_rows = help_columns()
-        .iter()
-        .map(|sections| help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION).len())
-        .max()
-        .unwrap_or(0);
-    let visible_rows = visible_rows as usize;
-    if max_rows <= visible_rows {
-        return None;
-    }
-    let total = max_rows.saturating_sub(visible_rows).saturating_add(1);
-    let current = (scroll as usize).saturating_add(1).min(total);
-    Some(format!(" {current}/{total} "))
-}
-
 fn help_column_lines(sections: &[&'static str], undo_description: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for section in sections {
@@ -529,27 +637,16 @@ fn help_column_lines(sections: &[&'static str], undo_description: &str) -> Vec<L
     lines
 }
 
-pub(crate) fn help_scroll_cap(frame_height: u16) -> u16 {
-    let visible_rows = help_dialog_height(frame_height).saturating_sub(2) as usize;
-    help_columns()
-        .iter()
-        .map(|sections| {
-            help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION)
-                .len()
-                .saturating_sub(visible_rows)
-        })
-        .max()
-        .unwrap_or(0) as u16
+pub(crate) fn help_scroll_cap(size: Size, undo_description: &str) -> u16 {
+    help_layout(size, undo_description).cap()
 }
 
 pub(crate) fn detail_help_scroll_cap(
-    frame_height: u16,
+    size: Size,
     focused_target: Option<&DetailTargetId>,
+    undo_description: &str,
 ) -> u16 {
-    let visible_rows = help_dialog_height(frame_height).saturating_sub(2) as usize;
-    detail_help_lines_for(focused_target, DEFAULT_UNDO_DESCRIPTION)
-        .len()
-        .saturating_sub(visible_rows) as u16
+    detail_help_layout(size, focused_target, undo_description).cap()
 }
 
 fn command_name_style() -> Style {
@@ -1171,6 +1268,202 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    fn normalized(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn display_row(buffer: &ratatui::buffer::Buffer, area: Rect, y: u16) -> String {
+        use unicode_width::UnicodeWidthStr;
+        let mut text = String::new();
+        let mut x = area.x;
+        while x < area.right() {
+            let symbol = buffer[(x, y)].symbol();
+            text.push_str(symbol);
+            x += symbol.width().max(1) as u16;
+        }
+        text
+    }
+
+    fn assert_help_layout(layout: &HelpLayout) {
+        let mut terminal = Terminal::new(TestBackend::new(
+            layout.area.right() + 3,
+            layout.area.bottom() + 2,
+        ))
+        .unwrap();
+        let mut snapshots = Vec::new();
+        for scroll in 0..=layout.cap() {
+            let copy = layout.clone();
+            terminal
+                .draw(|frame| copy.render(frame, "Shortcuts", scroll))
+                .unwrap();
+            snapshots.push(terminal.backend().buffer().clone());
+        }
+        for (area, lines) in &layout.columns {
+            for (row, line) in lines.iter().enumerate() {
+                assert!(
+                    line.width() <= area.width as usize,
+                    "{} > {}: {}",
+                    line.width(),
+                    area.width,
+                    line
+                );
+                let scroll = row.min(layout.cap() as usize);
+                let y = area.y + (row - scroll) as u16;
+                let actual = display_row(&snapshots[scroll], *area, y);
+                assert_eq!(actual.trim_end(), line.to_string().trim_end());
+            }
+        }
+        assert_eq!(
+            layout.cap() as usize,
+            layout.rows().saturating_sub(layout.content.height as usize)
+        );
+    }
+
+    #[test]
+    fn help_wraps_complete_descriptions_and_reserves_scrollbar_space() {
+        let undo = "undo a very long change on a task with 漢字 and literal `backticks`";
+        for width in [70, 80, 100, 111, 112, 113, 120, 270] {
+            let layout = help_layout(Size::new(width, 24), undo);
+            let descriptions = layout
+                .columns
+                .iter()
+                .flat_map(|(_, lines)| lines)
+                .filter_map(|line| line.spans.get(1))
+                .map(|span| span.content.as_ref())
+                .collect::<Vec<_>>()
+                .join(" ");
+            for command in CommandContext::Normal.commands() {
+                let expected = if command.action == Action::Undo {
+                    undo
+                } else {
+                    command.description
+                };
+                assert!(
+                    normalized(&descriptions).contains(&normalized(expected)),
+                    "width {width}: {expected}"
+                );
+            }
+            assert_help_layout(&layout);
+            assert_eq!(help_scroll_cap(Size::new(width, 24), undo), layout.cap());
+        }
+    }
+
+    #[test]
+    fn help_uses_one_column_when_narrow_and_balances_wrapped_sections_when_wide() {
+        let narrow = help_layout(Size::new(80, 24), DEFAULT_UNDO_DESCRIPTION);
+        assert_eq!(narrow.columns.len(), 1);
+        let headings = narrow.columns[0]
+            .1
+            .iter()
+            .filter(|line| line.spans.len() == 1 && !line.to_string().is_empty())
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(headings, CommandContext::Normal.sections());
+        let wide = help_layout(Size::new(270, 30), DEFAULT_UNDO_DESCRIPTION);
+        assert_eq!(wide.columns.len(), 2);
+        assert!(wide.columns[0].1.len().abs_diff(wide.columns[1].1.len()) <= 3);
+    }
+
+    #[test]
+    fn help_continuations_align_and_preserve_unicode_and_long_tokens() {
+        let description = "漢字 e\u{301} 😀 literal `code` abcdefghijklmnopqrstuvwxyz";
+        let input = vec![Line::from(vec![
+            Span::raw("u             "),
+            Span::raw(description),
+        ])];
+        let lines = wrap_help_lines(input, 24);
+        assert!(lines.len() > 1);
+        assert_eq!(lines[0].spans[0].content, "u             ");
+        assert!(
+            lines[1..]
+                .iter()
+                .all(|line| line.spans[0].content == "              ")
+        );
+        assert!(lines.iter().all(|line| line.width() <= 24));
+        let reconstructed = lines
+            .iter()
+            .map(|line| line.spans[1].content.as_ref())
+            .collect::<String>();
+        assert_eq!(
+            reconstructed.split_whitespace().collect::<String>(),
+            description.split_whitespace().collect::<String>()
+        );
+        for width in [0, 1, 10, 20] {
+            let _ = help_layout(Size::new(width, 5), description);
+            let _ = detail_help_layout(Size::new(width, 5), None, description);
+        }
+    }
+
+    #[test]
+    fn detail_help_wraps_every_focus_variant_and_live_undo_text() {
+        let targets = [
+            None,
+            Some(DetailTargetId::Task {
+                section: DetailSection::EpicChildren,
+                task_id: crate::test_support::task_id("help-child"),
+            }),
+            Some(DetailTargetId::Note {
+                note_id: "help-note".to_string(),
+            }),
+            Some(DetailTargetId::Attachment {
+                attachment_id: "help-attachment".to_string(),
+            }),
+            Some(DetailTargetId::Expand {
+                section: DetailSection::DependsOn,
+            }),
+        ];
+        let undo =
+            "undo a change with a long description that must wrap across several physical rows";
+        for target in &targets {
+            for width in [70, 80, 100, 270] {
+                let layout = detail_help_layout(Size::new(width, 18), target.as_ref(), undo);
+                let actual = layout.columns[0]
+                    .1
+                    .iter()
+                    .filter_map(|line| line.spans.get(1))
+                    .map(|span| span.content.as_ref())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                for line in detail_help_lines_for(target.as_ref(), undo) {
+                    if let Some(description) = line.spans.get(1) {
+                        assert!(normalized(&actual).contains(&normalized(&description.content)));
+                    }
+                }
+                assert_help_layout(&layout);
+                assert_eq!(
+                    detail_help_scroll_cap(Size::new(width, 18), target.as_ref(), undo),
+                    layout.cap()
+                );
+            }
+        }
+        assert!(
+            help_scroll_cap(Size::new(80, 18), &"undo ".repeat(100))
+                > help_scroll_cap(Size::new(80, 18), DEFAULT_UNDO_DESCRIPTION)
+        );
+    }
+
+    #[test]
+    fn help_resize_clamps_shared_viewport_and_position_title() {
+        let narrow = help_layout(Size::new(70, 18), DEFAULT_UNDO_DESCRIPTION);
+        let wide = help_layout(Size::new(270, 40), DEFAULT_UNDO_DESCRIPTION);
+        assert!(narrow.cap() > wide.cap());
+        let cap = wide.cap();
+        let mut terminal = Terminal::new(TestBackend::new(270, 40)).unwrap();
+        terminal
+            .draw(|frame| wide.render(frame, "Shortcuts", narrow.cap()))
+            .unwrap();
+        assert!(buffer_text(terminal.backend()).contains(&format!(" {}/{0} ", cap + 1)));
+        let layout = help_layout(Size::new(270, 40), DEFAULT_UNDO_DESCRIPTION);
+        for (area, lines) in layout.columns {
+            let expected = lines.last().unwrap().to_string();
+            let row = area.y + (lines.len() - 1 - cap as usize) as u16;
+            let actual = (area.x..area.right())
+                .map(|x| terminal.backend().buffer()[(x, row)].symbol())
+                .collect::<String>();
+            assert_eq!(actual.trim_end(), expected.trim_end());
+        }
+    }
+
     fn custom_command_catalog() -> CommandCatalog {
         CommandCatalog::new(vec![CustomTuiCommandConfig {
             name: "dispatch".to_string(),
@@ -1689,7 +1982,7 @@ mod tests {
                         size,
                         OverlayMouseContext {
                             add_task_only: false,
-                            detail_help_scroll_cap: 0,
+                            help_scroll_cap: 0,
                         },
                     );
                     let OverlayMouseOutcome::Retained(OverlayState::Command { state: clicked }) =
@@ -2051,7 +2344,7 @@ mod tests {
 
     #[test]
     fn detail_help_scroll_cap_uses_detail_rows() {
-        assert!(detail_help_scroll_cap(10, None) > 0);
+        assert!(detail_help_scroll_cap((100, 10).into(), None, DEFAULT_UNDO_DESCRIPTION) > 0);
     }
 
     #[test]
@@ -2282,9 +2575,11 @@ mod tests {
     #[test]
     fn help_columns_balance_section_rows() {
         let columns = help_columns();
-        let row_counts = columns
+        let layout = help_layout(Size::new(270, 30), DEFAULT_UNDO_DESCRIPTION);
+        let row_counts = layout
+            .columns
             .iter()
-            .map(|sections| help_column_lines(sections, DEFAULT_UNDO_DESCRIPTION).len())
+            .map(|(_, lines)| lines.len())
             .collect::<Vec<_>>();
 
         let tail_right = ["Order", "Conflicts", "Config"]

@@ -173,6 +173,65 @@ pub(crate) fn take_trailing_cells(text: &str, width: usize) -> &str {
     &text[start..]
 }
 
+pub(crate) fn title_line_ranges(title: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let width = width.max(1);
+    let mut words = Vec::new();
+    let mut word_start = None;
+    for (index, character) in title.char_indices() {
+        if character.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                words.push(start..index);
+            }
+        } else if word_start.is_none() {
+            word_start = Some(index);
+        }
+    }
+    if let Some(start) = word_start {
+        words.push(start..title.len());
+    }
+    if words.is_empty() {
+        return std::iter::once(0..title.len()).collect();
+    }
+
+    let mut lines = Vec::new();
+    let mut current: Option<std::ops::Range<usize>> = None;
+    for word in words {
+        if let Some(line) = &mut current {
+            let candidate = line.start..word.end;
+            if title[candidate.clone()].width() <= width {
+                line.end = word.end;
+                continue;
+            }
+            lines.push(line.clone());
+            current = None;
+        }
+
+        let mut chunk_start = word.start;
+        for (offset, character) in title[word.clone()].char_indices() {
+            let index = word.start + offset;
+            let end = index + character.len_utf8();
+            if title[chunk_start..end].width() <= width {
+                continue;
+            }
+            if chunk_start < index {
+                lines.push(chunk_start..index);
+                chunk_start = index;
+            }
+            if title[chunk_start..end].width() > width {
+                lines.push(chunk_start..end);
+                chunk_start = end;
+            }
+        }
+        if chunk_start < word.end {
+            current = Some(chunk_start..word.end);
+        }
+    }
+    if let Some(line) = current {
+        lines.push(line);
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

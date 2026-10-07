@@ -102,17 +102,28 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<()> {
-        let detail_focus = self
-            .detail
-            .state()
-            .and_then(|detail| detail.focused_target())
-            .cloned();
+        let help_scroll_cap = if matches!(
+            mouse.kind,
+            crossterm::event::MouseEventKind::ScrollDown
+                | crossterm::event::MouseEventKind::ScrollUp
+        ) {
+            match self.overlay.as_ref() {
+                Some(OverlayState::Help { .. }) => {
+                    help_scroll_cap(terminal_size, &self.undo_description())
+                }
+                Some(OverlayState::DetailHelp { .. }) => detail_help_scroll_cap(
+                    terminal_size,
+                    self.help_detail_focus(),
+                    &self.undo_description(),
+                ),
+                _ => 0,
+            }
+        } else {
+            0
+        };
         let context = crate::tui::overlay::OverlayMouseContext {
             add_task_only: self.intake.view().add_task_only,
-            detail_help_scroll_cap: detail_help_scroll_cap(
-                terminal_size.height,
-                detail_focus.as_ref(),
-            ),
+            help_scroll_cap,
         };
         let Some(overlay) = self.overlay.take() else {
             return Ok(());
@@ -265,16 +276,15 @@ impl App {
                 )
             }
             OverlayState::DetailHelp { .. } => detail_help_scroll_cap(
-                terminal_size.height,
-                self.detail
-                    .state()
-                    .and_then(|detail| detail.focused_target()),
+                terminal_size,
+                self.help_detail_focus(),
+                &self.undo_description(),
             ),
             OverlayState::DatabaseStats { .. } => database_stats_scroll_cap(terminal_size.height),
             OverlayState::Changelog(state) => {
                 crate::tui::changelog::changelog_scroll_cap(&state.markdown, terminal_size)
             }
-            _ => help_scroll_cap(terminal_size.height),
+            _ => help_scroll_cap(terminal_size, &self.undo_description()),
         };
         let was_detail_help = matches!(overlay, OverlayState::DetailHelp { .. });
         let was_add_task_description_editor = matches!(

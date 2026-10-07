@@ -502,7 +502,7 @@ async fn mouse_wheel_scrolls_help_overlay() {
 #[tokio::test]
 async fn mouse_wheel_clamps_help_overlay() {
     let mut app = test_app().await;
-    let expected = crate::tui::ui::help_scroll_cap(24);
+    let expected = crate::tui::ui::help_scroll_cap((80, 24).into(), &app.undo_description());
     app.overlay = Some(OverlayState::Help { scroll: 0 });
 
     for _ in 0..200 {
@@ -860,4 +860,58 @@ async fn detail_mouse_wheel_scrolls_conflict_text_panel() {
         app.overlay,
         Some(OverlayState::TextPanel(ref panel)) if panel.scroll == expected.saturating_sub(1)
     ));
+}
+
+#[tokio::test]
+async fn wrapped_help_keyboard_and_mouse_reach_matching_endpoints_after_resize() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Help scroll endpoints")).await;
+    for detail in [false, true] {
+        if detail {
+            app.show_detail(0);
+        }
+        for size in [
+            ratatui::layout::Size::new(70, 18),
+            ratatui::layout::Size::new(120, 30),
+        ] {
+            let cap = if detail {
+                crate::tui::ui::detail_help_scroll_cap(
+                    size,
+                    app.help_detail_focus(),
+                    &app.undo_description(),
+                )
+            } else {
+                crate::tui::ui::help_scroll_cap(size, &app.undo_description())
+            };
+            app.overlay = Some(if detail {
+                OverlayState::DetailHelp { scroll: u16::MAX }
+            } else {
+                OverlayState::Help { scroll: u16::MAX }
+            });
+            app.dispatch_key(key(KeyCode::Char('j')), size)
+                .await
+                .unwrap();
+            assert!(
+                matches!(app.overlay, Some(OverlayState::Help { scroll } | OverlayState::DetailHelp { scroll }) if scroll == cap)
+            );
+            app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), size)
+                .await
+                .unwrap();
+            assert!(
+                matches!(app.overlay, Some(OverlayState::Help { scroll } | OverlayState::DetailHelp { scroll }) if scroll == cap)
+            );
+            app.dispatch_key(key(KeyCode::Char('k')), size)
+                .await
+                .unwrap();
+            assert!(
+                matches!(app.overlay, Some(OverlayState::Help { scroll } | OverlayState::DetailHelp { scroll }) if scroll == cap.saturating_sub(1))
+            );
+            app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), size)
+                .await
+                .unwrap();
+            assert!(
+                matches!(app.overlay, Some(OverlayState::Help { scroll } | OverlayState::DetailHelp { scroll }) if scroll == cap)
+            );
+        }
+    }
 }
