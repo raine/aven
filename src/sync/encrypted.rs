@@ -18,6 +18,7 @@ pub(crate) use aven_core::sync::client::engine::{
     Outcome, PendingInvitation, Progress, SetupPreview, Stage, StatusReport, SyncState,
     local_phase, unix_now,
 };
+use aven_core::sync::client::errors::has_code;
 use aven_core::sync::client::keys::{ProtectedStorage, StoreResult};
 use aven_core::sync::client::tail::ImageTransfer;
 use aven_core::sync::client::{ClientHost, Step};
@@ -142,6 +143,17 @@ pub(crate) async fn run_setup(
     let host = DesktopHost::foreground(config);
     driver()?
         .run(|link| engine::run_setup(link, database, &host, invitation, progress))
+        .await
+}
+
+pub(crate) async fn resume_setup(
+    database: &Database,
+    config: &AppConfig,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<(String, Outcome)> {
+    let host = DesktopHost::foreground(config);
+    driver()?
+        .run(|link| engine::resume_setup(link, database, &host, progress))
         .await
 }
 
@@ -530,8 +542,37 @@ async fn print_setup_preview(database: &Database, config: &AppConfig, server: &s
     Ok(())
 }
 
+fn print_setup_progress(progress: Progress) {
+    if progress == Stage::UploadingData.into() {
+        eprintln!("Uploading encrypted data...");
+    }
+}
+
+fn print_set_up(server: &str, outcome: &Outcome, config: &AppConfig) {
+    println!("Sync set up with {server}");
+    print_outcome(outcome);
+    print_automatic_sync_hint(config);
+}
+
 pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupArgs) -> Result<()> {
     ensure_setup_available(database, config).await?;
+    // An unfinished setup continues from what it saved, before any clipboard
+    // or prompt input is read.
+    if local_phase(database).await? == LocalPhase::SetupIncomplete {
+        eprintln!("Resuming the unfinished setup...");
+        match resume_setup(database, config, &print_setup_progress).await {
+            Err(error) if has_code(&error, engine::SETUP_INVITATION_REQUIRED) => eprintln!(
+                "The server doesn't hold this setup's claim yet, so continuing needs a setup \
+                 invitation: the original one if it's still valid, otherwise a newer one for \
+                 the same server storage."
+            ),
+            result => {
+                let (server, outcome) = result?;
+                print_set_up(&server, &outcome, config);
+                return Ok(());
+            }
+        }
+    }
     let text = read_setup_invitation()?;
     let invitation = SetupInvitation::decode(&text).map_err(|error| {
         if DeviceInvitation::decode(&text).is_ok() {
@@ -545,15 +586,8 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
         print_setup_preview(database, config, &invitation.server).await?;
         confirm_setup(args.yes)?;
     }
-    let outcome = run_setup(database, config, &invitation, &|progress| {
-        if progress == Stage::UploadingData.into() {
-            eprintln!("Uploading encrypted data...");
-        }
-    })
-    .await?;
-    println!("Sync set up with {}", invitation.server);
-    print_outcome(&outcome);
-    print_automatic_sync_hint(config);
+    let outcome = run_setup(database, config, &invitation, &print_setup_progress).await?;
+    print_set_up(&invitation.server, &outcome, config);
     Ok(())
 }
 

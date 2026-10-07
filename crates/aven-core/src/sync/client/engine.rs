@@ -250,6 +250,37 @@ pub async fn run_setup(
     invitation: &SetupInvitation,
     progress: &(dyn Fn(Progress) + Sync),
 ) -> Result<Outcome> {
+    Ok(setup(link, database, host, Some(invitation), progress)
+        .await?
+        .1)
+}
+
+/// The code of a [`resume_setup`] refusal that a setup invitation can
+/// continue: without the setup secret the server's refusal leaves open
+/// whether this claim can still be made.
+pub const SETUP_INVITATION_REQUIRED: &str = "sync-setup-resume-invitation-required";
+
+/// Resumes the setup this database started from its retained server origin,
+/// setup ID and seed authority, without the setup invitation, and returns
+/// the server. Only a claim the server already holds accepts the seed bearer;
+/// otherwise this fails with [`SETUP_INVITATION_REQUIRED`] and changes
+/// nothing.
+pub async fn resume_setup(
+    link: Link,
+    database: &Database,
+    host: &dyn ClientHost,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<(String, Outcome)> {
+    setup(link, database, host, None, progress).await
+}
+
+async fn setup(
+    link: Link,
+    database: &Database,
+    host: &dyn ClientHost,
+    invitation: Option<&SetupInvitation>,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<(String, Outcome)> {
     let _total = bootstrap::StageTimer::start("setup_total");
     ensure_setup_available(database, host).await?;
     let blob_dir = host.blob_dir(database)?;
@@ -258,36 +289,64 @@ pub async fn run_setup(
         key_store(host, database).await?
     };
     let _guard = coordination::acquire(database).await?;
-    store.bind_seed_origin(database, &invitation.server).await?;
-    let bootstrap = bootstrap::Client::new(&invitation.server, link.clone())?;
+    let (server, setup_id, secret) = match invitation {
+        Some(invitation) => {
+            store.bind_seed_origin(database, &invitation.server).await?;
+            (
+                invitation.server.clone(),
+                invitation.setup_id,
+                Some(&invitation.secret),
+            )
+        }
+        None => {
+            ensure!(
+                local_phase(database).await? == LocalPhase::SetupIncomplete,
+                "error sync-setup-not-started hint=\"rerun `aven sync setup`\""
+            );
+            let (server, setup_id) = store.retained_seed_setup(database).await?;
+            (server, setup_id, None)
+        }
+    };
+    let bootstrap = bootstrap::Client::new(&server, link.clone())?;
     let mut proof = None;
     // A sealed publication intent means the claim and capture are complete.
     if database.seed_publication_intent_bytes().await?.is_none() {
         progress(Stage::PreparingData.into());
         let timer = bootstrap::StageTimer::start("prepare_claim");
         let seed = store
-            .prepare_seed_claim(database, invitation.setup_id)
+            .prepare_seed_claim(database, setup_id)
             .await
             .map_err(explain_seed_claim_error)?;
         database.clear_local_seed_claim_refused().await?;
         drop(timer);
         let timer = bootstrap::StageTimer::start("claim");
-        let setup = ClaimAuthentication::SetupSecret(&invitation.secret);
-        let claim = match bootstrap.claim(seed.genesis(), setup).await {
-            Ok(()) => Ok(()),
-            Err(_) => {
-                // A response may have been lost after admission. The pinned
-                // seed bearer proves an exact retry without the invitation.
-                let bearer = ClaimAuthentication::SeedBearer(seed.bearer());
-                bootstrap.claim(seed.genesis(), bearer).await
+        let bearer = ClaimAuthentication::SeedBearer(seed.bearer());
+        let claim = match secret {
+            Some(secret) => {
+                let setup = ClaimAuthentication::SetupSecret(secret);
+                match bootstrap.claim(seed.genesis(), setup).await {
+                    Ok(()) => Ok(()),
+                    // A response may have been lost after admission. The pinned
+                    // seed bearer proves an exact retry without the invitation.
+                    Err(_) => bootstrap.claim(seed.genesis(), bearer).await,
+                }
             }
+            None => bootstrap.claim(seed.genesis(), bearer).await,
         };
         drop(timer);
         if let Err(error) = claim {
             // Refusals are unauthenticated and may hide a committed claim, so
             // the seed authority stays for an exact retry and nothing is fenced.
             if setup_refusal(&error) {
-                if database.seed_source_pin().await?.is_none() {
+                let fenced = database.seed_source_pin().await?.is_some();
+                // Without the setup secret, a refusal can't show that the
+                // claim is lost; the setup invitation may still make it.
+                if secret.is_none()
+                    && (!fenced || has_code(&error, "bootstrap-setup-invitation-rejected"))
+                {
+                    return Err(error.context(format!("error {SETUP_INVITATION_REQUIRED}")));
+                }
+                if !fenced {
                     database
                         .mark_local_seed_claim_refused(error.to_string().as_str())
                         .await?;
@@ -302,7 +361,7 @@ pub async fn run_setup(
                 .capture_local_shared_state_for_setup(&blob_dir)
                 .await?;
             store
-                .package_seed_capture_validated(database, &blob_dir, invitation.setup_id, None)
+                .package_seed_capture_validated(database, &blob_dir, setup_id, None)
                 .await?;
             return Err(error.context(
                 "error sync-setup-outcome-unknown hint=\"the server claim couldn't be confirmed; resume continues the same setup\"",
@@ -321,12 +380,7 @@ pub async fn run_setup(
         let _timer = bootstrap::StageTimer::start("package");
         proof = Some(
             store
-                .package_seed_capture_validated(
-                    database,
-                    &blob_dir,
-                    invitation.setup_id,
-                    Some(capture),
-                )
+                .package_seed_capture_validated(database, &blob_dir, setup_id, Some(capture))
                 .await?,
         );
     }
@@ -347,13 +401,14 @@ pub async fn run_setup(
     // Binds this installation's enrollment identity to the server.
     {
         let _timer = bootstrap::StageTimer::start("enrollment");
-        enrollment::Client::new(&invitation.server, link.clone())?
+        enrollment::Client::new(&server, link.clone())?
             .refresh(&store, database)
             .await?;
     }
     let _timer = bootstrap::StageTimer::start("drain");
-    let client = tail::Client::new(&invitation.server, link.clone())?;
-    drain(&client, &store, database, host, &blob_dir, ROUND_LIMIT).await
+    let client = tail::Client::new(&server, link.clone())?;
+    let outcome = drain(&client, &store, database, host, &blob_dir, ROUND_LIMIT).await?;
+    Ok((server, outcome))
 }
 
 /// A created device invitation whose inviting device waits for admission.

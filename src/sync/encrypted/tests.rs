@@ -762,6 +762,7 @@ mod automatic;
 mod conflicts;
 mod devices;
 mod reset;
+mod setup_resume;
 
 /// A running server with seed `a` and joined peer `b`.
 struct Pair {
@@ -959,16 +960,26 @@ async fn cli_join_continues_with_a_new_invitation_after_expiry() {
 }
 
 /// Relays every request to a real server and, depending on `mode`, replaces
-/// the reply to a committed claim or a status request with a refusal.
+/// the reply to a committed claim or a status request with a refusal, loses
+/// the reply to a committed request, or never answers.
 struct ForgingRelay {
     upstream: String,
     http: reqwest::Client,
     mode: std::sync::atomic::AtomicU8,
+    claims: std::sync::atomic::AtomicUsize,
 }
 
 const RELAY: u8 = 0;
 const FORGE_CLAIM_REJECTED: u8 = 1;
 const FORGE_STATUS_CLAIMED: u8 = 2;
+/// Commits each claim, then answers as if the connection failed.
+const LOSE_CLAIM_REPLY: u8 = 3;
+/// Commits the publication, then answers as if the connection failed.
+const LOSE_PUBLISH_REPLY: u8 = 4;
+/// Fails every upload batch without forwarding it.
+const FAIL_UPLOADS: u8 = 5;
+/// Holds claims without forwarding them, until the client is stopped.
+const HOLD_CLAIMS: u8 = 6;
 
 async fn forging_relay(
     axum::extract::State(relay): axum::extract::State<std::sync::Arc<ForgingRelay>>,
@@ -986,6 +997,21 @@ async fn forging_relay(
     let text = String::from_utf8_lossy(&bytes);
     let claim = text.contains("\"ClaimSetup\"") || text.contains("\"ClaimBearer\"");
     let status = text.contains("\"Status\"");
+    let publish = text.contains("\"Publish\"");
+    let upload = request_type.as_ref().is_some_and(|value| {
+        value.as_bytes() == aven_core::sync::bootstrap_staging::batch::CONTENT_TYPE.as_bytes()
+    });
+    if claim {
+        relay
+            .claims
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    let lost = || axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    match relay.mode.load(std::sync::atomic::Ordering::SeqCst) {
+        HOLD_CLAIMS if claim => std::future::pending::<()>().await,
+        FAIL_UPLOADS if upload => return lost(),
+        _ => {}
+    }
     let mut forwarded = relay
         .http
         .post(format!("{}{path}", relay.upstream))
@@ -996,7 +1022,10 @@ async fn forging_relay(
     if let Some(authorization) = authorization {
         forwarded = forwarded.header(header::AUTHORIZATION, authorization);
     }
-    let upstream = forwarded.send().await.unwrap();
+    // An unreachable server looks the same as a lost connection.
+    let Ok(upstream) = forwarded.send().await else {
+        return lost();
+    };
     let forged = match relay.mode.load(std::sync::atomic::Ordering::SeqCst) {
         FORGE_CLAIM_REJECTED if claim => {
             assert!(
@@ -1006,6 +1035,17 @@ async fn forging_relay(
             Some("bootstrap-setup-invitation-rejected")
         }
         FORGE_STATUS_CLAIMED if status => Some("bootstrap-storage-already-claimed"),
+        LOSE_CLAIM_REPLY if claim => {
+            assert!(
+                upstream.status().is_success(),
+                "the server commits the claim"
+            );
+            return lost();
+        }
+        LOSE_PUBLISH_REPLY if publish => {
+            assert!(upstream.status().is_success(), "the server publishes");
+            return lost();
+        }
         _ => None,
     };
     if let Some(code) = forged {
@@ -1026,133 +1066,6 @@ async fn forging_relay(
             .insert(header::CONTENT_TYPE, content_type);
     }
     response
-}
-
-/// Unsigned refusals may hide a committed claim, so they never discard the
-/// seed authority or fence the setup; a later exact retry completes it.
-#[tokio::test]
-async fn cli_forged_setup_refusals_keep_committed_claim_recoverable() {
-    use std::sync::{Arc, atomic::Ordering};
-
-    let root = tempfile::tempdir().unwrap();
-    let root = root.path();
-    let operator = Installation::new(root, "operator");
-    let a = Installation::new(root, "a");
-    a.ok(&["add", "Keep local"]).await;
-    let data = root.join("server.sqlite");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let relay_url = format!("http://{}", listener.local_addr().unwrap());
-    let relay = Arc::new(ForgingRelay {
-        upstream: format!("http://127.0.0.1:{port}"),
-        http: reqwest::Client::builder().no_proxy().build().unwrap(),
-        mode: FORGE_CLAIM_REJECTED.into(),
-    });
-    let app = axum::Router::new()
-        .fallback(forging_relay)
-        .with_state(relay.clone());
-    let relay_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let setup = line_with(
-        &operator
-            .ok(&[
-                "server",
-                "setup",
-                "--data",
-                &data.display().to_string(),
-                "--url",
-                &relay_url,
-            ])
-            .await,
-        "aven-setup:",
-    );
-    let _server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
-
-    // Both the setup claim and the bearer retry commit, but come back refused.
-    let error = failure(&a.run_with_input(&["sync", "setup", "--yes"], &setup).await);
-    assert!(error.contains("sync-setup-invitation-rejected"), "{error}");
-    let server = aven_core::db::Database::open(&data).await.unwrap();
-    assert!(server.e2ee_server_is_claimed().await.unwrap());
-    assert_eq!(status(&a).await["state"], "not-set-up");
-    let local = aven_core::db::Database::open(&a.db()).await.unwrap();
-    assert!(
-        local
-            .local_seed_genesis_commitment()
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert!(local.seed_source_pin().await.unwrap().is_none());
-
-    let wrong_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let wrong_url = format!("http://{}", wrong_listener.local_addr().unwrap());
-    let wrong_requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let count = wrong_requests.clone();
-    let wrong_app = axum::Router::new().fallback(move || {
-        let count = count.clone();
-        async move {
-            count.fetch_add(1, Ordering::SeqCst);
-            axum::http::StatusCode::FORBIDDEN
-        }
-    });
-    let wrong_task = tokio::spawn(async move {
-        axum::serve(wrong_listener, wrong_app).await.unwrap();
-    });
-    let mut changed = SetupInvitation::decode(&setup).unwrap();
-    changed.server = wrong_url;
-    let changed_origin = changed.encode().unwrap();
-    let pin = local.local_seed_genesis_commitment().await.unwrap();
-    let error = failure(
-        &a.run_with_input(&["sync", "setup", "--yes"], changed_origin.as_str())
-            .await,
-    );
-    assert!(error.contains("sync-setup-server-mismatch"), "{error}");
-    assert_eq!(wrong_requests.load(Ordering::SeqCst), 0);
-    assert_eq!(local.local_seed_genesis_commitment().await.unwrap(), pin);
-
-    // The retry claims exactly; a forged status refusal then leaves the fenced
-    // setup resumable instead of requiring recovery to a new path.
-    relay.mode.store(FORGE_STATUS_CLAIMED, Ordering::SeqCst);
-    let error = failure(&a.run_with_input(&["sync", "setup", "--yes"], &setup).await);
-    assert!(
-        error.contains("sync-setup-fenced-storage-claimed"),
-        "{error}"
-    );
-    assert_eq!(status(&a).await["state"], "setup-incomplete");
-    assert!(
-        local
-            .seed_publication_intent_bytes()
-            .await
-            .unwrap()
-            .is_some()
-    );
-    // Sealed-intent resume bypasses claim preparation, but not the origin check.
-    changed.setup_id = [99; 32];
-    let unrelated = changed.encode().unwrap();
-    let error = failure(
-        &a.run_with_input(&["sync", "setup"], unrelated.as_str())
-            .await,
-    );
-    assert!(error.contains("sync-setup-server-mismatch"), "{error}");
-    assert_eq!(wrong_requests.load(Ordering::SeqCst), 0);
-    assert_eq!(local.local_seed_genesis_commitment().await.unwrap(), pin);
-
-    relay.mode.store(RELAY, Ordering::SeqCst);
-    let stdout = success(
-        &a.run_with_input(&["sync", "setup"], &setup).await,
-        &["sync", "setup"],
-    );
-    assert!(
-        stdout.contains(&format!("Sync set up with {relay_url}")),
-        "{stdout}"
-    );
-    assert_eq!(status(&a).await["state"], "ready");
-
-    wrong_task.abort();
-    relay_task.abort();
 }
 
 #[test]

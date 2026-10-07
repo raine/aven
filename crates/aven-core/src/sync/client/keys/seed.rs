@@ -11,6 +11,7 @@ pub(super) const SEED_ITEM: &str = "seed";
 const SEED_MARKER_RECORD: &str = "seed-authority";
 const SEED_ORIGIN_ITEM: &str = "seed-origin";
 const SEED_ORIGIN_BYTES: usize = 44 + crate::sync::client::MAX_SERVER_BYTES;
+const SEED_ORIGIN_MISSING: &str = "error sync-setup-server-missing hint=\"the saved setup server is missing; abandon setup with `aven sync reset --force` before starting again\"";
 
 impl ProtectedLocalKeyStore {
     /// Pins the canonical setup origin before any request can disclose credentials.
@@ -36,9 +37,33 @@ impl ProtectedLocalKeyStore {
         }
         anyhow::ensure!(
             !established && !self.seed_authority_exists()?,
-            "error sync-setup-server-missing hint=\"the saved setup server is missing; abandon setup with `aven sync reset --force` before starting again\""
+            SEED_ORIGIN_MISSING
         );
         self.write_owned(SEED_ORIGIN_ITEM, SEED_ORIGIN_BYTES, origin.as_bytes())
+    }
+
+    /// The canonical origin and setup ID that started setup was bound to, so
+    /// it can resume without its invitation. Reads existing authority only;
+    /// nothing is created or replaced.
+    pub(crate) async fn retained_seed_setup(
+        &self,
+        database: &Database,
+    ) -> anyhow::Result<(String, [u8; 32])> {
+        self.validate_database(database).await?;
+        self.prepare()?;
+        let _guard = self.lock()?;
+        let package = self.load_required_locked()?;
+        let origin = self
+            .read_owned(SEED_ORIGIN_ITEM, SEED_ORIGIN_BYTES, false)?
+            .ok_or_else(|| anyhow::anyhow!(SEED_ORIGIN_MISSING))?;
+        let seed = self
+            .load_secret(SEED_ITEM, SEED_BYTES)?
+            .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::MissingAuthority))?;
+        let seed = self.decode_seed(&seed, &package)?;
+        Ok((
+            String::from_utf8(origin.to_vec())?,
+            seed.genesis().setup_id(),
+        ))
     }
 
     /// Persists private seed keys, bearer and exact validated genesis before use.
