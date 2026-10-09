@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: TUI shortcut help wraps descriptions instead of clipping them, uses one column on narrow terminals, and lists only commands with hotkeys. ([#33](https://github.com/raine/aven/issues/33))
+
 ## v0.1.46 (2026-10-05)
 
 - A sync-server Docker image is now available at `ghcr.io/raine/aven` for Linux amd64 and arm64. Run it with [Docker or Docker Compose](https://aventasks.dev/sync/#run-with-docker), or build from source. ([#32](https://github.com/raine/aven/issues/32))
