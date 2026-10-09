@@ -30,6 +30,7 @@ use crate::render::print_json_pretty;
 use crate::sync_http::HttpDriver;
 
 mod devices;
+mod setup_progress;
 #[cfg(test)]
 pub(crate) use aven_core::sync::client::engine::ROUND_LIMIT;
 #[cfg(test)]
@@ -40,6 +41,7 @@ pub(crate) use devices::{
     Device, DeviceListing, Removal, finish_removal, list as list_devices, load_devices,
     remove as remove_device, remove_other_device,
 };
+use setup_progress::SetupProgress;
 
 #[cfg(test)]
 mod tests;
@@ -542,12 +544,6 @@ async fn print_setup_preview(database: &Database, config: &AppConfig, server: &s
     Ok(())
 }
 
-fn print_setup_progress(progress: Progress) {
-    if progress == Stage::UploadingData.into() {
-        eprintln!("Uploading encrypted data...");
-    }
-}
-
 fn print_set_up(server: &str, outcome: &Outcome, config: &AppConfig) {
     println!("Sync set up with {server}");
     print_outcome(outcome);
@@ -560,7 +556,13 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
     // or prompt input is read.
     if local_phase(database).await? == LocalPhase::SetupIncomplete {
         eprintln!("Resuming the unfinished setup...");
-        match resume_setup(database, config, &print_setup_progress).await {
+        let progress = Mutex::new(SetupProgress::stderr());
+        let result = resume_setup(database, config, &|update| {
+            progress.lock().unwrap().update(update);
+        })
+        .await;
+        drop(progress);
+        match result {
             Err(error) if has_code(&error, engine::SETUP_INVITATION_REQUIRED) => eprintln!(
                 "The server doesn't hold this setup's claim yet, so continuing needs a setup \
                  invitation: the original one if it's still valid, otherwise a newer one for \
@@ -586,7 +588,13 @@ pub(crate) async fn setup(database: &Database, config: &AppConfig, args: SetupAr
         print_setup_preview(database, config, &invitation.server).await?;
         confirm_setup(args.yes)?;
     }
-    let outcome = run_setup(database, config, &invitation, &print_setup_progress).await?;
+    let progress = Mutex::new(SetupProgress::stderr());
+    let result = run_setup(database, config, &invitation, &|update| {
+        progress.lock().unwrap().update(update);
+    })
+    .await;
+    drop(progress);
+    let outcome = result?;
     print_set_up(&invitation.server, &outcome, config);
     Ok(())
 }

@@ -14,7 +14,8 @@ use super::super::scroll::{clamp_scroll_start, render_vertical_scrollbar};
 use super::super::sync_status_model::{SyncHealth, sync_status_summary};
 
 use crate::sync::encrypted::Removal;
-use crate::sync::encrypted::{Amount, InvitationCheck, LocalPhase, SetupPreview, Stage};
+use crate::sync::encrypted::{InvitationCheck, LocalPhase, SetupPreview, Stage};
+use crate::sync::progress_text::amount_text;
 use crate::tui::overlay::{
     AutomaticSyncService, InvitationKind, SecretText, SyncAction, SyncDialogView, SyncPage,
     dialog_area, sync_actions,
@@ -513,27 +514,6 @@ fn progress_lines(lines: &mut Vec<Line<'static>>, running: &RunningOperation, wi
         _ => "You can close this dialog and keep working.",
     };
     lines.extend(paragraph(note, Style::new().fg(FG_MUTED), width));
-}
-
-/// Measured work in the current stage. A percentage appears only against an
-/// exact total, and reaches 100% only when every byte has transferred.
-fn amount_text(amount: Amount) -> String {
-    let bytes = |bytes: u64| super::database_stats::format_bytes(bytes as i64);
-    match amount {
-        Amount::Bytes {
-            done,
-            total: Some(total),
-        } if total > 0 => format!(
-            "{} of {} · {}%",
-            bytes(done),
-            bytes(total),
-            done.min(total) * 100 / total
-        ),
-        Amount::Bytes { done, .. } => format!("{} so far", bytes(done)),
-        Amount::Changes { done: 1 } => "1 change applied".to_string(),
-        Amount::Changes { done } => format!("{done} changes applied"),
-        Amount::Images { done, remaining } => format!("{done} done · {remaining} left"),
-    }
 }
 
 /// After a join timed out in this session, explains what to do if the

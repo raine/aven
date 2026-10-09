@@ -82,3 +82,22 @@ pub fn print_text_diff(from_label: &str, old: &str, to_label: &str, new: &str) {
         print!("{unified}");
     }
 }
+
+pub(crate) fn format_bytes(bytes: impl Into<i128>) -> String {
+    let bytes = bytes.into();
+    const KIB: i128 = 1024;
+    const MIB: i128 = KIB * 1024;
+    const GIB: i128 = MIB * 1024;
+    const TIB: i128 = GIB * 1024;
+    if bytes >= TIB {
+        format!("{:.1} TiB", bytes as f64 / TIB as f64)
+    } else if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
