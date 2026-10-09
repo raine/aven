@@ -1016,7 +1016,7 @@ fn invitation_lines(
              continue it; nothing is captured again."
         }
         InvitationKind::Setup => {
-            "Paste the setup invitation from your hosting provider or `aven server setup`."
+            "Paste the setup invitation from Aven Cloud, your hosting provider or `aven server setup`."
         }
         InvitationKind::Join if status.phase == LocalPhase::JoinIncomplete => {
             "On the device that created the first invitation, use Add device or run \

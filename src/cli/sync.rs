@@ -289,7 +289,7 @@ pub(crate) enum DeviceSubcommand {
     },
 }
 
-pub(super) const SETUP_HELP: &str = r#"Paste the setup invitation from your hosting provider or
+pub(super) const SETUP_HELP: &str = r#"Paste the setup invitation from Aven Cloud, your hosting provider or
 `aven server setup`, or pipe it to standard input. Setup previews this database
 and asks for confirmation; use --yes when standard input is not a terminal.
 This database becomes the starting point of the synced data. Rerun the same

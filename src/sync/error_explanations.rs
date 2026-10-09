@@ -140,10 +140,10 @@ pub(crate) fn explain(
             message: "This isn't a valid setup invitation.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Copy the complete setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then paste it into `aven sync setup`."
+                    "Copy the complete setup invitation from Aven Cloud or your hosting provider, or run `aven server setup` if you host the server yourself, then paste it into `aven sync setup`."
                 }
                 ErrorSurface::Tui => {
-                    "Copy the complete setup invitation from your hosting provider, or from `aven server setup` if you host the server yourself, then paste it into Set up sync."
+                    "Copy the complete setup invitation from Aven Cloud or your hosting provider, or from `aven server setup` if you host the server yourself, then paste it into Set up sync."
                 }
             },
         });
@@ -281,10 +281,10 @@ pub(crate) fn explain(
             message: "This setup invitation expired.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Get a new setup invitation from your hosting provider, or run `aven server setup` again if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
+                    "Get a new setup invitation from Aven Cloud or your hosting provider, or run `aven server setup` again if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Get a new setup invitation from your hosting provider, or run `aven server setup` again if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
+                    "Get a new setup invitation from Aven Cloud or your hosting provider, or run `aven server setup` again if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
                 }
             },
         });
@@ -295,10 +295,10 @@ pub(crate) fn explain(
             message: "This setup invitation expired, was replaced, or belongs to different storage.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Get the current setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
+                    "Get the current setup invitation from Aven Cloud or your hosting provider, or run `aven server setup` if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Get the current setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
+                    "Get the current setup invitation from Aven Cloud or your hosting provider, or run `aven server setup` if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
                 }
             },
         });
@@ -634,7 +634,7 @@ pub(crate) fn explain(
 
 /// A different setup or server cannot resume the setup started here, and a
 /// mismatch is never a reason to discard the setup's keys.
-const SETUP_MISMATCH_NEXT_STEP: &str = "Use the invitation that started this setup, or a newer one for the same server storage. If neither is available, back up this database and restore it to a new path for a local-only copy. This setup's keys are kept.";
+const SETUP_MISMATCH_NEXT_STEP: &str = "Use the invitation that started this setup, or a newer one for the same Aven Cloud hosting or server storage. If neither is available, back up this database and restore it to a new path for a local-only copy. This setup's keys are kept.";
 
 /// A synced change uses an operation or value this version doesn't know.
 const UNSUPPORTED_CHANGE: &[&str] = &[
@@ -938,7 +938,10 @@ mod tests {
             rejected.next_step,
             invalid.next_step,
         ] {
-            assert!(step.contains("your hosting provider"), "{step}");
+            assert!(
+                step.contains("Aven Cloud or your hosting provider"),
+                "{step}"
+            );
             assert!(step.contains("`aven server setup`"), "{step}");
         }
     }
@@ -954,9 +957,27 @@ mod tests {
                 let explanation = explain(ErrorAction::Setup, surface, &error).unwrap();
                 assert_eq!(explanation.code, code);
                 assert!(!explanation.combined().contains("reset"), "{explanation:?}");
-                assert!(explanation.next_step.contains("same server storage"));
+                assert!(explanation.next_step.contains("same Aven Cloud hosting"));
                 assert!(explanation.next_step.contains("keys are kept"));
             }
+        }
+    }
+
+    #[test]
+    fn cloud_https_refusal_wins_over_invalid_server_url() {
+        let error = aven_core::sync::client::server_origin("http://sync.aventasks.dev")
+            .unwrap_err()
+            .context("error sync-join-command");
+        for action in [ErrorAction::General, ErrorAction::Setup, ErrorAction::Join] {
+            let explanation = explain(action, ErrorSurface::Cli, &error).unwrap();
+            assert_eq!(explanation.code, "sync-cloud-https-required");
+            assert!(
+                explanation
+                    .message
+                    .contains("No sync credentials were sent")
+            );
+            assert!(explanation.next_step.starts_with("New setups and joins"));
+            assert!(!explanation.combined().contains("reset"));
         }
     }
 

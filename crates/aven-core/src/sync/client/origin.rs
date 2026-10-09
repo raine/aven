@@ -5,9 +5,12 @@ use url::Url;
 /// Longest server origin; invitations carry its length in one byte.
 pub const MAX_SERVER_BYTES: usize = 255;
 
+/// The official Aven Cloud sync host, which serves only HTTPS.
+const AVEN_CLOUD_HOST: &str = "sync.aventasks.dev";
+
 /// Validates `origin` for encrypted transport and returns the endpoint at
 /// `path`: HTTP or HTTPS with a host and no credentials, query, fragment or
-/// path.
+/// path. The official Cloud host requires HTTPS on every port.
 pub(crate) fn endpoint(origin: &str, path: &str) -> Result<Url> {
     // Inspect the supplied authority/path too: URL parsing erases empty
     // userinfo and resolves dot segments before exposing those fields.
@@ -29,6 +32,13 @@ pub(crate) fn endpoint(origin: &str, path: &str) -> Result<Url> {
             && url.fragment().is_none()
             && url.path() == "/",
         "error bootstrap-origin"
+    );
+    // The parsed host is lowercase and percent-decoded; a trailing dot names
+    // the same DNS host.
+    let host = url.host_str().unwrap_or_default();
+    ensure!(
+        url.scheme() == "https" || host.strip_suffix('.').unwrap_or(host) != AVEN_CLOUD_HOST,
+        "error sync-cloud-https-required"
     );
     url.set_path(path);
     Ok(url)
@@ -103,6 +113,53 @@ mod tests {
             "https://sync.example.com",
         ] {
             assert_eq!(server_origin(origin).unwrap(), origin);
+        }
+    }
+
+    #[test]
+    fn official_cloud_host_requires_https_without_changing_origins() {
+        for origin in [
+            "http://sync.aventasks.dev",
+            "HTTP://SYNC.AVENTASKS.DEV",
+            "http://sync.aventasks.dev:80",
+            "http://sync.aventasks.dev:443",
+            "http://sync.aventasks.dev:3746",
+            "http://sync.aventasks.dev.",
+            "http://%73ync.aventasks.dev",
+        ] {
+            let error = endpoint(origin, "/e2ee/bootstrap/v1").unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "error sync-cloud-https-required",
+                "{origin}"
+            );
+            let error = server_origin(origin).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("sync-cloud-https-required"),
+                "{origin}: {error:#}"
+            );
+        }
+        for (origin, canonical) in [
+            ("https://sync.aventasks.dev", "https://sync.aventasks.dev"),
+            (
+                "HTTPS://SYNC.AVENTASKS.DEV:443/",
+                "https://sync.aventasks.dev",
+            ),
+            ("https://sync.aventasks.dev.", "https://sync.aventasks.dev."),
+            (
+                "https://sync.aventasks.dev:444",
+                "https://sync.aventasks.dev:444",
+            ),
+            (
+                "http://sync.aventasks.dev.example",
+                "http://sync.aventasks.dev.example",
+            ),
+            (
+                "http://dev-sync.aventasks.dev",
+                "http://dev-sync.aventasks.dev",
+            ),
+        ] {
+            assert_eq!(server_origin(origin).unwrap(), canonical, "{origin}");
         }
     }
 
