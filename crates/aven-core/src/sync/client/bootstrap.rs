@@ -480,6 +480,10 @@ fn validate_staging(
     Ok(())
 }
 
+/// Target payload size for setup uploads. Smaller batches provide more frequent
+/// server acknowledgements without splitting frozen encrypted records.
+const UPLOAD_BATCH_PAYLOAD: u64 = staging::MAX_REQUEST_BYTES as u64;
+
 /// Splits `slots` into batches within every batch limit, keeping catalog
 /// slices apart from the records catalogs describe.
 fn pack(
@@ -492,7 +496,7 @@ fn pack(
     for slot in slots {
         let fits = !current.is_empty()
             && current.len() < staging::batch::MAX_RECORDS
-            && payload + slot.len <= staging::batch::MAX_PAYLOAD as u64
+            && payload + slot.len <= UPLOAD_BATCH_PAYLOAD
             && current[0].component.is_catalog() == slot.component.is_catalog()
             && staging::batch::header_len(&header(
                 current.iter().copied().chain([*slot]).collect(),
@@ -545,4 +549,60 @@ pub fn components(
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(records: Vec<staging::batch::Slot>) -> staging::batch::Header {
+        staging::batch::Header {
+            vault: [1; 32],
+            genesis: [2; 32],
+            bootstrap: [3; 32],
+            commitment: [4; 32],
+            records,
+        }
+    }
+
+    #[test]
+    fn upload_batches_acknowledge_each_full_size_record() {
+        let slots: Vec<_> = (0..4)
+            .map(|index| staging::batch::Slot {
+                component: staging::Component::State,
+                index,
+                len: staging::MAX_REQUEST_BYTES as u64,
+            })
+            .collect();
+        let batches = pack(&slots, header);
+        assert_eq!(batches.len(), slots.len());
+        assert!(batches.iter().all(|batch| batch.len() == 1));
+        assert_eq!(batches.concat(), slots);
+    }
+
+    #[test]
+    fn upload_batches_group_small_records_without_mixing_catalogs() {
+        let slots: Vec<_> = (0..10)
+            .map(|index| staging::batch::Slot {
+                component: if index < 2 {
+                    staging::Component::DataCatalog
+                } else {
+                    staging::Component::State
+                },
+                index,
+                len: UPLOAD_BATCH_PAYLOAD / 4,
+            })
+            .collect();
+        let batches = pack(&slots, header);
+        assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), [2, 4, 4]);
+        assert_eq!(batches.concat(), slots);
+        for batch in batches {
+            let records: Vec<_> = batch
+                .iter()
+                .map(|slot| vec![0; slot.len as usize])
+                .collect();
+            let refs: Vec<_> = records.iter().map(Vec::as_slice).collect();
+            assert!(staging::batch::encode(&header(batch), &refs).is_ok());
+        }
+    }
 }
