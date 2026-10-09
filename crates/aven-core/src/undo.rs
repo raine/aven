@@ -1606,12 +1606,17 @@ fn label_delta(current: &[String], target: &[String]) -> (Vec<String>, Vec<Strin
 }
 
 async fn change_is_unsynced(conn: &mut SqliteConnection, change_id: &str) -> Result<bool> {
-    let server_seq =
-        sqlx::query_scalar::<_, Option<i64>>("SELECT server_seq FROM changes WHERE change_id = ?")
-            .bind(change_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(matches!(server_seq, Some(None)))
+    // Frozen changes must remain immutable even before the server accepts them.
+    let removable = sqlx::query_scalar::<_, bool>(
+        "SELECT server_seq IS NULL
+                AND NOT EXISTS (SELECT 1 FROM local_e2ee_outbox WHERE operation_id = changes.change_id)
+                AND NOT EXISTS (SELECT 1 FROM local_e2ee_accepted WHERE operation_id = changes.change_id)
+         FROM changes WHERE change_id = ?",
+    )
+    .bind(change_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(removable.unwrap_or(false))
 }
 
 async fn all_changes_unsynced(conn: &mut SqliteConnection, change_ids: &[String]) -> Result<bool> {
@@ -1791,7 +1796,7 @@ async fn delete_created_note(
     restoration_change_ids: &[String],
 ) -> Result<()> {
     let row = sqlx::query(
-        "SELECT change_id FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?",
+        "SELECT change_id, body FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?",
     )
     .bind(workspace_id)
     .bind(note_id)
@@ -1812,22 +1817,47 @@ async fn delete_created_note(
     let lineage = std::iter::once(note_add_change_id)
         .chain(restoration_change_ids.iter().map(String::as_str))
         .collect::<Vec<_>>();
+    let mut removable = true;
     for change_id in &lineage {
-        if !change_is_unsynced(conn, change_id).await? {
-            bail!("error undo-state-changed task_id={task_id} field=note");
-        }
+        removable &= change_is_unsynced(conn, change_id).await?;
     }
-    crate::sync::shared_state::ensure_changes_not_local_capture_protected(conn, &lineage).await?;
+    if removable {
+        crate::sync::shared_state::ensure_changes_not_local_capture_protected(conn, &lineage)
+            .await?;
+    }
     sqlx::query("DELETE FROM notes WHERE workspace_id = ? AND id = ? AND task_id = ?")
         .bind(workspace_id)
         .bind(note_id)
         .bind(task_id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM changes WHERE change_id = ?")
-        .bind(expected_change_id)
-        .execute(&mut *conn)
+    if removable {
+        sqlx::query("DELETE FROM changes WHERE change_id = ?")
+            .bind(expected_change_id)
+            .execute(&mut *conn)
+            .await?;
+    } else {
+        let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+        let deleted_at = now();
+        append_change(
+            conn,
+            ChangeEntity::Task,
+            task_id,
+            Some("notes"),
+            op_type::NOTE_DELETE,
+            ChangePayload::workspace(&workspace)
+                .set("note_id", note_id)
+                .set("body", row.get::<String, _>("body"))
+                .set("deleted_at", &deleted_at),
+        )
         .await?;
+        sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
+            .bind(&deleted_at)
+            .bind(workspace_id)
+            .bind(task_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(())
 }
 
@@ -1855,9 +1885,6 @@ async fn delete_created_project(
     if name != expected_name || prefix != expected_prefix {
         bail!("error undo-state-changed project_key={project_key}");
     }
-    if !change_is_unsynced(conn, create_change_id).await? {
-        bail!("error undo-state-changed project_key={project_key}");
-    }
     let task_refs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM tasks WHERE workspace_id = ? AND project_id = ?")
             .bind(workspace_id)
@@ -1876,6 +1903,24 @@ async fn delete_created_project(
     .await?;
     if path_refs > 0 {
         bail!("error undo-state-changed project_key={project_key}");
+    }
+    if !change_is_unsynced(conn, create_change_id).await? {
+        let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+        sqlx::query("DELETE FROM projects WHERE workspace_id = ? AND key = ?")
+            .bind(workspace_id)
+            .bind(project_key)
+            .execute(&mut *conn)
+            .await?;
+        append_change(
+            conn,
+            ChangeEntity::Project,
+            project_id.as_str(),
+            None,
+            op_type::PROJECT_DELETE,
+            ChangePayload::workspace(&workspace).set("deleted_at", now()),
+        )
+        .await?;
+        return Ok(());
     }
     crate::sync::shared_state::ensure_changes_not_local_capture_protected(
         conn,
@@ -1961,7 +2006,7 @@ async fn delete_created_label(
             .bind(label)
             .fetch_one(&mut *conn)
             .await?;
-    if exists == 0 || !change_is_unsynced(conn, create_change_id).await? {
+    if exists == 0 {
         bail!("error undo-state-changed label={label}");
     }
     let task_refs: i64 =
@@ -1977,8 +2022,43 @@ async fn delete_created_label(
     .bind(label)
     .fetch_one(&mut *conn)
     .await?;
-    if task_refs > 0 || series_refs > 0 {
+    let live_task_refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM task_labels tl
+         WHERE tl.workspace_id = ? AND tl.label = ?
+           AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.workspace_id = tl.workspace_id
+                           AND t.id = tl.task_id AND t.deleted = 1)",
+    )
+    .bind(workspace_id)
+    .bind(label)
+    .fetch_one(&mut *conn)
+    .await?;
+    if live_task_refs > 0 || series_refs > 0 {
         bail!("error undo-state-changed label={label}");
+    }
+    if task_refs > 0 || !change_is_unsynced(conn, create_change_id).await? {
+        sqlx::query("DELETE FROM task_labels WHERE workspace_id = ? AND label = ?")
+            .bind(workspace_id)
+            .bind(label)
+            .execute(&mut *conn)
+            .await?;
+        let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
+        sqlx::query("DELETE FROM labels WHERE workspace_id = ? AND name = ?")
+            .bind(workspace_id)
+            .bind(label)
+            .execute(&mut *conn)
+            .await?;
+        append_change(
+            conn,
+            ChangeEntity::Label,
+            label,
+            None,
+            op_type::LABEL_DELETE,
+            ChangePayload::workspace(&workspace)
+                .set("name", label)
+                .set("deleted_at", now()),
+        )
+        .await?;
+        return Ok(());
     }
     crate::sync::shared_state::ensure_changes_not_local_capture_protected(
         conn,

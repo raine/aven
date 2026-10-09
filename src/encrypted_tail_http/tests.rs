@@ -1944,18 +1944,19 @@ async fn creation_undo_pending_frozen_and_accepted() {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         head_record(&f.seed, &inputs.authority).await
     };
-    let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
-    assert!(
-        error.to_string().contains("encrypted-history-owned"),
-        "{error:#}"
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    assert_eq!(
+        scalar(
+            &f.seed,
+            &format!("SELECT deleted FROM tasks WHERE id='{}'", frozen.id)
+        )
+        .await,
+        1
     );
-    assert_eq!(title(&f.seed, frozen.id.as_str()).await, "undo frozen");
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     }
-    converge(&f).await;
-    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
     converge(&f).await;
     for db in [&f.seed, &f.peer] {
         assert_eq!(
@@ -1965,6 +1966,122 @@ async fn creation_undo_pending_frozen_and_accepted() {
             )
             .await,
             1
+        );
+    }
+}
+
+#[tokio::test]
+async fn project_and_label_creation_undo_pending_frozen_and_accepted() {
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    for state in ["pending", "frozen", "accepted"] {
+        for entity in ["project", "label"] {
+            let name = format!("undo-{entity}-{state}");
+            if entity == "project" {
+                f.seed
+                    .create_project_with_tui_undo(&w, &name)
+                    .await
+                    .unwrap();
+            } else {
+                f.seed.create_label_with_tui_undo(&w, &name).await.unwrap();
+            }
+            let record = if state == "frozen" {
+                let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+                Some(head_record(&f.seed, &inputs.authority).await)
+            } else {
+                None
+            };
+            if state == "accepted" {
+                converge(&f).await;
+            }
+            f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+            let query = if entity == "project" {
+                format!("SELECT count(*) FROM projects WHERE key='{name}' AND deleted=0")
+            } else {
+                format!("SELECT count(*) FROM labels WHERE name='{name}'")
+            };
+            assert_eq!(scalar(&f.seed, &query).await, 0);
+            if let Some(record) = record {
+                let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+                assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
+            }
+            converge(&f).await;
+            assert_eq!(scalar(&f.peer, &query).await, 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn task_creation_undo_keeps_frozen_labels_and_attachments() {
+    use aven_core::operations::{AttachmentAddInput, TaskAttachmentAddInput, TaskCreationUndo};
+    let f = fixture().await;
+    converge(&f).await;
+    let w = f.seed.list_workspaces().await.unwrap().remove(0);
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(3, 3)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let mut task_draft = draft("undo image and new label");
+    task_draft.labels = vec!["undo-new-label".into()];
+    let outcome = f
+        .seed
+        .create_task_with_attachments_and_options(
+            &w,
+            &blobs(&f.seed),
+            Default::default(),
+            task_draft,
+            vec![TaskAttachmentAddInput {
+                attachment_id: aven_core::ids::new_id(),
+                input: AttachmentAddInput {
+                    filename: None,
+                    alt_text: None,
+                    declared_media_type: None,
+                    bytes: bytes.into_inner(),
+                    optimization_policy: aven_core::attachments::ImageOptimizationPolicy::Preserve,
+                    dedupe_existing: false,
+                },
+            }],
+            aven_core::operations::TaskCreationOptions::standalone(TaskCreationUndo::TuiTask)
+                .with_create_missing_labels(),
+        )
+        .await
+        .unwrap();
+    let record = {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        f.seed
+            .prepare_encrypted_batch_in_run(
+                &inputs.authority,
+                &blobs(&f.seed),
+                None,
+                tail::BATCH_COUNT,
+            )
+            .await
+            .unwrap();
+        head_record(&f.seed, &inputs.authority).await
+    };
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    {
+        let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
+        assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
+    }
+    converge(&f).await;
+    for db in [&f.seed, &f.peer] {
+        assert_eq!(
+            scalar(
+                db,
+                &format!("SELECT deleted FROM tasks WHERE id='{}'", outcome.task.id)
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT count(*) FROM labels WHERE name='undo-new-label'"
+            )
+            .await,
+            0
         );
     }
 }
@@ -2619,31 +2736,45 @@ async fn note_creation_undo_respects_history_ownership() {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         head_record(&f.seed, &inputs.authority).await
     };
-    let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
-    assert!(
-        error.to_string().contains("encrypted-history-owned"),
-        "{error:#}"
-    );
-    assert_eq!(
-        note_body(&f.seed, &frozen.note_id).await.as_deref(),
-        Some("frozen add")
-    );
+    f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+    assert_eq!(note_body(&f.seed, &frozen.note_id).await, None);
     {
         let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
         assert_eq!(head_record(&f.seed, &inputs.authority).await, record);
     }
     converge(&f).await;
-    let error = f.seed.apply_latest_tui_undo(&w.id).await.err().unwrap();
-    assert!(
-        error.to_string().contains("undo-state-changed"),
-        "{error:#}"
-    );
     for db in [&f.seed, &f.peer] {
         assert_eq!(note_body(db, &pending.note_id).await, None);
-        assert_eq!(
-            note_body(db, &frozen.note_id).await.as_deref(),
-            Some("frozen add")
-        );
+        assert_eq!(note_body(db, &frozen.note_id).await, None);
+    }
+}
+
+#[tokio::test]
+async fn note_creation_undo_after_acceptance_and_pending_restoration() {
+    let f = fixture().await;
+    let (w, task, _) = shared_note(&f).await;
+    for restore in [false, true] {
+        let note = f
+            .seed
+            .add_note_with_tui_undo(&w, &task, "accepted add".into())
+            .await
+            .unwrap();
+        converge(&f).await;
+        if restore {
+            f.seed
+                .delete_note_with_tui_undo(&w, &task, &note.note_id)
+                .await
+                .unwrap();
+            f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+            assert_eq!(
+                note_body(&f.seed, &note.note_id).await.as_deref(),
+                Some("accepted add")
+            );
+        }
+        f.seed.apply_latest_tui_undo(&w.id).await.unwrap().unwrap();
+        assert_eq!(note_body(&f.seed, &note.note_id).await, None);
+        converge(&f).await;
+        assert_eq!(note_body(&f.peer, &note.note_id).await, None);
     }
 }
 
