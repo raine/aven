@@ -640,7 +640,7 @@ pub(crate) async fn reset(database: &Database, config: &AppConfig, args: ResetAr
     }
     println!("{message}");
     eprintln!(
-        "Start a new sync with `aven sync setup`, using an invitation from `aven server setup`."
+        "Start a new sync with `aven sync setup`, using an invitation from your hosting provider or `aven server setup`."
     );
     Ok(())
 }
@@ -923,7 +923,7 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     if report.state == SyncState::NotSetUp {
         println!("Sync: not set up; this database is local only");
         println!(
-            "Run `aven sync setup` with an invitation from `aven server setup`, or \
+            "Run `aven sync setup` with an invitation from your hosting provider or `aven server setup`, or \
              `aven sync join` on a new database."
         );
         return Ok(());

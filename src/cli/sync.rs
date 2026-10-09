@@ -289,10 +289,11 @@ pub(crate) enum DeviceSubcommand {
     },
 }
 
-pub(super) const SETUP_HELP: &str = r#"Paste the invitation printed by `aven server setup`, or pipe it to standard
-input. Setup previews this database and asks for confirmation; use --yes when
-standard input is not a terminal. This database becomes the starting point of
-the synced data. Rerun the same command to resume an interrupted setup."#;
+pub(super) const SETUP_HELP: &str = r#"Paste the setup invitation from your hosting provider or
+`aven server setup`, or pipe it to standard input. Setup previews this database
+and asks for confirmation; use --yes when standard input is not a terminal.
+This database becomes the starting point of the synced data. Rerun the same
+command to resume an interrupted setup."#;
 
 pub(super) const INVITE_HELP: &str = r#"The invitation, which begins with `AVEN:`, is printed to standard output.
 Anyone with it can access all synced data and manage devices. Keep this command running until the other

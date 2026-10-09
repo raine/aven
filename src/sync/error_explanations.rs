@@ -116,10 +116,10 @@ pub(crate) fn explain(
             message: "This isn't a valid setup invitation.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Run `aven server setup`, then paste the complete invitation into `aven sync setup`."
+                    "Copy the complete setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then paste it into `aven sync setup`."
                 }
                 ErrorSurface::Tui => {
-                    "Run server setup, then paste its complete invitation into Set up sync."
+                    "Copy the complete setup invitation from your hosting provider, or from `aven server setup` if you host the server yourself, then paste it into Set up sync."
                 }
             },
         });
@@ -198,15 +198,15 @@ pub(crate) fn explain(
     if has("sync-setup-invitation-mismatch") {
         return Some(Explanation {
             code: "sync-setup-invitation-mismatch",
-            message: "This invitation belongs to a different setup.",
-            next_step: match surface {
-                ErrorSurface::Cli => {
-                    "Use the invitation that started this setup. If its server storage is gone, run `aven sync reset --force`."
-                }
-                ErrorSurface::Tui => {
-                    "Use the original invitation, or run `aven sync reset --force` in the CLI if its server storage is gone."
-                }
-            },
+            message: "This invitation is for different server storage than the setup started here.",
+            next_step: SETUP_MISMATCH_NEXT_STEP,
+        });
+    }
+    if has("sync-setup-server-mismatch") {
+        return Some(Explanation {
+            code: "sync-setup-server-mismatch",
+            message: "This invitation is for a different server than the setup started here.",
+            next_step: SETUP_MISMATCH_NEXT_STEP,
         });
     }
     if let Some(explanation) = protected_key_store_explanation(surface, error) {
@@ -257,10 +257,10 @@ pub(crate) fn explain(
             message: "This setup invitation expired.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Run `aven server setup` on the server again for a new invitation, then rerun `aven sync setup` with it. Nothing here was changed."
+                    "Get a new setup invitation from your hosting provider, or run `aven server setup` again if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Run `aven server setup` on the server again for a new invitation, then choose Set up sync and paste it. Nothing here was changed."
+                    "Get a new setup invitation from your hosting provider, or run `aven server setup` again if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
                 }
             },
         });
@@ -271,10 +271,10 @@ pub(crate) fn explain(
             message: "This setup invitation expired, was replaced, or belongs to different storage.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Run `aven server setup` on the server for a current invitation, then rerun `aven sync setup` with it. Nothing here was changed."
+                    "Get the current setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Run `aven server setup` on the server for a current invitation, then choose Set up sync and paste it. Nothing here was changed."
+                    "Get the current setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
                 }
             },
         });
@@ -484,7 +484,7 @@ pub(crate) fn explain(
         return Some(Explanation {
             code: "enrollment-refused",
             message: "The server refused the join request.",
-            next_step: "The invitation may have expired, been cancelled, or already been used; run `aven sync invite` on the other device and try again.",
+            next_step: "Sync hosting may be temporarily unavailable, or the invitation may have expired, been cancelled, or already been used. Retry `aven sync join` with the same invitation later; if it's still refused, run `aven sync invite` on the other device for a new one.",
         });
     }
     // Setup and join run before this device has access to refuse.
@@ -579,12 +579,19 @@ pub(crate) fn explain(
             },
         });
     }
+    if has("encrypted-tail-refused") {
+        return Some(Explanation {
+            code: "encrypted-tail-refused",
+            message: "The sync server refused this sync.",
+            next_step: "Local tasks and unsynced changes stay on this device. Try again later; if it keeps failing, check with your hosting provider or server operator.",
+        });
+    }
     if let Some(code) = first(&["enrollment-refused", "bootstrap-refused"]) {
         return Some(match action {
             ErrorAction::Join => Explanation {
                 code,
                 message: "The server refused the join request.",
-                next_step: "The invitation may have expired, been cancelled, or already been used; get a new invitation and try again.",
+                next_step: "Sync hosting may be temporarily unavailable, or the invitation may have expired, been cancelled, or already been used. Retry with the same invitation later; if it's still refused, get a new invitation.",
             },
             ErrorAction::Setup => Explanation {
                 code,
@@ -600,6 +607,10 @@ pub(crate) fn explain(
     }
     None
 }
+
+/// A different setup or server cannot resume the setup started here, and a
+/// mismatch is never a reason to discard the setup's keys.
+const SETUP_MISMATCH_NEXT_STEP: &str = "Use the invitation that started this setup, or a newer one for the same server storage. If neither is available, back up this database and restore it to a new path for a local-only copy. This setup's keys are kept.";
 
 /// A synced change uses an operation or value this version doesn't know.
 const UNSUPPORTED_CHANGE: &[&str] = &[
@@ -827,11 +838,20 @@ mod tests {
     }
 
     #[test]
-    fn refused_join_mentions_cancellation() {
-        let error = anyhow!("error enrollment-refused").context("error sync-join-command");
-        let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
-        assert!(explanation.next_step.contains("been cancelled"));
-        assert!(!explanation.combined().contains("removed"));
+    fn refused_join_retries_before_a_new_invitation() {
+        for (surface, error) in [
+            (
+                ErrorSurface::Cli,
+                anyhow!("error enrollment-refused").context("error sync-join-command"),
+            ),
+            (ErrorSurface::Tui, anyhow!("error enrollment-refused")),
+        ] {
+            let explanation = explain(ErrorAction::Join, surface, &error).unwrap();
+            assert!(explanation.next_step.contains("been cancelled"));
+            assert!(explanation.next_step.contains("temporarily unavailable"));
+            assert!(explanation.next_step.contains("same invitation later"));
+            assert!(!explanation.combined().contains("removed"));
+        }
     }
 
     #[test]
@@ -842,22 +862,57 @@ mod tests {
     }
 
     #[test]
-    fn expired_setup_invitation_is_named_and_points_to_server_setup() {
+    fn expired_setup_invitation_is_named_and_points_to_hosting_or_server_setup() {
         let error = anyhow!("error bootstrap-setup-invitation-expired")
             .context("error sync-setup-invitation-expired hint=\"expired\"");
         let cli = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(cli.code, "sync-setup-invitation-expired");
         assert_eq!(cli.message, "This setup invitation expired.");
-        assert!(cli.next_step.contains("`aven server setup`"));
         assert!(cli.next_step.contains("`aven sync setup`"));
         let tui = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
-        assert!(tui.next_step.contains("`aven server setup`"));
         assert!(tui.next_step.contains("choose Set up sync"));
 
         let error = anyhow!("error sync-setup-invitation-rejected");
         let rejected = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
         assert!(rejected.message.contains("expired, was replaced"));
-        assert!(rejected.next_step.contains("`aven server setup`"));
+
+        let error = anyhow!("error sync-setup-invitation-invalid");
+        let invalid = explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
+        for step in [
+            cli.next_step,
+            tui.next_step,
+            rejected.next_step,
+            invalid.next_step,
+        ] {
+            assert!(step.contains("your hosting provider"), "{step}");
+            assert!(step.contains("`aven server setup`"), "{step}");
+        }
+    }
+
+    #[test]
+    fn setup_mismatches_keep_the_setup_without_suggesting_reset() {
+        for code in [
+            "sync-setup-invitation-mismatch",
+            "sync-setup-server-mismatch",
+        ] {
+            let error = anyhow!("error {code} hint=\"raw\"");
+            for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
+                let explanation = explain(ErrorAction::Setup, surface, &error).unwrap();
+                assert_eq!(explanation.code, code);
+                assert!(!explanation.combined().contains("reset"), "{explanation:?}");
+                assert!(explanation.next_step.contains("same server storage"));
+                assert!(explanation.next_step.contains("keys are kept"));
+            }
+        }
+    }
+
+    #[test]
+    fn refused_tail_keeps_local_work_without_suggesting_reset() {
+        let tail = anyhow!("error encrypted-tail-refused outcome-unknown");
+        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &tail).unwrap();
+        assert_eq!(explanation.code, "encrypted-tail-refused");
+        assert!(explanation.next_step.contains("unsynced changes stay"));
+        assert!(!explanation.combined().contains("reset"));
     }
 
     #[test]

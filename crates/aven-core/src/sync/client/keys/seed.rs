@@ -31,7 +31,7 @@ impl ProtectedLocalKeyStore {
         if let Some(saved) = self.read_owned(SEED_ORIGIN_ITEM, SEED_ORIGIN_BYTES, false)? {
             anyhow::ensure!(
                 saved.as_slice() == origin.as_bytes(),
-                "error sync-setup-server-mismatch hint=\"resume with an invitation from the original server; to abandon setup, run `aven sync reset --force`\""
+                "error sync-setup-server-mismatch hint=\"resume with an invitation from the original server; if none is available, back up this database and restore it to a new path for a local-only copy\""
             );
             return Ok(());
         }

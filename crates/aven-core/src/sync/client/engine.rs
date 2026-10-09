@@ -94,7 +94,7 @@ fn jittered(interval: Duration) -> Duration {
     interval
 }
 
-pub const NOT_SET_UP: &str = "error sync-not-set-up hint=\"run `aven sync setup` with an invitation from `aven server setup`, or `aven sync join` on a new database\"";
+pub const NOT_SET_UP: &str = "error sync-not-set-up hint=\"run `aven sync setup` with an invitation from your hosting provider or `aven server setup`, or `aven sync join` on a new database\"";
 
 /// True when this database takes part in sync, including an interrupted
 /// setup or join.
@@ -907,10 +907,10 @@ fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
             "error sync-setup-storage-already-claimed hint=\"this server already belongs to another sync; nothing here was changed; to use that sync, join it from an empty database\"",
         ),
         Some("bootstrap-setup-invitation-rejected") => error.context(
-            "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; run `aven server setup` for this unclaimed storage and try its current invitation\"",
+            "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; get the current invitation from your hosting provider, or run `aven server setup` if you host the server yourself\"",
         ),
         Some("bootstrap-setup-invitation-expired") => error.context(
-            "error sync-setup-invitation-expired hint=\"this setup invitation expired; nothing here was changed; run `aven server setup` on the server again for a new invitation\"",
+            "error sync-setup-invitation-expired hint=\"this setup invitation expired; nothing here was changed; get a new invitation from your hosting provider, or run `aven server setup` again if you host the server yourself\"",
         ),
         _ => error,
     }

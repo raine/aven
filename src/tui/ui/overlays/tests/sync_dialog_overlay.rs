@@ -1207,7 +1207,7 @@ fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
 #[test]
 fn commands_render_in_code_style_without_backticks() {
     let rendered = render_invitation(InvitationKind::Setup, "");
-    assert!(rendered.contains("printed by aven server setup on your server"));
+    assert!(rendered.contains("your hosting provider or aven server setup"));
     assert!(!rendered.contains('`'));
 
     let failure = OperationFailure {
