@@ -101,13 +101,12 @@ pub(crate) fn daemon_install_command(db: &std::path::Path) -> String {
 }
 
 impl SyncPage {
-    /// Confirmations that change what this database is, or remove a
-    /// device, start on Back or Cancel.
+    /// Setup and join confirmations start on their primary action;
+    /// device removal starts on Cancel.
     fn default_focus(&self) -> usize {
         match self {
-            Self::Invitation { .. } | Self::ConfirmJoin { .. } => 1,
+            Self::Invitation { .. } | Self::ConfirmSetup { .. } | Self::ConfirmJoin { .. } => 1,
             Self::Home
-            | Self::ConfirmSetup { .. }
             | Self::Devices
             | Self::ConfirmRemove { .. }
             | Self::ConfirmAutomaticSync { .. } => 0,
@@ -750,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmations_start_on_back_except_joining() {
+    fn setup_and_join_confirmations_start_on_primary_action() {
         let setup = SyncDialogState::page(SyncPage::ConfirmSetup {
             server: "https://sync.example.com".to_string(),
             preview: SetupPreview {
@@ -761,21 +760,21 @@ mod tests {
             },
             invitation: SecretText::default(),
         });
-        assert_eq!(setup.selected, 0);
+        assert_eq!(setup.selected, 1);
         let actions = [SyncAction::Back, SyncAction::ConfirmSetup];
         assert!(matches!(
             handle_sync_dialog_key(setup.clone(), key(KeyCode::Enter), &actions, 0),
-            SyncDialogOutcome::Run(_, SyncAction::Back)
+            SyncDialogOutcome::Run(_, SyncAction::ConfirmSetup)
         ));
         let state = retained(handle_sync_dialog_key(
             setup,
-            key(KeyCode::Right),
+            key(KeyCode::Left),
             &actions,
             0,
         ));
         assert!(matches!(
             handle_sync_dialog_key(state, key(KeyCode::Enter), &actions, 0),
-            SyncDialogOutcome::Run(_, SyncAction::ConfirmSetup)
+            SyncDialogOutcome::Run(_, SyncAction::Back)
         ));
         let join = SyncDialogState::page(SyncPage::ConfirmJoin {
             server: "https://sync.example.com".to_string(),
