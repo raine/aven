@@ -563,7 +563,9 @@ fn detail_help_lines(undo_description: &str) -> Vec<Line<'static>> {
             .collect::<Vec<_>>();
         let commands = CommandContext::Detail
             .commands()
-            .filter(|command| command.section == *section)
+            .filter(|command| {
+                command.section == *section && !command.keys(CommandContext::Detail).is_empty()
+            })
             .collect::<Vec<_>>();
         if fixed.is_empty() && commands.is_empty() {
             continue;
@@ -616,6 +618,15 @@ fn detail_help_scroll_title(scroll: u16, visible_rows: u16, max_rows: usize) -> 
 fn help_column_lines(sections: &[&'static str], undo_description: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for section in sections {
+        let commands = CommandContext::Normal
+            .commands()
+            .filter(|command| {
+                command.section == *section && !command.keys(CommandContext::Normal).is_empty()
+            })
+            .collect::<Vec<_>>();
+        if commands.is_empty() {
+            continue;
+        }
         if !lines.is_empty() {
             lines.push(Line::from(""));
         }
@@ -623,10 +634,7 @@ fn help_column_lines(sections: &[&'static str], undo_description: &str) -> Vec<L
             *section,
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         )));
-        for command in CommandContext::Normal
-            .commands()
-            .filter(|command| command.section == *section)
-        {
+        for command in commands {
             lines.push(help_command_line(
                 command,
                 CommandContext::Normal,
@@ -1332,7 +1340,10 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect::<Vec<_>>()
                 .join(" ");
-            for command in CommandContext::Normal.commands() {
+            for command in CommandContext::Normal
+                .commands()
+                .filter(|command| !command.keys(CommandContext::Normal).is_empty())
+            {
                 let expected = if command.action == Action::Undo {
                     undo
                 } else {
@@ -2207,6 +2218,50 @@ mod tests {
     }
 
     #[test]
+    fn shortcut_help_only_lists_commands_with_hotkeys_for_its_context() {
+        for context in [CommandContext::Normal, CommandContext::Detail] {
+            let lines = match context {
+                CommandContext::Normal => {
+                    help_column_lines(context.sections(), DEFAULT_UNDO_DESCRIPTION)
+                }
+                CommandContext::Detail => detail_help_lines(DEFAULT_UNDO_DESCRIPTION),
+            };
+            for command in context.commands() {
+                let expected = if command.action == Action::Undo {
+                    DEFAULT_UNDO_DESCRIPTION
+                } else {
+                    command.description
+                };
+                let listed = lines.iter().any(|line| {
+                    line.spans
+                        .get(1)
+                        .is_some_and(|span| span.content == expected)
+                });
+                assert_eq!(
+                    listed,
+                    !command.keys(context).is_empty(),
+                    "{} in {context:?}",
+                    command.name
+                );
+            }
+            assert!(
+                lines
+                    .iter()
+                    .filter(|line| line.spans.len() == 2)
+                    .all(|line| !line.spans[0].content.trim().is_empty())
+            );
+        }
+    }
+
+    #[test]
+    fn commands_without_hotkeys_remain_in_command_palette() {
+        for name in ["update", "changelog", "add-device"] {
+            let rendered = render_command_overlay(name, name.len());
+            assert!(rendered.contains(&format!(":{name}")), "{rendered}");
+        }
+    }
+
+    #[test]
     fn global_help_includes_upcoming_view_route() {
         let rendered = help_columns()
             .iter()
@@ -2296,7 +2351,10 @@ mod tests {
         assert!(rendered.contains("copy selected task title and description"));
         assert!(rendered.contains("copy selected task notes"));
 
-        for command in CommandContext::Detail.commands() {
+        for command in CommandContext::Detail
+            .commands()
+            .filter(|command| !command.keys(CommandContext::Detail).is_empty())
+        {
             let keys = command
                 .keys(CommandContext::Detail)
                 .iter()
