@@ -1,6 +1,6 @@
 files:
   symlink:
-    - CLAUDE.local.md
+    - AGENTS.md
     - .env
     - history
   copy:
