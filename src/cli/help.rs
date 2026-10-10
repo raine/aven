@@ -67,7 +67,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         heading: "SETUP",
-        commands: &["config", "doctor", "update"],
+        commands: &["config", "doctor", "update", "completions"],
     },
     HelpSection {
         heading: "ATTACHMENTS",

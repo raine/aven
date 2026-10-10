@@ -49,6 +49,7 @@ impl CommandMetadata {
 impl Commands {
     pub(crate) fn metadata(&self) -> CommandMetadata {
         match self {
+            Self::Completions { .. } => CommandMetadata::cli(),
             Self::Add(_) => CommandMetadata::cli_wake(),
             Self::Context(_) => CommandMetadata::cli(),
             Self::Show(_) => CommandMetadata::cli(),

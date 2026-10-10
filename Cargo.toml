@@ -72,6 +72,7 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize.workspace = true
 qrcode = { version = "0.14.1", default-features = false }
+clap_complete = "4.6"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

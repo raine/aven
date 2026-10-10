@@ -72,6 +72,12 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub(crate) enum Commands {
+    /// Print a shell completion script
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Create a task
     #[command(after_long_help = ADD_EXAMPLES)]
     Add(AddArgs),

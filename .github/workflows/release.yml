@@ -232,6 +232,7 @@ jobs:
 
             def install
               bin.install "aven"
+              generate_completions_from_executable(bin/"aven", "completions")
             end
 
             test do

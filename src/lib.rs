@@ -119,6 +119,7 @@ enum CliDispatch {
 }
 
 enum StandaloneCommand {
+    Completions(clap_complete::Shell),
     BackupRestore(cli::BackupRestoreArgs),
     Config(cli::ConfigCommand),
     Daemon(cli::DaemonArgs),
@@ -170,6 +171,9 @@ impl CliDispatch {
 impl From<Commands> for CliDispatch {
     fn from(command: Commands) -> Self {
         match command {
+            Commands::Completions { shell } => {
+                Self::Standalone(StandaloneCommand::Completions(shell))
+            }
             Commands::Add(args) => Self::database(DatabaseCommand::Add(args)),
             Commands::Attachment(args) => Self::database(DatabaseCommand::Attachment(args)),
             Commands::Dep(args) => Self::database(DatabaseCommand::Dep(args)),
@@ -224,6 +228,11 @@ async fn dispatch_standalone(
     command: StandaloneCommand,
 ) -> Result<()> {
     match command {
+        StandaloneCommand::Completions(shell) => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "aven", &mut std::io::stdout());
+            Ok(())
+        }
         StandaloneCommand::BackupRestore(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(db, &config)?;

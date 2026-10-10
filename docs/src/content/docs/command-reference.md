@@ -1271,6 +1271,18 @@ aven doctor --integrity
 aven doctor --json --fail-on-error
 ```
 
+### `aven completions`
+
+Print a static completion script for subcommands, flags, and enumerated values.
+
+```sh
+aven completions <bash|zsh|fish|elvish|powershell>
+```
+
+Write the output to your shell's completion directory, for example:
+`aven completions fish > ~/.config/fish/completions/aven.fish`.
+Homebrew installs completions automatically.
+
 ### `aven update`
 
 Check GitHub releases for a newer aven version.
