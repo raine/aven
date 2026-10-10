@@ -1,15 +1,15 @@
 .site-header nav a[aria-current='page'] { color: var(--ink); }
 
-.sync-hero { text-align: center; }
-.sync-hero h1 { margin-top: 24px; }
-.sync-lead { max-width: 520px; margin: 28px auto 0; color: var(--muted); font-size: 18px; line-height: 1.65; text-wrap: pretty; }
-.sync-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-top: 34px; }
+.sync-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 48px; align-items: center; }
+.sync-hero h1 { margin-top: 24px; font-size: clamp(44px, 4.3vw, 62px); letter-spacing: -2.8px; }
+.sync-lead { max-width: 440px; margin-top: 28px; color: var(--muted); font-size: 18px; line-height: 1.65; text-wrap: pretty; }
+.sync-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
 
 /* The diagram's connectors are a fixed three-column grid aligned with the devices below. */
-.sync-topology { display: grid; justify-items: center; max-width: 760px; margin: 64px auto 0; padding: 34px 28px 30px; border: 1px solid var(--line); border-radius: 16px; background: radial-gradient(ellipse at 50% 0%, #8346b930, transparent 70%), var(--panel); text-align: center; }
+.sync-topology { display: grid; justify-items: center; padding: 34px 28px 30px; border: 1px solid var(--line); border-radius: 16px; background: radial-gradient(ellipse at 50% 0%, #8346b930, transparent 70%), var(--panel); text-align: center; }
 .sync-node { position: relative; display: grid; gap: 3px; padding: 14px 8px; border: 1px solid #3b3733; border-radius: 10px; background: #151413; }
 .sync-node b { font-size: 15px; font-weight: 600; }
-.sync-node small { color: var(--faint); font: 11.5px/1.5 var(--mono); }
+.sync-node small { color: var(--faint); font: 11px/1.5 var(--mono); }
 .sync-node i { color: var(--violet); font: normal 10.5px/1.6 var(--mono); letter-spacing: 1.2px; text-transform: uppercase; }
 .sync-node em { position: absolute; top: -9px; right: 10px; padding: 0 6px; border: 1px solid #40563a; border-radius: 99px; background: #1a2118; color: #b9d8ab; font: normal 9.5px/1.7 var(--mono); letter-spacing: .8px; text-transform: uppercase; }
 .sync-server { width: 100%; padding: 16px 28px; border-color: #624a7b; background: #1d1724; box-shadow: 0 18px 40px #0006; }
@@ -37,13 +37,14 @@
 .sync-closing > p a:hover { color: #d8b8ff; }
 
 @media (max-width: 1000px) {
+  .sync-hero { grid-template-columns: 1fr; gap: 44px; }
   .sync-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sync-transports { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
   .sync-lead { font-size: 16px; }
-  .sync-topology { margin-top: 44px; padding: 26px 16px 22px; }
+  .sync-topology { padding: 26px 16px 22px; }
   .sync-server { padding-inline: 16px; }
   .sync-cards, .sync-steps { grid-template-columns: 1fr; }
 }

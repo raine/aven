@@ -50,12 +50,14 @@ const transports = [
 
       <main id="main">
         <section class="hero sync-hero" style={`--hero-logo: url("${logo.src}")`} aria-labelledby="sync-heading">
-          <p class="hero-eyebrow">Sync</p>
-          <h1 id="sync-heading">Your tasks,<br /><span>on every machine.</span></h1>
-          <p class="sync-lead">End-to-end encrypted sync through a server you run. Free, open source, and invisible once it's set up.</p>
-          <div class="sync-actions">
-            <a class="closing-button closing-primary" href="/sync/setup/">Set up sync</a>
-            <a class="closing-button" href="/sync/setup/#what-encryption-protects">What encryption protects</a>
+          <div class="sync-hero-copy">
+            <p class="hero-eyebrow">Sync</p>
+            <h1 id="sync-heading">Your tasks,<br /><span>on every machine.</span></h1>
+            <p class="sync-lead">End-to-end encrypted sync through a server you run. Free, open source, and invisible once it's set up.</p>
+            <div class="sync-actions">
+              <a class="closing-button closing-primary" href="/sync/setup/">Set up sync</a>
+              <a class="closing-button" href="/sync/setup/#what-encryption-protects">What encryption protects</a>
+            </div>
           </div>
           <figure class="sync-topology" aria-label="Diagram: laptop, desktop, and phone connect to your sync server and exchange only encrypted data.">
             <div class="sync-node sync-server"><i>Your server</i><b>aven server</b><small>Home server or VPS · VPN</small></div>
