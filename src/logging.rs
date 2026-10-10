@@ -26,10 +26,7 @@ pub(crate) fn init(mode: LogMode) -> Result<()> {
     if mode.uses_stderr() {
         init_stderr(filter)?;
     } else {
-        let path = std::env::var_os("AVEN_LOG_FILE")
-            .map(PathBuf::from)
-            .unwrap_or(default_log_path()?);
-        init_file(&path, filter)?;
+        let _ = init_file_logging(filter);
     }
     install_panic_hook();
     Ok(())
@@ -49,14 +46,28 @@ pub(crate) fn record_command_error(error: &anyhow::Error) {
     }
 }
 
-fn default_log_path() -> Result<PathBuf> {
-    let mut dir = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
+fn init_file_logging(filter: EnvFilter) -> Result<()> {
+    let path = log_path_from(
+        std::env::var_os("AVEN_LOG_FILE").map(PathBuf::from),
+        std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
+        dirs::home_dir,
+    )?;
+    init_file(&path, filter)
+}
+
+pub(crate) fn log_path_from(
+    log_file: Option<PathBuf>,
+    state_home: Option<PathBuf>,
+    home_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(path) = log_file {
+        return Ok(path);
+    }
+    let dir = state_home
         .filter(|path| path.is_absolute())
-        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
+        .or_else(|| home_dir().map(|home| home.join(".local/state")))
         .context("could not find state directory")?;
-    dir.push(APP_DIR);
-    Ok(dir.join(LOG_FILE))
+    Ok(dir.join(APP_DIR).join(LOG_FILE))
 }
 
 fn init_stderr(filter: EnvFilter) -> Result<()> {
@@ -134,6 +145,23 @@ mod tests {
     use std::panic::Location;
 
     use super::{LogMode, format_panic_location};
+
+    #[test]
+    fn missing_home_and_state_only_disable_default_logging() {
+        assert!(super::log_path_from(None, None, || None).is_err());
+        let explicit = std::path::PathBuf::from("custom.log");
+        assert_eq!(
+            super::log_path_from(Some(explicit.clone()), None, || {
+                panic!("explicit log path must not resolve the home directory")
+            })
+            .unwrap(),
+            explicit
+        );
+        assert_eq!(
+            super::log_path_from(None, Some("/state".into()), || None).unwrap(),
+            std::path::PathBuf::from("/state/aven/aven.log")
+        );
+    }
 
     #[test]
     fn long_running_modes_use_stderr() {

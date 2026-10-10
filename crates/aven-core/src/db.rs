@@ -178,7 +178,7 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
         && let Some(parent) = path.parent()
     {
         fs::create_dir_all(parent)
-            .with_context(|| format!("could not create {}", parent.display()))?;
+            .map_err(|error| anyhow::anyhow!("could not create {}: {error}", parent.display()))?;
     }
     let _setup = match storage {
         DatabaseStorage::File => Some(lock_database_setup(options.get_filename()).await?),
@@ -207,7 +207,7 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
     let pool = pool_options
         .connect_with(options)
         .await
-        .with_context(|| format!("could not open {}", path.display()))?;
+        .map_err(|error| anyhow::anyhow!("could not open {}: {error}", path.display()))?;
     backup::backup_before_pending_migrations(path, existed_before_open, &pool).await?;
     MIGRATOR.run(&pool).await?;
     initialize_meta(&pool).await?;
@@ -231,9 +231,9 @@ async fn lock_database_setup(path: &Path) -> Result<fs::File> {
     let lock_path = path.with_file_name(name);
     tokio::task::spawn_blocking(move || {
         let lock = crate::private_fs::open_lock_file(&lock_path)
-            .with_context(|| format!("could not open {}", lock_path.display()))?;
+            .map_err(|error| anyhow::anyhow!("could not open {}: {error}", lock_path.display()))?;
         lock.lock()
-            .with_context(|| format!("could not lock {}", lock_path.display()))?;
+            .map_err(|error| anyhow::anyhow!("could not lock {}: {error}", lock_path.display()))?;
         Ok(lock)
     })
     .await?
@@ -245,7 +245,10 @@ fn create_private_database_file(path: &Path) -> Result<()> {
     match crate::private_fs::create_new_file(path) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("could not create {}", path.display())),
+        Err(error) => Err(anyhow::anyhow!(
+            "could not create {}: {error}",
+            path.display()
+        )),
     }
 }
 

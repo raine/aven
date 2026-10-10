@@ -47,6 +47,28 @@ pub(crate) fn explain(
     // Codes that share one explanation; the first present one is displayed.
     let first = |family: &[&'static str]| family.iter().copied().find(|code| has(code));
 
+    if has("server-storage-unprepared") {
+        return Some(Explanation {
+            code: "server-storage-unprepared",
+            message: "Server storage isn't prepared.",
+            next_step: "Run `aven server setup --url URL` first.",
+        });
+    }
+    if has("server-membership-invalid") {
+        return Some(Explanation {
+            code: "server-membership-invalid",
+            message: "Stored device membership failed verification.",
+            next_step: "Restore this path from a backup or prepare a new one with `aven server setup`.",
+        });
+    }
+    if has("server-storage-unsupported") {
+        return Some(Explanation {
+            code: "server-storage-unsupported",
+            message: "Server storage holds unencrypted sync history, which is no longer supported.",
+            next_step: "Prepare a new path with `aven server setup`.",
+        });
+    }
+
     if all.iter().any(|code| code.ends_with("-tls")) {
         let code =
             first(&["enrollment-tls", "bootstrap-tls", "encrypted-tail-tls"]).unwrap_or("sync-tls");

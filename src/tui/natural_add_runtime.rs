@@ -104,27 +104,25 @@ fn task_intake_log_path_from_env(
     xdg_state_home: Option<OsString>,
     home_dir: Option<PathBuf>,
 ) -> PathBuf {
-    log_file
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_log_path_display_from_env(xdg_state_home, home_dir))
-}
-
-fn default_log_path_display_from_env(
-    xdg_state_home: Option<OsString>,
-    home_dir: Option<PathBuf>,
-) -> PathBuf {
-    let mut dir = xdg_state_home
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| home_dir.map(|home| home.join(".local/state")))
-        .unwrap_or_else(|| PathBuf::from("~/.local/state"));
-    dir.push("aven");
-    dir.join("aven.log")
+    crate::logging::log_path_from(
+        log_file.map(PathBuf::from),
+        xdg_state_home.map(PathBuf::from),
+        || home_dir,
+    )
+    .unwrap_or_else(|_| PathBuf::from("~/.local/state/aven/aven.log"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_intake_log_path_without_home_preserves_display_fallback() {
+        assert_eq!(
+            task_intake_log_path_from_env(None, None, None),
+            PathBuf::from("~/.local/state/aven/aven.log")
+        );
+    }
 
     #[test]
     fn detached_intake_receives_originating_tui_pid() {

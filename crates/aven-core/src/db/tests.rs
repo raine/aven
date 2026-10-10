@@ -512,3 +512,22 @@ async fn capture_documents_migration_moves_documents_out_of_the_journal() {
         .unwrap();
     assert_eq!(left, 0);
 }
+
+#[tokio::test]
+async fn open_errors_include_filesystem_and_connection_causes() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("file");
+    std::fs::write(&file, "not sqlite").unwrap();
+    let nested = file.join("database.sqlite");
+    let error = super::open_db(&nested).await.unwrap_err();
+    let message = error.to_string();
+    assert!(message.starts_with(&format!("could not create {}: ", file.display())));
+    assert!(message.contains("os error"), "{message}");
+    assert_eq!(format!("{error:#}"), message);
+
+    let error = super::open_db(&file).await.unwrap_err();
+    let message = error.to_string();
+    assert!(message.starts_with(&format!("could not open {}: ", file.display())));
+    assert!(message.contains("file is not a database"), "{message}");
+    assert_eq!(format!("{error:#}"), message);
+}

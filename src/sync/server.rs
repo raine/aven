@@ -154,6 +154,7 @@ async fn serve(
             "Warning: public or wildcard bind {bind} enabled without TLS. Device credentials and setup invitations are not protected by payload encryption."
         );
     }
+    info!(storage = %data.display(), "sync server storage");
     if !data.exists() {
         bail!(UNPREPARED_STORAGE);
     }
@@ -248,6 +249,19 @@ async fn serve_connections(
 mod tests {
     use super::BindScope;
     use std::net::IpAddr;
+
+    #[test]
+    fn storage_errors_render_readable_codes_and_steps() {
+        for raw in [UNPREPARED_STORAGE, INVALID_MEMBERSHIP, UNSUPPORTED_STORAGE] {
+            let error = anyhow::anyhow!("error membership-change-limit").context(raw);
+            let lines = crate::cli_error_lines(&error);
+            let code = raw.split_whitespace().nth(1).unwrap();
+            assert!(lines[0].starts_with("Error: "));
+            assert!(lines[0].ends_with(&format!("[{code}]")));
+            assert!(!lines[0].contains("hint="));
+            assert!(lines[1].starts_with("Next: "));
+        }
+    }
 
     #[test]
     fn classifies_private_and_vpn_bind_addresses() {
