@@ -1,0 +1,132 @@
+---
+import logo from '../assets/aven-logo-grape-violet.svg';
+import Brand from '../components/Brand.astro';
+import GitHubIcon from '../components/GitHubIcon.astro';
+import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
+import '../styles/landing.css';
+import '../styles/sync.css';
+
+const features = [
+  { label: 'E2EE · DEVICE KEYS', title: "Your server can't read your tasks.", description: 'Devices encrypt tasks, history, and images before upload. Only they hold the keys, so even the machine running the server cannot read your tasks.', color: 'violet' },
+  { label: 'SQLITE · OFFLINE', title: 'Works offline. Syncs later.', description: 'Every change lands in your local database first. Nothing waits on the network, and the sync daemon catches up when the server is reachable.', color: 'green' },
+  { label: 'TUI · CLI · AGENTS', title: 'One queue, every machine.', description: 'Your terminals and your coding agents work from the same tasks. Aven for iPhone and Android joins the same sync when it ships.', color: 'blue' },
+  { label: 'CONFLICTS · KEPT', title: 'Nothing silently overwritten.', description: 'When two devices edit the same field between syncs, Aven keeps both values and asks you to choose.', color: 'orange' },
+];
+const transports = [
+  { label: 'RECOMMENDED', title: 'Private network', description: "Tailscale or WireGuard. Devices connect to the server's VPN address and nothing is exposed to the internet.", color: 'green', href: '/sync/#start-a-server' },
+  { label: 'PUBLIC', title: 'Behind a TLS proxy', description: 'Put it behind the reverse proxy you already run and give devices its HTTPS URL.', color: 'blue', href: '/sync/#use-a-public-tls-proxy' },
+  { label: 'CONTAINER', title: 'Docker or Compose', description: 'The same server in a container, with a volume for storage and an invitation-only setup.', color: 'orange', href: '/sync/#run-with-docker' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#121110" />
+    <title>Encrypted sync | aven</title>
+    <meta name="description" content="Sync Aven across your machines through a server you run. End-to-end encrypted, works offline, free and open source." />
+    <link rel="canonical" href="https://aventasks.dev/encrypted-sync/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Encrypted sync | aven" />
+    <meta property="og:description" content="End-to-end encrypted sync through a server you run." />
+    <meta property="og:url" content="https://aventasks.dev/encrypted-sync/" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="container">
+      <header class="site-header">
+        <Brand />
+        <nav aria-label="Main navigation">
+          <a class="features-link" href="/#features">Features</a>
+          <a href="/encrypted-sync/" aria-current="page">Sync</a>
+          <a href="/getting-started/">Docs</a>
+          <a href="https://github.com/raine/aven"><GitHubIcon /> GitHub</a>
+        </nav>
+      </header>
+
+      <main id="main">
+        <section class="hero sync-hero" style={`--hero-logo: url("${logo.src}")`} aria-labelledby="sync-heading">
+          <p class="hero-eyebrow">Sync</p>
+          <h1 id="sync-heading">Your tasks,<br /><span>on every machine.</span></h1>
+          <p class="sync-lead">End-to-end encrypted sync through a server you run. Free, open source, and invisible once it's set up.</p>
+          <div class="sync-actions">
+            <a class="closing-button closing-primary" href="/sync/">Set up sync</a>
+            <a class="closing-button" href="/sync/#what-encryption-protects">What encryption protects</a>
+          </div>
+          <figure class="sync-topology" aria-label="Diagram: laptop, desktop, and phone connect to your sync server and exchange only encrypted data.">
+            <div class="sync-node sync-server"><i>Your server</i><b>aven server</b><small>Raspberry Pi · Tailscale</small></div>
+            <div class="sync-links" aria-hidden="true"><span></span><span></span><span></span><p>encrypted</p></div>
+            <div class="sync-devices">
+              <div class="sync-node"><b>Laptop</b><small>TUI · CLI · agents</small><em>keys</em></div>
+              <div class="sync-node"><b>Desktop</b><small>TUI · CLI · agents</small><em>keys</em></div>
+              <div class="sync-node sync-soon"><b>Phone</b><small>coming soon</small><em>keys</em></div>
+            </div>
+          </figure>
+        </section>
+
+        <section class="section" aria-label="Sync features">
+          <div class="sync-cards">
+            {features.map((feature) => (
+              <article class="sync-card">
+                <p class:list={['feature-label', feature.color]}>
+                  {feature.label.split(' · ').map((term, index) => (
+                    <span class="feature-label-term">{index > 0 && <span class="feature-label-separator">· </span>}{term}</span>
+                  ))}
+                </p>
+                <h3>{feature.title}</h3>
+                <p>{feature.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="steps-heading">
+          <div class="detail-copy">
+            <p class="eyebrow">How it works</p>
+            <h2 id="steps-heading">Four commands, once.</h2>
+          </div>
+          <ol class="sync-steps">
+            <li><b>Start a server</b><span><code>aven server setup</code> prints a setup invitation, then <code>aven server</code> serves it.</span></li>
+            <li><b>Set up one device</b><span><code>aven sync setup</code> with the invitation. Its tasks become the starting data.</span></li>
+            <li><b>Invite the next</b><span><code>aven sync invite</code> prints an invitation and a QR code, valid ten minutes.</span></li>
+            <li><b>Join</b><span><code>aven sync join</code> on the new device. Tasks download, then images.</span></li>
+          </ol>
+        </section>
+
+        <section class="section" aria-labelledby="transport-heading">
+          <div class="detail-copy">
+            <p class="eyebrow">Where it runs</p>
+            <h2 id="transport-heading">Pick how your devices reach it.</h2>
+          </div>
+          <div class="feature-grid sync-transports">
+            {transports.map((transport) => (
+              <a class="feature" href={transport.href}>
+                <p class:list={['feature-label', transport.color]}>{transport.label}</p>
+                <h3>{transport.title}</h3>
+                <p class="feature-description">{transport.description}</p>
+              </a>
+            ))}
+          </div>
+        </section>
+
+        <section class="closing-section sync-closing" aria-labelledby="closing-heading">
+          <h2 id="closing-heading">Your tasks are already local.<br />Now take them with you.</h2>
+          <p>Sync is not a backup. Keep <a href="/backups/">your own backups</a> too.</p>
+          <div class="closing-actions">
+            <a class="closing-button closing-primary" href="/sync/">Set up sync</a>
+            <a class="closing-button" href="https://github.com/raine/aven">View on GitHub</a>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div><Brand /></div>
+        <nav aria-label="Footer navigation"><a href="/getting-started/">Docs</a><a href="/changelog/">Changelog</a><a href="/support/">Support</a><a href="/privacy/">Privacy</a><a href="https://github.com/raine/aven">Source <ExternalLinkIcon /></a></nav>
+      </footer>
+    </div>
+  </body>
+</html>
