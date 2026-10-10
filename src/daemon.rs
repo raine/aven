@@ -88,6 +88,7 @@ async fn run_loop(
     let mut retry_not_before = None;
     let mut awaiting_setup = false;
     let mut access_refused = false;
+    let mut vault_deleted = false;
     let mut next_attachment_maintenance = Instant::now();
     let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     let mut sync = encrypted::DaemonSync::default();
@@ -128,6 +129,7 @@ async fn run_loop(
                         backoff_seconds = 1;
                         awaiting_setup = false;
                         access_refused = false;
+                        vault_deleted = false;
                         next_sync = if outcome.more_work_ready() {
                             Instant::now() + DAEMON_INCOMPLETE_RESCHEDULE
                         } else {
@@ -136,6 +138,7 @@ async fn run_loop(
                     }
                     Ok(DaemonRound::NotSetUp) => {
                         access_refused = false;
+                        vault_deleted = false;
                         if !awaiting_setup {
                             awaiting_setup = true;
                             println!("daemon-sync-not-set-up hint=\"run `aven sync setup` or `aven sync join`\"");
@@ -146,6 +149,17 @@ async fn run_loop(
                     Ok(DaemonRound::Deferred) => {
                         debug!("daemon sync deferred");
                         next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
+                    }
+                    // Rounds check the recorded deletion locally and send no
+                    // request until the user resets sync or `aven sync`
+                    // succeeds.
+                    Ok(DaemonRound::VaultDeleted) => {
+                        if !vault_deleted {
+                            vault_deleted = true;
+                            println!("daemon-sync-vault-deleted hint=\"this sync's vault was deleted; run `aven sync reset`, then `aven sync setup` with a new setup code\"");
+                        }
+                        backoff_seconds = 1;
+                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
                     }
                     // Refusals persist until the user acts elsewhere, so
                     // backing off only repeats the warning.
@@ -244,7 +258,7 @@ async fn sync_once(
                 outcome.rounds, outcome.metadata_caught_up, outcome.images
             );
         }
-        DaemonRound::NotSetUp | DaemonRound::Deferred => {}
+        DaemonRound::NotSetUp | DaemonRound::Deferred | DaemonRound::VaultDeleted => {}
     }
     Ok(round)
 }

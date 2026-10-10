@@ -8,10 +8,17 @@ use crate::ids::WorkspaceId;
 const IOS_QUEUE_WORKSPACE_META_KEY: &str = "ios_queue_workspace_id";
 const ONBOARDING_META_KEY: &str = "tui_onboarding_version";
 const SYNC_ACCESS_REFUSED_AT_META_KEY: &str = "sync_access_refused_at";
+/// The `sync_` prefix places it in the sync state that reset clears.
+const SYNC_VAULT_DELETED_AT_META_KEY: &str = "sync_vault_deleted_at";
 const FIRST_LAUNCH_ONBOARDING_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncAccessRefusal {
+    pub at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncVaultDeletion {
     pub at: String,
 }
 
@@ -44,6 +51,32 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         sqlx::query("DELETE FROM meta WHERE key = ?")
             .bind(SYNC_ACCESS_REFUSED_AT_META_KEY)
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Returns when the server last reported this sync's vault deleted.
+    pub async fn sync_vault_deletion(&self) -> Result<Option<SyncVaultDeletion>> {
+        Ok(self
+            .meta(SYNC_VAULT_DELETED_AT_META_KEY)
+            .await?
+            .map(|at| SyncVaultDeletion { at }))
+    }
+
+    /// Remembers a vault deletion until a user-started sync succeeds or sync
+    /// is reset.
+    pub async fn record_sync_vault_deletion(&self) -> Result<SyncVaultDeletion> {
+        let at = crate::ids::now();
+        let mut conn = self.acquire_writer().await?;
+        set_meta(&mut conn, SYNC_VAULT_DELETED_AT_META_KEY, &at).await?;
+        Ok(SyncVaultDeletion { at })
+    }
+
+    pub async fn clear_sync_vault_deletion(&self) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        sqlx::query("DELETE FROM meta WHERE key = ?")
+            .bind(SYNC_VAULT_DELETED_AT_META_KEY)
             .execute(&mut *conn)
             .await?;
         Ok(())
@@ -197,6 +230,24 @@ mod tests {
 
         database.clear_sync_access_refusal().await.unwrap();
         assert_eq!(database.sync_access_refusal().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn sync_vault_deletion_persists_apart_from_access_refusal_until_cleared() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        assert_eq!(database.sync_vault_deletion().await.unwrap(), None);
+
+        let recorded = database.record_sync_vault_deletion().await.unwrap();
+        assert_eq!(
+            database.sync_vault_deletion().await.unwrap(),
+            Some(recorded)
+        );
+        assert_eq!(database.sync_access_refusal().await.unwrap(), None);
+
+        database.clear_sync_vault_deletion().await.unwrap();
+        assert_eq!(database.sync_vault_deletion().await.unwrap(), None);
     }
 
     #[tokio::test]

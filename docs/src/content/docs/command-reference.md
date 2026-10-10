@@ -1005,13 +1005,17 @@ aven sync status --json
 ```
 
 The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
-`key-change-pending`, `access-refused`, or `ready`.
+`key-change-pending`, `access-refused`, `vault-deleted`, or `ready`.
 `key-change-pending` means an invitation expired after keys may have been sent
 to a device that never joined; the next `aven sync` changes keys before
 uploading new changes. `access-refused` records when the server refused this
 device's credentials. It may have been removed, but the refusal alone does not
 prove that; check from another device. Local tasks and images remain available,
-and a successful sync clears the state. Set-up databases also report the
+and a successful sync clears the state. `vault-deleted` records when the server
+reported this sync's vault deleted, for example after a reset in the hosting
+portal. Automatic sync stops; local tasks and unsynced changes stay. Run
+`aven sync reset`, then `aven sync setup` with a new setup code. A successful
+`aven sync` also clears the state. Set-up databases also report the
 server, whether local changes wait to sync, open conflicts, pending image
 uploads, downloads, and unavailable images, plus whether an invitation is open
 and its expiry. Text output omits the internal server position; JSON retains it. The versioned JSON report omits invitation text, keys, and task

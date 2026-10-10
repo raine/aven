@@ -917,6 +917,7 @@ pub(crate) fn status_state_words(state: SyncState) -> &'static str {
         SyncState::JoinIncomplete => "joining incomplete",
         SyncState::KeyChangePending => "key change pending",
         SyncState::AccessRefused => "access unconfirmed",
+        SyncState::VaultDeleted => "vault deleted",
         SyncState::Ready => "ready",
     }
 }
@@ -958,6 +959,11 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
         SyncState::AccessRefused => println!(
             "State: access unconfirmed. The server refused this device. It may have been \
              removed from sync; check from another device. Local tasks and images stay here."
+        ),
+        SyncState::VaultDeleted => println!(
+            "State: vault deleted. This sync's vault was deleted on the server, so automatic \
+             sync stopped. Local tasks and unsynced changes stay here. Run `aven sync reset`, \
+             then `aven sync setup` with a new setup code."
         ),
         SyncState::Ready | SyncState::NotSetUp => println!("State: ready"),
     }

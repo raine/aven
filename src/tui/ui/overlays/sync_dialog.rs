@@ -318,6 +318,15 @@ fn home_lines(body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
     if let Some(state) = state_line(status, summary.health) {
         lines.push(Line::from(Span::styled(state, Style::new().fg(FG_MUTED))));
     }
+    if summary.health == SyncHealth::VaultDeleted {
+        lines.extend(paragraph(
+            "This sync's vault was deleted on the server, so automatic sync stopped. Local \
+             tasks and unsynced changes stay here. Run `aven sync reset` in a terminal, then \
+             `aven sync setup` with a new setup code.",
+            Style::new().fg(FG),
+            width,
+        ));
+    }
     if summary.health == SyncHealth::AccessRefused {
         lines.extend(paragraph(
             "The server refused this device. It may have been removed from sync; check from \
@@ -1320,6 +1329,7 @@ fn action_line(label: &'static str, focused: bool) -> Line<'static> {
 /// Explains the status headline; a set-up database needs no explanation.
 fn state_line(status: &TuiSyncStatus, health: SyncHealth) -> Option<&'static str> {
     Some(match (health, status.phase) {
+        (SyncHealth::VaultDeleted, _) => "Vault deleted",
         (SyncHealth::AccessRefused, _) => "Access unconfirmed",
         (SyncHealth::RuntimeDisabled, _) => "Sync is disabled by the runtime override",
         (_, LocalPhase::NotSetUp) => "This database is local only",
@@ -1361,6 +1371,14 @@ fn detail_lines(status: &TuiSyncStatus, width: usize) -> Vec<Line<'static>> {
     if let Some(at) = &status.access_refused_at {
         lines.extend(wrapped_row(
             "Access refused",
+            at,
+            Style::new().fg(RED),
+            width,
+        ));
+    }
+    if let Some(at) = &status.vault_deleted_at {
+        lines.extend(wrapped_row(
+            "Vault deleted",
             at,
             Style::new().fg(RED),
             width,

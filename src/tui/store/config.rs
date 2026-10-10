@@ -93,6 +93,10 @@ pub(super) async fn load_sync_status(
         .sync_access_refusal()
         .await?
         .map(|refusal| refusal.at);
+    let vault_deleted_at = database
+        .sync_vault_deletion()
+        .await?
+        .map(|deletion| deletion.at);
     Ok(TuiSyncStatus {
         enabled: config.sync.enabled,
         runtime_allowed: config.sync_is_allowed(),
@@ -109,5 +113,6 @@ pub(super) async fn load_sync_status(
         devices: association.devices,
         invitation: association.invitation,
         access_refused_at,
+        vault_deleted_at,
     })
 }

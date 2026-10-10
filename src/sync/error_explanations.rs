@@ -54,6 +54,13 @@ pub(crate) fn explain(
             next_step: "New setups and joins need an invitation for https://sync.aventasks.dev. A setup already started with an http:// address can't continue; back up this database and restore it to a new path for a local-only copy. Local work continues.",
         });
     }
+    if has("sync-vault-deleted") {
+        return Some(Explanation {
+            code: "sync-vault-deleted",
+            message: "This sync's vault was deleted, either reset in the hosting portal or by the operator. Sync can't continue with it.",
+            next_step: "Local tasks and unsynced changes stay on this device. Run `aven sync reset`, then `aven sync setup` with a new setup code; local data carries into the new vault. A database that hasn't finished joining can't be reset; join the new sync from a new database instead, for example `aven --db PATH sync join`.",
+        });
+    }
     if let Some(code) = first(&[
         "sync-hosting-blocked",
         "sync-hosting-quota",
@@ -773,6 +780,29 @@ mod tests {
                     assert!(!explanation.message.contains("Access unconfirmed"));
                     assert!(!aven_core::sync::client::errors::is_access_refusal(&error));
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn vault_deletion_points_to_reset_and_a_new_setup_without_retry_advice() {
+        let error = anyhow!("error sync-vault-deleted outcome-unknown").context("error sync-round");
+        for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
+            for action in [ErrorAction::General, ErrorAction::Setup, ErrorAction::Join] {
+                let explanation = explain(action, surface, &error).unwrap();
+                assert_eq!(explanation.code, "sync-vault-deleted");
+                assert!(explanation.message.contains("deleted"));
+                let next = explanation.next_step;
+                assert!(next.contains("unsynced changes stay"), "{next}");
+                assert!(
+                    next.contains(
+                        "Run `aven sync reset`, then `aven sync setup` with a new setup code"
+                    ),
+                    "{next}"
+                );
+                assert!(next.contains("hasn't finished joining"), "{next}");
+                assert!(!next.contains("Keep the same"), "{next}");
+                assert!(!explanation.message.contains("Access unconfirmed"));
             }
         }
     }

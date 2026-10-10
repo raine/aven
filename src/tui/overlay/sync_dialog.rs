@@ -236,7 +236,8 @@ pub(crate) fn sync_actions(
         SyncPage::Home if activity.running.is_some() => Vec::new(),
         SyncPage::Home => match status.phase {
             LocalPhase::SetUp => {
-                let refused = status.access_refused_at.is_some();
+                let refused =
+                    status.access_refused_at.is_some() || status.vault_deleted_at.is_some();
                 let mut actions = vec![SyncAction::SyncNow];
                 if !refused && !status.enabled && status.runtime_allowed {
                     actions.push(SyncAction::SyncAutomatically);
@@ -605,6 +606,11 @@ mod tests {
             sync_actions(&state, &refused_with_invitation, &idle),
             [SyncAction::SyncNow, SyncAction::CancelInvitation]
         );
+        let deleted = TuiSyncStatus {
+            vault_deleted_at: Some("2026-10-09T12:00:00Z".to_string()),
+            ..status(LocalPhase::SetUp)
+        };
+        assert_eq!(sync_actions(&state, &deleted, &idle), [SyncAction::SyncNow]);
     }
 
     #[test]

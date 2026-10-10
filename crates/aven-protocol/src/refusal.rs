@@ -161,6 +161,7 @@ mod tests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hosting {
     Blocked,
+    Deleted,
     Quota,
     Unavailable,
 }
@@ -169,6 +170,8 @@ pub enum Hosting {
 pub struct HostingCodes {
     /// 403: reversible hosting block, without altering device membership.
     pub blocked: &'static str,
+    /// 403: the vault was deleted for good; devices must set up sync again.
+    pub deleted: &'static str,
     /// 429: hosting capacity exhausted; no accepted history is discarded.
     pub quota: &'static str,
     /// 503: hosting temporarily unavailable, not a credential refusal.
@@ -179,6 +182,7 @@ impl HostingCodes {
     pub fn classify(&self, status: u16, code: Option<&str>) -> Option<Hosting> {
         match (status, code) {
             (403, Some(code)) if code == self.blocked => Some(Hosting::Blocked),
+            (403, Some(code)) if code == self.deleted => Some(Hosting::Deleted),
             (429, Some(code)) if code == self.quota => Some(Hosting::Quota),
             (503, Some(code)) if code == self.unavailable => Some(Hosting::Unavailable),
             _ => None,
@@ -188,21 +192,25 @@ impl HostingCodes {
 
 pub const BOOTSTRAP_HOSTING: HostingCodes = HostingCodes {
     blocked: "bootstrap-hosting-blocked",
+    deleted: "bootstrap-hosting-deleted",
     quota: "bootstrap-hosting-quota",
     unavailable: "bootstrap-hosting-unavailable",
 };
 pub const ENROLLMENT_HOSTING: HostingCodes = HostingCodes {
     blocked: "enrollment-hosting-blocked",
+    deleted: "enrollment-hosting-deleted",
     quota: "enrollment-hosting-quota",
     unavailable: "enrollment-hosting-unavailable",
 };
 pub const TAIL_HOSTING: HostingCodes = HostingCodes {
     blocked: "encrypted-tail-hosting-blocked",
+    deleted: "encrypted-tail-hosting-deleted",
     quota: "encrypted-tail-hosting-quota",
     unavailable: "encrypted-tail-hosting-unavailable",
 };
 pub const IMAGE_HOSTING: HostingCodes = HostingCodes {
     blocked: "encrypted-image-hosting-blocked",
+    deleted: "encrypted-image-hosting-deleted",
     quota: "encrypted-image-hosting-quota",
     unavailable: "encrypted-image-hosting-unavailable",
 };
@@ -222,6 +230,7 @@ mod hosting_tests {
         for (i, family) in families.iter().enumerate() {
             for (status, code, expected) in [
                 (403, family.blocked, Hosting::Blocked),
+                (403, family.deleted, Hosting::Deleted),
                 (429, family.quota, Hosting::Quota),
                 (503, family.unavailable, Hosting::Unavailable),
             ] {

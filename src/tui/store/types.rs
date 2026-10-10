@@ -681,6 +681,9 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) invitation: Option<crate::sync::encrypted::InvitationStatus>,
     /// Time of the latest server authentication refusal, cleared by a successful sync.
     pub(crate) access_refused_at: Option<String>,
+    /// Time the server reported this sync's vault deleted, cleared by reset or
+    /// a successful `Sync now`.
+    pub(crate) vault_deleted_at: Option<String>,
 }
 
 impl Default for TuiSyncStatus {
@@ -701,6 +704,7 @@ impl Default for TuiSyncStatus {
             server: None,
             invitation: None,
             access_refused_at: None,
+            vault_deleted_at: None,
         }
     }
 }

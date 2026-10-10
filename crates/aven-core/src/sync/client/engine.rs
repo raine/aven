@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::errors::{code, has_code, is_access_refusal};
+use super::errors::{code, has_code, is_access_refusal, is_vault_deleted};
 use super::exchange::Link;
 use super::host::{ClientHost, key_store};
 use super::keys::peer::InvitationProgress;
@@ -407,8 +407,11 @@ async fn setup(
     }
     let _timer = bootstrap::StageTimer::start("drain");
     let client = tail::Client::new(&server, link.clone())?;
-    let outcome = drain(&client, &store, database, host, &blob_dir, ROUND_LIMIT).await?;
-    Ok((server, outcome))
+    let outcome = drain(&client, &store, database, host, &blob_dir, ROUND_LIMIT).await;
+    if let Err(error) = &outcome {
+        remember_vault_deletion(database, error).await;
+    }
+    Ok((server, outcome?))
 }
 
 /// A created device invitation whose inviting device waits for admission.
@@ -807,8 +810,11 @@ pub async fn run_join(
         ROUND_LIMIT,
         Some(progress),
     )
-    .await?;
-    Ok((server, outcome))
+    .await;
+    if let Err(error) = &outcome {
+        remember_vault_deletion(database, error).await;
+    }
+    Ok((server, outcome?))
 }
 
 /// Explains why a join request could not use this invitation. Every refusal
@@ -968,8 +974,23 @@ fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
 /// Changes from the server were downloaded; local changes stay queued.
 const KEY_CHANGE_REQUIRED: &str = "error sync-key-change-required hint=\"an invitation expired after keys may have been sent to a device that never joined; this device downloads changes but uploads new ones only after sync changes keys; check the connection and run `aven sync` again\"";
 
-async fn remember_access_refusal(database: &Database, error: &anyhow::Error) {
-    if is_access_refusal(error)
+/// Remembers a vault deletion, which stops daemon rounds until the user acts.
+async fn remember_vault_deletion(database: &Database, error: &anyhow::Error) {
+    if is_vault_deleted(error)
+        && let Err(state_error) = database.record_sync_vault_deletion().await
+    {
+        tracing::warn!(
+            error = %state_error,
+            "could not persist sync vault deletion"
+        );
+    }
+}
+
+/// A vault deletion is not an access refusal, so it records only itself.
+async fn remember_refusal(database: &Database, error: &anyhow::Error) {
+    if is_vault_deleted(error) {
+        remember_vault_deletion(database, error).await;
+    } else if is_access_refusal(error)
         && let Err(state_error) = database.record_sync_access_refusal().await
     {
         tracing::warn!(
@@ -987,7 +1008,7 @@ async fn track_access_result<T>(database: &Database, result: Result<T>) -> Resul
             Ok(value)
         }
         Err(error) => {
-            remember_access_refusal(database, &error).await;
+            remember_refusal(database, &error).await;
             Err(error)
         }
     }
@@ -1008,19 +1029,13 @@ async fn drain_associated(
     let result = drain(&client, &store, database, host, &blob_dir, round_limit)
         .await
         .map_err(explain_round_error);
-    match result {
-        Ok(outcome) => {
-            database.clear_sync_access_refusal().await?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            remember_access_refusal(database, &error).await;
-            Err(error)
-        }
-    }
+    track_access_result(database, result).await
 }
 
 /// Runs one interactive drain, waiting briefly for another sync to finish.
+/// This is the user-started recheck of a recorded vault deletion: it ignores
+/// the record and clears it on success. Automatic callers must not sync while
+/// [`StatusReport::vault_deleted_at`] is set.
 pub async fn run_to_completion(
     link: Link,
     database: &Database,
@@ -1029,7 +1044,9 @@ pub async fn run_to_completion(
     host.ensure_sync_allowed()?;
     ensure!(is_set_up(database).await?, NOT_SET_UP);
     let _guard = coordination::acquire(database).await?;
-    drain_associated(link, database, host, ROUND_LIMIT).await
+    let outcome = drain_associated(link, database, host, ROUND_LIMIT).await?;
+    database.clear_sync_vault_deletion().await?;
+    Ok(outcome)
 }
 
 pub enum DaemonRound {
@@ -1038,6 +1055,9 @@ pub enum DaemonRound {
     Deferred,
     /// The database has not been set up or joined; it stays local.
     NotSetUp,
+    /// The server reported the vault deleted. Later rounds make no request
+    /// until sync is reset or a user-started sync succeeds.
+    VaultDeleted,
 }
 
 /// One bounded daemon round that never waits for another sync.
@@ -1054,9 +1074,13 @@ pub async fn daemon_round(
     let Some(_guard) = coordination::try_acquire(database)? else {
         return Ok(DaemonRound::Deferred);
     };
-    drain_associated(link, database, host, round_limit)
-        .await
-        .map(DaemonRound::Completed)
+    if database.sync_vault_deletion().await?.is_some() {
+        return Ok(DaemonRound::VaultDeleted);
+    }
+    match drain_associated(link, database, host, round_limit).await {
+        Err(error) if is_vault_deleted(&error) => Ok(DaemonRound::VaultDeleted),
+        result => result.map(DaemonRound::Completed),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1232,6 +1256,7 @@ pub enum SyncState {
     KeyChangePending,
     Ready,
     AccessRefused,
+    VaultDeleted,
 }
 
 #[derive(Serialize)]
@@ -1251,6 +1276,7 @@ pub struct StatusReport {
     pub invitation: &'static str,
     pub invitation_expires_at: Option<u64>,
     pub access_refused_at: Option<String>,
+    pub vault_deleted_at: Option<String>,
 }
 
 /// Local observation only; contacts no server. Waits briefly for a running
@@ -1274,6 +1300,10 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
             .sync_access_refusal()
             .await?
             .map(|refusal| refusal.at),
+        vault_deleted_at: database
+            .sync_vault_deletion()
+            .await?
+            .map(|deletion| deletion.at),
     };
     if !is_set_up(database).await? {
         return Ok(report);
@@ -1321,13 +1351,15 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
             }
         };
     }
-    if report.access_refused_at.is_some()
-        && !matches!(
-            report.state,
-            SyncState::SetupIncomplete | SyncState::JoinIncomplete
-        )
-    {
-        report.state = SyncState::AccessRefused;
+    if !matches!(
+        report.state,
+        SyncState::SetupIncomplete | SyncState::JoinIncomplete
+    ) {
+        if report.vault_deleted_at.is_some() {
+            report.state = SyncState::VaultDeleted;
+        } else if report.access_refused_at.is_some() {
+            report.state = SyncState::AccessRefused;
+        }
     }
     Ok(report)
 }
@@ -1565,6 +1597,7 @@ mod hosting_tests {
         for (mode, family) in families.into_iter().enumerate() {
             for (status, wire_code, client_code) in [
                 (403, family.blocked, "sync-hosting-blocked"),
+                (403, family.deleted, "sync-vault-deleted"),
                 (429, family.quota, "sync-hosting-quota"),
                 (503, family.unavailable, "sync-hosting-unavailable"),
             ] {
@@ -1604,6 +1637,8 @@ mod hosting_tests {
                 assert!(has_code(&error, client_code), "{error:#}");
                 assert!(!is_access_refusal(&error));
                 assert!(db.sync_access_refusal().await.unwrap().is_none());
+                let deleted = client_code == "sync-vault-deleted";
+                assert_eq!(db.sync_vault_deletion().await.unwrap().is_some(), deleted);
                 assert_eq!(
                     db.seed_publication_intent_bytes().await.unwrap().unwrap(),
                     intent
@@ -1663,6 +1698,9 @@ mod hosting_tests {
                     .unwrap();
                 assert!(matches!(retry.next().await.unwrap(), Step::Done(())));
                 assert!(db.sync_access_refusal().await.unwrap().is_none());
+                // Only a user-started sync clears a recorded deletion.
+                assert_eq!(db.sync_vault_deletion().await.unwrap().is_some(), deleted);
+                db.clear_sync_vault_deletion().await.unwrap();
                 assert_eq!(
                     db.seed_publication_intent_bytes().await.unwrap().unwrap(),
                     intent
