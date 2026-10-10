@@ -366,6 +366,24 @@ async fn server_setup_accepts_http_over_vpn_origin() {
     assert!(stdout.contains("Keep this invitation private. It expires in one hour."));
     assert!(output.stderr.is_empty());
 
+    assert!(stdout.contains(&format!("Server storage: {}", data.display())));
+    assert!(stdout.contains(&format!(
+        "Then start the server on this storage so it's reachable at {origin}. Pass the same --data path to aven server."
+    )));
+    assert!(!stdout.contains("--bind"));
+
+    let output = operator
+        .command(&["server", "setup", "--url", origin])
+        .env_remove("STATE_DIRECTORY")
+        .output()
+        .await
+        .unwrap();
+    let stdout = success(&output, &["server", "setup"]);
+    assert!(stdout.contains(&format!(
+        "Then start the server on this storage so it's reachable at {origin}."
+    )));
+    assert!(!stdout.contains("Pass the same --data"));
+
     let invitation_only_data = temp.path().join("invitation-only.sqlite");
     let output = operator
         .run(&[

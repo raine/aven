@@ -76,6 +76,11 @@ Default Caddy body and timeout settings need no changes.
 
 ### Run with Docker
 
+The image is the aven CLI: with no arguments it starts the sync server.
+Write commands exactly as on a native install, including `server setup`.
+The image runs only the sync server; run `aven sync …` and task commands on
+your devices, not inside the container.
+
 The container runs as a non-root user and stores the server database in
 `/data/sync-server.sqlite`. Mount a named volume at `/data` for both setup and
 serving.
@@ -122,10 +127,18 @@ Configure your externally managed HTTPS proxy on the host to forward to
 Prepare storage with the HTTPS origin devices will use, without a path prefix:
 
 ```sh
-docker compose run --rm --no-deps aven setup --url https://sync.example.com --invitation-only
+docker compose run --rm --no-deps aven server setup --url https://sync.example.com --invitation-only
 docker compose up -d
-docker compose logs -f aven
+docker compose logs -f --timestamps --since 1m aven
 ```
+
+Run setup in a one-off container that shares the service's volume, as shown.
+If the service started first, it restarts until setup succeeds and can't be
+reached with `docker exec`; the one-off container works either way.
+
+Use timestamps when checking logs: `server-storage-unprepared` errors from
+before setup are expected. If the service still reports unprepared storage
+after setup, setup and the service are using different volumes or directories.
 
 The setup command prints only the private `aven-setup:` invitation. Use it on
 the starting device as in [Set up sync from one device](#set-up-sync-from-one-device).
@@ -145,7 +158,7 @@ use that origin for setup:
 
 ```sh
 export AVEN_HOST_IP=100.100.20.30
-docker compose run --rm --no-deps aven setup --url http://100.100.20.30:3746 --invitation-only
+docker compose run --rm --no-deps aven server setup --url http://100.100.20.30:3746 --invitation-only
 docker compose up -d
 ```
 
@@ -158,9 +171,22 @@ proxy above:
 
 ```sh
 docker volume create aven-data
-docker run --rm -v aven-data:/data "$AVEN_IMAGE" setup --url https://sync.example.com --invitation-only
+docker run --rm -v aven-data:/data "$AVEN_IMAGE" server setup --url https://sync.example.com --invitation-only
 docker run -d --name aven-server --restart unless-stopped --stop-timeout 15 \
   -v aven-data:/data -p 127.0.0.1:3746:3746 "$AVEN_IMAGE"
+```
+
+Check startup with `docker logs -t aven-server`. Errors from before setup are
+expected; if unprepared-storage errors continue, check that setup and the
+service share the same storage.
+
+Arguments replace the entire default command. To override serving options,
+include `server` and all the serve flags you need:
+
+```sh
+docker run -d --name aven-server --restart unless-stopped --stop-timeout 15 \
+  -v aven-data:/data -p 127.0.0.1:3746:3746 "$AVEN_IMAGE" \
+  server --bind 0.0.0.0:3746 --unsafe-public-bind --data /data/sync-server.sqlite
 ```
 
 For direct VPN access, replace `127.0.0.1` in the published port with the host's
@@ -197,6 +223,27 @@ For a local build, build the new source with a new tag and select that tag
 instead of pulling. For plain Docker, stop and remove only `aven-server`,
 preserve `aven-data`, then recreate the container with the new image and the
 same volume/port settings. Do not rerun setup during an upgrade.
+
+#### Start over with new server storage
+
+1. Stop and remove the service container, keeping its storage: use
+   `docker compose down` **without `--volumes`**, or
+   `docker stop aven-server && docker rm aven-server`. An existing container
+   keeps its mounts, so `docker start` would reuse the old storage.
+2. Keep the old volume or directory until the new sync works.
+3. Create new storage. For plain Docker, run `docker volume create aven-data-2`.
+   For Compose, choose a new volume name in both the service's `volumes:` entry
+   and the top-level `volumes:` declaration. For a bind mount, use a new empty
+   directory owned by `65532:65532` with mode `700`.
+4. Run `server setup` in a one-off container on the new storage, using the setup
+   command above with the new volume or directory.
+5. Recreate the service: `docker compose up -d`, or the same plain-Docker
+   `docker run` command above with the new `-v`, keeping port and restart
+   settings.
+6. If a device's setup never finished, run `aven sync reset --force`, then
+   `aven sync setup` with the new invitation; see the
+   [interrupted-setup guidance](#set-up-sync-from-one-device). For an established
+   sync, follow [Rebuilding sync](#rebuilding-sync), using plain `aven sync reset`.
 
 ### Run the server as a service
 

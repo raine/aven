@@ -16,8 +16,8 @@ STOPSIGNAL SIGTERM
 LABEL org.opencontainers.image.source="https://github.com/raine/aven" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.description="Aven encrypted sync server"
-ENTRYPOINT ["/usr/local/bin/aven", "server"]
-CMD ["--bind", "0.0.0.0:3746", "--unsafe-public-bind"]
+ENTRYPOINT ["/usr/local/bin/aven"]
+CMD ["server", "--bind", "0.0.0.0:3746", "--unsafe-public-bind"]
 
 FROM runtime AS release
 ARG TARGETARCH

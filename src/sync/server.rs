@@ -18,8 +18,6 @@ use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::config;
 use crate::signals::shutdown_signal;
 
-const DEFAULT_PORT: u16 = 3746;
-
 /// Setup invitations stay usable for one hour, or until a device claims storage.
 const SETUP_INVITATION_SECONDS: u64 = 3600;
 
@@ -93,43 +91,16 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
     println!("Anyone with it can claim this server.");
     println!("Run `aven sync setup` on the device whose data should start the sync.");
     println!("Server storage: {}", data.display());
-    let data_arg = if explicit_data {
-        format!(" --data {}", data.display())
+    let same_data = if explicit_data {
+        " Pass the same --data path to aven server."
     } else {
-        String::new()
+        ""
     };
     println!(
-        "Then start the server: aven server{data_arg} --bind 127.0.0.1:{}",
-        suggested_port(&args.url)
+        "Then start the server on this storage so it's reachable at {}.{same_data}",
+        args.url
     );
-    if args.url.starts_with("http://") && !origin_is_loopback(&args.url) {
-        println!("For direct VPN HTTP, bind the server's VPN address.");
-    }
     Ok(())
-}
-
-/// The local service port: an HTTP origin's port is direct, while HTTPS
-/// normally terminates at a reverse proxy in front of the default port.
-fn suggested_port(url: &str) -> u16 {
-    let Ok(url) = url::Url::parse(url) else {
-        return DEFAULT_PORT;
-    };
-    match url.port_or_known_default() {
-        Some(port) if url.scheme() == "http" || origin_is_loopback(url.as_str()) => port,
-        _ => DEFAULT_PORT,
-    }
-}
-
-fn origin_is_loopback(origin: &str) -> bool {
-    let Ok(url) = url::Url::parse(origin) else {
-        return false;
-    };
-    match url.host() {
-        Some(url::Host::Domain(domain)) => domain == "localhost",
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -275,7 +246,7 @@ async fn serve_connections(
 
 #[cfg(test)]
 mod tests {
-    use super::{BindScope, suggested_port};
+    use super::BindScope;
     use std::net::IpAddr;
 
     #[test]
@@ -313,18 +284,6 @@ mod tests {
                 BindScope::Public
             );
         }
-    }
-
-    #[test]
-    fn setup_suggests_direct_http_port() {
-        assert_eq!(suggested_port("https://sync.example.com"), 3746);
-        assert_eq!(suggested_port("https://sync.example.com:8443"), 3746);
-        assert_eq!(suggested_port("http://127.0.0.1:4000"), 4000);
-        assert_eq!(suggested_port("http://localhost:4001"), 4001);
-        assert_eq!(suggested_port("http://[::1]:4002"), 4002);
-        assert_eq!(suggested_port("http://localhost"), 80);
-        assert_eq!(suggested_port("http://100.100.20.30:47831"), 47831);
-        assert_eq!(suggested_port("http://sync.private.example:47831"), 47831);
     }
 
     use super::*;

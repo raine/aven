@@ -1039,12 +1039,11 @@ aven server setup [--data <path>] --url <url> [--invitation-only]
 | `--invitation-only` | For `setup`: print only the invitation, without operator instructions. |
 
 `server setup` stores an expiring setup verifier, then prints a setup invitation
-for `aven sync setup`, the storage path, and a starting `aven server --bind ...`
-command together on standard output. Use `--invitation-only` when a script needs
-the invitation without the operator instructions. The suggested bind uses an HTTP URL's port; HTTPS
-uses port 3746 for the service behind its proxy. For direct VPN HTTP, replace
-the loopback bind with the server's VPN address. Running setup again before a
-device claims the server replaces the invitation. The server does not terminate
+for `aven sync setup`, the storage path, and guidance to start the server on
+that storage so devices can reach the setup URL. With explicit `--data`, it
+reminds you to pass the same path to `aven server`. Use `--invitation-only` when
+a script needs the invitation without the operator instructions. Running setup
+again before a device claims the server replaces the invitation. The server does not terminate
 TLS. Device credentials, setup invitations, server identifiers, and traffic
 metadata are outside the end-to-end encrypted payload, so use HTTP only over a
 trusted VPN or another protected private network; otherwise put a TLS reverse

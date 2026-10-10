@@ -188,8 +188,8 @@ pub(super) const SERVER_SETUP_HELP: &str = r#"The setup invitation lets one devi
 its database. It expires after one hour; until a device has claimed the
 server, running setup again replaces it. The replacement keeps the server's
 setup identity, so a device whose setup was interrupted resumes with the new
-invitation. Serve the storage with `aven server --bind ADDRESS`;
-setup prints a suggested command. Bind the server directly to its trusted VPN
+invitation. Serve the storage with `aven server --bind ADDRESS`.
+Bind the server directly to its trusted VPN
 address for HTTP, or put a TLS reverse proxy in front of it. Public and wildcard
 binds require --unsafe-public-bind."#;
 

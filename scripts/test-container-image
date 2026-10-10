@@ -21,6 +21,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+docker run --rm --platform "$platform" "$image" --help >"$scratch/help"
+grep -q 'Local-first task manager' "$scratch/help"
+echo "$platform: top-level CLI help available"
+
 docker volume create "$volume" >/dev/null
 docker create --name "$name" --platform "$platform" -v "$volume:/data" "$image" >/dev/null
 # Inspect the selected image ID, not the host-default platform of a manifest tag.
@@ -44,14 +48,14 @@ echo "$platform: unprepared storage refused"
 
 # Setup output grants authority over the server; never print or retain it.
 docker run --rm --name "$name" --platform "$platform" -v "$volume:/data" "$image" \
-  setup --url https://sync.example.com --invitation-only >"$scratch/invitation" 2>"$scratch/setup-error"
+  server setup --url https://sync.example.com --invitation-only >"$scratch/invitation" 2>"$scratch/setup-error"
 grep -q '^aven-setup:' "$scratch/invitation"
 rm "$scratch/invitation" "$scratch/setup-error"
 echo "$platform: explicit setup as non-root succeeded"
 
 start() {
   docker run -d --name "$name" --platform "$platform" --stop-timeout 15 \
-    -v "$volume:/data" -p 127.0.0.1::3746 "$image" >/dev/null
+    -v "$volume:/data" -p 127.0.0.1::3746 "$image" "$@" >/dev/null
 }
 reachable() {
   local port status attempt
@@ -86,7 +90,7 @@ docker start "$name" >/dev/null
 reachable
 stop
 docker rm "$name" >/dev/null
-start
+start server --bind 0.0.0.0:3746 --unsafe-public-bind
 reachable
 stop
 echo "$platform: restart and replacement preserved prepared storage"
