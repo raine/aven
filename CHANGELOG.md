@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Docker images now accept full aven commands (`server setup` or `server --bind …`), with clearer storage errors and [setup and recovery guidance](https://aventasks.dev/sync/#run-with-docker). CLI and TUI commands no longer fail when log files can't be written. Generate [shell completions](https://aventasks.dev/command-reference/#aven-completions) with `aven completions <shell>`; Homebrew installs them automatically. ([#35](https://github.com/raine/aven/issues/35))
 - Fix: TUI shortcut help wraps descriptions instead of clipping them, uses one column on narrow terminals, and lists only commands with hotkeys. ([#33](https://github.com/raine/aven/issues/33))
 
 ## v0.1.46 (2026-10-05)
