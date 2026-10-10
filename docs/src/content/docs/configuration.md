@@ -215,7 +215,7 @@ project:
 
 Sync is optional, self-hosted, and end-to-end encrypted. The server is chosen
 when a database is set up or joined, not in configuration; see
-[Sync across devices](/sync/). Enable automatic sync by the daemon:
+[Sync across devices](/sync/setup/). Enable automatic sync by the daemon:
 
 ```yaml
 sync:

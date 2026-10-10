@@ -194,7 +194,7 @@ moving forward and records a conflict so you can choose the correct history.
 Conflicting Pause, Resume, or Stop changes also appear for review and prevent
 additional tasks until resolved.
 
-See [Resolve conflicts](/sync/#resolve-conflicts) for the review workflow.
+See [Resolve conflicts](/sync/setup/#resolve-conflicts) for the review workflow.
 
 ## Related pages
 
@@ -202,7 +202,7 @@ See [Resolve conflicts](/sync/#resolve-conflicts) for the review workflow.
   used by each dated task.
 - [Task metadata](/task-metadata/) explains custom values inherited by dated tasks.
 - [Using the TUI](/tui/) covers navigation, selection, and command discovery.
-- [Sync across devices](/sync/) covers synchronization and conflict handling.
+- [Sync across devices](/sync/setup/) covers synchronization and conflict handling.
 
 ## Reference
 

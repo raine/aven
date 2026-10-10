@@ -5,22 +5,22 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Docker images now accept full aven commands (`server setup` or `server --bind …`), with clearer storage errors and [setup and recovery guidance](https://aventasks.dev/sync/#run-with-docker). CLI and TUI commands no longer fail when log files can't be written. Generate [shell completions](https://aventasks.dev/command-reference/#aven-completions) with `aven completions <shell>`; Homebrew installs them automatically. ([#35](https://github.com/raine/aven/issues/35))
+- Docker images now accept full aven commands (`server setup` or `server --bind …`), with clearer storage errors and [setup and recovery guidance](https://aventasks.dev/sync/setup/#run-with-docker). CLI and TUI commands no longer fail when log files can't be written. Generate [shell completions](https://aventasks.dev/command-reference/#aven-completions) with `aven completions <shell>`; Homebrew installs them automatically. ([#35](https://github.com/raine/aven/issues/35))
 - Fix: TUI shortcut help wraps descriptions instead of clipping them, uses one column on narrow terminals, and lists only commands with hotkeys. ([#33](https://github.com/raine/aven/issues/33))
 
 ## v0.1.46 (2026-10-05)
 
-- A sync-server Docker image is now available at `ghcr.io/raine/aven` for Linux amd64 and arm64. Run it with [Docker or Docker Compose](https://aventasks.dev/sync/#run-with-docker), or build from source. ([#32](https://github.com/raine/aven/issues/32))
+- A sync-server Docker image is now available at `ghcr.io/raine/aven` for Linux amd64 and arm64. Run it with [Docker or Docker Compose](https://aventasks.dev/sync/setup/#run-with-docker), or build from source. ([#32](https://github.com/raine/aven/issues/32))
 
 ## v0.1.45 (2026-10-04)
 
-- Sync is now [end-to-end encrypted](https://aventasks.dev/sync/). Devices encrypt tasks, history and images before upload, so the sync server cannot read your tasks or images. It still sees [some metadata](https://aventasks.dev/sync/#what-encryption-protects), such as IDs, sizes and timing.
-- Start a sync with a one-time setup invitation from [`aven server setup`](https://aventasks.dev/sync/#start-a-server), and [add devices](https://aventasks.dev/sync/#add-a-device) by scanning a QR code or pasting an invitation from a device that already syncs.
-- [List and remove devices](https://aventasks.dev/sync/#manage-devices) with `aven sync device` or **Manage devices** in the TUI Sync dialog. Removing a device rotates the keys for future changes.
-- [`aven sync reset`](https://aventasks.dev/sync/#rebuilding-sync) returns a database to local-only use, keeping its tasks and images.
-- Breaking: Unencrypted sync is removed, and servers refuse storage from earlier releases. Sync every device before upgrading, then follow [Upgrade from unencrypted sync](https://aventasks.dev/sync/#upgrade-from-unencrypted-sync) to move to new server storage.
+- Sync is now [end-to-end encrypted](https://aventasks.dev/sync/setup/). Devices encrypt tasks, history and images before upload, so the sync server cannot read your tasks or images. It still sees [some metadata](https://aventasks.dev/sync/setup/#what-encryption-protects), such as IDs, sizes and timing.
+- Start a sync with a one-time setup invitation from [`aven server setup`](https://aventasks.dev/sync/setup/#start-a-server), and [add devices](https://aventasks.dev/sync/setup/#add-a-device) by scanning a QR code or pasting an invitation from a device that already syncs.
+- [List and remove devices](https://aventasks.dev/sync/setup/#manage-devices) with `aven sync device` or **Manage devices** in the TUI Sync dialog. Removing a device rotates the keys for future changes.
+- [`aven sync reset`](https://aventasks.dev/sync/setup/#rebuilding-sync) returns a database to local-only use, keeping its tasks and images.
+- Breaking: Unencrypted sync is removed, and servers refuse storage from earlier releases. Sync every device before upgrading, then follow [Upgrade from unencrypted sync](https://aventasks.dev/sync/setup/#upgrade-from-unencrypted-sync) to move to new server storage.
 - Move tasks to a project in another workspace with [`aven move`](https://aventasks.dev/command-reference/#aven-move). Notes, labels, metadata, attachments, epic subtrees and internal relationships move with them, and refs keep their suffix.
-- On Linux, [`aven daemon install`](https://aventasks.dev/sync/#automate-sync-with-the-daemon) and the other daemon subcommands manage a systemd user service.
+- On Linux, [`aven daemon install`](https://aventasks.dev/sync/setup/#automate-sync-with-the-daemon) and the other daemon subcommands manage a systemd user service.
 - `aven server` and `aven server setup` store data in a standard location by default, so `--data` is optional.
 - Fix: The daemon restarts on the new version after `brew upgrade` instead of running the old one until Homebrew cleans it up.
 - Fix: Databases, backups, restore staging and log files are created readable only by you.
@@ -204,7 +204,7 @@ description: Release notes for aven.
 - [Epics](https://aventasks.dev/concepts/#dependencies-and-epics) start collapsed, selected-task previews show due dates, and active filters remain visible in constrained TUI headers.
 - Nested dialogs have clearer visual depth, and task composers stay compact while adapting to longer descriptions and schedule editors.
 - [Detached natural-language task creation](https://aventasks.dev/tui/#create-with-ai) sends a system notification when it finishes after the originating TUI exits.
-- Fix: [Attachment sync](https://aventasks.dev/sync/#image-attachments-during-sync) accepts UTC timestamps with fractional seconds.
+- Fix: [Attachment sync](https://aventasks.dev/sync/setup/#image-attachments-during-sync) accepts UTC timestamps with fractional seconds.
 - Out-of-range `--limit` values return clear errors for list, search, and [recurrence history](https://aventasks.dev/command-reference/#recur-history).
 
 ## v0.1.19 (2026-07-28)
@@ -291,7 +291,7 @@ description: Release notes for aven.
 - Added task copy shortcuts for refs, titles, descriptions, notes, and combined task text.
 - Improved [task detail navigation](https://aventasks.dev/tui/#task-detail) with a shortcut that jumps directly to notes.
 - Added a guided [Taskwarrior migration workflow](https://aventasks.dev/taskwarrior/#migrate-from-taskwarrior) to the documentation.
-- Improved [daemon and server startup](https://aventasks.dev/sync/) in Linux services, containers, and other environments without writable state directories.
+- Improved [daemon and server startup](https://aventasks.dev/sync/setup/) in Linux services, containers, and other environments without writable state directories.
 
 ## v0.1.5 (2026-07-12)
 
@@ -301,7 +301,7 @@ description: Release notes for aven.
 
 - [Task composer](https://aventasks.dev/tui/#capture-tasks) labels can be set while creating a task.
 - TUI timestamps display in local time across task details, notes, recent actions, and database stats.
-- [Database diagnostics](https://aventasks.dev/sync/#diagnose-sync-state) show sync history size, synced and pending change counts, server sequence range, and payload bytes.
+- [Database diagnostics](https://aventasks.dev/sync/setup/#diagnose-sync-state) show sync history size, synced and pending change counts, server sequence range, and payload bytes.
 - [Task list](https://aventasks.dev/tui/#find-work) selection stays visible when queue group headers remain pinned.
 - Back navigation from an [epic child detail](https://aventasks.dev/tui/#projects-and-relationships) returns to the parent detail view and scroll position.
 
@@ -324,7 +324,7 @@ description: Release notes for aven.
 ## v0.1.1 (2026-07-03)
 
 - Made natural task creation from the [full TUI](https://aventasks.dev/tui/#capture-tasks) continue reliably after exiting the interface, while keeping created tasks undoable when the TUI remains open.
-- Improved [daemon update handling](https://aventasks.dev/sync/#automate-sync-with-the-daemon) so launchd services use a stable executable path, restart cleanly, and show richer status in `aven doctor`.
+- Improved [daemon update handling](https://aventasks.dev/sync/setup/#automate-sync-with-the-daemon) so launchd services use a stable executable path, restart cleanly, and show richer status in `aven doctor`.
 
 ## v0.1.0 (2026-07-02)
 

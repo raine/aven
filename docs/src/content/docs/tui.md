@@ -276,7 +276,7 @@ history. See [`aven recur`](/command-reference/#aven-recur) for CLI management.
 
 The header shows synchronization state. Click it, press `C s`, or run `:sync` to open the **Sync** dialog, where you can set up or join sync, sync now, add a device, and manage devices. Press `S` to sync immediately. Press `v c` to open tasks with unresolved field conflicts, then use the `c` family to inspect and resolve them.
 
-See [Sync across devices](/sync/) for setup, transport, and conflict handling.
+See [Sync across devices](/sync/setup/) for setup, transport, and conflict handling.
 See [Back up and restore](/backups/) for recovery workflows.
 
 ## Run aven from tmux

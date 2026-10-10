@@ -963,7 +963,7 @@ rotations. Adding a device is one change. Removing a device, or changing keys
 after an invitation expired when it may have sent keys, is two: the change and
 its key rotation. Inviting a device requires room for one key rotation. Once a
 limit is reached, devices can no longer be added or removed; start a new sync
-from a backup as in [Recover from device loss](/sync/#recover-from-device-loss).
+from a backup as in [Recover from device loss](/sync/setup/#recover-from-device-loss).
 
 #### `aven sync reset`
 
@@ -993,7 +993,7 @@ original setup invitation or server storage is gone and setup cannot resume,
 that accepted the setup, but keeps local tasks, images, and history. JSON output
 reports `state` as `reset`, or `not-set-up` when the database did not take part
 in sync. The TUI has no reset action. See
-[Rebuilding sync](/sync/#rebuilding-sync).
+[Rebuilding sync](/sync/setup/#rebuilding-sync).
 
 #### `aven sync status`
 

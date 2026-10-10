@@ -62,7 +62,7 @@ databases.
 
 Changes made after the backup and never synced are not carried into the new
 sync. Check any old database you can still access before discarding it. See
-[Recover from device loss](/sync/#recover-from-device-loss) for the complete
+[Recover from device loss](/sync/setup/#recover-from-device-loss) for the complete
 command sequence.
 
 ## Export and import portable JSON
@@ -107,7 +107,7 @@ the included image files together.
 
 A complete backup includes only images available locally when it is created. If
 you synchronize attachments, confirm that sync is complete before creating the
-archive. See [Image attachments during sync](/sync/#image-attachments-during-sync).
+archive. See [Image attachments during sync](/sync/setup/#image-attachments-during-sync).
 
 See [Data safety commands](/command-reference/#data-safety-commands) for every
 backup, restore, export, and import option.

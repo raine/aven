@@ -13,9 +13,9 @@ const features = [
   { label: 'CONFLICTS · KEPT', title: 'Nothing silently overwritten.', description: 'When two devices edit the same field between syncs, Aven keeps both values and asks you to choose.', color: 'orange' },
 ];
 const transports = [
-  { label: 'RECOMMENDED', title: 'Private network', description: "Tailscale or WireGuard. Devices connect to the server's VPN address and nothing is exposed to the internet.", color: 'green', href: '/sync/#start-a-server' },
-  { label: 'PUBLIC', title: 'Behind a TLS proxy', description: 'Put it behind the reverse proxy you already run and give devices its HTTPS URL.', color: 'blue', href: '/sync/#use-a-public-tls-proxy' },
-  { label: 'CONTAINER', title: 'Docker or Compose', description: 'The same server in a container, with a volume for storage and an invitation-only setup.', color: 'orange', href: '/sync/#run-with-docker' },
+  { label: 'RECOMMENDED', title: 'Private network', description: "Tailscale or WireGuard. Devices connect to the server's VPN address and nothing is exposed to the internet.", color: 'green', href: '/sync/setup/#start-a-server' },
+  { label: 'PUBLIC', title: 'Behind a TLS proxy', description: 'Put it behind the reverse proxy you already run and give devices its HTTPS URL.', color: 'blue', href: '/sync/setup/#use-a-public-tls-proxy' },
+  { label: 'CONTAINER', title: 'Docker or Compose', description: 'The same server in a container, with a volume for storage and an invitation-only setup.', color: 'orange', href: '/sync/setup/#run-with-docker' },
 ];
 ---
 
@@ -27,13 +27,13 @@ const transports = [
     <meta name="theme-color" content="#121110" />
     <title>Encrypted sync | aven</title>
     <meta name="description" content="Sync Aven across your machines through a server you run. End-to-end encrypted, works offline, free and open source." />
-    <link rel="canonical" href="https://aventasks.dev/encrypted-sync/" />
+    <link rel="canonical" href="https://aventasks.dev/sync/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Encrypted sync | aven" />
     <meta property="og:description" content="End-to-end encrypted sync through a server you run." />
-    <meta property="og:url" content="https://aventasks.dev/encrypted-sync/" />
+    <meta property="og:url" content="https://aventasks.dev/sync/" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -42,7 +42,7 @@ const transports = [
         <Brand />
         <nav aria-label="Main navigation">
           <a class="features-link" href="/#features">Features</a>
-          <a href="/encrypted-sync/" aria-current="page">Sync</a>
+          <a href="/sync/" aria-current="page">Sync</a>
           <a href="/getting-started/">Docs</a>
           <a href="https://github.com/raine/aven"><GitHubIcon /> GitHub</a>
         </nav>
@@ -54,8 +54,8 @@ const transports = [
           <h1 id="sync-heading">Your tasks,<br /><span>on every machine.</span></h1>
           <p class="sync-lead">End-to-end encrypted sync through a server you run. Free, open source, and invisible once it's set up.</p>
           <div class="sync-actions">
-            <a class="closing-button closing-primary" href="/sync/">Set up sync</a>
-            <a class="closing-button" href="/sync/#what-encryption-protects">What encryption protects</a>
+            <a class="closing-button closing-primary" href="/sync/setup/">Set up sync</a>
+            <a class="closing-button" href="/sync/setup/#what-encryption-protects">What encryption protects</a>
           </div>
           <figure class="sync-topology" aria-label="Diagram: laptop, desktop, and phone connect to your sync server and exchange only encrypted data.">
             <div class="sync-node sync-server"><i>Your server</i><b>aven server</b><small>Raspberry Pi · Tailscale</small></div>
@@ -117,7 +117,7 @@ const transports = [
           <h2 id="closing-heading">Your tasks are already local.<br />Now take them with you.</h2>
           <p>Sync is not a backup. Keep <a href="/backups/">your own backups</a> too.</p>
           <div class="closing-actions">
-            <a class="closing-button closing-primary" href="/sync/">Set up sync</a>
+            <a class="closing-button closing-primary" href="/sync/setup/">Set up sync</a>
             <a class="closing-button" href="https://github.com/raine/aven">View on GitHub</a>
           </div>
         </section>

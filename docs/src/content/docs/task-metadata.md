@@ -157,4 +157,4 @@ Metadata fields, values, renames, recurring templates, and conflicts sync betwee
 
 Metadata also participates in task undo and is included in portable export, import, database backup, restore, and integrity checks.
 
-See the [command reference](/command-reference/) for complete option lists and [Sync across devices](/sync/) for sync setup and conflict behavior.
+See the [command reference](/command-reference/) for complete option lists and [Sync across devices](/sync/setup/) for sync setup and conflict behavior.

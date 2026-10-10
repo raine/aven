@@ -43,4 +43,4 @@ Workspaces keep personal and work tasks in the same database while separating th
 - [Concepts](/concepts/) to understand workspaces, projects, statuses, refs, and the queue.
 - [Using the TUI](/tui/) to learn navigation, views, filters, and shortcuts.
 - [Work with agents](/agents/) to connect coding agents and other AI integrations.
-- [Sync across devices](/sync/) to configure optional self-hosted sync.
+- [Sync across devices](/sync/setup/) to configure optional self-hosted sync.

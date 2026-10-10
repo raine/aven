@@ -939,7 +939,7 @@ async fn associated_server(store: &ProtectedLocalKeyStore, database: &Database) 
 }
 
 /// The vault's lifetime budget of signed membership changes is spent.
-const CHANGE_LIMIT: &str = "error sync-device-change-limit hint=\"this sync has reached its limit on device changes, so devices can no longer be added or removed; start a new sync to keep changing devices, see https://aventasks.dev/sync/#recover-from-device-loss\"";
+const CHANGE_LIMIT: &str = "error sync-device-change-limit hint=\"this sync has reached its limit on device changes, so devices can no longer be added or removed; start a new sync to keep changing devices, see https://aventasks.dev/sync/setup/#recover-from-device-loss\"";
 
 fn explain_change_limit(error: anyhow::Error) -> anyhow::Error {
     if has_code(&error, "membership-change-limit") {

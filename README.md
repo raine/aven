@@ -37,7 +37,7 @@ and shows what needs action, what is blocked, and what to focus on next.
 Aven keeps tasks in a local SQLite database instead of tracked files inside each project repo. You
 and your agents can capture and update tasks offline, independent of git state, branches, worktrees,
 or checkouts. If you need the same tasks on more than one device, you can
-[sync them through a server you control](https://aventasks.dev/sync/). Sync is end-to-end
+[sync them through a server you control](https://aventasks.dev/sync/setup/). Sync is end-to-end
 encrypted, so the server cannot read your tasks.
 
 Repositories map to projects by default. Aven creates a project when you add its first task, and
@@ -112,7 +112,7 @@ See [Getting started](https://aventasks.dev/getting-started/) for first-run usag
 - [Scheduling tasks](https://aventasks.dev/schedule-tasks/)
 - [Recurring tasks](https://aventasks.dev/recurring-tasks/)
 - [Work with agents](https://aventasks.dev/agents/)
-- [Sync across devices](https://aventasks.dev/sync/)
+- [Sync across devices](https://aventasks.dev/sync/setup/)
 - [Back up and restore](https://aventasks.dev/backups/)
 - [Command reference](https://aventasks.dev/command-reference/)
 - [Configuration](https://aventasks.dev/configuration/)

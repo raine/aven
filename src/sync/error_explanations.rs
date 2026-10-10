@@ -593,10 +593,10 @@ pub(crate) fn explain(
             message: "Sync stopped on a change it can't apply, to protect your data. Local tasks are safe and editable.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "To keep syncing, rebuild sync on fresh server storage with `aven sync reset`: https://aven.raine.dev/sync/#rebuilding-sync"
+                    "To keep syncing, rebuild sync on fresh server storage with `aven sync reset`: https://aventasks.dev/sync/setup/#rebuilding-sync"
                 }
                 ErrorSurface::Tui => {
-                    "To keep syncing, rebuild sync on fresh server storage; run `aven sync reset` and see https://aven.raine.dev/sync/#rebuilding-sync"
+                    "To keep syncing, rebuild sync on fresh server storage; run `aven sync reset` and see https://aventasks.dev/sync/setup/#rebuilding-sync"
                 }
             },
         });
@@ -1013,7 +1013,11 @@ mod tests {
                         .contains("Local tasks are safe and editable")
                 );
                 assert!(explanation.next_step.contains("`aven sync reset`"));
-                assert!(explanation.next_step.contains("/sync/#rebuilding-sync"));
+                assert!(
+                    explanation
+                        .next_step
+                        .contains("/sync/setup/#rebuilding-sync")
+                );
             }
         }
         let error = anyhow::Error::from(aven_core::sync::encrypted_tail::PrefixIdentityCollision);
