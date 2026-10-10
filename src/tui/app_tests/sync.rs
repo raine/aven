@@ -239,7 +239,8 @@ async fn setup_previews_this_database_and_starts_only_after_confirmation() {
     assert_eq!(server, "https://sync.example.com");
     assert_eq!(preview.workspaces, 2);
 
-    // Focus starts on Back, which abandons the unsubmitted form.
+    // Back abandons the unsubmitted form without starting setup.
+    app.handle_overlay_key(key(KeyCode::Left)).await.unwrap();
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);
     assert!(!app.sync_ops.work_pending());
@@ -247,7 +248,7 @@ async fn setup_previews_this_database_and_starts_only_after_confirmation() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     paste(&mut app, &setup).await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Right)).await.unwrap();
+    // Confirmation starts on the primary setup action.
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(app.sync_ops.work_pending());
     assert_eq!(*sync_page(&app), crate::tui::overlay::SyncPage::Home);

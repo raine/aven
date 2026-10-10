@@ -262,13 +262,8 @@ async fn note_creation_undo_follows_deletion_restoration() {
 }
 
 #[tokio::test]
-async fn note_restoration_preserves_sync_guards_and_rejects_replacement() {
-    for case in [
-        "original-synced",
-        "restoration-synced",
-        "replacement-before-delete",
-        "replacement-after-restore",
-    ] {
+async fn note_restoration_rejects_replacement() {
+    for case in ["replacement-before-delete", "replacement-after-restore"] {
         let (_dir, pool, mut store) = test_store_with_pool().await;
         let (task_id, _) = create_selected_task(&mut store, "Safety").await;
         let note_id = store
@@ -295,18 +290,7 @@ async fn note_restoration_preserves_sync_guards_and_rejects_replacement() {
             .await
             .unwrap();
         assert_ne!(original, restored);
-        if case.ends_with("synced") {
-            let synced = if case == "original-synced" {
-                &original
-            } else {
-                &restored
-            };
-            sqlx::query("UPDATE changes SET server_seq = 1 WHERE change_id = ?")
-                .bind(synced)
-                .execute(&pool)
-                .await
-                .unwrap();
-        } else if case == "replacement-after-restore" {
+        if case == "replacement-after-restore" {
             sqlx::query("UPDATE notes SET change_id = 'unrelated' WHERE id = ?")
                 .bind(&note_id)
                 .execute(&pool)
@@ -335,6 +319,80 @@ async fn note_restoration_preserves_sync_guards_and_rejects_replacement() {
             .await
             .unwrap();
         assert_eq!(count, 1, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn note_restoration_undo_preserves_synced_history() {
+    for case in ["original-synced", "restoration-synced"] {
+        let (_dir, pool, mut store) = test_store_with_pool().await;
+        let (task_id, _) = create_selected_task(&mut store, "Synced note").await;
+        let note_id = store
+            .add_note_to_task(&task_id, "original".into())
+            .await
+            .unwrap();
+        let original: String = sqlx::query_scalar("SELECT change_id FROM notes WHERE id = ?")
+            .bind(&note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        store.delete_note(&task_id, &note_id).await.unwrap();
+        store.undo_last(None).await.unwrap();
+        let restored: String = sqlx::query_scalar("SELECT change_id FROM notes WHERE id = ?")
+            .bind(&note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(original, restored);
+        let synced = if case == "original-synced" {
+            &original
+        } else {
+            &restored
+        };
+        sqlx::query("UPDATE changes SET server_seq = 1 WHERE change_id = ?")
+            .bind(synced)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let before: Vec<(String, String, Option<i64>)> =
+            sqlx::query_as("SELECT change_id, payload, server_seq FROM changes ORDER BY change_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        store.undo_last(None).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM notes WHERE id = ?")
+            .bind(&note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{case}");
+        let after: Vec<(String, String, Option<i64>)> =
+            sqlx::query_as("SELECT change_id, payload, server_seq FROM changes ORDER BY change_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after.len(), before.len() + 1, "{case}");
+        for change in &before {
+            assert!(after.contains(change), "{case}: history changed");
+        }
+        let appended = after
+            .iter()
+            .find(|change| !before.contains(change))
+            .unwrap();
+        assert_eq!(appended.2, None, "{case}");
+        let deletion: (String, String) =
+            sqlx::query_as("SELECT entity_id, op_type FROM changes WHERE change_id = ?")
+                .bind(&appended.0)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(deletion.0, task_id.to_string(), "{case}");
+        assert_eq!(deletion.1, "note_delete", "{case}");
+        let payload: serde_json::Value = serde_json::from_str(&appended.1).unwrap();
+        assert_eq!(payload["note_id"], note_id, "{case}");
+        assert_eq!(payload["body"], "original", "{case}");
     }
 }
 
