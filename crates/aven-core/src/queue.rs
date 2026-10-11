@@ -6,6 +6,20 @@ use chrono::NaiveDate;
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::types::Task;
 
+/// Active tasks idle this many days need attention.
+pub const STALE_ACTIVE_DAYS: i64 = 7;
+/// Todo tasks idle this many days are due for review. Backlog is parked
+/// work, so idle backlog is expected and never stale.
+pub const STALE_TODO_DAYS: i64 = 30;
+
+/// Why a task needs a triage decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriageReason {
+    Inbox,
+    StaleActive,
+    StaleTodo,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueueBand {
     NeedsAction,
@@ -214,6 +228,41 @@ pub fn available_since_defer(task: &Task, now_seconds: i64) -> bool {
     activity < available_at || creation_seeded_queue_activity(task)
 }
 
+/// Returns why a visible, non-epic task needs a triage decision, if it does.
+pub fn triage_reason(task: &Task, meta: &QueueMeta, now_seconds: i64) -> Option<TriageReason> {
+    if task.is_epic || !work_visible(task, now_seconds) {
+        return None;
+    }
+    let idle_days = meta.idle_days.unwrap_or(0);
+    match task.status {
+        TaskStatus::Inbox => Some(TriageReason::Inbox),
+        TaskStatus::Active if idle_days >= STALE_ACTIVE_DAYS => Some(TriageReason::StaleActive),
+        TaskStatus::Todo if idle_days >= STALE_TODO_DAYS => Some(TriageReason::StaleTodo),
+        _ => None,
+    }
+}
+
+/// Whether a triage review mark still covers a stale task: keeping a task
+/// quiets it for one more stale window of its status. Inbox tasks always need
+/// a destination, so marks never hide them.
+pub fn triage_review_current(
+    reason: TriageReason,
+    reviewed_at: Option<i64>,
+    now_seconds: i64,
+) -> bool {
+    let window_days = match reason {
+        TriageReason::Inbox => return false,
+        TriageReason::StaleActive => STALE_ACTIVE_DAYS,
+        TriageReason::StaleTodo => STALE_TODO_DAYS,
+    };
+    reviewed_at.is_some_and(|at| now_seconds - at < window_days * 86_400)
+}
+
+/// Whether nothing has touched the task's queue activity since creation.
+pub fn untouched_since_creation(task: &Task) -> bool {
+    creation_seeded_queue_activity(task)
+}
+
 fn creation_seeded_queue_activity(task: &Task) -> bool {
     task.queue_activity_at == task.created_at && task.updated_at == task.created_at
 }
@@ -232,7 +281,7 @@ fn classify_queue(
         (QueueBand::NeedsAction, Some(QueueReason::Conflict))
     } else if task.priority == TaskPriority::Urgent {
         (QueueBand::NeedsAction, Some(QueueReason::Urgent))
-    } else if task.status == TaskStatus::Active && idle_days >= 7 {
+    } else if task.status == TaskStatus::Active && idle_days >= STALE_ACTIVE_DAYS {
         (
             QueueBand::NeedsAction,
             Some(QueueReason::Stale {
@@ -379,6 +428,37 @@ mod tests {
             is_epic: true,
             ..task(status, priority, queue_activity_at)
         }
+    }
+
+    #[test]
+    fn triage_reason_uses_status_specific_idle_thresholds() {
+        let day = 86_400;
+        let now = 100 * day;
+        let reason = |status: &str, idle_days: i64| {
+            let task = task(status, "none", &(now - idle_days * day).to_string());
+            let meta = queue_meta(&task, false, false, 0, now);
+            triage_reason(&task, &meta, now)
+        };
+        assert_eq!(reason("inbox", 0), Some(TriageReason::Inbox));
+        assert_eq!(reason("active", 6), None);
+        assert_eq!(reason("active", 7), Some(TriageReason::StaleActive));
+        assert_eq!(reason("todo", 29), None);
+        assert_eq!(reason("todo", 30), Some(TriageReason::StaleTodo));
+        assert_eq!(reason("backlog", 400), None);
+        assert_eq!(reason("done", 90), None);
+    }
+
+    #[test]
+    fn triage_reason_skips_epics_and_deferred_tasks() {
+        let now = 100 * 86_400;
+        let epic = epic("inbox", "none", "0");
+        let meta = queue_meta(&epic, false, false, 0, now);
+        assert_eq!(triage_reason(&epic, &meta, now), None);
+
+        let mut deferred = task("inbox", "none", "0");
+        deferred.available_at = Some((now + 86_400).to_string());
+        let meta = queue_meta(&deferred, false, false, 0, now);
+        assert_eq!(triage_reason(&deferred, &meta, now), None);
     }
 
     #[test]
@@ -586,5 +666,29 @@ mod tests {
     #[test]
     fn unix_seconds_parses_utc_timestamp() {
         assert_eq!(unix_seconds("1970-01-02T01:02:03Z"), Some(90_123));
+    }
+
+    #[test]
+    fn triage_review_quiets_stale_tasks_for_one_window() {
+        let day = 86_400;
+        let now = 100 * day;
+        let reviewed = Some(now - 5 * day);
+        assert!(triage_review_current(
+            TriageReason::StaleActive,
+            reviewed,
+            now
+        ));
+        assert!(!triage_review_current(
+            TriageReason::StaleActive,
+            Some(now - 7 * day),
+            now
+        ));
+        assert!(triage_review_current(
+            TriageReason::StaleTodo,
+            Some(now - 29 * day),
+            now
+        ));
+        assert!(!triage_review_current(TriageReason::Inbox, reviewed, now));
+        assert!(!triage_review_current(TriageReason::StaleTodo, None, now));
     }
 }

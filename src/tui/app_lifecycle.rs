@@ -488,6 +488,7 @@ impl App {
             inline_images,
             pending_attachments: self.attachment_controller.views(),
             command_catalog: self.command_catalog.clone(),
+            triage: None,
             routing_domain: self.current_routing_domain(),
             has_primary_task: selected_task.is_some(),
             undo_description,
@@ -508,6 +509,9 @@ impl App {
                 },
             )
         });
+        if self.detail.is_inactive() {
+            view.triage = self.triage.as_ref();
+        }
         let store = &self.store;
         let widgets = &mut self.widgets;
         let list = &mut self.list;

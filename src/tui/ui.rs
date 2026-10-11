@@ -9,6 +9,7 @@ mod footer;
 mod header;
 
 pub(crate) use self::header::{HeaderTarget, header_target_at};
+use self::triage::render_triage;
 mod inline_code;
 mod input;
 pub(super) use input::CARET_MARKER;
@@ -24,6 +25,7 @@ mod task_display;
 mod task_list;
 mod timestamps;
 mod toast;
+mod triage;
 mod truncate;
 
 #[cfg(test)]
@@ -128,6 +130,7 @@ pub(crate) struct ViewState<'a> {
     pub(crate) inline_images: Option<DetailInlineImageContext>,
     pub(crate) pending_attachments: Vec<crate::tui::attachment_controller::PendingAttachmentView>,
     pub(crate) command_catalog: std::sync::Arc<crate::tui::event::CommandCatalog>,
+    pub(crate) triage: Option<&'a crate::tui::triage::TriageSession>,
     pub(crate) routing_domain: crate::tui::event::RoutingDomain,
     pub(crate) has_primary_task: bool,
     pub(crate) undo_description: String,
@@ -401,6 +404,20 @@ fn render_surface(
                 view.removed_epic_child.as_ref(),
             );
         }
+    }
+    if let Some(triage) = view.triage {
+        let choice = view.footer_choice_mode.map(|mode| match mode {
+            FooterChoiceMode::Status => FooterMode::StatusChoice,
+            FooterChoiceMode::Priority => FooterMode::PriorityChoice,
+        });
+        let custom_commands = matches!(
+            view.command_catalog.resolve_shortcut_in_domain(
+                crate::tui::event::RoutingDomain::Normal,
+                &[crossterm::event::KeyCode::Char('z')],
+            ),
+            crate::tui::event::CatalogShortcutLookup::Prefix
+        );
+        render_triage(frame, theme, store, triage, choice, custom_commands);
     }
     if let Some(overlay) = &view.overlay {
         render_overlay(

@@ -18,6 +18,16 @@ impl App {
         mouse: MouseEvent,
         terminal_size: Size,
     ) -> Result<bool> {
+        if self.triage.is_some() && self.overlay.is_none() && self.detail.is_inactive() {
+            // The list under the card must keep following it, so the wheel
+            // only scrolls the card.
+            let lines = match mouse.kind {
+                MouseEventKind::ScrollDown => 3,
+                MouseEventKind::ScrollUp => -3,
+                _ => return Ok(false),
+            };
+            return Ok(self.scroll_triage_card(lines));
+        }
         let shortcut_scroll = self.shortcut_overlay_scroll(mouse.kind);
         let task_list_wheel = self.routes_wheel_to_task_list(mouse.kind, terminal_size);
         let previous_selection = self.list.selected_task();

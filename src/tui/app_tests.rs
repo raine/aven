@@ -634,3 +634,6 @@ mod typed_overlay_submissions;
 
 #[path = "app_tests/metadata.rs"]
 mod metadata;
+
+#[path = "app_tests/triage.rs"]
+mod triage;

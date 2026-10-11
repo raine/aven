@@ -133,6 +133,9 @@ impl App {
         let result = execute_terminal_invocation_with(transition, &invocation, runner).await;
         self.apply_custom_command_result(&name, on_success, result)
             .await;
+        if let Err(error) = self.settle_triage_custom_command().await {
+            self.set_error(format!("triage reload failed: {error:#}"));
+        }
         true
     }
 
@@ -209,6 +212,9 @@ impl App {
             self.notification = Some(error);
         } else if let Some(info) = completion_info {
             self.set_info(info);
+        }
+        if let Err(error) = self.settle_triage_custom_command().await {
+            self.set_error(format!("triage reload failed: {error:#}"));
         }
         true
     }

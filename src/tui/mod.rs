@@ -67,6 +67,7 @@ mod text;
 mod theme;
 mod time;
 mod toast;
+mod triage;
 mod ui;
 mod widgets;
 

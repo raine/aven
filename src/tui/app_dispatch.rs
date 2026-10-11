@@ -42,6 +42,18 @@ impl App {
 
     pub(crate) async fn dispatch_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         self.list.cancel_column_drag();
+        if self.triage.is_some() {
+            if self.overlay.is_none() && self.detail.is_inactive() && self.footer_choice.is_none() {
+                self.handle_triage_key(key).await?;
+            } else {
+                self.dispatch_routed_key(key, terminal_size).await?;
+            }
+            return self.settle_triage().await;
+        }
+        self.dispatch_routed_key(key, terminal_size).await
+    }
+
+    async fn dispatch_routed_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         let input = route_key(
             key,
             KeyRouteState {

@@ -336,6 +336,13 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         &[],
         Action::ShowWelcome,
     ),
+    BuiltInCommand::implemented(
+        "triage",
+        "review inbox and stale tasks one at a time",
+        "General",
+        &[],
+        Action::BeginTriage,
+    ),
     BuiltInCommand::implemented_global_in_detail(
         "refresh",
         "reload tasks",

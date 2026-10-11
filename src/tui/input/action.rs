@@ -100,6 +100,7 @@ impl App {
             Action::ReturnToLastChange => self.return_to_last_change().await?,
             Action::ToggleHelp => self.toggle_help_at_height(24),
             Action::ShowWelcome => self.show_welcome(),
+            Action::BeginTriage => self.open_triage().await?,
             Action::BeginSearch => self.begin_search(),
             Action::BeginCommand => self.begin_command().await,
             Action::Refresh => self.refresh().await?,

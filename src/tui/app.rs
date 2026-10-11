@@ -263,6 +263,7 @@ pub(crate) struct App {
     pub(super) pending_terminal_command:
         Option<crate::tui::custom_command::CustomCommandInvocation>,
     pub(super) terminal_mouse_capture: bool,
+    pub(crate) triage: Option<crate::tui::triage::TriageSession>,
     #[cfg(test)]
     pub(super) _test_database_dir: Option<tempfile::TempDir>,
 }
@@ -351,6 +352,7 @@ impl App {
             custom_commands: crate::tui::custom_command_runtime::CustomCommandController::default(),
             pending_terminal_command: None,
             terminal_mouse_capture: false,
+            triage: None,
             #[cfg(test)]
             _test_database_dir: None,
         };

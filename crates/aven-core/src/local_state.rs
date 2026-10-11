@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 
@@ -11,6 +11,7 @@ const SYNC_ACCESS_REFUSED_AT_META_KEY: &str = "sync_access_refused_at";
 /// The `sync_` prefix places it in the sync state that reset clears.
 const SYNC_VAULT_DELETED_AT_META_KEY: &str = "sync_vault_deleted_at";
 const FIRST_LAUNCH_ONBOARDING_VERSION: u32 = 1;
+const TRIAGE_REVIEWS_META_KEY: &str = "tui_triage_reviews";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncAccessRefusal {
@@ -322,6 +323,56 @@ impl Database {
     }
 }
 
+/// When each task was last kept as it stands in triage, in unix seconds. The
+/// marks are local to this database: they only quiet triage on this machine.
+pub type TriageReviews = BTreeMap<String, i64>;
+
+impl Database {
+    pub async fn triage_reviews(&self) -> Result<TriageReviews> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(parse_triage_reviews(
+            get_meta(&mut conn, TRIAGE_REVIEWS_META_KEY)
+                .await?
+                .as_deref(),
+        ))
+    }
+
+    /// Sets or clears a task's review mark and returns the previous one. Marks
+    /// older than the longest stale window no longer affect triage and are
+    /// dropped.
+    pub async fn set_triage_review(
+        &self,
+        task_id: &str,
+        reviewed_at: Option<i64>,
+        now_seconds: i64,
+    ) -> Result<Option<i64>> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let mut reviews =
+            parse_triage_reviews(get_meta(&mut tx, TRIAGE_REVIEWS_META_KEY).await?.as_deref());
+        let previous = match reviewed_at {
+            Some(at) => reviews.insert(task_id.to_string(), at),
+            None => reviews.remove(task_id),
+        };
+        let horizon = now_seconds - crate::queue::STALE_TODO_DAYS * 86_400;
+        reviews.retain(|_, at| *at > horizon);
+        set_meta(
+            &mut tx,
+            TRIAGE_REVIEWS_META_KEY,
+            &serde_json::to_string(&reviews)?,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(previous)
+    }
+}
+
+fn parse_triage_reviews(value: Option<&str>) -> TriageReviews {
+    value
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +543,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(before, after);
+    }
+
+    #[tokio::test]
+    async fn triage_reviews_round_trip_and_drop_expired_marks() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let now = 100 * 86_400;
+        database
+            .set_triage_review("OLD", Some(now - 31 * 86_400), now)
+            .await
+            .unwrap();
+        assert_eq!(
+            database
+                .set_triage_review("NEW", Some(now), now)
+                .await
+                .unwrap(),
+            None
+        );
+
+        let reviews = database.triage_reviews().await.unwrap();
+        assert_eq!(reviews.get("NEW"), Some(&now));
+        assert!(!reviews.contains_key("OLD"));
+
+        assert_eq!(
+            database.set_triage_review("NEW", None, now).await.unwrap(),
+            Some(now)
+        );
+        assert!(database.triage_reviews().await.unwrap().is_empty());
     }
 }

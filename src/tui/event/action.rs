@@ -73,6 +73,7 @@ pub(crate) enum Action {
     ReturnToLastChange,
     ToggleHelp,
     ShowWelcome,
+    BeginTriage,
     BeginSearch,
     BeginCommand,
     AcceptSearch,

@@ -467,13 +467,45 @@ fn footer_hints(mode: FooterMode, width: u16) -> &'static [(&'static str, &'stat
     }
 }
 
+/// Key hints in the footer's chip style for surfaces outside the task list.
+pub(super) fn key_hint_spans(theme: &Theme, hints: &[(&str, &str)]) -> Vec<Span<'static>> {
+    key_hint_segments(theme, hints, theme.bg, theme.bg_panel)
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// One chip-and-label segment per hint, with `chip` filling the key and its
+/// rounded edges blended into the surrounding `bg`.
+pub(super) fn key_hint_segments(
+    theme: &Theme,
+    hints: &[(&str, &str)],
+    bg: ratatui::style::Color,
+    chip: ratatui::style::Color,
+) -> Vec<Vec<Span<'static>>> {
+    hints
+        .iter()
+        .map(|(keys, label)| {
+            let mut spans = key_on(theme, keys, bg, chip);
+            spans.push(Span::styled(format!(" {label}  "), theme.dim()));
+            spans
+        })
+        .collect()
+}
+
 fn key(theme: &Theme, label: &str) -> Vec<Span<'static>> {
-    let key_style = theme
-        .muted()
-        .bg(theme.bg_panel)
-        .add_modifier(Modifier::BOLD);
-    let separator_style = theme.dim().bg(theme.bg_panel);
-    let edge_style = Style::new().fg(theme.bg_panel).bg(theme.bg);
+    key_on(theme, label, theme.bg, theme.bg_panel)
+}
+
+fn key_on(
+    theme: &Theme,
+    label: &str,
+    bg: ratatui::style::Color,
+    chip: ratatui::style::Color,
+) -> Vec<Span<'static>> {
+    let key_style = theme.muted().bg(chip).add_modifier(Modifier::BOLD);
+    let separator_style = theme.dim().bg(chip);
+    let edge_style = Style::new().fg(chip).bg(bg);
     let mut spans = vec![Span::styled(theme.pill_edge("").to_string(), edge_style)];
     for (index, part) in label.split('/').enumerate() {
         if index > 0 {

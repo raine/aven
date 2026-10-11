@@ -80,7 +80,7 @@ fn config(program: &str, success: CustomTuiCommandSuccess) -> AppConfig {
     config
 }
 
-fn capture_config(
+pub(super) fn capture_config(
     path: &std::path::Path,
     target: CustomTuiCommandTarget,
     keys: Vec<String>,
@@ -93,11 +93,11 @@ fn capture_config(
     config
 }
 
-fn captured_json(path: &std::path::Path) -> serde_json::Value {
+pub(super) fn captured_json(path: &std::path::Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
 
-async fn poll_until_complete(app: &mut App) {
+pub(super) async fn poll_until_complete(app: &mut App) {
     for _ in 0..100 {
         if app.poll_custom_commands().await {
             return;
@@ -107,7 +107,7 @@ async fn poll_until_complete(app: &mut App) {
     panic!("custom command did not complete");
 }
 
-async fn external_database(app: &App) -> aven_core::db::Database {
+pub(super) async fn external_database(app: &App) -> aven_core::db::Database {
     let path = app
         ._test_database_dir
         .as_ref()

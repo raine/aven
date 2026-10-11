@@ -318,6 +318,26 @@ field: pick one from the list, type a value, and press `Enter` to save. For
 multiline values, press `Ctrl-x Ctrl-e` to use your `$VISUAL` or `$EDITOR`.
 Define and rename fields with the CLI; see [Task metadata](/task-metadata/).
 
+## Triage mode
+
+Triage mode is a way to clear out tasks that need a decision, one card at a time. Run `:triage` to review:
+
+- Inbox tasks
+- Active tasks with no activity for 7 days
+- Todo tasks with no activity for 30 days
+
+Triage follows the current scope. In project scope it reviews only that project. It shows up to 10 cards per session. When you finish them, press `Enter` to load the next batch.
+
+![aven TUI triage mode showing a stale active task card with its description and decision shortcuts](/triage.webp)
+
+<p class="media-caption">Each card shows why the task needs attention, its description, and the decisions available for it.</p>
+
+Each card lists the decisions available for the task with the same shortcuts as the task list. After a decision, triage moves to the next card. [Custom commands](/custom-commands/) also run on the card's task.
+
+Choosing the current status of an active or todo task keeps it as it is. Aven records the review on this device only and leaves the task unchanged. The task returns to triage once another stale period passes without activity.
+
+Cards you skip return in the next session.
+
 ## Reference
 
 - [Concepts](/concepts/) defines the task model behind the interface.
