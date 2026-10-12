@@ -46,8 +46,10 @@ pub fn available_task_clause(alias: &'static str, now_expression: &str) -> Strin
 /// `alias` must be a static identifier such as `t`.
 pub fn unresolved_blocker_clause(alias: &'static str) -> String {
     format!(
+        // CROSS JOIN pins the dependency rows as the outer loop; otherwise the
+        // planner can scan every task in the workspace as a candidate blocker.
         "EXISTS (SELECT 1 FROM task_dependencies d
-         JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
+         CROSS JOIN tasks blocker ON blocker.workspace_id = d.workspace_id AND blocker.id = d.depends_on_task_id
          WHERE d.workspace_id = {alias}.workspace_id AND d.task_id = {alias}.id
            AND {})",
         open_task_clause("blocker"),
