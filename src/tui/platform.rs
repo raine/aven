@@ -16,6 +16,7 @@ pub(crate) use editor::{
 pub(crate) use gist::create_secret_gist;
 pub(crate) use terminal::{
     KeyboardEnhancementGuard, SuspendedTerminal, SystemTerminalTransition, TerminalTransition,
+    detect_appearance,
 };
 #[cfg(test)]
 pub(crate) use viewer::browser_url_for_test;

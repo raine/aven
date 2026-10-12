@@ -7,6 +7,8 @@ use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::supports_keyboard_enhancement;
+
+use crate::tui::theme::Appearance;
 #[cfg(not(test))]
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -116,6 +118,34 @@ impl Drop for KeyboardEnhancementGuard {
     fn drop(&mut self) {
         let _ = self.disable();
     }
+}
+
+/// Picks the theme for the terminal's background.
+///
+/// Asks the terminal for its colors with OSC 10 and OSC 11. When it does not
+/// answer, reads `COLORFGBG`, and otherwise uses the dark theme. Call this
+/// before the TUI reads input, so a reply cannot arrive as key presses.
+pub(crate) fn detect_appearance() -> Appearance {
+    use terminal_colorsaurus::{QueryOptions, ThemeMode, theme_mode};
+
+    match theme_mode(QueryOptions::default()) {
+        Ok(ThemeMode::Light) => Appearance::Light,
+        Ok(ThemeMode::Dark) => Appearance::Dark,
+        Err(_) => std::env::var("COLORFGBG")
+            .ok()
+            .and_then(|value| colorfgbg_appearance(&value))
+            .unwrap_or_default(),
+    }
+}
+
+/// `COLORFGBG` holds ANSI color indexes as `fg;bg`, or `fg;default;bg`.
+/// White (7) and the bright colors except bright black (8) are light.
+fn colorfgbg_appearance(value: &str) -> Option<Appearance> {
+    let background: u8 = value.rsplit(';').next()?.parse().ok()?;
+    Some(match background {
+        7 | 9..=15 => Appearance::Light,
+        _ => Appearance::Dark,
+    })
 }
 
 pub(crate) trait TerminalTransition {
@@ -255,6 +285,16 @@ impl TerminalTransition for SystemTerminalTransition {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn colorfgbg_reads_the_background_from_the_last_field() {
+        assert_eq!(colorfgbg_appearance("0;15"), Some(Appearance::Light));
+        assert_eq!(colorfgbg_appearance("0;default;7"), Some(Appearance::Light));
+        assert_eq!(colorfgbg_appearance("15;0"), Some(Appearance::Dark));
+        assert_eq!(colorfgbg_appearance("7;8"), Some(Appearance::Dark));
+        assert_eq!(colorfgbg_appearance("15;default"), None);
+        assert_eq!(colorfgbg_appearance(""), None);
+    }
+
     use std::io::{self, Write};
 
     use anyhow::Result;

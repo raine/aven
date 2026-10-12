@@ -169,6 +169,7 @@ async fn run_with_welcome_intro(
         app::App::new_with_view_state_and_config(database, workspace, launch.view_state, config)
             .await?;
     app.set_add_task_db_path(db_path);
+    app.set_appearance(platform::detect_appearance());
     match launch.startup {
         store::TuiStartup::AddTaskOnly { natural } => {
             let mut terminal = TerminalSession::init()?;
