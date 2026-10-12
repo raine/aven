@@ -859,7 +859,7 @@ fn render_add_task_child(
     if matches!(state.mode, AddTaskMode::Compose) {
         return;
     }
-    dim_rendered_area(frame, dialog_area);
+    dim_rendered_area(frame, theme, dialog_area);
 
     if matches!(state.mode, AddTaskMode::ConfirmDiscard) {
         render_confirm(

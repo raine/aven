@@ -232,6 +232,7 @@ pub(crate) struct App {
     pub(crate) list: ListSurface,
     pub(super) intake: IntakeController,
     pub(crate) widgets: WidgetState,
+    pub(crate) appearance: crate::tui::theme::Appearance,
     pub(crate) theme: crate::tui::theme::Theme,
     pub(crate) overlay: Option<OverlayState>,
     pub(super) onboarding_intro: Option<crate::tui::app_onboarding::OnboardingIntro>,
@@ -320,6 +321,7 @@ impl App {
             list: ListSurface::new(has_tasks),
             intake: IntakeController::new(),
             widgets: WidgetState::default(),
+            appearance: crate::tui::theme::Appearance::Dark,
             theme: crate::tui::theme::Theme::dark(),
             overlay: None,
             onboarding_intro: None,
@@ -398,6 +400,15 @@ impl App {
 
     pub(crate) fn set_add_task_db_path(&mut self, db_path: std::path::PathBuf) {
         self.intake.set_db_path(db_path);
+    }
+
+    pub(crate) fn set_appearance(&mut self, appearance: crate::tui::theme::Appearance) {
+        self.appearance = appearance;
+        self.theme = appearance.theme();
+    }
+
+    pub(crate) fn toggle_appearance(&mut self) {
+        self.set_appearance(self.appearance.toggled());
     }
 
     fn highlighted_sidebar_command_target(

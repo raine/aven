@@ -80,6 +80,34 @@ pub(crate) struct Theme {
 
     /// Text inside markdown block quotes.
     pub(crate) quote: Color,
+
+    /// Color that dimmed surfaces recede toward, such as the underlay of a
+    /// modal dialog and the dimmed splash logo.
+    pub(crate) dim_target: Color,
+}
+
+/// Built-in themes, matched to the terminal background they stay readable on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Appearance {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    pub(crate) const fn theme(self) -> Theme {
+        match self {
+            Self::Dark => Theme::dark(),
+            Self::Light => Theme::light(),
+        }
+    }
+
+    pub(crate) const fn toggled(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
+    }
 }
 
 impl Theme {
@@ -157,6 +185,92 @@ impl Theme {
             ],
 
             quote: Color::Rgb(137, 199, 82),
+
+            dim_target: Color::Rgb(0, 0, 0),
+        }
+    }
+
+    pub(crate) const fn light() -> Self {
+        let paper = Color::Rgb(250, 250, 247);
+        let bg_raised = Color::Rgb(236, 236, 231);
+        let border = Color::Rgb(174, 174, 166);
+        let blue = Color::Rgb(36, 96, 176);
+        let green = Color::Rgb(52, 128, 24);
+        let red = Color::Rgb(200, 44, 50);
+        Self {
+            bg: Color::Reset,
+            bg_raised,
+            bg_panel: Color::Rgb(229, 229, 223),
+            bg_selected: Color::Rgb(219, 211, 248),
+            bg_row_marked: bg_raised,
+            bg_row_group: bg_raised,
+            bg_lane: Color::Rgb(244, 244, 240),
+            bg_lane_active: Color::Rgb(238, 236, 247),
+            lane_divider: Color::Rgb(213, 213, 207),
+
+            fg: Color::Rgb(28, 29, 27),
+            fg_muted: Color::Rgb(84, 86, 82),
+            fg_dim: Color::Rgb(126, 128, 122),
+            inverse_fg: paper,
+
+            border,
+            scrollbar_track: border,
+            table_header_bg: border,
+            badge_bg: border,
+            badge_installed_bg: Color::Rgb(218, 218, 211),
+
+            accent: Color::Rgb(104, 72, 220),
+            info: blue,
+            success: green,
+            warning: Color::Rgb(196, 112, 8),
+            danger: red,
+            attention: Color::Rgb(168, 124, 0),
+            conflict: Color::Rgb(190, 48, 104),
+
+            code: blue,
+            link: blue,
+            status_todo: blue,
+            priority_medium: Color::Rgb(96, 82, 200),
+            priority_none: border,
+
+            custom_command_name: Color::Rgb(178, 96, 34),
+            custom_command_tag: Color::Rgb(150, 86, 44),
+
+            field_label_active: Color::Rgb(78, 44, 188),
+            field_error: red,
+            task_label: Color::Rgb(0, 118, 148),
+
+            splash_gradient: [
+                Color::Rgb(135, 40, 250),
+                Color::Rgb(150, 63, 255),
+                Color::Rgb(176, 108, 255),
+            ],
+            splash_check: Color::Rgb(40, 16, 72),
+            // A third of the way from `dim_target` to `splash_check`, matching
+            // how far the dark theme's check fades.
+            splash_check_dimmed: Color::Rgb(180, 172, 189),
+            splash_afterglow: Color::Rgb(88, 28, 196),
+
+            project_palette: [
+                Color::Rgb(118, 64, 212),
+                Color::Rgb(16, 138, 104),
+                Color::Rgb(184, 112, 8),
+                Color::Rgb(200, 62, 40),
+                Color::Rgb(184, 48, 112),
+                Color::Rgb(84, 140, 24),
+                Color::Rgb(24, 112, 192),
+                Color::Rgb(168, 124, 0),
+                Color::Rgb(16, 136, 140),
+                Color::Rgb(136, 80, 212),
+                Color::Rgb(196, 76, 40),
+                Color::Rgb(40, 136, 60),
+                Color::Rgb(56, 92, 208),
+                Color::Rgb(176, 56, 156),
+            ],
+
+            quote: green,
+
+            dim_target: paper,
         }
     }
 

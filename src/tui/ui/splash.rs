@@ -131,7 +131,7 @@ fn splash_cell(
     let purple_mask = pixel_mask(&pixels, Pixel::Purple);
     let occupied_mask = white_mask | purple_mask;
     let purple = purple_at(&theme.splash_gradient, cell_y * 2, height * 2);
-    let purple = dim_color(purple, visual.dim);
+    let purple = dim_color(purple, theme.dim_target, visual.dim);
     let glow = afterglow_amount(
         cell_x * 2,
         cell_y * 2,
@@ -353,16 +353,22 @@ fn rgb_channels(color: Color) -> Option<(f32, f32, f32)> {
     }
 }
 
-fn dim_color(color: Color, amount: f32) -> Color {
+/// Fully dimmed, a color keeps a third of its distance from `target`.
+fn dim_color(color: Color, target: Color, amount: f32) -> Color {
     let amount = amount.clamp(0.0, 1.0);
-    match color {
-        Color::Rgb(red, green, blue) => Color::Rgb(
-            mix_channel(red, red / 3, amount),
-            mix_channel(green, green / 3, amount),
-            mix_channel(blue, blue / 3, amount),
+    match (color, target) {
+        (Color::Rgb(red, green, blue), Color::Rgb(to_red, to_green, to_blue)) => Color::Rgb(
+            mix_channel(red, dimmed_channel(red, to_red), amount),
+            mix_channel(green, dimmed_channel(green, to_green), amount),
+            mix_channel(blue, dimmed_channel(blue, to_blue), amount),
         ),
         _ => color,
     }
+}
+
+fn dimmed_channel(value: u8, target: u8) -> u8 {
+    let target = i32::from(target);
+    (target + (i32::from(value) - target) / 3) as u8
 }
 
 fn mix_channel(start: u8, end: u8, amount: f32) -> u8 {
@@ -414,6 +420,20 @@ mod tests {
             let amount = afterglow_amount(60, 28, 120, 56, logo, progress);
             assert_eq!(afterglow_color(color, glow, amount), color);
         }
+    }
+
+    #[test]
+    fn dimming_moves_the_logo_toward_the_dim_target() {
+        let purple = Color::Rgb(135, 40, 250);
+        assert_eq!(
+            dim_color(purple, Theme::dark().dim_target, 1.0),
+            Color::Rgb(45, 13, 83)
+        );
+        assert_eq!(
+            dim_color(purple, Theme::light().dim_target, 1.0),
+            Color::Rgb(212, 180, 248)
+        );
+        assert_eq!(dim_color(purple, Theme::light().dim_target, 0.0), purple);
     }
 
     #[test]

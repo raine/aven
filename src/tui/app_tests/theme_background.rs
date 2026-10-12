@@ -53,3 +53,17 @@ async fn popover_menu_keeps_main_surface_underlay_bright() {
     assert_eq!(underlay.bg, Color::Reset);
     assert!(!underlay.modifier.contains(Modifier::DIM));
 }
+
+#[tokio::test]
+async fn toggle_background_switches_theme_and_keeps_terminal_background() {
+    let mut app = test_app().await;
+
+    app.toggle_appearance();
+    let buf = render_app_buffer(&mut app, 120, 30);
+
+    assert_eq!(app.theme, crate::tui::theme::Theme::light());
+    assert_eq!(buf[(119, 10)].bg, Color::Reset);
+
+    app.toggle_appearance();
+    assert_eq!(app.theme, crate::tui::theme::Theme::dark());
+}

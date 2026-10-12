@@ -119,12 +119,12 @@ fn right_edge_title<'a>(theme: &Theme, title: Option<Line<'a>>) -> Line<'a> {
     title
 }
 
-pub(super) fn dim_rendered_background(frame: &mut Frame) {
+pub(super) fn dim_rendered_background(frame: &mut Frame, theme: &Theme) {
     let area = frame.area();
-    dim_rendered_area(frame, area);
+    dim_rendered_area(frame, theme, area);
 }
 
-pub(super) fn dim_rendered_area(frame: &mut Frame, area: Rect) {
+pub(super) fn dim_rendered_area(frame: &mut Frame, theme: &Theme, area: Rect) {
     let buffer = frame.buffer_mut();
     for row in area.top()..area.bottom() {
         for column in area.left()..area.right() {
@@ -136,25 +136,29 @@ pub(super) fn dim_rendered_area(frame: &mut Frame, area: Rect) {
             {
                 cell.modifier.insert(Modifier::DIM);
             }
-            cell.bg = dim_background_color(cell.bg);
+            cell.bg = dim_background_color(cell.bg, theme.dim_target);
         }
     }
 }
 
-fn dim_background_color(color: Color) -> Color {
-    let Color::Rgb(red, green, blue) = color else {
+/// Moves an RGB background two fifths of the way toward `target`. Other
+/// colors, including the terminal default, stay as they are.
+fn dim_background_color(color: Color, target: Color) -> Color {
+    let (Color::Rgb(red, green, blue), Color::Rgb(to_red, to_green, to_blue)) = (color, target)
+    else {
         return color;
     };
 
     Color::Rgb(
-        dim_color_channel(red),
-        dim_color_channel(green),
-        dim_color_channel(blue),
+        dim_color_channel(red, to_red),
+        dim_color_channel(green, to_green),
+        dim_color_channel(blue, to_blue),
     )
 }
 
-fn dim_color_channel(value: u8) -> u8 {
-    (u16::from(value) * 3 / 5) as u8
+fn dim_color_channel(value: u8, target: u8) -> u8 {
+    let target = i32::from(target);
+    (target + (i32::from(value) - target) * 3 / 5) as u8
 }
 
 /// Width of `dialog_hint_line`, for sizing without styling.
@@ -193,11 +197,21 @@ mod tests {
 
     #[test]
     fn dimming_darkens_rgb_and_preserves_default_backgrounds() {
+        let target = Theme::dark().dim_target;
         assert_eq!(
-            dim_background_color(Color::Rgb(150, 100, 50)),
+            dim_background_color(Color::Rgb(150, 100, 50), target),
             Color::Rgb(90, 60, 30)
         );
-        assert_eq!(dim_background_color(Color::Reset), Color::Reset);
+        assert_eq!(dim_background_color(Color::Reset, target), Color::Reset);
+    }
+
+    #[test]
+    fn light_dimming_fades_backgrounds_toward_the_paper_color() {
+        let light = Theme::light();
+        assert_eq!(
+            dim_background_color(light.bg_raised, light.dim_target),
+            Color::Rgb(242, 242, 238)
+        );
     }
 
     #[test]

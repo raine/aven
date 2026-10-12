@@ -322,6 +322,13 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         }],
         Action::Refresh,
     ),
+    BuiltInCommand::implemented_global_in_detail(
+        "toggle-background",
+        "switch between the light and dark theme",
+        "General",
+        &[],
+        Action::ToggleBackground,
+    ),
     BuiltInCommand::implemented_with_aliases(
         "sync",
         &["config-status"],

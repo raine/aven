@@ -528,7 +528,7 @@ fn render_add_task_surface_overlay(
         }
         _ => {
             if overlay_dims_underlay(overlay, false) {
-                dialog::dim_rendered_background(frame);
+                dialog::dim_rendered_background(frame, theme);
             }
             render_overlay_content(
                 frame,
@@ -1004,7 +1004,7 @@ fn render_overlay(
         return;
     }
     if overlay_dims_underlay(overlay, inline_title_editor) {
-        dialog::dim_rendered_background(frame);
+        dialog::dim_rendered_background(frame, theme);
     }
     if let OverlayView::DetailHelp { scroll } = overlay {
         render_detail_help(
