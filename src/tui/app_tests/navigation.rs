@@ -902,3 +902,54 @@ async fn sidebar_wheel_does_not_leak_through_modal_or_tiny_terminal() {
         assert_eq!(app.list.focus(), Focus::Tasks);
     }
 }
+
+#[tokio::test]
+async fn mouse_wheel_over_sidebar_preserves_active_detail_routing() {
+    let mut app = test_app().await;
+    let mut draft = test_task_draft("Scrollable detail");
+    draft.description = (0..100)
+        .map(|index| format!("Description line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    create_and_select_task(&mut app, draft).await;
+    app.show_detail(0);
+    let size = (140, 24);
+    let sidebar = app.list.selected_sidebar();
+    let task = app.list.selected_task();
+    let scope = app.store.view_state.scope.clone();
+    let wheel = wheel_down(3, 4);
+
+    app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert_eq!(app.list.selected_task(), task);
+    assert!(app.detail.is_active());
+    let scroll = app.detail.state().unwrap().scroll();
+    assert!(scroll > 0);
+
+    let mut up = wheel;
+    up.kind = MouseEventKind::ScrollUp;
+    app.dispatch_mouse(up, size.into()).await.unwrap();
+    assert!(app.detail.state().unwrap().scroll() < scroll);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+
+    app.dispatch_mouse(wheel_down(80, 8), size.into())
+        .await
+        .unwrap();
+    let scroll = app.detail.state().unwrap().scroll();
+    assert!(scroll > 0);
+    app.begin_search();
+    app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    assert_eq!(app.detail.state().unwrap().scroll(), scroll);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert_eq!(app.list.selected_task(), task);
+
+    app.overlay = None;
+    app.detail.close();
+    app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    assert_eq!(app.list.selected_task(), task);
+    assert_eq!(app.store.view_state.scope, scope);
+}

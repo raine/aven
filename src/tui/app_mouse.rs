@@ -24,6 +24,7 @@ impl App {
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
         ) && !self.prefix_hints_active()
             && self.overlay.is_none()
+            && self.detail.is_inactive()
             && self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row);
         let previous_sidebar = (self.list.focus(), self.list.selected_sidebar());
         let task_list_wheel =
@@ -81,7 +82,9 @@ impl App {
                 } else {
                     -1
                 };
-                if self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row) {
+                if self.detail.is_inactive()
+                    && self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
+                {
                     // Browse without activating a scope or changing the task selection.
                     self.list.focus_sidebar();
                     self.preserve_or_restore_sidebar_selection();

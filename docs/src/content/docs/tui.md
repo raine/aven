@@ -76,9 +76,10 @@ Use `Tab` (or `Left` from the task list) to focus the sidebar. Browse with
 `Up`/`Down` or `k`/`j`, page with `PageUp`/`PageDown` or `Ctrl-u`/`Ctrl-d`, and
 use `Home`/`End` to reach the edges. Long lists keep the highlighted row visible;
 page navigation and mouse wheel movement stop at the first and last selectable
-rows. The wheel over the visible sidebar focuses and browses it without changing
-the active scope or task selection. Press `Enter` to activate the highlighted
-view or project, or `Esc`/`Tab` to return to tasks without activating it.
+rows. While browsing tasks, the wheel over the visible sidebar focuses and
+browses it without changing the active scope or task selection. Active task
+detail and capturing overlays retain wheel ownership. Press `Enter` to activate
+the highlighted view or project, or `Esc`/`Tab` to return to tasks without activating it.
 
 Configure the ordered sidebar view list in
 [`tui.sidebar.views`](/configuration/#tui-sidebar-views). Hidden views remain
