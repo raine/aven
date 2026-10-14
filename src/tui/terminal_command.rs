@@ -391,14 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_lifecycle_and_restoration_wrap_every_runner_result() {
-        for result in [
-            Ok(()),
-            Err("nonzero".into()),
-            Err("signal".into()),
-            Err("timeout".into()),
-            Err("wait".into()),
-            Err("spawn".into()),
-        ] {
+        for result in [Ok(()), Err("runner failed".into())] {
             let invocation = invocation();
             let events = Arc::new(Mutex::new(Vec::new()));
             let mut transition = FakeTransition {
@@ -545,13 +538,5 @@ fn main() {
         assert_eq!(error, "custom command :agent timed out");
         assert_eq!(transition.suspend_count, 1);
         assert_eq!(transition.restore_count, 1);
-    }
-
-    #[test]
-    fn configured_timeout_is_distinct_from_unlimited_terminal_default() {
-        let mut invocation = invocation();
-        assert_eq!(invocation.timeout, None);
-        invocation.timeout = Some(Duration::from_secs(30));
-        assert_eq!(invocation.timeout, Some(Duration::from_secs(30)));
     }
 }

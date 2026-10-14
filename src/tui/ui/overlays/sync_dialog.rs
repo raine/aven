@@ -5,7 +5,7 @@ use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::inline_code::wrap_with_code;
@@ -37,6 +37,7 @@ const MAX_DIALOG_WIDTH: u16 = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncDialogHit {
     Action(usize),
+    CloudLink,
     Inside,
     Outside,
 }
@@ -45,6 +46,7 @@ struct Body {
     lines: Vec<Line<'static>>,
     /// Body line and cell range of each action, in action order.
     actions: Vec<ActionArea>,
+    cloud_links: Vec<ActionArea>,
 }
 
 #[derive(Clone, Copy)]
@@ -183,6 +185,14 @@ pub(crate) fn sync_dialog_hit(
     }
     let line = layout.start + usize::from(row - layout.body_area.y);
     let column = column - layout.body_area.x;
+    if layout
+        .body
+        .cloud_links
+        .iter()
+        .any(|area| area.line == line && (area.start..area.end).contains(&column))
+    {
+        return SyncDialogHit::CloudLink;
+    }
     layout
         .body
         .actions
@@ -235,6 +245,7 @@ fn body(theme: &Theme, view: &SyncDialogView<'_>, width: usize) -> Body {
     let mut body = Body {
         lines: Vec::new(),
         actions: Vec::new(),
+        cloud_links: Vec::new(),
     };
     match &view.state.page {
         SyncPage::Home => home_lines(theme, &mut body, view, width),
@@ -296,7 +307,62 @@ fn body(theme: &Theme, view: &SyncDialogView<'_>, width: usize) -> Body {
             ));
         }
     }
+    link_cloud_labels(theme, &mut body);
     body
+}
+
+/// Finds link cells in the rendered lines, including labels split by wrapping.
+fn link_cloud_labels(theme: &Theme, body: &mut Body) {
+    let mut chars = Vec::new();
+    for (line, text) in body.lines.iter().enumerate() {
+        let mut column = 0;
+        for ch in text.to_string().chars() {
+            let end = column + ch.width().unwrap_or(0) as u16;
+            chars.push((
+                ch,
+                Some(ActionArea {
+                    line,
+                    start: column,
+                    end,
+                }),
+            ));
+            column = end;
+        }
+        chars.push((' ', None));
+    }
+    let label: Vec<_> = "Aven Cloud".chars().collect();
+    for window in chars.windows(label.len()) {
+        if window.iter().map(|(ch, _)| *ch).eq(label.iter().copied()) {
+            body.cloud_links
+                .extend(window.iter().filter_map(|(_, area)| *area));
+        }
+    }
+    let link_style = Style::new()
+        .fg(theme.accent)
+        .add_modifier(Modifier::UNDERLINED);
+    for (line_index, line) in body.lines.iter_mut().enumerate() {
+        let mut column = 0;
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        for span in &line.spans {
+            for ch in span.content.chars() {
+                let linked = body.cloud_links.iter().any(|area| {
+                    area.line == line_index && (area.start..area.end).contains(&column)
+                });
+                let style = if linked {
+                    span.style.patch(link_style)
+                } else {
+                    span.style
+                };
+                if let Some(last) = spans.last_mut().filter(|last| last.style == style) {
+                    last.content.to_mut().push(ch);
+                } else {
+                    spans.push(Span::styled(ch.to_string(), style));
+                }
+                column += ch.width().unwrap_or(0) as u16;
+            }
+        }
+        line.spans = spans;
+    }
 }
 
 fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: usize) {
@@ -338,6 +404,16 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
     if let Some(state) = state_line(status, summary.health) {
         lines.push(Line::from(Span::styled(state, theme.muted())));
     }
+    if summary.health == SyncHealth::VaultDeleted {
+        lines.extend(paragraph(
+            theme,
+            "This sync's vault was deleted on the server, so automatic sync stopped. Local \
+             tasks and unsynced changes stay here. Run `aven sync reset` in a terminal, then \
+             `aven sync setup` with a new setup code.",
+            Style::new().fg(theme.fg),
+            width,
+        ));
+    }
     if summary.health == SyncHealth::AccessRefused {
         lines.extend(paragraph(
             theme,
@@ -360,13 +436,7 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
 
     lines.push(Line::from(""));
     if let Some(server) = &status.server {
-        lines.extend(wrapped_row(
-            theme,
-            "Server",
-            server,
-            Style::new().fg(theme.fg),
-            width,
-        ));
+        server_lines(theme, lines, server, width);
     }
     lines.extend(wrapped_row(
         theme,
@@ -1076,7 +1146,7 @@ fn invitation_lines(
              continue it; nothing is captured again."
         }
         InvitationKind::Setup => {
-            "Paste the setup invitation from your hosting provider or `aven server setup`."
+            "Paste the setup invitation from Aven Cloud, or from `aven server setup` if you self-host."
         }
         InvitationKind::Join if status.phase == LocalPhase::JoinIncomplete => {
             "On the device that created the first invitation, use Add device or run \
@@ -1143,6 +1213,21 @@ fn invitation_lines(
     }
 }
 
+fn server_lines(theme: &Theme, lines: &mut Vec<Line<'static>>, server: &str, width: usize) {
+    let server = if aven_core::sync::client::is_aven_cloud(server) {
+        "Aven Cloud"
+    } else {
+        server
+    };
+    lines.extend(wrapped_row(
+        theme,
+        "Server",
+        server,
+        Style::new().fg(theme.fg),
+        width,
+    ));
+}
+
 fn confirm_setup_lines(
     theme: &Theme,
     body: &mut Body,
@@ -1151,13 +1236,7 @@ fn confirm_setup_lines(
     width: usize,
 ) {
     let lines = &mut body.lines;
-    lines.extend(wrapped_row(
-        theme,
-        "Server",
-        server,
-        Style::new().fg(theme.fg),
-        width,
-    ));
+    server_lines(theme, lines, server, width);
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Use this computer's data:",
@@ -1213,13 +1292,7 @@ fn confirm_setup_lines(
 
 fn confirm_join_lines(theme: &Theme, body: &mut Body, server: &str, replace: bool, width: usize) {
     let lines = &mut body.lines;
-    lines.extend(wrapped_row(
-        theme,
-        "Server",
-        server,
-        Style::new().fg(theme.fg),
-        width,
-    ));
+    server_lines(theme, lines, server, width);
     lines.push(Line::from(""));
     if replace {
         lines.extend(paragraph(
@@ -1438,6 +1511,7 @@ fn action_line(theme: &Theme, label: &'static str, focused: bool) -> Line<'stati
 /// Explains the status headline; a set-up database needs no explanation.
 fn state_line(status: &TuiSyncStatus, health: SyncHealth) -> Option<&'static str> {
     Some(match (health, status.phase) {
+        (SyncHealth::VaultDeleted, _) => "Vault deleted",
         (SyncHealth::AccessRefused, _) => "Access unconfirmed",
         (SyncHealth::RuntimeDisabled, _) => "Sync is disabled by the runtime override",
         (_, LocalPhase::NotSetUp) => "This database is local only",
@@ -1470,6 +1544,65 @@ fn detail_lines(theme: &Theme, status: &TuiSyncStatus, width: usize) -> Vec<Line
             width,
         ));
     }
+    let daemon = status
+        .daemon_service
+        .as_ref()
+        .map_or("unavailable", |service| {
+            if !service.installed {
+                "not installed"
+            } else if service.running == Some(true) {
+                "running"
+            } else {
+                "not running"
+            }
+        });
+    lines.extend(wrapped_row(theme, "Daemon", daemon, theme.muted(), width));
+    let now = chrono::Utc::now().timestamp();
+    let last_sync = status.daemon_sync.last_success_at.map_or_else(
+        || "never recorded".to_string(),
+        |at| {
+            format!(
+                "{} ({} ago)",
+                crate::status::daemon_time(at),
+                crate::status::elapsed_text(now.saturating_sub(at))
+            )
+        },
+    );
+    // Three intervals allows normal scheduling jitter without hiding a stalled daemon.
+    let stale = status.enabled
+        && status.pending_changes > 0
+        && status.daemon_sync.last_success_at.is_none_or(|at| {
+            now.saturating_sub(at) > status.interval_seconds.saturating_mul(3) as i64
+        });
+    lines.extend(wrapped_row(
+        theme,
+        "Last daemon sync",
+        &last_sync,
+        Style::new().fg(if stale { theme.warning } else { theme.fg_muted }),
+        width,
+    ));
+    if let Some(error) = &status.daemon_sync.error {
+        lines.extend(wrapped_row(
+            theme,
+            "Daemon error",
+            &format!(
+                "{} since {}",
+                error.code,
+                crate::status::daemon_time(error.since)
+            ),
+            Style::new().fg(theme.danger),
+            width,
+        ));
+        if let Some(at) = status.daemon_sync.next_retry_at.filter(|at| *at > now) {
+            lines.extend(wrapped_row(
+                theme,
+                "Next retry",
+                &format!("in {}", crate::status::elapsed_text(at - now)),
+                theme.muted(),
+                width,
+            ));
+        }
+    }
     lines.extend(wrapped_row(
         theme,
         "Sync cursor",
@@ -1493,6 +1626,15 @@ fn detail_lines(theme: &Theme, status: &TuiSyncStatus, width: usize) -> Vec<Line
             width,
         ));
     }
+    if let Some(at) = &status.vault_deleted_at {
+        lines.extend(wrapped_row(
+            theme,
+            "Vault deleted",
+            at,
+            Style::new().fg(theme.danger),
+            width,
+        ));
+    }
     lines
 }
 
@@ -1503,13 +1645,14 @@ fn wrapped_row(
     style: Style,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let value_width = width.saturating_sub(LABEL_WIDTH).max(1);
+    let label_width = LABEL_WIDTH.max(label.len() + 1);
+    let value_width = width.saturating_sub(label_width).max(1);
     let mut lines = wrap_with_code(theme, value, style, value_width);
     for (index, line) in lines.iter_mut().enumerate() {
         let label = if index == 0 { label } else { "" };
         line.spans.insert(
             0,
-            Span::styled(format!("{label:<LABEL_WIDTH$}"), theme.dim()),
+            Span::styled(format!("{label:<label_width$}"), theme.dim()),
         );
     }
     lines
@@ -1608,4 +1751,227 @@ pub(in crate::tui::ui) fn sync_dialog_lines_for_test_width(
     width: usize,
 ) -> Vec<Line<'static>> {
     body(&Theme::dark(), view, width).lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_blocked_dialog_renders_headline_recovery_and_health_details() {
+        let theme = Theme::dark();
+        let now = chrono::Utc::now().timestamp();
+        let status = TuiSyncStatus {
+            enabled: true,
+            set_up: true,
+            phase: LocalPhase::SetUp,
+            pending_changes: 16,
+            daemon_sync: aven_core::local_state::DaemonSyncState {
+                last_success_at: Some(now - 4 * 3600 - 41 * 60),
+                error: Some(aven_core::local_state::DaemonSyncError {
+                    code: "protected-key-storage-unavailable".to_string(),
+                    message: "unlock".to_string(),
+                    since: now - 4 * 3600,
+                }),
+                next_retry_at: Some(now + 192),
+            },
+            ..Default::default()
+        };
+        let state = crate::tui::overlay::SyncDialogState {
+            details: true,
+            ..Default::default()
+        };
+        let activity = SyncActivity::default();
+        let view = SyncDialogView {
+            state: &state,
+            status: &status,
+            activity: &activity,
+            syncing: None,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 60)).unwrap();
+        terminal
+            .draw(|frame| render_sync_dialog(frame, &theme, &view))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for expected in [
+            "● Background sync blocked",
+            "Background sync",
+            "Last daemon sync",
+            "4h 41m ago",
+            "Daemon error",
+            "Next retry",
+            "in 3m",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        #[cfg(target_os = "macos")]
+        let recovery = [
+            "Keychain access needed",
+            "Choose",
+            "Sync now, then Always Allow",
+        ];
+        #[cfg(not(target_os = "macos"))]
+        let recovery = ["Key store access needed", "Unlock", "then choose Sync now."];
+        for expected in recovery {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        let headline = body(&theme, &view, 96)
+            .lines
+            .into_iter()
+            .find(|line| line.to_string().contains("Background sync blocked"))
+            .unwrap();
+        assert!(
+            headline
+                .spans
+                .iter()
+                .all(|span| span.style.fg == Some(theme.danger))
+        );
+        let details = detail_lines(&theme, &status, 96);
+        let stale = details
+            .iter()
+            .find(|line| line.to_string().contains("Last daemon sync"))
+            .unwrap();
+        assert_eq!(stale.spans.last().unwrap().style.fg, Some(theme.warning));
+        let error = details
+            .iter()
+            .find(|line| line.to_string().contains("Daemon error"))
+            .unwrap();
+        assert_eq!(error.spans.last().unwrap().style.fg, Some(theme.danger));
+        let mut recovered = status;
+        recovered.daemon_sync.error = None;
+        recovered.daemon_sync.next_retry_at = None;
+        recovered.daemon_sync.last_success_at = Some(now);
+        let details = detail_lines(&theme, &recovered, 96);
+        assert!(
+            !details
+                .iter()
+                .any(|line| line.to_string().contains("Daemon error")
+                    || line.to_string().contains("Next retry"))
+        );
+        let last = details
+            .iter()
+            .find(|line| line.to_string().contains("Last daemon sync"))
+            .unwrap();
+        assert_eq!(last.spans.last().unwrap().style.fg, Some(theme.fg_muted));
+    }
+
+    #[test]
+    fn cloud_link_styles_only_label_cells_and_handles_wrapping() {
+        let theme = Theme::dark();
+        for width in [21, 40, 60] {
+            let mut body = Body {
+                lines: paragraph(
+                    &theme,
+                    "界 Paste from Aven Cloud, or from `aven server setup` if you self-host.",
+                    theme.muted(),
+                    width,
+                ),
+                actions: Vec::new(),
+                cloud_links: Vec::new(),
+            };
+            let before: Vec<_> = body.lines.iter().map(ToString::to_string).collect();
+            link_cloud_labels(&theme, &mut body);
+            assert_eq!(
+                before,
+                body.lines
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            );
+            let linked: String = body
+                .lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .filter(|span| span.style.add_modifier.contains(Modifier::UNDERLINED))
+                .map(|span| span.content.as_ref())
+                .collect();
+            assert_eq!(linked.replace(' ', ""), "AvenCloud", "width {width}");
+            assert!(!body.cloud_links.is_empty());
+        }
+    }
+
+    #[test]
+    fn cloud_link_hit_uses_visible_cells_and_scroll_offset() {
+        use crate::tui::overlay::SyncDialogState;
+        let theme = Theme::dark();
+        let status = TuiSyncStatus::default();
+        let activity = SyncActivity::default();
+        for (terminal, scroll) in [(Size::new(80, 24), 0), (Size::new(35, 10), 1)] {
+            let state = SyncDialogState {
+                page: SyncPage::Invitation {
+                    kind: InvitationKind::Setup,
+                    input: SecretText::default(),
+                    error: None,
+                },
+                scroll,
+                selected: usize::MAX,
+                ..Default::default()
+            };
+            let view = SyncDialogView {
+                state: &state,
+                status: &status,
+                activity: &activity,
+                syncing: None,
+            };
+            let layout = Layout::new(&theme, &view, terminal);
+            let mut hits = 0;
+            for area in &layout.body.cloud_links {
+                if area.line < layout.start || area.line >= layout.start + layout.visible_rows {
+                    continue;
+                }
+                for column in area.start..area.end {
+                    assert_eq!(
+                        sync_dialog_hit(
+                            &theme,
+                            &view,
+                            terminal,
+                            layout.body_area.x + column,
+                            layout.body_area.y + (area.line - layout.start) as u16
+                        ),
+                        SyncDialogHit::CloudLink
+                    );
+                    hits += 1;
+                }
+            }
+            assert!(hits > 0);
+            assert_eq!(
+                sync_dialog_hit(&theme, &view, terminal, layout.area.x, layout.area.y),
+                SyncDialogHit::Inside
+            );
+            assert_eq!(
+                sync_dialog_hit(&theme, &view, terminal, 0, 0),
+                SyncDialogHit::Outside
+            );
+        }
+    }
+
+    #[test]
+    fn server_row_names_cloud_and_keeps_other_origins_visible() {
+        for (server, cloud) in [
+            ("https://sync.aventasks.dev", true),
+            ("HTTPS://SYNC.AVENTASKS.DEV:443/", true),
+            ("https://sync.aventasks.dev:444", false),
+            ("http://sync.private.example:3746", false),
+            ("https://sync.aventasks.dev/private", false),
+            ("https://user@sync.aventasks.dev", false),
+        ] {
+            let mut lines = Vec::new();
+            server_lines(&Theme::dark(), &mut lines, server, 100);
+            let text = lines
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(text.contains("Server"), "{text}");
+            assert!(!text.contains("Hosting"), "{text}");
+            assert_eq!(text.contains("Aven Cloud"), cloud, "{text}");
+            assert_eq!(text.contains(server), !cloud, "{text}");
+        }
+    }
 }

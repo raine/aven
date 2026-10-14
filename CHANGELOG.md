@@ -3,6 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- macOS installations from Homebrew or the install script show [notifications](https://aventasks.dev/notifications/) with Aven's name and icon, and identify the background daemon as Aven in Login Items.
+- Get [reminders](https://aventasks.dev/notifications/#reminders) from the background daemon: a daily digest of tasks due today or overdue, and a notification when a deferred task becomes available. Turn them on with `aven config set reminders.enabled true`.
+
 ## v0.1.49 (2026-10-13)
 
 - Install the prebuilt binary with Nix, without compiling: `nix profile install https://github.com/raine/aven/releases/latest/download/aven-nix.tar.gz`.

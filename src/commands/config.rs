@@ -38,6 +38,7 @@ impl ConfigKey {
     fn name(self) -> &'static str {
         match self {
             Self::SyncEnabled => "sync.enabled",
+            Self::RemindersEnabled => "reminders.enabled",
             Self::SyncIntervalSeconds => "sync.interval_seconds",
             Self::SyncQrGlyphs => "sync.qr_glyphs",
             Self::UpdateAutomaticChecks => "update.automatic_checks",
@@ -55,6 +56,7 @@ impl ConfigKey {
     fn render(self, config: &AppConfig) -> String {
         match self {
             Self::SyncEnabled => config.sync.enabled.to_string(),
+            Self::RemindersEnabled => config.reminders.enabled.to_string(),
             Self::SyncIntervalSeconds => config.sync_interval_seconds().to_string(),
             Self::SyncQrGlyphs => match config.sync.qr_glyphs {
                 QrGlyphsConfig::Auto => "auto".to_string(),
@@ -80,7 +82,8 @@ impl ConfigKey {
 
     fn parse_value(self, value: &str) -> Result<String> {
         match self {
-            Self::SyncEnabled | Self::UpdateAutomaticChecks => match value {
+            Self::SyncEnabled | Self::RemindersEnabled | Self::UpdateAutomaticChecks => match value
+            {
                 "true" | "false" => Ok(value.to_string()),
                 _ => bail!("invalid value for {}: expected true or false", self.name()),
             },

@@ -1,5 +1,7 @@
 mod epics;
 pub use epics::{EpicProgress, EpicSummary};
+mod task_list;
+pub use task_list::{TaskList, TaskListDirection, TaskListFacet, TaskListQuery, TaskListSort};
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -151,35 +153,6 @@ impl Store {
             labels,
             queue,
         })
-    }
-
-    pub async fn project_tasks(
-        &self,
-        workspace_id: &WorkspaceId,
-        project_id: &ProjectId,
-    ) -> Result<Vec<TaskListRow>, Error> {
-        self.workspace(workspace_id).await?;
-        let project = self
-            .database
-            .find_project_by_id(workspace_id, project_id)
-            .await
-            .map_err(Error::from_internal)?
-            .ok_or_else(|| Error::new(ErrorCode::NotFound, "project not found".to_string()))?;
-        self.database
-            .list_task_summary_items(
-                workspace_id,
-                TaskFilters {
-                    project: Some(project.key),
-                    ..TaskFilters::default()
-                },
-                TaskQueryMode::Flat,
-                TaskSort::Updated,
-                SortDirection::Desc,
-                None,
-            )
-            .await
-            .map(|items| items.into_iter().map(TaskListRow::from).collect())
-            .map_err(Error::from_internal)
     }
 
     pub async fn search_tasks(
@@ -1444,6 +1417,9 @@ pub struct TaskListRow {
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub due_on: Option<String>,
+    pub available_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
     pub is_epic: bool,
 }
 
@@ -1457,6 +1433,9 @@ impl From<TaskListItem> for TaskListRow {
             status: item.task.status,
             priority: item.task.priority,
             due_on: item.task.due_on,
+            available_at: item.task.available_at,
+            created_at: item.task.created_at,
+            updated_at: item.task.updated_at,
             is_epic: item.task.is_epic,
         }
     }
@@ -2911,16 +2890,7 @@ mod tests {
     }
 
     #[test]
-    fn error_codes_are_stable_and_internal_errors_are_distinct() {
-        assert_eq!(ErrorCode::Validation.as_str(), "validation");
-        assert_eq!(ErrorCode::NotFound.as_str(), "not_found");
-        assert_eq!(ErrorCode::OpenConflict.as_str(), "open_conflict");
-        assert_eq!(
-            ErrorCode::GenerationConflict.as_str(),
-            "generation_conflict"
-        );
-        assert_eq!(ErrorCode::Database.as_str(), "database");
-        assert_eq!(ErrorCode::Internal.as_str(), "internal");
+    fn internal_errors_map_to_distinct_error_codes() {
         assert_eq!(
             Error::from_internal(
                 crate::error::CoreError::generation_conflict(

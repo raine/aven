@@ -8,11 +8,36 @@ use crate::ids::WorkspaceId;
 const IOS_QUEUE_WORKSPACE_META_KEY: &str = "ios_queue_workspace_id";
 const ONBOARDING_META_KEY: &str = "tui_onboarding_version";
 const SYNC_ACCESS_REFUSED_AT_META_KEY: &str = "sync_access_refused_at";
+/// The `sync_` prefix places it in the sync state that reset clears.
+const SYNC_VAULT_DELETED_AT_META_KEY: &str = "sync_vault_deleted_at";
 const FIRST_LAUNCH_ONBOARDING_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncAccessRefusal {
     pub at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncVaultDeletion {
+    pub at: String,
+}
+
+/// Local daemon health, cleared with the other sync metadata on reset.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DaemonSyncState {
+    /// Unix seconds of the last completed daemon round.
+    pub last_success_at: Option<i64>,
+    pub error: Option<DaemonSyncError>,
+    /// Unix seconds of the backoff deadline, absent after success.
+    pub next_retry_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DaemonSyncError {
+    pub code: String,
+    pub message: String,
+    /// Unix seconds when this error code first appeared without a success.
+    pub since: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +48,51 @@ pub enum OnboardingStatus {
 }
 
 impl Database {
+    pub async fn daemon_sync_state(&self) -> Result<DaemonSyncState> {
+        self.meta("sync_daemon_health")
+            .await?
+            .map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .unwrap_or_else(|| Ok(DaemonSyncState::default()))
+    }
+
+    /// Records an actual round, not idle polling or lock contention. Repeated
+    /// errors retain their first-seen time; unchanged snapshots cause no write.
+    pub async fn record_daemon_sync_round(
+        &self,
+        at: i64,
+        error: Option<(&str, &str, i64)>,
+    ) -> Result<()> {
+        let previous = self.daemon_sync_state().await?;
+        let mut state = previous.clone();
+        if let Some((code, message, retry_at)) = error {
+            let since = previous
+                .error
+                .as_ref()
+                .filter(|error| error.code == code)
+                .map_or(at, |error| error.since);
+            state.error = Some(DaemonSyncError {
+                code: code.to_string(),
+                message: message.to_string(),
+                since,
+            });
+            state.next_retry_at = Some(retry_at);
+        } else {
+            state.last_success_at = Some(at);
+            state.error = None;
+            state.next_retry_at = None;
+        }
+        if state != previous {
+            let mut conn = self.acquire_writer().await?;
+            set_meta(
+                &mut conn,
+                "sync_daemon_health",
+                &serde_json::to_string(&state)?,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Returns the last time this installation's sync credentials were refused.
     pub async fn sync_access_refusal(&self) -> Result<Option<SyncAccessRefusal>> {
         Ok(self
@@ -44,6 +114,32 @@ impl Database {
         let mut conn = self.acquire_writer().await?;
         sqlx::query("DELETE FROM meta WHERE key = ?")
             .bind(SYNC_ACCESS_REFUSED_AT_META_KEY)
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Returns when the server last reported this sync's vault deleted.
+    pub async fn sync_vault_deletion(&self) -> Result<Option<SyncVaultDeletion>> {
+        Ok(self
+            .meta(SYNC_VAULT_DELETED_AT_META_KEY)
+            .await?
+            .map(|at| SyncVaultDeletion { at }))
+    }
+
+    /// Remembers a vault deletion until a user-started sync succeeds or sync
+    /// is reset.
+    pub async fn record_sync_vault_deletion(&self) -> Result<SyncVaultDeletion> {
+        let at = crate::ids::now();
+        let mut conn = self.acquire_writer().await?;
+        set_meta(&mut conn, SYNC_VAULT_DELETED_AT_META_KEY, &at).await?;
+        Ok(SyncVaultDeletion { at })
+    }
+
+    pub async fn clear_sync_vault_deletion(&self) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        sqlx::query("DELETE FROM meta WHERE key = ?")
+            .bind(SYNC_VAULT_DELETED_AT_META_KEY)
             .execute(&mut *conn)
             .await?;
         Ok(())
@@ -109,6 +205,55 @@ impl Database {
                 ONBOARDING_META_KEY,
                 &FIRST_LAUNCH_ONBOARDING_VERSION.to_string(),
             )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// A reminder this device has handled, keyed by kind, task and trigger.
+/// Digest entries use an empty `task_id`.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct ReminderLogEntry {
+    pub kind: String,
+    pub task_id: String,
+    pub trigger: String,
+    pub outcome: String,
+}
+
+impl Database {
+    pub async fn reminder_log(&self) -> Result<Vec<ReminderLogEntry>> {
+        let mut conn = self.acquire_reader().await?;
+        Ok(sqlx::query_as::<_, ReminderLogEntry>(
+            "SELECT kind, task_id, trigger, outcome FROM local_reminder_log",
+        )
+        .fetch_all(&mut *conn)
+        .await?)
+    }
+
+    /// Records entries in one transaction, replacing the outcome of existing
+    /// keys.
+    pub async fn record_reminders(&self, entries: &[ReminderLogEntry]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let recorded_at = crate::ids::now();
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        for entry in entries {
+            sqlx::query(
+                "INSERT INTO local_reminder_log(kind, task_id, trigger, outcome, recorded_at)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(kind, task_id, trigger)
+                 DO UPDATE SET outcome = excluded.outcome, recorded_at = excluded.recorded_at",
+            )
+            .bind(&entry.kind)
+            .bind(&entry.task_id)
+            .bind(&entry.trigger)
+            .bind(&entry.outcome)
+            .bind(&recorded_at)
+            .execute(&mut *tx)
             .await?;
         }
         tx.commit().await?;
@@ -182,6 +327,83 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn daemon_health_preserves_first_seen_and_clears_on_success_and_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("health.sqlite");
+        let database = Database::open(&path).await.unwrap();
+        assert_eq!(
+            database.daemon_sync_state().await.unwrap(),
+            DaemonSyncState::default()
+        );
+        database.record_daemon_sync_round(100, None).await.unwrap();
+        database
+            .record_daemon_sync_round(110, Some(("network", "retry", 111)))
+            .await
+            .unwrap();
+        database
+            .record_daemon_sync_round(120, Some(("network", "retry", 122)))
+            .await
+            .unwrap();
+        let state = database.daemon_sync_state().await.unwrap();
+        assert_eq!(state.last_success_at, Some(100));
+        assert_eq!(state.error.as_ref().unwrap().since, 110);
+        assert_eq!(state.next_retry_at, Some(122));
+        sqlx::raw_sql(
+            "CREATE TRIGGER reject_health_write BEFORE UPDATE ON meta
+            WHEN NEW.key = 'sync_daemon_health'
+            BEGIN SELECT RAISE(ABORT, 'redundant health write'); END;",
+        )
+        .execute(&mut *database.acquire_writer().await.unwrap())
+        .await
+        .unwrap();
+        database
+            .record_daemon_sync_round(121, Some(("network", "retry", 122)))
+            .await
+            .unwrap();
+        sqlx::raw_sql("DROP TRIGGER reject_health_write")
+            .execute(&mut *database.acquire_writer().await.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            Database::open(&path)
+                .await
+                .unwrap()
+                .daemon_sync_state()
+                .await
+                .unwrap(),
+            state
+        );
+        database
+            .record_daemon_sync_round(130, Some(("keys", "unlock", 140)))
+            .await
+            .unwrap();
+        assert_eq!(
+            database
+                .daemon_sync_state()
+                .await
+                .unwrap()
+                .error
+                .unwrap()
+                .since,
+            130
+        );
+        database.record_daemon_sync_round(150, None).await.unwrap();
+        assert_eq!(
+            database.daemon_sync_state().await.unwrap(),
+            DaemonSyncState {
+                last_success_at: Some(150),
+                error: None,
+                next_retry_at: None,
+            }
+        );
+        database.clear_sync_state().await.unwrap();
+        assert_eq!(
+            database.daemon_sync_state().await.unwrap(),
+            DaemonSyncState::default()
+        );
+    }
+
+    #[tokio::test]
     async fn sync_access_refusal_persists_until_cleared() {
         let database = Database::open(std::path::Path::new(":memory:"))
             .await
@@ -197,6 +419,45 @@ mod tests {
 
         database.clear_sync_access_refusal().await.unwrap();
         assert_eq!(database.sync_access_refusal().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn reminder_outcome_replaces_existing_key() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let entry = |outcome: &str| ReminderLogEntry {
+            kind: "available".into(),
+            task_id: "T1".into(),
+            trigger: "2026-10-14T09:00:00Z".into(),
+            outcome: outcome.into(),
+        };
+
+        database
+            .record_reminders(&[entry("waiting")])
+            .await
+            .unwrap();
+        database.record_reminders(&[entry("sent")]).await.unwrap();
+
+        assert_eq!(database.reminder_log().await.unwrap(), vec![entry("sent")]);
+    }
+
+    #[tokio::test]
+    async fn sync_vault_deletion_persists_apart_from_access_refusal_until_cleared() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        assert_eq!(database.sync_vault_deletion().await.unwrap(), None);
+
+        let recorded = database.record_sync_vault_deletion().await.unwrap();
+        assert_eq!(
+            database.sync_vault_deletion().await.unwrap(),
+            Some(recorded)
+        );
+        assert_eq!(database.sync_access_refusal().await.unwrap(), None);
+
+        database.clear_sync_vault_deletion().await.unwrap();
+        assert_eq!(database.sync_vault_deletion().await.unwrap(), None);
     }
 
     #[tokio::test]

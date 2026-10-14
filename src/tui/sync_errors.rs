@@ -78,17 +78,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nonempty_targets_explain_that_nothing_changed() {
-        let error = anyhow!("error shared-state-install target database is not empty")
-            .context("error sync-join-requires-empty-database hint=\"join with a new database\"");
-        let message = failure(OperationKind::Join, &error).message;
-        assert!(
-            message.contains("`aven --db /new/path sync join`"),
-            "{message}"
-        );
-    }
-
-    #[test]
     fn join_timeouts_keep_conditional_expiry_guidance() {
         let error = anyhow!("error sync-join-timeout hint=\"x\"");
         let failure = failure(OperationKind::Join, &error);

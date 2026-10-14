@@ -6,7 +6,6 @@ async fn conflict_list_shortcut_applies_conflicts_view() {
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
     assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
-    assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
     assert_eq!(
         toast_message(&app).as_deref(),
         Some("no unresolved conflicts")
@@ -268,4 +267,6 @@ async fn cancel_discards_conflict_intent() {
     ));
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
     assert!(app.overlay.is_none());
+    assert!(app.store.tasks[selected].has_conflict);
+    assert_eq!(app.store.tasks[selected].task.title, "Conflict");
 }

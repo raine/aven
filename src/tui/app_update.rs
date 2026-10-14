@@ -449,6 +449,7 @@ mod tests {
             archive_name: "aven-test.tar.gz".to_string(),
             archive_url: "https://example.com/aven-test.tar.gz".to_string(),
             checksum_url: "https://example.com/aven-test.sha256".to_string(),
+            app: None,
         }
     }
 

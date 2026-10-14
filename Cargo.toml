@@ -1,8 +1,14 @@
 [workspace]
-members = [".", "crates/aven-core"]
+members = [".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
 resolver = "3"
 
 [workspace.dependencies]
+chacha20 = { version = "=0.10.2", default-features = false, features = ["rng", "zeroize"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
+hpke = { version = "=0.14.1", default-features = false, features = ["alloc", "x25519", "chacha"] }
+rand_core = "=0.10.1"
+subtle = "2.6"
+getrandom = "0.4"
 anyhow = "1.0"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -36,6 +42,7 @@ repository = "https://github.com/raine/aven"
 license = "MIT"
 
 [dependencies]
+aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
 aven-core = { path = "crates/aven-core", version = "=0.1.34" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
@@ -47,7 +54,7 @@ hyper-util = { version = "0.1", features = ["http1", "server", "server-graceful"
 image.workspace = true
 iana-time-zone = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-rustls = { version = "0.23", default-features = false }
+rustls = { version = "0.23.46", default-features = false }
 flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -89,6 +96,7 @@ security-framework-sys = { version = "2.15", default-features = false }
 notify-rust = "4"
 
 [dev-dependencies]
+aven-conformance = { path = "crates/aven-conformance", version = "=0.1.0" }
 tokio = { workspace = true, features = ["test-util"] }
 aven-core = { path = "crates/aven-core", version = "=0.1.34", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }

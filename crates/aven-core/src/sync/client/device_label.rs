@@ -52,6 +52,8 @@ mod tests {
         assert_eq!(clean_label("  Office Mac\n"), Some("Office Mac".into()));
         assert_eq!(clean_label("bad\u{0007}name"), Some("badname".into()));
         assert_eq!(clean_label("\n"), None);
-        assert_eq!(clean_label(&"x".repeat(80)).unwrap().len(), 64);
+        for unit in ["x", "🦀"] {
+            assert_eq!(clean_label(&unit.repeat(65)), Some(unit.repeat(64)));
+        }
     }
 }

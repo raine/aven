@@ -58,47 +58,39 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn preserve_policy_keeps_bytes() {
-        let bytes = b"png bytes".to_vec();
-        let optimized = optimize_image_bytes(
-            "image/png",
-            bytes.clone(),
-            ImageOptimizationPolicy::Preserve,
-        )
-        .await
-        .unwrap();
+    async fn optimization_preserves_pixels_and_respects_bypass_conditions() {
+        use ImageOptimizationPolicy::{Optimize, Preserve};
+        use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
 
-        assert_eq!(optimized.bytes, bytes);
-        assert!(!optimized.optimized);
-    }
+        let pixels = vec![255; 64 * 64 * 4];
+        let mut bytes = Vec::new();
+        PngEncoder::new(&mut bytes)
+            .write_image(&pixels, 64, 64, ExtendedColorType::Rgba8)
+            .unwrap();
+        let optimized = optimize_image_bytes("image/png", bytes.clone(), Optimize)
+            .await
+            .unwrap();
+        assert!(optimized.optimized);
+        assert!(optimized.bytes.len() < bytes.len());
+        assert_eq!(
+            image::load_from_memory(&optimized.bytes)
+                .unwrap()
+                .to_rgba8()
+                .into_raw(),
+            pixels
+        );
 
-    #[tokio::test]
-    async fn non_png_keeps_bytes() {
-        let bytes = b"gif bytes".to_vec();
-        let optimized = optimize_image_bytes(
-            "image/gif",
-            bytes.clone(),
-            ImageOptimizationPolicy::Optimize,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(optimized.bytes, bytes);
-        assert!(!optimized.optimized);
-    }
-
-    #[tokio::test]
-    async fn invalid_png_keeps_bytes() {
-        let bytes = b"not a png".to_vec();
-        let optimized = optimize_image_bytes(
-            "image/png",
-            bytes.clone(),
-            ImageOptimizationPolicy::Optimize,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(optimized.bytes, bytes);
-        assert!(!optimized.optimized);
+        // The declared media type and policy govern whether bytes are inspected.
+        for (media_type, input, policy) in [
+            ("image/png", bytes.as_slice(), Preserve),
+            ("image/gif", bytes.as_slice(), Optimize),
+            ("image/png", b"not a png".as_slice(), Optimize),
+        ] {
+            let result = optimize_image_bytes(media_type, input.to_vec(), policy)
+                .await
+                .unwrap();
+            assert_eq!(result.bytes, input, "{media_type} {policy:?}");
+            assert!(!result.optimized, "{media_type} {policy:?}");
+        }
     }
 }

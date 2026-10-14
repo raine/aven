@@ -19,15 +19,25 @@ fn sync_existing_forms_parse() {
 
 #[test]
 fn public_server_bind_flag_parses() {
-    let cli = Cli::try_parse_from([
-        "aven",
-        "server",
-        "--unsafe-public-bind",
-        "--data",
-        "server.sqlite",
-    ])
-    .unwrap();
-    assert!(matches!(cli.command, Some(Commands::Server(_))));
+    for (arguments, expected) in [
+        (
+            vec![
+                "aven",
+                "server",
+                "--unsafe-public-bind",
+                "--data",
+                "server.sqlite",
+            ],
+            true,
+        ),
+        (vec!["aven", "server", "--data", "server.sqlite"], false),
+    ] {
+        let cli = Cli::try_parse_from(&arguments).unwrap();
+        let Some(Commands::Server(server)) = cli.command else {
+            panic!("expected server command");
+        };
+        assert_eq!(server.unsafe_public_bind, expected, "{arguments:?}");
+    }
 }
 
 #[test]

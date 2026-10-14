@@ -99,6 +99,8 @@ async fn relocation_preserves_complete_conflicts_versions_and_metadata_aliases()
         .unwrap();
     let title_version = field_version(&mut conn, &task.id, "title").await.unwrap();
     assert!(title_version.is_some());
+    assert!(owner_version.is_some());
+    assert!(removed_version.is_some());
     for (field, resolved) in [
         ("title".to_string(), 1),
         (format!("metadata:{}", source_owner.id), 1),

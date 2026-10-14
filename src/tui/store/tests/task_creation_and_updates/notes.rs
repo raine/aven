@@ -84,21 +84,6 @@ async fn assert_note_activity_preserves_stale_task_creation_undo(
 }
 
 #[tokio::test]
-async fn add_note_to_task_writes_note() {
-    let mut store = test_store().await;
-    let (_, selected) = store
-        .create_task(task_draft("Note target"), None)
-        .await
-        .unwrap();
-    let task_id = store.tasks[selected.unwrap()].task.id.clone();
-    let note_id = store
-        .add_note_to_task(&task_id, "hello note".to_string())
-        .await
-        .unwrap();
-    assert!(!note_id.is_empty());
-}
-
-#[tokio::test]
 async fn note_edit_and_delete_target_stable_identity() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let task_id =
@@ -107,7 +92,13 @@ async fn note_edit_and_delete_target_stable_identity() {
         .add_note_to_task(&task_id, "original".to_string())
         .await
         .unwrap();
-
+    let added: (String, String) = sqlx::query_as("SELECT id, body FROM notes WHERE task_id = ?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!note_id.is_empty());
+    assert_eq!(added, (note_id.clone(), "original".to_string()));
     assert_eq!(
         store
             .edit_note(&task_id, &note_id, "corrected".to_string())

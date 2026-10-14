@@ -43,29 +43,18 @@ fn update_check_environment_disable_takes_precedence() {
 }
 
 #[test]
-fn sync_disabled_flag_recognizes_true_values() {
-    for value in [Some("1"), Some("true"), Some("yes")] {
-        assert!(sync_disabled_value(value));
+fn sync_disabled_flag_distinguishes_true_and_other_values() {
+    for (value, expected) in [
+        (Some("1"), true),
+        (Some("true"), true),
+        (Some("yes"), true),
+        (None, false),
+        (Some("0"), false),
+        (Some("false"), false),
+        (Some(""), false),
+    ] {
+        assert_eq!(sync_disabled_value(value), expected, "{value:?}");
     }
-}
-
-#[test]
-fn sync_disabled_flag_ignores_other_values() {
-    for value in [None, Some("0"), Some("false"), Some("")] {
-        assert!(!sync_disabled_value(value));
-    }
-}
-
-#[test]
-fn generated_config_includes_sync_opt_in_without_inactive_override() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.yaml");
-
-    write_default_config(&path).unwrap();
-
-    let text = fs::read_to_string(path).unwrap();
-    assert!(text.contains("sync:\n  enabled: false\n"));
-    assert!(!text.contains("disabled:"));
 }
 
 #[test]
@@ -106,18 +95,15 @@ fn disabled_sync_reports_actionable_error() {
 }
 
 #[test]
-fn sync_without_disable_override_is_allowed() {
-    AppConfig::default().ensure_sync_allowed().unwrap();
-}
-
-#[test]
-fn generated_client_config_omits_server_attachment_settings() {
+fn generated_client_config_preserves_sync_opt_in_and_omits_server_settings() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.yaml");
 
     write_default_config(&path).unwrap();
 
     let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("sync:\n  enabled: false\n"));
+    assert!(!text.contains("disabled:"));
     assert!(!text.contains("server_grace_days"));
     assert!(!text.contains("server_workspace_quota_bytes"));
     let loaded = AppConfig::load_from_path(&path).unwrap();

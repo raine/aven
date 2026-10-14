@@ -351,6 +351,9 @@ mod tests {
             task_list_item_with_status_and_queue("todo medium", "todo", QueueBand::Soon),
             task_list_item_with_status_and_queue("inbox", "inbox", QueueBand::Triage),
             task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
+            task_list_item_with_status_and_queue("epic", "todo", QueueBand::Epics),
+            task_list_item_with_status_and_queue("finished", "done", QueueBand::Later),
+            task_list_item_with_status_and_queue("canceled", "canceled", QueueBand::Later),
         ];
 
         let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
@@ -379,8 +382,29 @@ mod tests {
                     count: 1,
                 }),
                 TaskListRow::Task { task_index: 3 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "epics".to_string(),
+                    count: 1
+                }),
+                TaskListRow::Task { task_index: 4 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "done".to_string(),
+                    count: 1
+                }),
+                TaskListRow::Task { task_index: 5 },
+                TaskListRow::Group(TaskGroupRow {
+                    label: "canceled".to_string(),
+                    count: 1
+                }),
+                TaskListRow::Task { task_index: 6 },
             ]
         );
+        for index in 0..tasks.len() {
+            assert_eq!(view.visual_row(index), index * 2 + 1);
+            assert_eq!(view.visual_row_for(index), Some(index * 2 + 1));
+            assert_eq!(view.task_index_at_visual_row(index * 2 + 1), Some(index));
+            assert_eq!(view.task_index_at_visual_row(index * 2), None);
+        }
     }
 
     #[test]
@@ -416,64 +440,6 @@ mod tests {
     }
 
     #[test]
-    fn queue_view_groups_epics_separately() {
-        let tasks = vec![
-            task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
-            task_list_item_with_status_and_queue("epic", "todo", QueueBand::Epics),
-        ];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
-
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Group(TaskGroupRow {
-                    label: "later".to_string(),
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "epics".to_string(),
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 1 },
-            ]
-        );
-    }
-
-    #[test]
-    fn queue_view_groups_terminal_statuses_by_status() {
-        let tasks = vec![
-            task_list_item_with_status_and_queue("backlog", "backlog", QueueBand::Later),
-            task_list_item_with_status_and_queue("finished", "done", QueueBand::Later),
-            task_list_item_with_status_and_queue("canceled", "canceled", QueueBand::Later),
-        ];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
-
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Group(TaskGroupRow {
-                    label: "later".to_string(),
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "done".to_string(),
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 1 },
-                TaskListRow::Group(TaskGroupRow {
-                    label: "canceled".to_string(),
-                    count: 1,
-                }),
-                TaskListRow::Task { task_index: 2 },
-            ]
-        );
-    }
-
-    #[test]
     fn non_queue_sort_does_not_emit_duplicate_status_groups() {
         let tasks = vec![
             task_list_item_with_status_and_queue("todo 1", "todo", QueueBand::Focus),
@@ -492,20 +458,6 @@ mod tests {
                 TaskListRow::Task { task_index: 2 },
             ]
         );
-    }
-
-    #[test]
-    fn visual_row_uses_planned_rows() {
-        let tasks = vec![
-            task_list_item_with_status_and_queue("todo high", "todo", QueueBand::Focus),
-            task_list_item_with_status_and_queue("todo medium", "todo", QueueBand::Soon),
-            task_list_item_with_status_and_queue("inbox", "inbox", QueueBand::Triage),
-        ];
-        let view = TaskListView::from_tasks(TaskListRenderMode::Queue, &tasks, &BTreeSet::new());
-
-        assert_eq!(view.visual_row(0), 1);
-        assert_eq!(view.visual_row(1), 3);
-        assert_eq!(view.visual_row(2), 5);
     }
 
     #[test]
@@ -708,58 +660,41 @@ mod tests {
     }
 
     #[test]
-    fn expanded_epic_parent_emits_child_row() {
-        let child = make_task("child", "child-1");
-        let parent = make_epic_parent("parent", "parent-1", &["child-1"], true);
-        let mut expanded = BTreeSet::new();
-        expanded.insert(crate::test_support::task_id("parent-1"));
-
-        let tasks = vec![parent, child];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Epics, &tasks, &expanded);
-
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::EpicChild {
-                    parent_index: 0,
-                    task_index: 1,
-                    last: true,
-                },
-            ]
-        );
-    }
-
-    #[test]
     fn expanded_epic_includes_resolved_children() {
-        let resolved_child = make_task("resolved", "child-1");
-        let open_child = make_task("open", "child-2");
-        let mut parent = make_epic_parent("parent", "parent-1", &["child-1", "child-2"], true);
-        parent.epic_children[0].unresolved = false;
-        let mut expanded = BTreeSet::new();
-        expanded.insert(crate::test_support::task_id("parent-1"));
+        for count in [1, 2] {
+            let mut parent = make_epic_parent("parent", "parent-1", &["child-1", "child-2"], true);
+            parent.epic_children.truncate(count);
+            if count == 2 {
+                parent.epic_children[0].unresolved = false;
+            }
+            let mut tasks = vec![
+                parent,
+                make_task("first", "child-1"),
+                make_task("second", "child-2"),
+            ];
+            tasks.truncate(count + 1);
+            let expanded = BTreeSet::from([crate::test_support::task_id("parent-1")]);
+            let view = TaskListView::from_tasks(TaskListRenderMode::Epics, &tasks, &expanded);
 
-        let tasks = vec![parent, resolved_child, open_child];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Epics, &tasks, &expanded);
-
-        assert_eq!(
-            view.rows,
-            vec![
-                TaskListRow::Task { task_index: 0 },
-                TaskListRow::EpicChild {
+            let mut expected = vec![TaskListRow::Task { task_index: 0 }];
+            for (task_index, last) in if count == 1 {
+                vec![(1, true)]
+            } else {
+                vec![(1, false), (2, true)]
+            } {
+                expected.push(TaskListRow::EpicChild {
                     parent_index: 0,
-                    task_index: 1,
-                    last: false,
-                },
-                TaskListRow::EpicChild {
-                    parent_index: 0,
-                    task_index: 2,
-                    last: true,
-                },
-            ]
-        );
+                    task_index,
+                    last,
+                });
+            }
+            assert_eq!(view.rows, expected);
+            for index in 0..tasks.len() {
+                assert_eq!(view.visual_row(index), index);
+                assert_eq!(view.visual_row_for(index), Some(index));
+                assert_eq!(view.task_index_at_visual_row(index), Some(index));
+            }
+        }
     }
 
     #[test]
@@ -773,20 +708,5 @@ mod tests {
         let view = TaskListView::from_tasks(TaskListRenderMode::Epics, &tasks, &expanded);
 
         assert_eq!(view.rows, vec![TaskListRow::Task { task_index: 0 }]);
-    }
-
-    #[test]
-    fn epics_visual_row_finds_child_row() {
-        let child = make_task("child", "child-1");
-        let parent = make_epic_parent("parent", "parent-1", &["child-1"], true);
-        let mut expanded = BTreeSet::new();
-        expanded.insert(crate::test_support::task_id("parent-1"));
-
-        let tasks = vec![parent, child];
-
-        let view = TaskListView::from_tasks(TaskListRenderMode::Epics, &tasks, &expanded);
-
-        assert_eq!(view.visual_row(0), 0);
-        assert_eq!(view.visual_row(1), 1);
     }
 }

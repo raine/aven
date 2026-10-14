@@ -178,56 +178,33 @@ mod tests {
     }
 
     #[test]
-    fn debug_database_resolution_uses_dev_environment_path() {
-        let config = AppConfig::default();
-        let dev_db = PathBuf::from("/tmp/aven-dev.sqlite");
-
-        assert_eq!(
-            resolve_db_path_from(None, None, Some(dev_db.clone()), &config, true).unwrap(),
-            dev_db
-        );
-    }
-
-    #[test]
-    fn debug_database_resolution_prefers_dev_environment_path() {
-        let config = AppConfig::default();
-        let dev_db = PathBuf::from("/tmp/aven-dev.sqlite");
-        let env_db = PathBuf::from("/tmp/aven-env.sqlite");
-
-        assert_eq!(
-            resolve_db_path_from(None, Some(env_db), Some(dev_db.clone()), &config, true,).unwrap(),
-            dev_db
-        );
-    }
-
-    #[test]
-    fn database_flag_overrides_debug_environment_path() {
-        let config = AppConfig::default();
-        let dev_db = Some(PathBuf::from("/tmp/aven-dev.sqlite"));
-        let flag_db = PathBuf::from("/tmp/aven-flag.sqlite");
-
-        assert_eq!(
-            resolve_db_path_from(Some(flag_db.clone()), None, dev_db, &config, true).unwrap(),
-            flag_db
-        );
-    }
-
-    #[test]
-    fn release_database_resolution_ignores_dev_environment_path() {
-        let mut config = AppConfig::default();
-        config.local.db_path = Some(PathBuf::from("/tmp/configured.sqlite"));
-
-        assert_eq!(
-            resolve_db_path_from(
-                None,
-                None,
-                Some(PathBuf::from("/tmp/aven-dev.sqlite")),
-                &config,
-                false,
-            )
-            .unwrap(),
-            PathBuf::from("/tmp/configured.sqlite")
-        );
+    fn database_resolution_preserves_build_specific_precedence() {
+        let dev = "/tmp/aven-dev.sqlite";
+        let env = "/tmp/aven-env.sqlite";
+        let flag = "/tmp/aven-flag.sqlite";
+        for (flag, env, dev, debug, expected) in [
+            (None, None, Some(dev), true, dev),
+            (None, Some(env), Some(dev), true, dev),
+            (Some(flag), None, Some(dev), true, flag),
+            (None, None, Some(dev), false, "/tmp/configured.sqlite"),
+        ] {
+            let mut config = AppConfig::default();
+            if !debug {
+                config.local.db_path = Some(PathBuf::from("/tmp/configured.sqlite"));
+            }
+            assert_eq!(
+                resolve_db_path_from(
+                    flag.map(PathBuf::from),
+                    env.map(PathBuf::from),
+                    dev.map(PathBuf::from),
+                    &config,
+                    debug,
+                )
+                .unwrap(),
+                PathBuf::from(expected),
+                "flag={flag:?} env={env:?} dev={dev:?} debug={debug}"
+            );
+        }
     }
 
     #[test]

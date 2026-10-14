@@ -253,30 +253,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_and_priority_parse_display_and_reject_invalid_values() {
-        assert_eq!(TaskSource::parse("tui").unwrap(), TaskSource::Tui);
-        assert_eq!(TaskSource::Api.as_str(), "api");
-        assert_eq!(TaskSource::parse("ios").unwrap(), TaskSource::Ios);
-        assert_eq!(TaskSource::Ios.to_string(), "ios");
-        assert_eq!(TaskSource::parse("android").unwrap(), TaskSource::Android);
-        assert_eq!(TaskSource::Android.as_str(), "android");
-        assert_eq!(TaskSource::Unknown.to_string(), "unknown");
+    fn choices_round_trip_and_reject_invalid_values() {
+        for value in TASK_SOURCES {
+            assert_eq!(TaskSource::parse(value).unwrap().to_string(), *value);
+        }
+        for value in STATUSES {
+            assert_eq!(TaskStatus::parse(value).unwrap().to_string(), *value);
+        }
+        for value in PRIORITIES {
+            assert_eq!(TaskPriority::parse(value).unwrap().to_string(), *value);
+        }
+
         assert_eq!(
             TaskSource::parse("agent").unwrap_err().to_string(),
             "error invalid-task-source input=agent choices=cli,tui,api,ios,android,unknown"
         );
-
-        assert_eq!(TaskStatus::parse("active").unwrap(), TaskStatus::Active);
-        assert_eq!(TaskStatus::Active.as_str(), "active");
-        assert_eq!(TaskStatus::Active.to_string(), "active");
         assert_eq!(
             TaskStatus::parse("blocked").unwrap_err().to_string(),
             "error invalid-status input=blocked choices=inbox,backlog,todo,active,done,canceled"
         );
-
-        assert_eq!(TaskPriority::parse("urgent").unwrap(), TaskPriority::Urgent);
-        assert_eq!(TaskPriority::Urgent.as_str(), "urgent");
-        assert_eq!(TaskPriority::Urgent.to_string(), "urgent");
         assert_eq!(
             TaskPriority::parse("soon").unwrap_err().to_string(),
             "error invalid-priority input=soon choices=none,low,medium,high,urgent"

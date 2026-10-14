@@ -41,7 +41,7 @@ code { font-family: var(--mono); }
 .site-header nav a { color: var(--muted); }
 .site-header nav a:hover, .site-footer nav a:hover { color: var(--ink); }
 .hero { position: relative; isolation: isolate; padding-top: 77px; }
-.hero::after { content: ''; position: absolute; inset: -40px -60px auto auto; width: 640px; height: 670px; background: var(--hero-logo) center/contain no-repeat; opacity: .12; z-index: -1; pointer-events: none; -webkit-mask-image: linear-gradient(to bottom, transparent 8%, #0001 45%, #000 82%); mask-image: linear-gradient(to bottom, transparent 8%, #0001 45%, #000 82%); }
+.hero::after { content: ''; position: absolute; inset: -100px -60px auto auto; width: 640px; height: 670px; background: var(--hero-logo) center/contain no-repeat; opacity: .12; z-index: -1; pointer-events: none; -webkit-mask-image: linear-gradient(to bottom, transparent 8%, #0001 45%, #000 82%); mask-image: linear-gradient(to bottom, transparent 8%, #0001 45%, #000 82%); }
 @media (prefers-reduced-motion: no-preference) {
   .hero::after { animation: hero-mark-enter 260ms ease-out both; }
 }
@@ -101,6 +101,10 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 .agent-section .text-link, .sync-section .text-link { font: 14px/1.7 var(--mono); }
 .section-copy > p:not(.eyebrow) { margin-top: 23px; }
 .section-copy > .text-link { margin-top: 25px; }
+.sync-section .section-copy > p.cloud-footnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding-top: 16px; border-top: 1px solid var(--line); font-family: var(--mono); }
+.cloud-footnote a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--aven-violet-line); text-underline-offset: 3px; transition: text-decoration-color 150ms ease-out; }
+.cloud-footnote a:hover { text-decoration-color: var(--violet); }
+.cloud-preview { padding: 0 6px; border: 1px solid #5c5236; border-radius: 99px; background: #201d14; color: #c9b87c; font: 9.5px/1.7 var(--mono); letter-spacing: .8px; text-transform: uppercase; }
 .terminal { background: #171620; border: 1px solid #4b3a66; border-radius: 10px; overflow: hidden; }
 .session-titlebar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 24px; border-bottom: 1px solid #332d40; color: var(--muted); font: 13px/1.5 var(--mono); }
 .session-example { font-size: 12px; color: var(--faint); }

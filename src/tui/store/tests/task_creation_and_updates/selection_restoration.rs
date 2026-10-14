@@ -3,7 +3,11 @@ use super::*;
 #[tokio::test]
 async fn unchanged_single_and_batch_edits_preserve_state_without_undo() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
-    let (task_id, selected) = create_selected_task(&mut store, "Unchanged edits").await;
+    create_selected_task(&mut store, "First row").await;
+    create_selected_task(&mut store, "Unchanged edits").await;
+    create_selected_task(&mut store, "Last row").await;
+    let selected = 1;
+    let task_id = store.tasks[selected].task.id.clone();
     let workspace_id = store.active_workspace.id.clone();
     let undo_before = pending_undo_count(&pool, &workspace_id).await;
     let changes_before = pending_change_count(&pool).await;

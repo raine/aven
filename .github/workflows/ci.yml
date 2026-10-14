@@ -32,6 +32,8 @@ jobs:
         run: |
           cargo install checkle --version '=0.1.2' --locked
           cargo install sqlx-cli --version '=0.9.0' --locked
+      - name: Check dependency advisories and licenses
+        run: checkle run cargo-deny
       - name: Check SQLx metadata
         run: just sqlx-check
       - name: Run full checks
@@ -54,9 +56,16 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install bash jq ruby shellcheck
       - name: Check public shell scripts
-        run: shellcheck scripts/process-lock scripts/test-process-lock scripts/test-pre-commit scripts/test-workmux-environment scripts/test-container-image hooks/pre-commit
+        run: shellcheck scripts/process-lock scripts/test-process-lock scripts/test-pre-commit scripts/test-workmux-environment scripts/test-container-image hooks/pre-commit scripts/assemble-macos-app scripts/test-assemble-macos-app scripts/package-macos-binary scripts/test-package-macos-binary scripts/sign-macos-release scripts/verify-macos-release scripts/test-verify-macos-release scripts/install scripts/test-install scripts/homebrew-formula scripts/test-homebrew-formula
       - name: Run public shell fixtures
         run: |
           scripts/test-process-lock
           scripts/test-pre-commit
           scripts/test-workmux-environment
+          scripts/test-install
+          scripts/test-homebrew-formula
+      - name: Run macOS app bundle fixtures
+        if: runner.os == 'macOS'
+        run: |
+          scripts/test-assemble-macos-app
+          scripts/test-package-macos-binary

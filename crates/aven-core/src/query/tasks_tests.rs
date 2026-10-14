@@ -1401,3 +1401,251 @@ async fn base_projection_applies_sql_limit_before_decoding_tasks() {
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].title, "first");
 }
+
+#[tokio::test]
+async fn dependency_filters_ignore_closed_blockers_without_creating_epics() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    let workspace = crate::workspaces::Workspace::default();
+    for (i, status, deleted) in [
+        (0, "done", false),
+        (1, "canceled", false),
+        (2, "todo", true),
+        (3, "todo", false),
+    ] {
+        let blocker = format!("B00000000000000{i}");
+        let child = format!("C00000000000000{i}");
+        let (title, at) = (format!("blocker {i}"), format!("00{i}"));
+        insert_test_task(&mut conn, &blocker, &title, status, "none", &at).await;
+        let (title, at) = (format!("child {i}"), format!("10{i}"));
+        insert_test_task(&mut conn, &child, &title, "todo", "none", &at).await;
+        sqlx::query("UPDATE tasks SET deleted = ? WHERE id = ?")
+            .bind(deleted)
+            .bind(&blocker)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        crate::operations::add_task_dependency(
+            &mut conn,
+            &workspace,
+            &child.parse().unwrap(),
+            &blocker.parse().unwrap(),
+        )
+        .await
+        .unwrap();
+        let summary = crate::query::task_dependency_summary(
+            &mut conn,
+            &workspace.id,
+            &blocker.parse().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(summary.blocks.len(), 1);
+        assert_eq!(summary.blocks[0].unresolved, i == 3);
+    }
+    for (ready_only, blocked_only, epics_only, expected) in [
+        (
+            true,
+            false,
+            false,
+            vec!["blocker 3", "child 0", "child 1", "child 2"],
+        ),
+        (false, true, false, vec!["child 3"]),
+        (false, false, true, vec![]),
+    ] {
+        let items = list_task_items_in_workspace(
+            &mut conn,
+            &workspace.id,
+            TaskFilters {
+                ready_only,
+                blocked_only,
+                epics_only,
+                ..TaskFilters::default()
+            },
+            TaskQueryMode::Flat,
+            TaskSort::Created,
+            SortDirection::Asc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_titles(&items), expected);
+    }
+    let items = list_task_items_in_workspace(
+        &mut conn,
+        &workspace.id,
+        TaskFilters {
+            include_deleted: true,
+            ..TaskFilters::default()
+        },
+        TaskQueryMode::Flat,
+        TaskSort::Created,
+        SortDirection::Asc,
+    )
+    .await
+    .unwrap();
+    assert_eq!(items.len(), 8);
+    for item in items {
+        assert_eq!(
+            item.dependent_count,
+            i64::from(item.task.title == "blocker 3")
+        );
+    }
+}
+
+#[tokio::test]
+async fn work_filters_and_counts_cover_exclusions_at_both_scopes() {
+    let (_temp, mut conn) = test_conn().await;
+    seed_default_project(&mut conn).await;
+    sqlx::query(
+        "INSERT INTO projects(id, key, name, prefix, created_at, updated_at)
+         VALUES ('0000000000000002', 'mobile-app', 'Mobile', 'MOB', 't', 't')",
+    )
+    .execute(conn.as_mut())
+    .await
+    .unwrap();
+    let yesterday = (chrono::Local::now().date_naive() - chrono::Duration::days(1)).to_string();
+    let today = chrono::Local::now().date_naive().to_string();
+    let mut ids = std::collections::BTreeMap::new();
+    for (index, (title, mobile)) in [
+        ("app ready", false),
+        ("app blocked", false),
+        ("app blocker", false),
+        ("app deferred", false),
+        ("app overdue", false),
+        ("app due today", false),
+        ("app epic", false),
+        ("app blocked epic", false),
+        ("app deleted", false),
+        ("app done", false),
+        ("app canceled", false),
+        ("mobile ready", true),
+        ("mobile blocked", true),
+        ("mobile blocker", true),
+        ("mobile overdue", true),
+        ("mobile due today", true),
+        ("mobile deferred overdue", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = format!("{:016}", index + 100);
+        insert_test_task(&mut conn, &id, title, "inbox", "none", "t").await;
+        if mobile {
+            sqlx::query("UPDATE tasks SET project_id = '0000000000000002' WHERE id = ?")
+                .bind(&id)
+                .execute(conn.as_mut())
+                .await
+                .unwrap();
+        }
+        ids.insert(title, id);
+    }
+    for sql in [
+        "UPDATE tasks SET status = 'done' WHERE title = 'app done'",
+        "UPDATE tasks SET status = 'canceled' WHERE title = 'app canceled'",
+        "UPDATE tasks SET deleted = 1 WHERE title = 'app deleted'",
+        "UPDATE tasks SET is_epic = 1 WHERE title IN ('app epic', 'app blocked epic')",
+        "UPDATE tasks SET available_at = '2999-01-01T00:00:00Z' WHERE title IN ('app deferred', 'mobile deferred overdue')",
+    ] {
+        sqlx::query(sql).execute(conn.as_mut()).await.unwrap();
+    }
+    for (title, due) in [
+        ("app overdue", &yesterday),
+        ("mobile overdue", &yesterday),
+        ("mobile deferred overdue", &yesterday),
+        ("app due today", &today),
+        ("mobile due today", &today),
+    ] {
+        sqlx::query("UPDATE tasks SET due_on = ? WHERE id = ?")
+            .bind(due)
+            .bind(&ids[title])
+            .execute(conn.as_mut())
+            .await
+            .unwrap();
+    }
+    let workspace_id = crate::workspaces::default_workspace_id();
+    for (blocked, blocker) in [
+        ("app blocked", "app blocker"),
+        ("app blocked epic", "app blocker"),
+        ("mobile blocked", "mobile blocker"),
+    ] {
+        sqlx::query(
+            "INSERT INTO task_dependencies(workspace_id, task_id, depends_on_task_id, created_at)
+             VALUES (?, ?, ?, 't')",
+        )
+        .bind(&workspace_id)
+        .bind(&ids[blocked])
+        .bind(&ids[blocker])
+        .execute(conn.as_mut())
+        .await
+        .unwrap();
+    }
+    for project in [None, Some("mobile-app")] {
+        let counts = sidebar_counts_for_scope_in_workspace(&mut conn, &workspace_id, project)
+            .await
+            .unwrap();
+        for (kind, workspace_titles, project_titles, count) in [
+            (
+                "ready",
+                vec![
+                    "app blocker",
+                    "app due today",
+                    "app overdue",
+                    "app ready",
+                    "mobile blocker",
+                    "mobile due today",
+                    "mobile overdue",
+                    "mobile ready",
+                ],
+                vec![
+                    "mobile blocker",
+                    "mobile due today",
+                    "mobile overdue",
+                    "mobile ready",
+                ],
+                counts.ready,
+            ),
+            (
+                "blocked",
+                vec!["app blocked", "app blocked epic", "mobile blocked"],
+                vec!["mobile blocked"],
+                counts.blocked,
+            ),
+            (
+                "overdue",
+                vec!["app overdue", "mobile overdue"],
+                vec!["mobile overdue"],
+                counts.overdue,
+            ),
+        ] {
+            let items = list_task_items_in_workspace(
+                &mut conn,
+                &workspace_id,
+                TaskFilters {
+                    project: project.map(str::to_string),
+                    ready_only: kind == "ready",
+                    exclude_epics: kind == "ready",
+                    blocked_only: kind == "blocked",
+                    overdue_only: kind == "overdue",
+                    availability: TaskAvailabilityFilter::Available,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Title,
+                SortDirection::Asc,
+            )
+            .await
+            .unwrap();
+            let expected = if project.is_some() {
+                project_titles
+            } else {
+                workspace_titles
+            };
+            assert_eq!(listed_titles(&items), expected, "{kind} {project:?}");
+            assert_eq!(
+                usize::try_from(count).unwrap(),
+                expected.len(),
+                "{kind} {project:?}"
+            );
+        }
+    }
+}

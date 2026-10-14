@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: package-macos-binary BINARY ARCHIVE" >&2
+  exit 2
+fi
+binary=$1
+archive=$2
+if [[ $(basename "$binary") != aven || -L $binary || ! -f $binary ]]; then
+  echo "expected a regular file named aven: $binary" >&2
+  exit 1
+fi
+
+# Without --no-mac-metadata, bsdtar stores extended attributes as AppleDouble
+# ._aven entries, and the updater accepts only a single regular aven entry.
+tar --no-mac-metadata -C "$(dirname "$binary")" -czf "$archive" aven

@@ -24,6 +24,7 @@ async fn add_note_from_detail_returns_to_detail() {
     assert!(app.detail.is_active());
     let selected = app.list.selected_task().unwrap();
     assert_eq!(app.store.tasks[selected].notes.len(), 1);
+    assert_eq!(app.store.tasks[selected].notes[0].body, "Important detail");
 }
 
 #[tokio::test]
@@ -341,26 +342,6 @@ async fn detail_delete_confirmation_names_selected_task_when_tasks_are_marked() 
 }
 
 #[tokio::test]
-async fn detail_shortcuts_do_not_leave_detail_before_opening_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail target")).await;
-    app.show_detail(0);
-
-    app.dispatch_key(key(KeyCode::Char('e')), (80, 24).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('p')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert_eq!(
-        app.footer_choice.as_ref().map(|choice| choice.mode),
-        Some(FooterChoiceMode::Priority)
-    );
-    assert!(app.view().detail_underlay);
-}
-
-#[tokio::test]
 async fn edit_title_from_detail_renders_inline_cursor() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
@@ -398,28 +379,16 @@ async fn edit_title_from_detail_renders_inline_cursor() {
             .modifier
             .contains(ratatui::style::Modifier::DIM)
     );
-}
-
-#[tokio::test]
-async fn cancel_edit_title_from_detail_returns_to_detail() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail title target")).await;
-    app.show_detail(0);
-
-    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('e')), (100, 30).into())
-        .await
-        .unwrap();
-    app.dispatch_key(key(KeyCode::Char('t')), (100, 30).into())
-        .await
-        .unwrap();
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
     assert!(app.authoring.is_idle());
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()]
+            .task
+            .title,
+        "Detail title target"
+    );
 }
 
 #[tokio::test]
@@ -583,6 +552,15 @@ async fn detail_single_key_edit_shortcuts_still_work() {
         Some(OverlayState::TagCombobox(state)) if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
     ));
     assert_pending_empty(&app);
+    assert!(app.view().detail_underlay);
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    for code in [KeyCode::Char('e'), KeyCode::Char('p')] {
+        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+    }
+    assert_eq!(
+        app.footer_choice.as_ref().map(|choice| choice.mode),
+        Some(FooterChoiceMode::Priority)
+    );
     assert!(app.view().detail_underlay);
 }
 
@@ -1049,7 +1027,7 @@ async fn detail_status_mouse_click_opens_menu_and_returns_to_detail() {
 }
 
 #[tokio::test]
-async fn detail_status_menu_empty_click_returns_to_detail_without_selecting_task() {
+async fn detail_status_menu_empty_click_does_not_select_task_or_change_status() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Hidden task")).await;
     let selected = create_and_select_task(&mut app, test_task_draft("Visible task")).await;
@@ -1066,6 +1044,7 @@ async fn detail_status_menu_empty_click_returns_to_detail_without_selecting_task
         .unwrap();
 
     assert_eq!(app.list.selected_task(), Some(selected));
+    assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 }

@@ -323,7 +323,7 @@ fn epic_time_column_uses_subtree_activity_and_respects_due_order() {
     );
     assert_eq!(
         epic_activity_cell(THEME, &parent, now, true, true).to_string(),
-        task_time_cell(THEME, &parent, now, TaskListRenderMode::Epics, true, true).to_string()
+        "+1d"
     );
     let child_activity = task_seconds_since(&child.task.updated_at, now)
         .map(compact_age)

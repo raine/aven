@@ -34,126 +34,6 @@ pub(crate) use self::session::{
 };
 
 #[cfg(test)]
-fn implemented_action_is_handled(action: Action) -> bool {
-    matches!(
-        action,
-        Action::Quit
-            | Action::MoveDown
-            | Action::MoveUp
-            | Action::MoveLeft
-            | Action::MoveRight
-            | Action::MoveColumnLeft
-            | Action::MoveColumnRight
-            | Action::BeginMoveToColumn
-            | Action::PreviousItem
-            | Action::NextItem
-            | Action::First
-            | Action::Last
-            | Action::ToggleFocus
-            | Action::ToggleSidebar
-            | Action::ToggleDetail
-            | Action::ToggleColumnsPreview
-            | Action::ChooseAppearance
-            | Action::SetAppearance(_)
-            | Action::GoBack
-            | Action::GoForward
-            | Action::GoToBlocker
-            | Action::ReturnToLastChange
-            | Action::ToggleHelp
-            | Action::ShowWelcome
-            | Action::BeginSearch
-            | Action::BeginCommand
-            | Action::Refresh
-            | Action::SyncNow
-            | Action::SetOrder(_)
-            | Action::ReverseSort
-            | Action::SetStatus(_)
-            | Action::SetPriority(_)
-            | Action::CyclePriority(_)
-            | Action::CopyShortRef
-            | Action::CopyDurableRef
-            | Action::CopyTaskTitle
-            | Action::CopyTaskDescription
-            | Action::CopyTaskText
-            | Action::CopyTaskNotes
-            | Action::CopyTaskMarkdown
-            | Action::BeginCreateTaskGist
-            | Action::OpenAttachment
-            | Action::SaveAttachment
-            | Action::DeleteAttachment
-            | Action::BeginEditTitle
-            | Action::BeginEditMetadata
-            | Action::BeginEditDescription
-            | Action::BeginEditProject
-            | Action::BeginEditPriority
-            | Action::BeginEditEpic
-            | Action::BeginEditAvailability
-            | Action::BeginEditDue
-            | Action::BeginEditLabels
-            | Action::SkipRecurrence
-            | Action::BeginEditRecurrenceTemplate
-            | Action::PauseRecurrence
-            | Action::ResumeRecurrence
-            | Action::StopRecurrence
-            | Action::ShowRecurrenceHistory
-            | Action::Delete
-            | Action::Restore
-            | Action::ToggleEpicExpanded
-            | Action::BeginAddEpicChild
-            | Action::RemoveEpicChild
-            | Action::BeginStatusPicker
-            | Action::BeginRenameProject
-            | Action::BeginDeleteProject
-            | Action::BeginAddTask
-            | Action::BeginAddNote
-            | Action::BeginAddProject
-            | Action::BeginAddProjectPath
-            | Action::BeginRemoveProjectPath
-            | Action::BeginAddLabel
-            | Action::BeginBrowseLabels
-            | Action::BeginRenameLabel
-            | Action::BeginDeleteLabel
-            | Action::BeginFilterLabel
-            | Action::BeginFilterPriority
-            | Action::BeginScopeProject
-            | Action::BeginSwitchWorkspace
-            | Action::BeginAddWorkspace
-            | Action::BeginRenameWorkspace
-            | Action::ClearFilters
-            | Action::ToggleClosedFilter
-            | Action::ToggleDeletedFilter
-            | Action::CycleRecurringLifecycleFilter
-            | Action::ToggleLayout
-            | Action::SetLayout(_)
-            | Action::ShowView(_)
-            | Action::ShowWorkspaceScope
-            | Action::BeginConflictList
-            | Action::ShowConflictDetails
-            | Action::NextConflict
-            | Action::PreviousConflict
-            | Action::AcceptConflictLocal
-            | Action::AcceptConflictRemote
-            | Action::BeginManualConflictMerge
-            | Action::ShowSync
-            | Action::ShowConfigInfo
-            | Action::ShowConfigPaths
-            | Action::ShowDatabaseStats
-            | Action::BeginUpdate
-            | Action::ShowChangelog
-            | Action::AddDevice
-            | Action::BeginConfigInit
-            | Action::BeginAddDependency
-            | Action::BeginRemoveDependency
-            | Action::BeginAddRelated
-            | Action::BeginRemoveRelated
-            | Action::Undo
-            | Action::ToggleMarkSelected
-            | Action::ToggleMarkAllInView
-            | Action::ClearMarks
-    )
-}
-
-#[cfg(test)]
 mod tests {
     use crossterm::event::KeyCode;
 
@@ -161,21 +41,9 @@ mod tests {
         resolve_shortcut_for(CommandContext::Normal, input)
     }
 
-    use crate::choices::{TaskPriority, TaskStatus};
     use crate::tui::store::TaskQuery;
 
     use super::*;
-
-    #[test]
-    fn maps_navigation_keys() {
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char('j')),
-            Action::MoveDown
-        );
-        assert_eq!(Action::from_normal_key(KeyCode::Down), Action::MoveDown);
-        assert_eq!(Action::from_normal_key(KeyCode::Char('k')), Action::MoveUp);
-        assert_eq!(Action::from_normal_key(KeyCode::Up), Action::MoveUp);
-    }
 
     #[test]
     fn search_mode_captures_text_keys() {
@@ -188,19 +56,6 @@ mod tests {
             Action::AcceptSearch
         );
         assert_eq!(Action::from_search_key(KeyCode::Esc), Action::CancelSearch);
-    }
-
-    #[test]
-    fn normal_escape_cancels_overlay() {
-        assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
-    }
-
-    #[test]
-    fn maps_command_panel_key() {
-        assert_eq!(
-            Action::from_normal_key(KeyCode::Char(':')),
-            Action::BeginCommand
-        );
     }
 
     #[test]
@@ -220,14 +75,6 @@ mod tests {
         assert_eq!(
             Action::from_command_key(KeyCode::Backspace),
             Action::BackspaceCommand
-        );
-    }
-
-    #[test]
-    fn resolves_sync_shortcut() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('S')]),
-            ShortcutLookup::Found(Action::SyncNow)
         );
     }
 
@@ -255,18 +102,6 @@ mod tests {
         assert_eq!(
             Action::ShowView(TaskQuery::Open).bulk_support(),
             BulkSupport::NotTaskScoped
-        );
-    }
-
-    #[test]
-    fn resolves_single_key_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('q')]),
-            ShortcutLookup::Found(Action::Quit)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('j')]),
-            ShortcutLookup::Found(Action::MoveDown)
         );
     }
 
@@ -402,14 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_undo_shortcut() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('u')]),
-            ShortcutLookup::Found(Action::Undo)
-        );
-    }
-
-    #[test]
     fn catalog_includes_add_device_as_a_keyless_list_command() {
         let command = COMMANDS
             .iter()
@@ -423,83 +250,6 @@ mod tests {
         assert!(command.keys(CommandContext::Normal).is_empty());
         assert!(command.is_available(CommandContext::Normal));
         assert!(!command.is_available(CommandContext::Detail));
-    }
-
-    #[test]
-    fn catalog_includes_update_and_changelog_without_global_shortcuts() {
-        for name in ["update", "changelog"] {
-            let command = COMMANDS
-                .iter()
-                .find(|command| command.name == name)
-                .unwrap();
-            assert!(command.keys(CommandContext::Normal).is_empty());
-        }
-    }
-
-    #[test]
-    fn catalog_includes_work_view_commands() {
-        for (name, query, shortcut) in [
-            ("view-ready", TaskQuery::Ready, "v y"),
-            ("view-blocked", TaskQuery::Blocked, "v k"),
-            ("view-overdue", TaskQuery::Overdue, "v x"),
-        ] {
-            let command = COMMANDS
-                .iter()
-                .find(|command| command.name == name)
-                .expect("work view command");
-            assert_eq!(command.section, "Views");
-            assert_eq!(command.action, Action::ShowView(query));
-            assert_eq!(
-                command
-                    .keys(CommandContext::Normal)
-                    .iter()
-                    .map(|key| key.label)
-                    .collect::<Vec<_>>(),
-                vec![shortcut]
-            );
-        }
-    }
-
-    #[test]
-    fn resolves_work_view_shortcuts() {
-        for (key, query) in [
-            ('y', TaskQuery::Ready),
-            ('k', TaskQuery::Blocked),
-            ('x', TaskQuery::Overdue),
-        ] {
-            assert_eq!(
-                resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char(key)]),
-                ShortcutLookup::Found(Action::ShowView(query))
-            );
-        }
-    }
-
-    #[test]
-    fn catalog_includes_upcoming_view_command() {
-        let command = COMMANDS
-            .iter()
-            .find(|command| command.name == "view-upcoming")
-            .expect("upcoming view command");
-
-        assert_eq!(command.description, "show upcoming task view");
-        assert_eq!(command.section, "Views");
-        assert_eq!(command.action, Action::ShowView(TaskQuery::Upcoming));
-        assert_eq!(
-            command
-                .keys(CommandContext::Normal)
-                .iter()
-                .map(|key| key.label)
-                .collect::<Vec<_>>(),
-            vec!["v p"]
-        );
-    }
-
-    #[test]
-    fn resolves_upcoming_view_shortcut() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::ShowView(TaskQuery::Upcoming))
-        );
     }
 
     #[test]
@@ -541,26 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_phase_prefix_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('g')]),
-            ShortcutLookup::Found(Action::First)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Active))
-        );
-    }
-
-    #[test]
     fn current_single_key_shortcuts_match_catalog() {
         for command in COMMANDS {
             for key in command.keys(CommandContext::Normal) {
@@ -577,6 +307,8 @@ mod tests {
             }
         }
 
+        assert_eq!(Action::from_normal_key(KeyCode::Down), Action::MoveDown);
+        assert_eq!(Action::from_normal_key(KeyCode::Up), Action::MoveUp);
         assert_eq!(Action::from_normal_key(KeyCode::Esc), Action::CancelOverlay);
         assert_eq!(Action::from_normal_key(KeyCode::Char('u')), Action::Undo);
         assert_eq!(Action::from_normal_key(KeyCode::Char('z')), Action::None);
@@ -586,22 +318,22 @@ mod tests {
     }
 
     #[test]
-    fn catalog_actions_are_handled() {
+    fn catalog_excludes_overlay_input_and_no_op_actions() {
         for command in COMMANDS {
             assert!(
-                implemented_action_is_handled(command.action),
-                "catalog action :{} is not handled",
-                command.name
-            );
-        }
-    }
-
-    #[test]
-    fn implemented_detail_actions_are_handled() {
-        for command in CommandContext::Detail.commands() {
-            assert!(
-                implemented_action_is_handled(command.action),
-                "implemented detail command :{} is not handled",
+                !matches!(
+                    command.action,
+                    Action::AcceptCommand
+                        | Action::CancelCommand
+                        | Action::BackspaceCommand
+                        | Action::CommandChar(_)
+                        | Action::AcceptSearch
+                        | Action::CancelSearch
+                        | Action::BackspaceSearch
+                        | Action::SearchChar(_)
+                        | Action::None
+                ),
+                "catalog command :{} uses overlay input or a no-op action",
                 command.name
             );
         }
@@ -624,9 +356,8 @@ mod tests {
     }
 
     #[test]
-    fn command_contexts_reject_duplicate_exact_shortcuts() {
+    fn every_catalog_binding_resolves_to_its_command() {
         for context in [CommandContext::Normal, CommandContext::Detail] {
-            let mut seen: Vec<(&[KeyCode], &str, &str)> = Vec::new();
             for command in context.commands() {
                 if context == CommandContext::Detail
                     && matches!(
@@ -637,249 +368,24 @@ mod tests {
                     continue;
                 }
                 for key in command.keys(context) {
-                    if let Some((_, other_command, other_label)) =
-                        seen.iter().find(|(codes, _, _)| *codes == key.codes)
-                    {
-                        panic!(
-                            "duplicate shortcut {} for :{} conflicts with {} for :{}",
-                            key.label, command.name, other_label, other_command
+                    assert_eq!(
+                        resolve_shortcut_for(context, key.codes),
+                        ShortcutLookup::Found(command.action),
+                        "{context:?} shortcut {} for :{}",
+                        key.label,
+                        command.name
+                    );
+                    for len in 1..key.codes.len() {
+                        assert_eq!(
+                            resolve_shortcut_for(context, &key.codes[..len]),
+                            ShortcutLookup::Prefix,
+                            "{context:?} prefix of {} for :{}",
+                            key.label,
+                            command.name
                         );
                     }
-                    seen.push((key.codes, command.name, key.label));
                 }
             }
-        }
-    }
-
-    #[test]
-    fn normal_context_resolves_last_change_shortcut() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('.')]),
-            ShortcutLookup::Found(Action::ReturnToLastChange)
-        );
-    }
-
-    #[test]
-    fn normal_context_resolves_forward_shortcut() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char(']')]),
-            ShortcutLookup::Found(Action::GoForward)
-        );
-    }
-
-    #[test]
-    fn priority_shortcuts_open_picker_in_list_and_detail() {
-        for context in [CommandContext::Normal, CommandContext::Detail] {
-            for keys in [
-                vec![KeyCode::Char('!')],
-                vec![KeyCode::Char('e'), KeyCode::Char('p')],
-                vec![KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')],
-            ] {
-                assert_eq!(
-                    resolve_shortcut_for(context, &keys),
-                    ShortcutLookup::Found(Action::BeginEditPriority)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn detail_context_resolves_detail_shortcuts() {
-        assert_eq!(
-            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('e')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::BeginStatusPicker)
-        );
-        assert_eq!(
-            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('t')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('g')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('g'), KeyCode::Char('[')]
-            ),
-            ShortcutLookup::Found(Action::GoBack)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('g'), KeyCode::Char(']')]
-            ),
-            ShortcutLookup::Found(Action::GoForward)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('g'), KeyCode::Char('.')]
-            ),
-            ShortcutLookup::Found(Action::ReturnToLastChange)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('g'), KeyCode::Char('B')]
-            ),
-            ShortcutLookup::Found(Action::GoToBlocker)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('B')]),
-            ShortcutLookup::Found(Action::GoToBlocker)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('t'), KeyCode::Char('e')]
-            ),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('e'), KeyCode::Char('t')]
-            ),
-            ShortcutLookup::Found(Action::BeginEditTitle)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')]
-            ),
-            ShortcutLookup::Found(Action::BeginEditTitle)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('e'), KeyCode::Char('j')]
-            ),
-            ShortcutLookup::Found(Action::BeginEditProject)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('e'), KeyCode::Char('p')]
-            ),
-            ShortcutLookup::Found(Action::BeginEditPriority)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('e'), KeyCode::Char('a')]
-            ),
-            ShortcutLookup::Found(Action::BeginEditAvailability)
-        );
-        assert_eq!(
-            resolve_shortcut_for(
-                CommandContext::Detail,
-                &[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]
-            ),
-            ShortcutLookup::Found(Action::BeginEditLabels)
-        );
-    }
-
-    #[test]
-    fn detail_context_resolves_explicit_recurrence_shortcuts() {
-        let cases = [
-            ('k', Action::SkipRecurrence),
-            ('e', Action::BeginEditRecurrenceTemplate),
-            ('p', Action::PauseRecurrence),
-            ('r', Action::ResumeRecurrence),
-            ('s', Action::StopRecurrence),
-            ('h', Action::ShowRecurrenceHistory),
-        ];
-
-        for (code, expected) in cases {
-            assert_eq!(
-                resolve_shortcut_for(
-                    CommandContext::Detail,
-                    &[KeyCode::Char('t'), KeyCode::Char('r'), KeyCode::Char(code),],
-                ),
-                ShortcutLookup::Found(expected)
-            );
-        }
-
-        assert_eq!(
-            resolve_shortcut_for(CommandContext::Detail, &[KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::BeginStatusPicker)
-        );
-    }
-
-    #[test]
-    fn detail_context_preserves_shared_task_shortcuts() {
-        let detail = CommandContext::Detail;
-        let cases = [
-            (&[KeyCode::Char(':')][..], Action::BeginCommand),
-            (&[KeyCode::Char('/')][..], Action::BeginSearch),
-            (&[KeyCode::Char('r')][..], Action::Refresh),
-            (
-                &[KeyCode::Char('d')][..],
-                Action::SetStatus(TaskStatus::Done),
-            ),
-            (
-                &[KeyCode::Char('x')][..],
-                Action::SetStatus(TaskStatus::Canceled),
-            ),
-            (
-                &[KeyCode::Char('t'), KeyCode::Char('R')][..],
-                Action::Restore,
-            ),
-            (
-                &[KeyCode::Char('t'), KeyCode::Char('a')][..],
-                Action::SetStatus(TaskStatus::Active),
-            ),
-            (
-                &[KeyCode::Char('t'), KeyCode::Char('h')][..],
-                Action::SetPriority(TaskPriority::High),
-            ),
-            (
-                &[KeyCode::Char('c'), KeyCode::Char('a')][..],
-                Action::AcceptConflictLocal,
-            ),
-            (
-                &[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')][..],
-                Action::RemoveEpicChild,
-            ),
-        ];
-
-        for (input, expected) in cases {
-            assert_eq!(
-                resolve_shortcut_for(detail, input),
-                ShortcutLookup::Found(expected)
-            );
-        }
-
-        for (code, status) in [
-            ('i', TaskStatus::Inbox),
-            ('b', TaskStatus::Backlog),
-            ('t', TaskStatus::Todo),
-            ('a', TaskStatus::Active),
-            ('d', TaskStatus::Done),
-            ('x', TaskStatus::Canceled),
-        ] {
-            assert_eq!(
-                resolve_shortcut_for(detail, &[KeyCode::Char('t'), KeyCode::Char(code)]),
-                ShortcutLookup::Found(Action::SetStatus(status))
-            );
-        }
-
-        for (code, priority) in [
-            ('0', TaskPriority::None),
-            ('l', TaskPriority::Low),
-            ('m', TaskPriority::Medium),
-            ('h', TaskPriority::High),
-            ('u', TaskPriority::Urgent),
-        ] {
-            assert_eq!(
-                resolve_shortcut_for(detail, &[KeyCode::Char('t'), KeyCode::Char(code)]),
-                ShortcutLookup::Found(Action::SetPriority(priority))
-            );
         }
     }
 
@@ -909,411 +415,5 @@ mod tests {
                 command.name
             );
         }
-    }
-
-    #[test]
-    fn resolves_project_shortcuts() {
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p')]),
-            ShortcutLookup::Prefix
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::BeginAddProject)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::BeginRenameProject)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('D')]),
-            ShortcutLookup::Found(Action::BeginDeleteProject)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('n')]),
-            ShortcutLookup::Found(Action::BeginAddProjectPath)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('p'), KeyCode::Char('x')]),
-            ShortcutLookup::Found(Action::BeginRemoveProjectPath)
-        ));
-    }
-
-    #[test]
-    fn resolves_label_administration_shortcuts() {
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('L')]),
-            ShortcutLookup::Prefix
-        ));
-        for (key, action) in [
-            ('n', Action::BeginAddLabel),
-            ('b', Action::BeginBrowseLabels),
-            ('r', Action::BeginRenameLabel),
-            ('D', Action::BeginDeleteLabel),
-        ] {
-            assert_eq!(
-                resolve_shortcut_for(
-                    CommandContext::Normal,
-                    &[KeyCode::Char('L'), KeyCode::Char(key)]
-                ),
-                ShortcutLookup::Found(action)
-            );
-        }
-    }
-
-    #[test]
-    fn resolves_authoring_shortcuts() {
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t')]),
-            ShortcutLookup::Prefix
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('n')]),
-            ShortcutLookup::Found(Action::BeginAddTask)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::BeginAddTask)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('N')]),
-            ShortcutLookup::Found(Action::BeginAddNote)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('n')]),
-            ShortcutLookup::Found(Action::BeginAddNote)
-        ));
-    }
-
-    #[test]
-    fn required_action_families_are_present() {
-        for name in [
-            "add-task",
-            "edit-title",
-            "status-picker",
-            "copy-ref",
-            "copy-id",
-            "status-active",
-            "scope-project",
-            "scope-all",
-            "order-due",
-            "order-priority",
-            "order-reverse",
-            "conflict-list",
-            "add-project",
-            "rename-project",
-            "delete-project",
-            "config-show",
-            "sync",
-            "sync-now",
-            "config-paths",
-            "database-stats",
-            "config-init",
-            "add-dependency",
-            "remove-dependency",
-        ] {
-            assert!(
-                COMMANDS.iter().any(|command| command.name == name),
-                "missing required command :{name}"
-            );
-        }
-    }
-
-    #[test]
-    fn resolves_task_editing_shortcuts() {
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e')]),
-            ShortcutLookup::Prefix
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('t')]),
-            ShortcutLookup::Found(Action::BeginEditTitle)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::BeginEditDescription)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('j')]),
-            ShortcutLookup::Found(Action::BeginEditProject)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::BeginEditPriority)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::BeginEditAvailability)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('e'), KeyCode::Char('l')]),
-            ShortcutLookup::Found(Action::BeginEditLabels)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e')]),
-            ShortcutLookup::Prefix
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('t')]),
-            ShortcutLookup::Found(Action::BeginEditTitle)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::BeginEditDescription)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('j')]),
-            ShortcutLookup::Found(Action::BeginEditProject)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::BeginEditPriority)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::BeginEditAvailability)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('e'), KeyCode::Char('l')]),
-            ShortcutLookup::Found(Action::BeginEditLabels)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c')]),
-            ShortcutLookup::Prefix
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('t')]),
-            ShortcutLookup::Found(Action::ToggleEpicExpanded)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::BeginAddEpicChild)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::RemoveEpicChild)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('y'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::CopyShortRef)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('y'), KeyCode::Char('i')]),
-            ShortcutLookup::Found(Action::CopyDurableRef)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('U')]),
-            ShortcutLookup::Found(Action::BeginRemoveDependency)
-        ));
-        assert!(matches!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('B')]),
-            ShortcutLookup::Found(Action::BeginAddDependency)
-        ));
-    }
-
-    #[test]
-    fn resolves_exact_priority_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('0')]),
-            ShortcutLookup::Found(Action::SetPriority(TaskPriority::None))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('l')]),
-            ShortcutLookup::Found(Action::SetPriority(TaskPriority::Low))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('m')]),
-            ShortcutLookup::Found(Action::SetPriority(TaskPriority::Medium))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('h')]),
-            ShortcutLookup::Found(Action::SetPriority(TaskPriority::High))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('u')]),
-            ShortcutLookup::Found(Action::SetPriority(TaskPriority::Urgent))
-        );
-    }
-
-    #[test]
-    fn status_shortcuts_resolve_through_task_prefix() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::BeginStatusPicker)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Done))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('x')]),
-            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Canceled))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('i')]),
-            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Inbox))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('t'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::SetStatus(TaskStatus::Done))
-        );
-    }
-
-    #[test]
-    fn resolves_filter_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('l')]),
-            ShortcutLookup::Found(Action::BeginFilterLabel)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::BeginFilterPriority)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::ToggleClosedFilter)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('f'), KeyCode::Char('c')]),
-            ShortcutLookup::Found(Action::ClearFilters)
-        );
-    }
-
-    #[test]
-    fn resolves_view_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('q')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskQuery::Queue))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('e')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskQuery::Epics))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::ShowView(
-                crate::tui::store::TaskQuery::RecentActions
-            ))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('v'), KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::ShowView(crate::tui::store::TaskQuery::Search))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::BeginScopeProject)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::ShowWorkspaceScope)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('g'), KeyCode::Char('w')]),
-            ShortcutLookup::Found(Action::BeginSwitchWorkspace)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('W'), KeyCode::Char('n')]),
-            ShortcutLookup::Found(Action::BeginAddWorkspace)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('W'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::BeginRenameWorkspace)
-        );
-    }
-
-    #[test]
-    fn resolves_conflict_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('l')]),
-            ShortcutLookup::Found(Action::BeginConflictList)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::ShowConflictDetails)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('n')]),
-            ShortcutLookup::Found(Action::NextConflict)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::PreviousConflict)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('a')]),
-            ShortcutLookup::Found(Action::AcceptConflictLocal)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::AcceptConflictRemote)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('c'), KeyCode::Char('m')]),
-            ShortcutLookup::Found(Action::BeginManualConflictMerge)
-        );
-    }
-
-    #[test]
-    fn resolves_config_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('?')]),
-            ShortcutLookup::Found(Action::ToggleHelp)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('h')]),
-            ShortcutLookup::Found(Action::MoveLeft)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('C')]),
-            ShortcutLookup::Prefix
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('s')]),
-            ShortcutLookup::Found(Action::ShowSync)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('c')]),
-            ShortcutLookup::Found(Action::ShowConfigInfo)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::ShowConfigPaths)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('D')]),
-            ShortcutLookup::Found(Action::ShowDatabaseStats)
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('C'), KeyCode::Char('i')]),
-            ShortcutLookup::Found(Action::BeginConfigInit)
-        );
-    }
-
-    #[test]
-    fn resolves_order_shortcuts() {
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('d')]),
-            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::DueOn))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('c')]),
-            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::Created))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('p')]),
-            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::Priority))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('u')]),
-            ShortcutLookup::Found(Action::SetOrder(crate::tui::store::TaskOrder::Updated))
-        );
-        assert_eq!(
-            resolve_shortcut(&[KeyCode::Char('o'), KeyCode::Char('r')]),
-            ShortcutLookup::Found(Action::ReverseSort)
-        );
     }
 }

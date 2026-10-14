@@ -149,8 +149,15 @@ mod keychain {
             match self.interaction {
                 KeychainInteraction::Allow => Ok(operation()),
                 KeychainInteraction::Deny => {
-                    let _interaction_guard = SecKeychain::disable_user_interaction()
-                        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?;
+                    let _interaction_guard =
+                        SecKeychain::disable_user_interaction().map_err(|source| {
+                            tracing::warn!(
+                                phase = "keychain_disable_ui",
+                                os_status = source.code(),
+                                "protected storage unavailable"
+                            );
+                            error(ProtectedLocalKeyStoreErrorKind::Unavailable)
+                        })?;
                     Ok(operation())
                 }
             }
@@ -164,7 +171,14 @@ mod keychain {
                 Ok(bytes) if bytes.len() == MASTER_KEY_BYTES => Ok(Some(Zeroizing::new(bytes))),
                 Ok(_) => Err(error(ProtectedLocalKeyStoreErrorKind::Corrupt)),
                 Err(source) if source.code() == errSecItemNotFound => Ok(None),
-                Err(_) => Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable)),
+                Err(source) => {
+                    tracing::warn!(
+                        phase = "keychain_read",
+                        os_status = source.code(),
+                        "protected storage unavailable"
+                    );
+                    Err(error(ProtectedLocalKeyStoreErrorKind::Unavailable))
+                }
             }
         }
 
@@ -216,11 +230,22 @@ mod keychain {
             match self.keychain_operation(|| options.add())? {
                 Ok(()) => {}
                 Err(source) if source.code() == errSecDuplicateItem => {}
-                Err(_) => return Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+                Err(source) => {
+                    tracing::warn!(
+                        phase = "keychain_add",
+                        os_status = source.code(),
+                        "protected storage write failed"
+                    );
+                    return Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed));
+                }
             }
-            let saved = self
-                .load_keychain_key(namespace)?
-                .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+            let saved = self.load_keychain_key(namespace)?.ok_or_else(|| {
+                tracing::warn!(
+                    phase = "keychain_add_readback_missing",
+                    "protected storage write failed"
+                );
+                error(ProtectedLocalKeyStoreErrorKind::WriteFailed)
+            })?;
             self.cache_key(namespace, saved.clone())?;
             Ok(saved)
         }
@@ -229,18 +254,38 @@ mod keychain {
             use security_framework::passwords::delete_generic_password_options;
             use security_framework_sys::base::errSecItemNotFound;
 
-            match self
+            let result = self
                 .keychain_operation(|| delete_generic_password_options(self.options(namespace)))?
-            {
-                Ok(()) => {}
-                Err(source) if source.code() == errSecItemNotFound => {}
-                Err(_) => return Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
-            }
+                .map_err(|source| source.code());
+            resolve_key_deletion(result, errSecItemNotFound, || {
+                self.delete_key_with_security_tool(namespace)
+            })?;
             self.cached_keys
                 .lock()
                 .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::Unavailable))?
                 .remove(namespace);
             Ok(())
+        }
+
+        /// The `security` tool may delete items whose ACL does not list this
+        /// executable, such as keys created by the bare binary before Aven.app.
+        fn delete_key_with_security_tool(&self, namespace: &str) -> bool {
+            use std::process::{Command, Stdio};
+
+            let _process_guard = KEYCHAIN_INTERACTION.lock();
+            Command::new("/usr/bin/security")
+                .args([
+                    "delete-generic-password",
+                    "-s",
+                    &self.service,
+                    "-a",
+                    namespace,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
         }
 
         fn wrapped_name(item: &str) -> String {
@@ -368,6 +413,34 @@ mod keychain {
         }
     }
 
+    /// Returned by `SecItemDelete` when this executable may read but not
+    /// delete an item created by another executable with the same designated
+    /// requirement.
+    const ERR_SEC_INVALID_OWNER_EDIT: i32 = -25244;
+
+    /// A key this executable cannot delete is left orphaned rather than failing
+    /// the deletion: its wrapped secrets are still removed, and a later
+    /// `create_key` reuses the item through the duplicate path.
+    fn resolve_key_deletion(
+        result: Result<(), i32>,
+        not_found: i32,
+        fallback: impl FnOnce() -> bool,
+    ) -> StoreResult<()> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(code) if code == not_found => Ok(()),
+            Err(ERR_SEC_INVALID_OWNER_EDIT) => {
+                if !fallback() {
+                    tracing::warn!(
+                        "could not delete protected key from Keychain; leaving it orphaned"
+                    );
+                }
+                Ok(())
+            }
+            Err(_) => Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+        }
+    }
+
     impl ProtectedStorage for KeychainStorage {
         fn prepare(&self, namespace: &str) -> StoreResult<()> {
             self.files.prepare(namespace)
@@ -408,7 +481,13 @@ mod keychain {
                 .create_secret(namespace, &Self::wrapped_name(item), &wrapped)?;
             match self.load_secret(namespace, item, bytes.len())? {
                 Some(saved) if saved.as_slice() == bytes => Ok(()),
-                _ => Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed)),
+                _ => {
+                    tracing::warn!(
+                        phase = "wrapped_secret_readback_mismatch",
+                        "protected storage write failed"
+                    );
+                    Err(error(ProtectedLocalKeyStoreErrorKind::WriteFailed))
+                }
             }
         }
 
@@ -456,6 +535,42 @@ mod keychain {
     mod tests {
         use super::*;
         use aven_core::db::Database;
+
+        #[test]
+        fn key_deletion_resolves_keychain_results() {
+            use security_framework_sys::base::errSecItemNotFound;
+
+            let unused = || -> bool { panic!("fallback runs only for owner-edit failures") };
+            assert!(resolve_key_deletion(Ok(()), errSecItemNotFound, unused).is_ok());
+            assert!(
+                resolve_key_deletion(Err(errSecItemNotFound), errSecItemNotFound, unused).is_ok()
+            );
+            assert_eq!(
+                resolve_key_deletion(Err(-25308), errSecItemNotFound, unused)
+                    .unwrap_err()
+                    .kind(),
+                ProtectedLocalKeyStoreErrorKind::WriteFailed
+            );
+        }
+
+        #[test]
+        fn owner_edit_failure_uses_fallback_and_tolerates_orphans() {
+            use security_framework_sys::base::errSecItemNotFound;
+
+            for fallback_deleted in [true, false] {
+                let mut ran = false;
+                let result = resolve_key_deletion(
+                    Err(ERR_SEC_INVALID_OWNER_EDIT),
+                    errSecItemNotFound,
+                    || {
+                        ran = true;
+                        fallback_deleted
+                    },
+                );
+                assert!(result.is_ok());
+                assert!(ran);
+            }
+        }
 
         struct Cleanup(KeychainStorage, String);
         impl Drop for Cleanup {

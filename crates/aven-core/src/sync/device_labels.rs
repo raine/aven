@@ -107,17 +107,35 @@ mod tests {
             .publish_device_label(device, "Renamed Mac")
             .await
             .unwrap();
+        database
+            .publish_device_label([0xcd; 32], "Linux")
+            .await
+            .unwrap();
+        let mut conn = database.acquire_reader().await.unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM changes WHERE op_type='publish_device_label'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(count, 2);
         assert_eq!(
-            database.device_labels().await.unwrap()[&device],
-            "Office Mac"
+            database.device_labels().await.unwrap(),
+            BTreeMap::from([(device, "Office Mac".into()), ([0xcd; 32], "Linux".into()),])
         );
     }
 
     #[test]
     fn rejects_unsafe_or_oversized_labels() {
-        assert!(validate_device_label("Linux laptop").is_ok());
-        assert!(validate_device_label("").is_err());
-        assert!(validate_device_label("bad\nname").is_err());
-        assert!(validate_device_label(&"x".repeat(65)).is_err());
+        for (label, valid) in [
+            ("Linux laptop".into(), true),
+            ("".into(), false),
+            ("bad\nname".into(), false),
+            ("x".repeat(64), true),
+            ("x".repeat(65), false),
+            ("🦀".repeat(64), true),
+            ("🦀".repeat(65), false),
+        ] {
+            assert_eq!(validate_device_label(&label).is_ok(), valid, "{label:?}");
+        }
     }
 }

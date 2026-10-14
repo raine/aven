@@ -264,9 +264,13 @@ pub(crate) async fn run_join(
 
 pub(crate) async fn run_to_completion(database: &Database, config: &AppConfig) -> Result<Outcome> {
     let host = DesktopHost::foreground(config);
-    driver()?
+    let outcome = driver()?
         .run(|link| engine::run_to_completion(link, database, &host))
-        .await
+        .await?;
+    if outcome.metadata_caught_up && outcome.images != ImageTransfer::Failed {
+        crate::daemon::retry_after_foreground_sync(database, config).await;
+    }
+    Ok(outcome)
 }
 
 #[derive(Default)]
@@ -526,6 +530,9 @@ async fn print_setup_preview(database: &Database, config: &AppConfig, server: &s
     let preview = setup_preview(database, config).await?;
     eprintln!("Set up sync from this database");
     eprintln!("  Database: {}", database.path().display());
+    if aven_core::sync::client::is_aven_cloud(server) {
+        eprintln!("  Hosting: Aven Cloud");
+    }
     eprintln!("  Server: {server}");
     eprintln!(
         "  Workspaces: {}, tasks: {} (including scheduled and recurring)",
@@ -648,7 +655,7 @@ pub(crate) async fn reset(database: &Database, config: &AppConfig, args: ResetAr
     }
     println!("{message}");
     eprintln!(
-        "Start a new sync with `aven sync setup`, using an invitation from your hosting provider or `aven server setup`."
+        "Start a new sync with `aven sync setup`, using an invitation from Aven Cloud, your hosting provider or `aven server setup`."
     );
     Ok(())
 }
@@ -809,6 +816,9 @@ pub(crate) async fn join(database: &Database, config: &AppConfig, args: JoinArgs
                 error
             }
         })?;
+        if aven_core::sync::client::is_aven_cloud(&invitation.server) {
+            eprintln!("Hosting: Aven Cloud");
+        }
         eprintln!("Server: {}", invitation.server);
         confirm_action(
             args.yes,
@@ -919,6 +929,7 @@ pub(crate) fn status_state_words(state: SyncState) -> &'static str {
         SyncState::JoinIncomplete => "joining incomplete",
         SyncState::KeyChangePending => "key change pending",
         SyncState::AccessRefused => "access unconfirmed",
+        SyncState::VaultDeleted => "vault deleted",
         SyncState::Ready => "ready",
     }
 }
@@ -931,13 +942,16 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     if report.state == SyncState::NotSetUp {
         println!("Sync: not set up; this database is local only");
         println!(
-            "Run `aven sync setup` with an invitation from your hosting provider or `aven server setup`, or \
+            "Run `aven sync setup` with an invitation from Aven Cloud, your hosting provider or `aven server setup`, or \
              `aven sync join` on a new database."
         );
         return Ok(());
     }
     println!("Sync: end-to-end encrypted");
     if let Some(server) = &report.server {
+        if aven_core::sync::client::is_aven_cloud(server) {
+            println!("Hosting: Aven Cloud");
+        }
         println!("Server: {server}");
     }
     if report.devices == Some(1) {
@@ -957,6 +971,11 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
         SyncState::AccessRefused => println!(
             "State: access unconfirmed. The server refused this device. It may have been \
              removed from sync; check from another device. Local tasks and images stay here."
+        ),
+        SyncState::VaultDeleted => println!(
+            "State: vault deleted. This sync's vault was deleted on the server, so automatic \
+             sync stopped. Local tasks and unsynced changes stay here. Run `aven sync reset`, \
+             then `aven sync setup` with a new setup code."
         ),
         SyncState::Ready | SyncState::NotSetUp => println!("State: ready"),
     }

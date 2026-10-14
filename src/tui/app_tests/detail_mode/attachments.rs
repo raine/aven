@@ -171,6 +171,7 @@ async fn unsupported_terminal_enter_and_mouse_use_external_viewer() {
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
+    app.notification = None;
     let item = app.store.selected_task(app.list.selected_task()).unwrap();
     let (column, row) = (0..30)
         .flat_map(|row| (0..100).map(move |column| (column, row)))
@@ -185,6 +186,10 @@ async fn unsupported_terminal_enter_and_mouse_use_external_viewer() {
     assert_eq!(app.inline_images.export_count(), 1);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("opened attachment in default image viewer")
+    );
 }
 
 #[tokio::test]
@@ -623,7 +628,8 @@ async fn changing_detail_task_clears_image_focus() {
     let (_dir, _pool, mut app) = test_app_with_pool().await;
     let first = create_and_select_task(&mut app, test_task_draft("First")).await;
     let first_id = app.store.tasks[first].task.id.clone();
-    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    let second = create_and_select_task(&mut app, test_task_draft("Second")).await;
+    let second_id = app.store.tasks[second].task.id.clone();
     let first = app
         .store
         .tasks
@@ -646,12 +652,14 @@ async fn changing_detail_task_clears_image_focus() {
             attachment_id: "FIRSTIMAGE".to_string(),
         });
 
-    let previous = app.list.selected_task();
     app.select_detail_task(1).await.unwrap();
 
-    assert_ne!(app.list.selected_task(), previous);
+    assert_eq!(
+        app.store.tasks[app.list.selected_task().unwrap()].task.id,
+        second_id
+    );
     assert!(app.detail.state_mut().unwrap().focused_target.is_none());
-    assert!(app.detail.state_mut().unwrap().focused_target.is_none());
+    assert!(app.detail.is_active());
 }
 
 #[tokio::test]

@@ -183,9 +183,11 @@ mod tests {
         );
         assert_eq!(meta_keys(fresh.pool()).await, meta_keys(copy.pool()).await);
         for key in ["sync_cursor", "local_seq", "sync_generation"] {
+            let expected = fresh.meta(key).await.unwrap().expect(key);
             assert_eq!(
-                fresh.meta(key).await.unwrap(),
-                copy.meta(key).await.unwrap()
+                copy.meta(key).await.unwrap().as_deref(),
+                Some(expected.as_str()),
+                "{key}"
             );
         }
         let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")

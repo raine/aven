@@ -233,6 +233,10 @@ async fn done_view_shortcut_keeps_project_scope() {
         TaskScope::Project("mobile-app".to_string())
     );
     assert_eq!(app.store.view_state.query, TaskQuery::Done);
+    assert_eq!(
+        app.store.view_state.filters().statuses,
+        vec!["done", "canceled"]
+    );
     assert_eq!(app.store.tasks.len(), 1);
     assert_eq!(app.store.tasks[0].task.title, "Mobile done");
     assert_eq!(toast_message(&app), None);
@@ -426,6 +430,8 @@ async fn workspace_administration_cancellation_reports_the_canceled_flow() {
 #[tokio::test]
 async fn switch_workspace_accepts_direct_filtering_and_arrow_navigation() {
     let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Default only")).await;
+    app.store.view_state.query = TaskQuery::Todo;
     app.store
         .create_workspace("Client Alpha".to_string())
         .await
@@ -437,6 +443,10 @@ async fn switch_workspace_accepts_direct_filtering_and_arrow_navigation() {
 
     app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Picker(state)) if state.title == SWITCH_WORKSPACE_TITLE && state.mode == PickerMode::Filter
+    ));
     type_chars(&mut app, "client").await;
 
     let first = match &app.overlay {
@@ -458,7 +468,10 @@ async fn switch_workspace_accepts_direct_filtering_and_arrow_navigation() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert_eq!(app.store.active_workspace.key, expected);
+    assert_eq!(app.store.view_state.query, TaskQuery::Todo);
+    assert!(app.store.tasks.is_empty());
     assert!(app.overlay.is_none());
+    assert_eq!(toast_message(&app), None);
 }
 
 #[tokio::test]
@@ -502,30 +515,6 @@ async fn switch_workspace_no_match_warns_and_reopens_filter() {
 }
 
 #[tokio::test]
-async fn switch_workspace_shortcut_opens_picker() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    let mut conn = pool.acquire().await.unwrap();
-    crate::workspaces::create_workspace(&mut conn, "Client Work")
-        .await
-        .unwrap();
-    drop(conn);
-
-    app.handle_normal_key(KeyCode::Char('g')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('w')).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::Picker(PickerState {
-            title,
-            mode: PickerMode::Filter,
-            ..
-        })) if title == SWITCH_WORKSPACE_TITLE
-    ));
-
-    reset_default_workspace(&pool).await;
-}
-
-#[tokio::test]
 async fn refresh_reports_invalid_project_scope_fallback() {
     let mut app = test_app().await;
     app.store.view_state.scope = TaskScope::Project("missing".to_string());
@@ -543,41 +532,18 @@ async fn refresh_reports_invalid_project_scope_fallback() {
 }
 
 #[tokio::test]
-async fn switch_workspace_changes_active_workspace() {
-    let (_dir, pool, mut app) = test_app_with_pool().await;
-    create_and_select_task(&mut app, test_task_draft("Default only")).await;
-
-    let mut conn = pool.acquire().await.unwrap();
-    crate::workspaces::create_workspace(&mut conn, "Client Work")
-        .await
-        .unwrap();
-    drop(conn);
-    app.refresh().await.unwrap();
-
-    app.store.view_state.query = TaskQuery::Todo;
-
-    app.submit_switch_workspace(vec!["client-work".to_string()])
-        .await
-        .unwrap();
-
-    assert_eq!(app.store.active_workspace.key, "client-work");
-    assert_eq!(app.store.view_state.query, TaskQuery::Todo);
-    assert!(app.store.tasks.is_empty());
-    assert!(app.overlay.is_none());
-    assert_eq!(toast_message(&app), None);
-
-    reset_default_workspace(&pool).await;
-}
-
-#[tokio::test]
 async fn clear_filters_shortcut_resets_default_view_without_notification() {
     let mut app = test_app().await;
     app.store.view_state.query = TaskQuery::Todo;
+    app.submit_filter_priority(vec!["urgent".to_string()])
+        .await
+        .unwrap();
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
     assert_eq!(app.store.view_state.query, TaskQuery::Todo);
+    assert!(app.store.view_state.filter_modifiers.priority.is_none());
     assert_eq!(toast_message(&app), None);
 }
 
@@ -588,7 +554,6 @@ async fn go_conflicts_shortcut_sets_conflicts_view() {
     app.handle_normal_key(KeyCode::Char('v')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('c')).await.unwrap();
 
-    assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
     assert_eq!(app.store.view_state.query, TaskQuery::Conflicts);
 }
 
@@ -796,6 +761,7 @@ async fn header_click_opens_workspace_menu_when_more_than_two_are_available() {
 #[tokio::test]
 async fn header_metric_click_still_selects_view_directly() {
     let mut app = test_app().await;
+    app.show_view(TaskQuery::Todo).await.unwrap();
 
     let queue_column = (0..180)
         .find(|column| {
@@ -1029,7 +995,9 @@ async fn mouse_wheel_stops_at_task_list_edges() {
 #[tokio::test]
 async fn mouse_wheel_ignored_with_overlay() {
     let mut app = test_app().await;
-    let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+    create_and_select_task(&mut app, test_task_draft("first")).await;
+    create_and_select_task(&mut app, test_task_draft("second")).await;
+    app.list.select_task(Some(0));
     app.begin_search();
     let selected = app.list.selected_task();
 
@@ -1059,7 +1027,9 @@ async fn modal_overlay_mouse_does_not_reach_detail_underlay() {
 #[tokio::test]
 async fn mouse_wheel_outside_sidebar_ignored_in_sidebar_focus() {
     let mut app = test_app().await;
-    let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+    create_and_select_task(&mut app, test_task_draft("first")).await;
+    create_and_select_task(&mut app, test_task_draft("second")).await;
+    app.list.select_task(Some(0));
     app.list.focus_sidebar();
     let sidebar = app.list.selected_sidebar();
 
@@ -1075,7 +1045,9 @@ async fn mouse_wheel_outside_sidebar_ignored_in_sidebar_focus() {
 #[tokio::test]
 async fn mouse_wheel_ignored_with_detail_underlay() {
     let mut app = test_app().await;
-    let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+    create_and_select_task(&mut app, test_task_draft("first")).await;
+    create_and_select_task(&mut app, test_task_draft("second")).await;
+    app.list.select_task(Some(0));
     app.detail = crate::tui::detail_session::DetailSession::open(0);
 
     app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
@@ -1083,12 +1055,15 @@ async fn mouse_wheel_ignored_with_detail_underlay() {
         .unwrap();
 
     assert_eq!(app.list.selected_task(), Some(0));
+    assert!(app.detail.is_active());
 }
 
 #[tokio::test]
 async fn mouse_wheel_ignored_for_small_terminal() {
     let mut app = test_app().await;
-    let _ = create_and_select_task(&mut app, test_task_draft("task")).await;
+    create_and_select_task(&mut app, test_task_draft("first")).await;
+    create_and_select_task(&mut app, test_task_draft("second")).await;
+    app.list.select_task(Some(0));
 
     app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (69, 24).into())
         .await

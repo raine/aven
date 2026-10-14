@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::sync::encrypted_tail::attachments::codec::DescriptorAuthority;
 use crate::sync::encrypted_tail::attachments::{self as image, codec::Descriptor};
 use crate::sync::seed_claim::{
     Secret,

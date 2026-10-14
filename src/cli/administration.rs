@@ -12,7 +12,8 @@ editing, including workspace routes, task-intake agents, TUI columns, and custom
 commands."#;
 
 pub(super) const CONFIG_SET_HELP: &str = r#"Accepted values:
-  sync.enabled, update.automatic_checks       true | false
+  sync.enabled, reminders.enabled             true | false
+  update.automatic_checks                     true | false
   sync.interval_seconds                       positive integer
   sync.qr_glyphs                              auto | sextant | half-block
   local.db_path                               nonempty path | null
@@ -260,6 +261,8 @@ pub(crate) enum ConfigKey {
     SyncEnabled,
     #[value(name = "sync.interval_seconds")]
     SyncIntervalSeconds,
+    #[value(name = "reminders.enabled")]
+    RemindersEnabled,
     #[value(name = "sync.qr_glyphs")]
     SyncQrGlyphs,
     #[value(name = "update.automatic_checks")]

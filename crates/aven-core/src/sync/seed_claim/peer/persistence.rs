@@ -4,15 +4,6 @@ use anyhow::Context;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
 
-/// Explicit current-head request context. Historical outcomes cannot authenticate it.
-pub struct Authentication<'a> {
-    pub vault: [u8; 32],
-    pub genesis: [u8; 32],
-    pub device: [u8; 32],
-    pub head: [u8; 32],
-    pub bearer: &'a Secret,
-}
-
 impl Database {
     pub async fn peer_target_preflight(&self) -> Result<String> {
         let mut conn = self.acquire_writer().await?;
@@ -161,11 +152,4 @@ async fn fresh(conn: &mut SqliteConnection) -> Result<()> {
     let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM local_seed_genesis_pin) OR EXISTS(SELECT 1 FROM server_seed_claim) OR EXISTS(SELECT 1 FROM local_peer_enrollment) OR EXISTS(SELECT 1 FROM meta WHERE key IN ('sync_server_url','e2ee_association'))").fetch_one(conn).await?;
     ensure!(!occupied, "error enrollment-target-not-fresh");
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RegistrationStatus {
-    Open,
-    Expired,
-    Consumed,
 }

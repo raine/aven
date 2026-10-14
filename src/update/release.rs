@@ -4,7 +4,7 @@ use reqwest::header::{ETAG, IF_NONE_MATCH};
 use semver::Version;
 use serde::Deserialize;
 
-use super::{REPOSITORY, Release};
+use super::{REPOSITORY, Release, ReleaseArchive};
 
 const RELEASE_API: &str = "https://api.github.com/repos/raine/aven/releases/latest";
 
@@ -87,6 +87,10 @@ fn parse_release(release: GithubRelease) -> Result<Release> {
     let checksum_url = unique_asset_url(&release.assets, &checksum_name)?;
     validate_asset_url(&archive_url)?;
     validate_asset_url(&checksum_url)?;
+    let app = match platform_app_archive_name()? {
+        Some(name) => optional_archive(&release.assets, name)?,
+        None => None,
+    };
 
     Ok(Release {
         version,
@@ -94,7 +98,23 @@ fn parse_release(release: GithubRelease) -> Result<Release> {
         archive_name,
         archive_url,
         checksum_url,
+        app: app.map(Box::new),
     })
+}
+
+fn optional_archive(assets: &[GithubAsset], name: String) -> Result<Option<ReleaseArchive>> {
+    if !assets.iter().any(|asset| asset.name == name) {
+        return Ok(None);
+    }
+    let url = unique_asset_url(assets, &name)?;
+    let checksum_url = unique_asset_url(assets, &name.replace(".tar.gz", ".sha256"))?;
+    validate_asset_url(&url)?;
+    validate_asset_url(&checksum_url)?;
+    Ok(Some(ReleaseArchive {
+        name,
+        url,
+        checksum_url,
+    }))
 }
 
 fn unique_asset_url(assets: &[GithubAsset], name: &str) -> Result<String> {
@@ -122,14 +142,25 @@ fn validate_asset_url(url: &str) -> Result<()> {
 }
 
 pub(super) fn platform_archive_name() -> Result<String> {
-    let suffix = match (std::env::consts::OS, std::env::consts::ARCH) {
+    Ok(format!("aven-{}.tar.gz", platform_suffix()?))
+}
+
+/// The archive holding only `Aven.app`, published for macOS.
+fn platform_app_archive_name() -> Result<Option<String>> {
+    let suffix = platform_suffix()?;
+    Ok(suffix
+        .starts_with("darwin-")
+        .then(|| format!("aven-{suffix}-app.tar.gz")))
+}
+
+fn platform_suffix() -> Result<&'static str> {
+    Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "darwin-arm64",
         ("macos", "x86_64") => "darwin-amd64",
         ("linux", "aarch64") => "linux-arm64",
         ("linux", "x86_64") => "linux-amd64",
         (os, arch) => bail!("aven releases do not support {os}/{arch}"),
-    };
-    Ok(format!("aven-{suffix}.tar.gz"))
+    })
 }
 
 #[cfg(test)]
@@ -158,6 +189,73 @@ mod tests {
         assert_eq!(parsed.version, Version::new(1, 2, 3));
         assert_eq!(parsed.tag, "v1.2.3");
         assert_eq!(parsed.archive_name, archive);
+        assert_eq!(parsed.app, None);
+    }
+
+    #[test]
+    fn parses_app_archive_only_on_macos() {
+        let archive = platform_archive_name().unwrap();
+        let checksum = archive.replace(".tar.gz", ".sha256");
+        let app = archive.replace(".tar.gz", "-app.tar.gz");
+        let app_checksum = archive.replace(".tar.gz", "-app.sha256");
+        let parsed = parse_release(GithubRelease {
+            tag_name: "v1.2.3".to_string(),
+            assets: vec![
+                asset(&archive),
+                asset(&checksum),
+                asset(&app),
+                asset(&app_checksum),
+            ],
+        })
+        .unwrap();
+
+        if cfg!(target_os = "macos") {
+            let parsed_app = parsed.app.unwrap();
+            assert_eq!(parsed_app.name, app);
+            assert!(parsed_app.url.ends_with(&format!("/v1.2.3/{app}")));
+            assert!(
+                parsed_app
+                    .checksum_url
+                    .ends_with(&format!("/v1.2.3/{app_checksum}"))
+            );
+            assert!(
+                parse_release(GithubRelease {
+                    tag_name: "v1.2.3".to_string(),
+                    assets: vec![asset(&archive), asset(&checksum), asset(&app)],
+                })
+                .is_err(),
+                "an app archive without its checksum must be rejected"
+            );
+            assert!(
+                parse_release(GithubRelease {
+                    tag_name: "v1.2.3".to_string(),
+                    assets: vec![
+                        asset(&archive),
+                        asset(&checksum),
+                        asset(&app),
+                        asset(&app),
+                        asset(&app_checksum),
+                    ],
+                })
+                .is_err()
+            );
+            let mut foreign = asset(&app);
+            foreign.browser_download_url = format!("https://example.com/{app}");
+            assert!(
+                parse_release(GithubRelease {
+                    tag_name: "v1.2.3".to_string(),
+                    assets: vec![
+                        asset(&archive),
+                        asset(&checksum),
+                        foreign,
+                        asset(&app_checksum),
+                    ],
+                })
+                .is_err()
+            );
+        } else {
+            assert_eq!(parsed.app, None);
+        }
     }
 
     #[test]

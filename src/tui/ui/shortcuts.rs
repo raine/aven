@@ -696,24 +696,6 @@ fn command_name_style(theme: &Theme) -> Style {
     Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
 }
 
-#[cfg(test)]
-fn command_hint_line(
-    theme: &Theme,
-    leading: Span<'static>,
-    command: &BuiltInCommand,
-    command_name_width: usize,
-) -> Line<'static> {
-    let mut spans = vec![
-        leading,
-        Span::styled(
-            format!("{:<command_name_width$}", command_label(command.name)),
-            command_name_style(theme),
-        ),
-    ];
-    spans.push(Span::styled(command.description, theme.dim()));
-    Line::from(spans)
-}
-
 fn catalog_command_hint_line(
     theme: &Theme,
     leading: Span<'static>,
@@ -782,23 +764,6 @@ fn help_command_line(
         theme.dim(),
     ));
     Line::from(spans)
-}
-
-#[cfg(test)]
-fn command_line(command: &BuiltInCommand, context: CommandContext) -> Line<'static> {
-    let theme = Theme::dark();
-    let keys = command
-        .keys(context)
-        .iter()
-        .map(|key| key.label)
-        .collect::<Vec<_>>()
-        .join("/");
-    command_hint_line(
-        &theme,
-        Span::styled(format!("{keys:<10}"), theme.muted()),
-        command,
-        19,
-    )
 }
 
 struct CommandPaletteOptions<'a> {
@@ -1389,6 +1354,12 @@ mod tests {
         let wide = help_layout(&Theme::dark(), Size::new(270, 30), DEFAULT_UNDO_DESCRIPTION);
         assert_eq!(wide.columns.len(), 2);
         assert!(wide.columns[0].1.len().abs_diff(wide.columns[1].1.len()) <= 3);
+        let columns = help_columns();
+        let tail_right = ["Order", "Conflicts", "Config"]
+            .into_iter()
+            .filter(|section| columns[1].contains(section))
+            .count();
+        assert!(tail_right < 3);
     }
 
     #[test]
@@ -1770,63 +1741,6 @@ mod tests {
     }
 
     #[test]
-    fn view_prefix_hints_include_upcoming() {
-        let rendered = prefix_hint_lines(CommandContext::Normal, &["v".to_string()])
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(rendered.contains(":view-upcoming"));
-        assert!(rendered.contains(" p "));
-        assert!(rendered.contains("show upcoming task view"));
-    }
-
-    #[test]
-    fn prefix_hint_lines_use_shared_catalog() {
-        let lines = prefix_hint_lines(CommandContext::Normal, &["t".to_string()]);
-        let rendered = lines
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains(":status-active"));
-        assert!(rendered.contains(":priority-medium"));
-        assert!(rendered.contains(" a "));
-        assert!(rendered.contains(" m "));
-    }
-
-    #[test]
-    fn detail_prefix_hint_lines_use_detail_catalog() {
-        let lines = prefix_hint_lines(CommandContext::Detail, &["t".to_string()]);
-        let rendered = lines
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains(":edit-title"));
-        assert!(rendered.contains(" e t "));
-    }
-
-    #[test]
-    fn prefix_hint_lines_show_remaining_chord_sequence() {
-        let rendered = prefix_hint_lines(CommandContext::Normal, &["t".to_string()])
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(rendered.contains(" e t "));
-        assert!(rendered.contains(":edit-title"));
-        assert!(rendered.contains(" e d "));
-        assert!(rendered.contains(":edit-description"));
-        assert!(rendered.contains(" e j "));
-        assert!(rendered.contains(":edit-project"));
-        assert!(rendered.contains(" e p "));
-        assert!(rendered.contains(":edit-priority"));
-    }
-
-    #[test]
     fn detail_prefix_hint_lines_align_command_descriptions() {
         let lines = prefix_hint_lines(CommandContext::Detail, &["t".to_string()]);
         let rendered = lines
@@ -1844,30 +1758,13 @@ mod tests {
             .find(|line| line.contains(":edit-description"))
             .unwrap();
         assert_eq!(
-            title.find("edit selected task title"),
-            description.find("edit selected task description")
+            title
+                .find("edit selected task title")
+                .expect("title description"),
+            description
+                .find("edit selected task description")
+                .expect("edit-description description")
         );
-    }
-
-    #[test]
-    fn copy_prefix_groups_every_copy_action() {
-        for (context, command_prefix) in [
-            (CommandContext::Normal, ":copy-"),
-            (CommandContext::Detail, ":copy-"),
-        ] {
-            let rendered = prefix_hint_lines(context, &["y".to_string()])
-                .iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            for name in ["ref", "id", "title", "description", "text", "notes"] {
-                assert!(
-                    rendered.contains(&format!("{command_prefix}{name}")),
-                    "{context:?} copy menu missing {name}"
-                );
-            }
-        }
     }
 
     #[test]
@@ -1982,10 +1879,13 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
 
-        assert!(rendered.contains(":edit-title"));
-        assert!(rendered.contains("1 task only"));
-        assert!(rendered.contains(":edit-project"));
-        assert!(rendered.contains("3 marked tasks"));
+        for (command, scope) in [
+            (":edit-title", "1 task only"),
+            (":edit-project", "3 marked tasks"),
+        ] {
+            let row = rendered.lines().find(|row| row.contains(command)).unwrap();
+            assert!(row.contains(scope), "{row}");
+        }
     }
 
     #[test]
@@ -1993,17 +1893,6 @@ mod tests {
         assert_eq!(prefix_hint_visible_rows(30, 20), 20);
         assert_eq!(prefix_hint_visible_rows(10, 20), 6);
         assert_eq!(prefix_hint_visible_rows(2, 20), 1);
-    }
-
-    #[test]
-    fn command_line_includes_multi_key_label() {
-        let command = COMMANDS
-            .iter()
-            .find(|command| command.name == "status-active")
-            .unwrap();
-        let line = command_line(command, CommandContext::Normal);
-        let rendered = line.to_string();
-        assert!(rendered.contains("t a"));
     }
 
     #[test]
@@ -2224,8 +2113,11 @@ mod tests {
         let buffer = render_command_buffer_at_width("", 0, None, Some("task-child-remove"), 72);
         let rendered = buffer_text_from_rows(&buffer);
 
-        assert!(rendered.contains(":task-child-remove"), "{rendered}");
-        assert!(rendered.contains('…'));
+        let row = rendered
+            .lines()
+            .find(|row| row.contains(":task-child-remove"))
+            .unwrap();
+        assert!(row.contains('…'), "{row}");
     }
 
     #[test]
@@ -2243,19 +2135,14 @@ mod tests {
     #[test]
     fn command_overlay_does_not_highlight_without_cycle() {
         let buffer = render_command_buffer("stat", 4, None, None);
-        assert!((0..buffer.area.height).all(|row| {
-            !buffer_row(&buffer, row).contains(":status-todo")
-                || (0..buffer.area.width).all(|column| {
-                    let cell = &buffer[(column, row)];
-                    cell.symbol() == " " || cell.style().bg != Some(Theme::dark().bg_selected)
-                })
-        }));
-    }
-
-    #[test]
-    fn overlay_render_includes_help_title() {
-        let rendered = render_help_overlay(0);
-        assert!(rendered.contains("Shortcuts"));
+        let row = (0..buffer.area.height)
+            .find(|&row| buffer_row(&buffer, row).contains(":status-todo"))
+            .expect("status-todo row");
+        assert!(
+            (0..buffer.area.width).all(|column| {
+                buffer[(column, row)].style().bg != Some(Theme::dark().bg_selected)
+            })
+        );
     }
 
     #[test]
@@ -2326,21 +2213,6 @@ mod tests {
             let rendered = render_command_overlay(name, name.len());
             assert!(rendered.contains(&format!(":{name}")), "{rendered}");
         }
-    }
-
-    #[test]
-    fn global_help_includes_upcoming_view_route() {
-        let rendered = help_columns()
-            .iter()
-            .flat_map(|sections| {
-                help_column_lines(&Theme::dark(), sections, DEFAULT_UNDO_DESCRIPTION)
-            })
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(rendered.contains("v p"));
-        assert!(rendered.contains("show upcoming task view"));
     }
 
     #[test]
@@ -2434,29 +2306,13 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("/");
             assert!(
-                rendered.contains(command.description),
-                ":{} missing",
+                rendered.lines().any(|row| {
+                    row.trim_start().starts_with(&format!("{keys} "))
+                        && row.contains(command.description)
+                }),
+                ":{} missing row with keys {keys} and description",
                 command.name
             );
-            assert!(rendered.contains(&keys), ":{} keys missing", command.name);
-        }
-    }
-
-    #[test]
-    fn detail_help_lists_recurrence_lifecycle_shortcuts() {
-        let rendered = detail_help_lines(&Theme::dark(), DEFAULT_UNDO_DESCRIPTION)
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        for (keys, description) in [
-            ("t r p", "pause the selected recurring series"),
-            ("t r r", "resume the selected recurring series"),
-            ("t r s", "stop future occurrences after the current task"),
-        ] {
-            assert!(rendered.contains(keys));
-            assert!(rendered.contains(description));
         }
     }
 
@@ -2469,7 +2325,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(!key_widths.is_empty());
-        assert!(key_widths.iter().all(|width| *width == 18));
+        assert!(key_widths.iter().all(|width| *width == key_widths[0]));
     }
 
     #[test]
@@ -2490,39 +2346,30 @@ mod tests {
         let detail = buffer_text_from_rows(&render_detail_help_buffer(0));
 
         for (rendered, title) in [(help, "Shortcuts"), (detail, "Task detail shortcuts")] {
-            assert!(rendered.contains("▲"), "{title} missing scrollbar begin");
-            assert!(rendered.contains("▼"), "{title} missing scrollbar end");
+            assert_eq!(count_marker(&rendered, "▲"), 1, "{title} scrollbar begin");
+            assert_eq!(count_marker(&rendered, "▼"), 1, "{title} scrollbar end");
         }
     }
 
-    #[test]
-    fn global_help_overlay_draws_one_scrollbar() {
-        let rendered = buffer_text_from_rows(&render_help_buffer(0));
-
-        assert_eq!(count_marker(&rendered, "▲"), 1);
-        assert_eq!(count_marker(&rendered, "▼"), 1);
+    fn scrollbar_thumb_rows(buffer: &ratatui::buffer::Buffer) -> Vec<u16> {
+        let column = (0..buffer.area.width)
+            .find(|&x| (0..buffer.area.height).any(|y| buffer[(x, y)].symbol() == "▲"))
+            .expect("scrollbar begin");
+        let rows = (0..buffer.area.height)
+            .filter(|&y| buffer[(column, y)].symbol() == "█")
+            .collect::<Vec<_>>();
+        assert!(!rows.is_empty(), "scrollbar thumb missing");
+        rows
     }
 
     #[test]
     fn help_overlay_scrollbar_moves_with_scroll_offset() {
-        let top = render_help_buffer(0);
-        let scrolled = render_help_buffer(1);
-
-        assert_ne!(
-            buffer_text_from_rows(&top),
-            buffer_text_from_rows(&scrolled)
-        );
-    }
-
-    #[test]
-    fn detail_help_overlay_scrollbar_moves_with_scroll_offset() {
-        let top = render_detail_help_buffer(0);
-        let scrolled = render_detail_help_buffer(1);
-
-        assert_ne!(
-            buffer_text_from_rows(&top),
-            buffer_text_from_rows(&scrolled)
-        );
+        for render in [render_help_buffer, render_detail_help_buffer] {
+            let top = scrollbar_thumb_rows(&render(0));
+            let bottom = scrollbar_thumb_rows(&render(u16::MAX));
+            assert!(bottom.first().unwrap() > top.first().unwrap());
+            assert!(bottom.last().unwrap() > top.last().unwrap());
+        }
     }
 
     #[test]
@@ -2712,25 +2559,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn help_columns_balance_section_rows() {
-        let columns = help_columns();
-        let layout = help_layout(&Theme::dark(), Size::new(270, 30), DEFAULT_UNDO_DESCRIPTION);
-        let row_counts = layout
-            .columns
-            .iter()
-            .map(|(_, lines)| lines.len())
-            .collect::<Vec<_>>();
-
-        let tail_right = ["Order", "Conflicts", "Config"]
-            .into_iter()
-            .filter(|section| columns[1].contains(section))
-            .count();
-
-        assert!(row_counts[0].abs_diff(row_counts[1]) <= 3);
-        assert!(tail_right < 3);
-    }
-
     fn assert_prefix_hints_cover_context(context: CommandContext) {
         let mut prefixes: Vec<Vec<String>> = Vec::new();
 
@@ -2764,17 +2592,16 @@ mod tests {
                         .collect::<Vec<_>>();
                     if labels.len() > prefix.len() && labels.starts_with(&prefix) {
                         let remaining = labels[prefix.len()..].join(" ");
+                        let name = format!(":{}", command.name);
+                        let keys = format!(" {:<6} ", remaining);
                         assert!(
-                            rendered.contains(&format!(":{}", command.name)),
-                            "prefix {} missing :{}",
+                            rendered.lines().any(|row| {
+                                row.starts_with(&keys)
+                                    && row.split_whitespace().any(|word| word == name)
+                                    && row.contains(command.description)
+                            }),
+                            "{context:?} prefix {} missing row for {name} with keys {remaining} and description",
                             prefix.join(" "),
-                            command.name
-                        );
-                        assert!(
-                            rendered.contains(&format!(" {:<6} ", remaining)),
-                            "prefix {} missing remaining keys {}",
-                            prefix.join(" "),
-                            remaining
                         );
                     }
                 }

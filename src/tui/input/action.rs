@@ -6,7 +6,12 @@ use crate::tui::event::Action;
 use crate::tui::store::TaskQuery;
 
 impl App {
-    pub(in crate::tui) async fn execute(&mut self, action: Action) -> Result<()> {
+    // Boxed so callers hold a pointer instead of a future sized for every action.
+    pub(in crate::tui) fn execute(&mut self, action: Action) -> impl Future<Output = Result<()>> {
+        Box::pin(self.execute_action(action))
+    }
+
+    async fn execute_action(&mut self, action: Action) -> Result<()> {
         let marked_task_count = self.bulk_scope_marked_task_count();
         if action.copy_requires_single_task() && marked_task_count > 0 {
             self.set_info("copy action requires one task");

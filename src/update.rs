@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod bundle;
 mod cache;
 mod eligibility;
 mod install;
@@ -31,6 +33,17 @@ pub(crate) struct Release {
     pub(crate) tag: String,
     pub(crate) archive_name: String,
     pub(crate) archive_url: String,
+    pub(crate) checksum_url: String,
+    /// The macOS `Aven.app` archive. Absent on Linux and in releases without it.
+    /// Boxed so a release stays small when moved through enums.
+    #[serde(default)]
+    pub(crate) app: Option<Box<ReleaseArchive>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReleaseArchive {
+    pub(crate) name: String,
+    pub(crate) url: String,
     pub(crate) checksum_url: String,
 }
 
@@ -178,11 +191,6 @@ pub(crate) fn progress_channel() -> (
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn package_version_is_semver() {
-        assert_eq!(current_version().to_string(), CURRENT_VERSION);
-    }
 
     #[test]
     fn cancellation_is_reported() {

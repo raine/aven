@@ -35,16 +35,16 @@ async fn encrypted_package_round_trips_and_retries_exact_bytes() {
             .unwrap();
     let snapshot_json = crate::sync::shared_state::unpack_document(&snapshot).unwrap();
     drop(conn);
-    assert!(
-        records
-            .iter()
-            .all(|record| !record.windows(32).any(|window| window == key.expose()))
-    );
+    assert!(records.iter().all(|record| {
+        !record
+            .windows(32)
+            .any(|window| window == key.protected_storage_bytes())
+    }));
     assert!(
         !snapshot_json
             .as_bytes()
             .windows(32)
-            .any(|window| window == key.expose())
+            .any(|window| window == key.protected_storage_bytes())
     );
     assert!(records.iter().all(|record| {
         !record

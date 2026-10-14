@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stores_and_retrieves_blob() {
+    async fn stores_and_retrieves_blob_idempotently() {
         let temp = tempfile::tempdir().unwrap();
         let db_path = temp.path().join("test.sqlite");
         let pool = open_db(&db_path).await.unwrap();
@@ -292,7 +292,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(stored.sha256, sha256_hex(&bytes));
-        assert!(stored.byte_size > 0);
+        assert_eq!(stored.byte_size, bytes.len() as i64);
+        let repeated = store_blob(&mut conn, &blob_dir, "image/png", &bytes)
+            .await
+            .unwrap();
+        assert_eq!(repeated.sha256, stored.sha256);
+        assert_eq!(repeated.byte_size, stored.byte_size);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM blob_inventory")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
 
         let obj_path = object_path(&blob_dir, &stored.sha256).unwrap();
         assert!(obj_path.exists(), "blob file should exist on disk");
@@ -307,31 +317,6 @@ mod tests {
         assert!(row.available);
         assert_eq!(row.sha256, stored.sha256);
         assert_eq!(row.byte_size, stored.byte_size);
-    }
-
-    #[tokio::test]
-    async fn stores_blob_idempotently() {
-        let temp = tempfile::tempdir().unwrap();
-        let db_path = temp.path().join("test.sqlite");
-        let pool = open_db(&db_path).await.unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-
-        let blob_dir = temp.path().join("blobs");
-
-        let bytes = png_bytes();
-        let stored1 = store_blob(&mut conn, &blob_dir, "image/png", &bytes)
-            .await
-            .unwrap();
-        let stored2 = store_blob(&mut conn, &blob_dir, "image/png", &bytes)
-            .await
-            .unwrap();
-
-        assert_eq!(stored1.sha256, stored2.sha256);
-        let row = blob_inventory_row(&mut conn, &stored1.sha256)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(row.available);
     }
 
     #[tokio::test]
@@ -382,9 +367,10 @@ mod tests {
 
     #[test]
     fn computes_sha256_hex() {
-        let result = sha256_hex(b"hello");
-        assert_eq!(result.len(), 64);
-        assert!(result.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(
+            sha256_hex(b"hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
     }
 
     #[test]

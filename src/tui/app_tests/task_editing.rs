@@ -494,7 +494,7 @@ async fn edit_project_picker_excludes_project_inference() {
 }
 
 #[tokio::test]
-async fn edit_priority_picker_prefills_current_priority() {
+async fn priority_footer_choice_updates_priority_and_promotes_inbox_task() {
     let mut app = test_app().await;
     create_and_select_task(
         &mut app,
@@ -714,11 +714,15 @@ async fn detail_copy_hotkeys_copy_task_text_and_show_feedback() {
     assert!(app.view().copy_description_available);
     assert!(app.view().copy_notes_available);
 
-    for (key_code, expected_message) in [
-        ('t', "copied task title"),
-        ('d', "copied task description"),
-        ('a', "copied task title and description"),
-        ('n', "copied task notes"),
+    for (key_code, expected_message, expected_text) in [
+        ('t', "copied task title", "Copy target"),
+        ('d', "copied task description", "First paragraph.\n\n- item"),
+        (
+            'a',
+            "copied task title and description",
+            "Copy target\n\nFirst paragraph.\n\n- item",
+        ),
+        ('n', "copied task notes", "Note body"),
     ] {
         app.show_detail(3);
         app.dispatch_key(key(KeyCode::Char('y')), (80, 24).into())
@@ -728,6 +732,10 @@ async fn detail_copy_hotkeys_copy_task_text_and_show_feedback() {
             .await
             .unwrap();
 
+        assert_eq!(
+            crate::tui::platform::clipboard_text_for_test().as_deref(),
+            Some(expected_text)
+        );
         assert_eq!(toast_message(&app).as_deref(), Some(expected_message));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
         assert!(app.overlay.is_none());
@@ -776,17 +784,25 @@ async fn table_copy_hotkeys_copy_task_text_and_show_feedback() {
     assert!(app.view().copy_description_available);
     assert!(app.view().copy_notes_available);
 
-    for (key_code, expected_message) in [
-        ('t', "copied task title"),
-        ('d', "copied task description"),
-        ('a', "copied task title and description"),
-        ('n', "copied task notes"),
+    for (key_code, expected_message, expected_text) in [
+        ('t', "copied task title", "Copy target"),
+        ('d', "copied task description", "First paragraph.\n\n- item"),
+        (
+            'a',
+            "copied task title and description",
+            "Copy target\n\nFirst paragraph.\n\n- item",
+        ),
+        ('n', "copied task notes", "Note body"),
     ] {
         app.handle_normal_key(KeyCode::Char('y')).await.unwrap();
         app.handle_normal_key(KeyCode::Char(key_code))
             .await
             .unwrap();
 
+        assert_eq!(
+            crate::tui::platform::clipboard_text_for_test().as_deref(),
+            Some(expected_text)
+        );
         assert_eq!(toast_message(&app).as_deref(), Some(expected_message));
         assert_eq!(toast_severity(&app), Some(ToastSeverity::Success));
         assert!(app.overlay.is_none());
@@ -938,21 +954,6 @@ async fn copy_requires_selected_task() {
 }
 
 #[tokio::test]
-async fn undo_shortcut_reverts_last_mutation() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Before")).await;
-    app.store
-        .update_title(Some(selected), "After".to_string())
-        .await
-        .unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, "After");
-
-    app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
-    assert_eq!(app.store.tasks[selected].task.title, "Before");
-    assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
-}
-
-#[tokio::test]
 async fn undo_shortcut_keeps_selected_row_position() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("First")).await;
@@ -968,6 +969,7 @@ async fn undo_shortcut_keeps_selected_row_position() {
 
     assert_eq!(app.list.selected_task(), Some(selected));
     assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Inbox);
+    assert!(toast_message(&app).is_some_and(|message| message.contains("undid")));
 }
 
 #[tokio::test]
@@ -978,6 +980,7 @@ async fn undo_command_reverts_last_mutation() {
         .update_title(Some(selected), "After".to_string())
         .await
         .unwrap();
+    assert_eq!(app.store.tasks[selected].task.title, "After");
 
     app.begin_command().await;
     for ch in "undo".chars() {

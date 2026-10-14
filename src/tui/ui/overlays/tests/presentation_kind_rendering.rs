@@ -111,12 +111,15 @@ fn edit_description_kind_uses_specialized_renderer_with_changed_title() {
         kind: MultilineInputKind::EditDescription,
         title: "Changed description title".to_string(),
         prompt: String::new(),
-        lines: borrow_slice(vec!["a".repeat(160)]),
+        lines: borrow_slice(vec!["x".repeat(160)]),
         row: 0,
         column: 150,
         mode: MultilineInputMode::Compose,
     }));
     assert!(rendered.contains("Changed description title"));
+    assert!(rendered.contains("Ctrl-Enter / ^S submit"));
+    assert!(!rendered.contains(&"x".repeat(160)));
+    assert_eq!(rendered.matches('x').count(), 160);
     assert!(rendered.contains("Ctrl+X Ctrl+E editor"));
     assert!(rendered.contains("line 1/1"));
 }
@@ -174,11 +177,17 @@ fn project_picker_kinds_control_submit_hints_with_changed_titles() {
         let rendered = render_overlay_view(OverlayView::Picker(PickerView {
             kind,
             title: title.to_string(),
+            filter: "aven".to_string(),
+            filter_cursor: 4,
             items: borrow_slice(vec![picker_item("AVN aven", "aven")]),
             ..project_picker_view()
         }));
         assert!(rendered.contains(title), "{kind:?}");
         assert!(rendered.contains("PREFIX"), "{kind:?}");
+        assert!(rendered.contains("PROJECT"), "{kind:?}");
+        assert!(rendered.contains("AVN"), "{kind:?}");
+        assert!(rendered.contains("aven"), "{kind:?}");
+        assert!(!rendered.contains("/aven"), "{kind:?}");
         assert!(rendered.contains(hint), "{kind:?}");
     }
 }

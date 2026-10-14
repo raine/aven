@@ -65,56 +65,31 @@ fn overlay_render_includes_search_title_and_input() {
 }
 
 #[test]
-fn search_overlay_shows_empty_result_summary() {
-    let rendered = render_overlay_view(OverlayView::Search {
-        input: "missing".to_string(),
-        cursor: 7,
-        results: &[],
-        selected: 0,
-        total_matches: 0,
-        stale: false,
-        no_matches_cached: false,
-        intent: SearchKind::Navigate,
-    });
-
-    assert!(rendered.contains("0 matches"));
-    assert!(!rendered.contains("No matching tasks"));
-}
-
-#[test]
-fn stale_search_overlay_keeps_empty_state_blank() {
-    let rendered = render_overlay_view(OverlayView::Search {
-        input: "query".to_string(),
-        cursor: 5,
-        results: &[],
-        selected: 0,
-        total_matches: 0,
-        stale: true,
-        no_matches_cached: false,
-        intent: SearchKind::Navigate,
-    });
-
-    assert!(!rendered.contains("searching..."));
-    assert!(!rendered.contains("No matching tasks"));
-    assert!(!rendered.contains("0 matches"));
-}
-
-#[test]
-fn stale_search_overlay_preserves_cached_empty_summary() {
-    let rendered = render_overlay_view(OverlayView::Search {
-        input: "quer".to_string(),
-        cursor: 4,
-        results: &[],
-        selected: 0,
-        total_matches: 0,
-        stale: true,
-        no_matches_cached: true,
-        intent: SearchKind::Navigate,
-    });
-
-    assert!(rendered.contains("0 matches"));
-    assert!(!rendered.contains("searching..."));
-    assert!(!rendered.contains("No matching tasks"));
+fn search_empty_summary_distinguishes_fresh_stale_and_cached_results() {
+    for (input, stale, no_matches_cached, summary) in [
+        ("missing", false, false, true),
+        ("query", true, false, false),
+        ("quer", true, true, true),
+        ("", false, false, false),
+    ] {
+        let rendered = render_overlay_view(OverlayView::Search {
+            input: input.to_string(),
+            cursor: input.len(),
+            results: &[],
+            selected: 0,
+            total_matches: 0,
+            stale,
+            no_matches_cached,
+            intent: SearchKind::Navigate,
+        });
+        assert_eq!(
+            rendered.contains("0 matches"),
+            summary,
+            "{input:?}/{stale}/{no_matches_cached}"
+        );
+        assert!(!rendered.contains("searching..."));
+        assert!(!rendered.contains("No matching tasks"));
+    }
 }
 
 #[test]
@@ -223,13 +198,17 @@ fn search_overlay_colors_project_prefix() {
         no_matches_cached: false,
         intent: SearchKind::Navigate,
     });
-    let prefix_cell = buffer
-        .content
-        .iter()
-        .find(|cell| cell.symbol() == "A" && cell.fg == Theme::dark().project("aven"))
-        .unwrap();
-
-    assert_eq!(prefix_cell.fg, Theme::dark().project("aven"));
+    let (row, text) = (0..buffer.area.height)
+        .map(|row| (row, buffer_row(&buffer, row)))
+        .find(|(_, text)| text.contains("AVN-1"))
+        .expect("result reference");
+    let column = text[..text.find("AVN-1").unwrap()].chars().count() as u16;
+    for offset in 0..3 {
+        assert_eq!(
+            buffer[(column + offset, row)].fg,
+            Theme::dark().project("aven")
+        );
+    }
 }
 
 #[test]

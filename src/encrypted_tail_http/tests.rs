@@ -484,9 +484,11 @@ async fn independent_clients_create_conflict_resolve_delete_restore_and_keep_ima
     let f = fixture().await;
     converge(&f).await;
     let w = f.seed.list_workspaces().await.unwrap().remove(0);
-    let seed_id = f.seed.meta("client_id").await.unwrap();
-    let peer_id = f.peer.meta("client_id").await.unwrap();
+    let seed_id = f.seed.meta("client_id").await.unwrap().unwrap();
+    let peer_id = f.peer.meta("client_id").await.unwrap().unwrap();
+    assert_ne!(seed_id, peer_id);
     let image_bytes = files(&f.root.path().join("objects/sha256"));
+    assert!(!image_bytes.is_empty());
     let task = f
         .seed
         .create_task(&w, draft("private fresh task"))
@@ -592,8 +594,8 @@ async fn independent_clients_create_conflict_resolve_delete_restore_and_keep_ima
         image_bytes
     );
     assert_eq!(scalar(&f.server, "SELECT count(*) FROM changes").await, 0);
-    assert_eq!(f.seed.meta("client_id").await.unwrap(), seed_id);
-    assert_eq!(f.peer.meta("client_id").await.unwrap(), peer_id);
+    assert_eq!(f.seed.meta("client_id").await.unwrap().unwrap(), seed_id);
+    assert_eq!(f.peer.meta("client_id").await.unwrap().unwrap(), peer_id);
     assert_eq!(
         scalar(
             &f.seed,

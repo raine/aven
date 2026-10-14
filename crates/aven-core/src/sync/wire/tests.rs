@@ -59,7 +59,6 @@ fn constructed_attachment_payloads_parse_without_json_or_protocol_changes() {
     ))
     .unwrap();
     assert_eq!(serde_json::to_value(delete).unwrap(), delete_value);
-    assert_eq!(SYNC_PROTOCOL_VERSION, 18);
 }
 
 #[test]

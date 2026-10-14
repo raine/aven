@@ -403,22 +403,26 @@ mod tests {
     }
 
     #[test]
-    fn picker_moves_with_j_and_k_in_navigation_mode() {
-        let state = picker_navigation_state();
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_picker_key(state, key(KeyCode::Char('j')))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 1);
-        assert_eq!(state.filter.as_str(), "");
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_picker_key(state, key(KeyCode::Char('k')))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 0);
-        assert_eq!(state.filter.as_str(), "");
+    fn picker_navigation_aliases_move_without_editing_filter() {
+        for (down, up) in [
+            (key(KeyCode::Char('j')), key(KeyCode::Char('k'))),
+            (key(KeyCode::Down), key(KeyCode::Up)),
+            (ctrl(KeyCode::Char('n')), ctrl(KeyCode::Char('p'))),
+        ] {
+            let state = picker_navigation_state();
+            let OverlayOutcome::None(OverlayState::Picker(state)) = handle_picker_key(state, down)
+            else {
+                panic!("expected picker state");
+            };
+            assert_eq!(state.selected, 1, "{down:?}");
+            assert_eq!(state.filter.as_str(), "");
+            let OverlayOutcome::None(OverlayState::Picker(state)) = handle_picker_key(state, up)
+            else {
+                panic!("expected picker state");
+            };
+            assert_eq!(state.selected, 0, "{up:?}");
+            assert_eq!(state.filter.as_str(), "");
+        }
     }
 
     #[test]
@@ -453,40 +457,6 @@ mod tests {
             panic!("expected picker state");
         };
         assert_eq!(state.mode, PickerMode::Navigate);
-    }
-
-    #[test]
-    fn picker_moves_with_arrow_keys() {
-        let state = picker_navigation_state();
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_picker_key(state, key(KeyCode::Down))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 1);
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_picker_key(state, key(KeyCode::Up))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 0);
-    }
-
-    #[test]
-    fn picker_moves_with_ctrl_n_and_ctrl_p() {
-        let state = picker_navigation_state();
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_picker_key(state, ctrl(KeyCode::Char('n')))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 1);
-        let OverlayOutcome::None(OverlayState::Picker(state)) =
-            handle_picker_key(state, ctrl(KeyCode::Char('p')))
-        else {
-            panic!("expected picker state");
-        };
-        assert_eq!(state.selected, 0);
     }
 
     #[test]

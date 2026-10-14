@@ -23,19 +23,38 @@ pub(crate) async fn install_direct(
     progress: watch::Sender<UpdateProgress>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<InstallSuccess> {
+    install_direct_for_home(client, plan, progress, cancelled, dirs::home_dir()).await
+}
+
+pub(super) async fn install_direct_for_home(
+    client: reqwest::Client,
+    plan: InstallPlan,
+    progress: watch::Sender<UpdateProgress>,
+    cancelled: Arc<AtomicBool>,
+    home: Option<std::path::PathBuf>,
+) -> Result<InstallSuccess> {
     let target = plan
         .direct_target()
         .context("this installation cannot be updated directly")?
         .to_path_buf();
-    ensure_not_cancelled(&cancelled)?;
-    set_phase(&progress, UpdatePhase::Downloading);
-    let archive = download_limited(&client, &plan.release.archive_url, ARCHIVE_LIMIT).await?;
-    ensure_not_cancelled(&cancelled)?;
-    let checksum = download_limited(&client, &plan.release.checksum_url, CHECKSUM_LIMIT).await?;
+    #[cfg(target_os = "macos")]
+    if let Some(layout) =
+        super::bundle::BundleLayout::for_target(&target, &plan.release, home.as_deref())?
+    {
+        return super::bundle::install(&client, &plan.release, layout, &progress, &cancelled).await;
+    }
+    #[cfg(not(target_os = "macos"))]
+    drop(home);
 
-    ensure_not_cancelled(&cancelled)?;
-    set_phase(&progress, UpdatePhase::Verifying);
-    verify_checksum(&archive, &checksum, &plan.release.archive_name)?;
+    let archive = download_verified(
+        &client,
+        &plan.release.archive_url,
+        &plan.release.checksum_url,
+        &plan.release.archive_name,
+        &progress,
+        &cancelled,
+    )
+    .await?;
 
     ensure_not_cancelled(&cancelled)?;
     set_phase(&progress, UpdatePhase::Extracting);
@@ -62,7 +81,28 @@ pub(crate) async fn install_direct(
     })
 }
 
-fn set_phase(progress: &watch::Sender<UpdateProgress>, phase: UpdatePhase) {
+/// Downloads an archive and checks it against its published SHA-256.
+pub(super) async fn download_verified(
+    client: &reqwest::Client,
+    archive_url: &str,
+    checksum_url: &str,
+    archive_name: &str,
+    progress: &watch::Sender<UpdateProgress>,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<Vec<u8>> {
+    ensure_not_cancelled(cancelled)?;
+    set_phase(progress, UpdatePhase::Downloading);
+    let archive = download_limited(client, archive_url, ARCHIVE_LIMIT).await?;
+    ensure_not_cancelled(cancelled)?;
+    let checksum = download_limited(client, checksum_url, CHECKSUM_LIMIT).await?;
+
+    ensure_not_cancelled(cancelled)?;
+    set_phase(progress, UpdatePhase::Verifying);
+    verify_checksum(&archive, &checksum, archive_name)?;
+    Ok(archive)
+}
+
+pub(super) fn set_phase(progress: &watch::Sender<UpdateProgress>, phase: UpdatePhase) {
     progress.send_replace(UpdateProgress { phase });
 }
 
@@ -157,7 +197,7 @@ fn stage_binary(target: &Path, binary: &[u8]) -> Result<tempfile::NamedTempFile>
     Ok(staged)
 }
 
-async fn validate_staged_binary(path: &Path, expected: &Version) -> Result<()> {
+pub(super) async fn validate_staged_binary(path: &Path, expected: &Version) -> Result<()> {
     let output = tokio::time::timeout(
         Duration::from_secs(5),
         tokio::process::Command::new(path).arg("--version").output(),
@@ -233,6 +273,7 @@ mod tests {
                 archive_name: "aven-test.tar.gz".to_string(),
                 archive_url: format!("http://{address}/archive"),
                 checksum_url: format!("http://{address}/checksum"),
+                app: None,
             },
             method: crate::update::InstallMethod::Direct {
                 target: target.to_path_buf(),

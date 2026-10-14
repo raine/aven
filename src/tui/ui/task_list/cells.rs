@@ -1222,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn task_row_cells_use_inline_title_when_selected() {
+    fn task_row_cells_route_inline_title_editor() {
         let item = task_list_item("original title");
         let editor = TextInputView {
             kind: TextInputKind::EditTitle,
@@ -1250,7 +1250,7 @@ mod tests {
             EpicSelectionContext::default(),
         );
 
-        assert!(cells[1].to_string().contains("edited title"));
+        assert_eq!(cells[1].to_string(), "edited title ");
     }
 
     #[test]

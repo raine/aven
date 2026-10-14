@@ -304,7 +304,20 @@ async fn every_ready_first_page_candidate_resolves_a_captured_target() {
 #[tokio::test]
 async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
     let mut app = test_app().await;
-
+    let selected = create_and_select_task(&mut app, test_task_draft("Before refresh")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.store
+        .database()
+        .update_task(
+            &app.store.active_workspace,
+            &task_id,
+            crate::operations::TaskUpdate {
+                title: Some("After refresh".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     app.begin_command().await;
     for ch in "ref".chars() {
         app.handle_overlay_key(key(KeyCode::Char(ch)))
@@ -313,6 +326,7 @@ async fn command_overlay_executes_unique_lookup_and_keeps_overlay_on_errors() {
     }
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert!(app.overlay.is_none());
+    assert_eq!(app.store.tasks[selected].task.title, "After refresh");
 
     app.begin_command().await;
     app.handle_overlay_key(key(KeyCode::Char('s')))
@@ -383,7 +397,11 @@ async fn command_overlay_arrow_selection_wraps() {
     app.begin_command().await;
     app.handle_overlay_key(key(KeyCode::Up)).await.unwrap();
     let last = match &app.overlay {
-        Some(OverlayState::Command { state }) => state.highlighted,
+        Some(OverlayState::Command { state }) => {
+            assert!(!state.candidates.is_empty());
+            assert_eq!(state.highlighted, Some(state.candidates.len() - 1));
+            state.highlighted
+        }
         overlay => panic!("expected command overlay, got {overlay:?}"),
     };
     app.handle_overlay_key(key(KeyCode::Down)).await.unwrap();
@@ -594,21 +612,6 @@ async fn command_panel_rejects_stale_captured_task_without_cursor_fallback() {
 }
 
 #[tokio::test]
-async fn command_overlay_tab_completes_unique_suffix_alias() {
-    let mut app = test_app().await;
-
-    app.begin_command().await;
-    type_chars(&mut app, ":todo").await;
-    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Command { state })
-            if state.input.text == "status-todo" && state.input.cursor == "status-todo".len()
-    ));
-}
-
-#[tokio::test]
 async fn command_overlay_tab_selects_first_partial_command_match() {
     let mut app = test_app().await;
 
@@ -712,6 +715,7 @@ async fn command_overlay_tab_cycles_from_exact_alias_match() {
         &app.overlay,
         Some(OverlayState::Command { state })
             if state.input.text == "status-todo"
+                && state.input.cursor == "status-todo".len()
                 && state.highlighted_name() == Some("status-todo")
     ));
 
@@ -1003,6 +1007,36 @@ async fn tab_completes_command_then_cycles_arguments_and_resets_on_edit() {
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(app.appearance, crate::tui::theme::Appearance::Light);
     assert!(app.overlay.is_none());
+}
+
+#[tokio::test]
+async fn command_name_cycle_keeps_matches_visible_until_editing() {
+    let mut app = test_app().await;
+    app.begin_command().await;
+    type_chars(&mut app, ":edit-").await;
+    let (_, matches) = command_input_and_choices(&app);
+    assert!(matches.len() > 1);
+
+    for expected in matches.iter().chain(matches.iter().take(1)) {
+        app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+        let (input, choices) = command_input_and_choices(&app);
+        assert_eq!(&input, expected);
+        assert_eq!(choices, matches);
+        let Some(OverlayState::Command { state }) = &app.overlay else {
+            panic!("command overlay");
+        };
+        assert_eq!(state.highlighted_name(), Some(expected.as_str()));
+    }
+    app.handle_overlay_key(key(KeyCode::BackTab)).await.unwrap();
+    assert_eq!(command_input_and_choices(&app).0, *matches.last().unwrap());
+    assert_eq!(command_input_and_choices(&app).1, matches);
+
+    type_chars(&mut app, "zzzz").await;
+    assert!(command_input_and_choices(&app).1.is_empty());
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Command { state }) if state.cycle_input.is_none()
+    ));
 }
 
 #[tokio::test]

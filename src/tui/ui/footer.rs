@@ -525,48 +525,47 @@ mod tests {
     }
 
     #[test]
-    fn detail_footer_lists_scroll_and_task_navigation_keys() {
-        let backend = TestBackend::new(128, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(
-                    footer_bar(&Theme::dark(), FooterMode::Detail, 128, 0),
-                    frame.area(),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-
-        assert!(rendered.contains("j/k Pg"));
-        assert!(rendered.contains("[/]"));
-        assert!(rendered.contains("task"));
-        assert!(rendered.contains("s"));
-        assert!(rendered.contains("e p"));
-        assert!(rendered.contains("d/x"));
-        assert!(rendered.contains("more"));
-    }
-
-    #[test]
     fn footer_shows_marked_task_scope() {
-        let backend = TestBackend::new(100, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(
-                    footer_bar(&Theme::dark(), FooterMode::List, 100, 3),
-                    frame.area(),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-
-        assert!(rendered.contains("● 3 marked"));
-        assert!(rendered.contains("actions"));
-        assert!(rendered.contains("Esc/t C"));
-        assert!(rendered.contains("clear"));
-        assert!(rendered.contains("undo"));
-        assert!(!rendered.contains("detail"));
+        for mode in [
+            FooterMode::List,
+            FooterMode::Columns,
+            FooterMode::Detail,
+            FooterMode::StatusChoice,
+            FooterMode::PriorityChoice,
+        ] {
+            for count in [0, 3] {
+                let mut terminal = Terminal::new(TestBackend::new(100, 3)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        frame.render_widget(
+                            footer_bar(&Theme::dark(), mode, 100, count),
+                            frame.area(),
+                        );
+                    })
+                    .unwrap();
+                let rendered = buffer_text(terminal.backend());
+                let bulk = count > 0 && matches!(mode, FooterMode::List | FooterMode::Columns);
+                assert_eq!(
+                    rendered.contains("● 3 marked"),
+                    count > 0 && mode != FooterMode::Detail
+                );
+                for label in ["actions", "Esc/t C", "clear", "undo"] {
+                    assert_eq!(rendered.contains(label), bulk, "{rendered}");
+                }
+                if bulk {
+                    assert!(!rendered.contains("detail"));
+                } else {
+                    let hint = match mode {
+                        FooterMode::Detail => "scroll",
+                        FooterMode::Columns => "select",
+                        FooterMode::StatusChoice => "todo",
+                        FooterMode::PriorityChoice => "high",
+                        _ => "detail",
+                    };
+                    assert!(rendered.contains(hint), "{rendered}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -592,70 +591,72 @@ mod tests {
     }
 
     #[test]
-    fn marked_scope_stays_out_of_detail_footer() {
-        let backend = TestBackend::new(100, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(
-                    footer_bar(&Theme::dark(), FooterMode::Detail, 100, 3),
-                    frame.area(),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-
-        assert!(!rendered.contains("marked"));
-        assert!(rendered.contains("scroll"));
-    }
-
-    #[test]
     fn bulk_footer_actions_share_rendered_hit_ranges() {
-        let area = Rect::new(0, 0, 100, 2);
-        let actions = (0..area.width)
-            .filter_map(|column| bulk_footer_action_at(&Theme::dark(), area, 3, column, 1))
-            .collect::<Vec<_>>();
-
-        assert!(actions.contains(&Action::BeginCommand));
-        assert!(actions.contains(&Action::ClearMarks));
-        assert!(actions.contains(&Action::Undo));
-        assert_eq!(bulk_footer_action_at(&Theme::dark(), area, 3, 5, 0), None);
-    }
-
-    #[test]
-    fn marked_status_choice_keeps_scope_without_conflicting_clear_hint() {
-        let backend = TestBackend::new(100, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(
-                    footer_bar(&Theme::dark(), FooterMode::StatusChoice, 100, 3),
-                    frame.area(),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-
-        assert!(rendered.contains("● 3 marked"));
-        assert!(rendered.contains("todo"));
-        assert!(!rendered.contains("clear"));
-    }
-
-    #[test]
-    fn footer_hides_marked_task_scope_when_marks_are_empty() {
-        let backend = TestBackend::new(100, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(
-                    footer_bar(&Theme::dark(), FooterMode::List, 100, 0),
-                    frame.area(),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-
-        assert!(!rendered.contains("marked"));
+        for width in [20, 30, 45, 100] {
+            let area = Rect::new(7, 4, width, 2);
+            let mut terminal = Terminal::new(TestBackend::new(120, 8)).unwrap();
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(
+                        footer_bar(&Theme::dark(), FooterMode::List, width, 3),
+                        area,
+                    );
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let row = (area.x..area.right())
+                .map(|x| buffer[(x, area.y + 1)].symbol())
+                .collect::<String>();
+            let mut visible_actions = Vec::new();
+            for (label, action) in [
+                ("actions", Action::BeginCommand),
+                ("clear", Action::ClearMarks),
+                ("undo", Action::Undo),
+            ] {
+                if let Some(byte) = row.find(label) {
+                    let start = area.x + row[..byte].chars().count() as u16;
+                    for column in start..start + label.len() as u16 {
+                        assert_eq!(
+                            bulk_footer_action_at(&Theme::dark(), area, 3, column, area.y + 1),
+                            Some(action)
+                        );
+                    }
+                    visible_actions.push(action);
+                }
+            }
+            if width == 100 {
+                assert_eq!(
+                    visible_actions,
+                    vec![Action::BeginCommand, Action::ClearMarks, Action::Undo]
+                );
+            }
+            for column in area.x..area.right() {
+                if let Some(action) =
+                    bulk_footer_action_at(&Theme::dark(), area, 3, column, area.y + 1)
+                {
+                    assert!(
+                        visible_actions.contains(&action),
+                        "hidden action at {width}/{column}"
+                    );
+                }
+                assert_eq!(
+                    bulk_footer_action_at(&Theme::dark(), area, 0, column, area.y + 1),
+                    None
+                );
+            }
+            for (column, row) in [
+                (area.x, area.y),
+                (area.x, area.bottom()),
+                (area.x - 1, area.y + 1),
+                (area.right(), area.y + 1),
+                (area.x + 2, area.y + 1),
+            ] {
+                assert_eq!(
+                    bulk_footer_action_at(&Theme::dark(), area, 3, column, row),
+                    None
+                );
+            }
+        }
     }
 
     #[test]
@@ -711,18 +712,10 @@ mod tests {
     }
 
     #[test]
-    fn deleted_detail_footer_advertises_restore() {
-        let hints = footer_hints(FooterMode::DetailDeleted, 80);
-
-        assert!(hints.contains(&("t R", "restore deleted")));
-        assert!(hints.contains(&("d/x", "done/cancel")));
+    fn restore_hint_tracks_root_and_nested_deletion_state() {
         assert!(detail_command_has_key("t R"));
         assert!(detail_command_has_key("d"));
         assert!(detail_command_has_key("x"));
-    }
-
-    #[test]
-    fn restore_hint_tracks_root_and_nested_deletion_state() {
         for mode in [FooterMode::Detail, FooterMode::DetailNested] {
             assert!(
                 !footer_hints(mode, 128)
@@ -732,6 +725,8 @@ mod tests {
         }
         for mode in [FooterMode::DetailDeleted, FooterMode::DetailNestedDeleted] {
             assert!(footer_hints(mode, 128).contains(&("t R", "restore deleted")));
+            assert!(footer_hints(mode, 80).contains(&("t R", "restore deleted")));
+            assert!(footer_hints(mode, 80).contains(&("d/x", "done/cancel")));
         }
     }
 
@@ -761,6 +756,27 @@ mod tests {
 
     #[test]
     fn detail_mutation_hints_use_catalog_bindings() {
+        let mut terminal = Terminal::new(TestBackend::new(128, 3)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    footer_bar(&Theme::dark(), FooterMode::Detail, 128, 0),
+                    frame.area(),
+                );
+            })
+            .unwrap();
+        let rendered = buffer_text(terminal.backend()).replace(['', ''], "");
+        for hint in [
+            "j/k Pg",
+            "[/] task",
+            "s status",
+            "e p priority",
+            "d/x done/cancel",
+            "? more",
+        ] {
+            assert!(rendered.contains(hint), "{rendered}");
+        }
+
         let hints = footer_hints(FooterMode::Detail, 128);
         assert!(hints.contains(&("s", "status")));
         assert!(hints.contains(&("e p", "priority")));

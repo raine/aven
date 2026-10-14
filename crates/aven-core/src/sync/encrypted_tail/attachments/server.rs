@@ -1,5 +1,7 @@
 use super::super::{Context, hash, valid};
 use super::{codec::Descriptor, *};
+#[cfg(test)]
+use crate::sync::encrypted_tail::attachments::codec::DescriptorAuthority;
 use crate::sync::seed_claim::membership::Membership;
 use crate::{
     attachments::lifecycle::LifecyclePolicy,
@@ -164,12 +166,15 @@ async fn eligible_object(
     m: &Membership,
     d: &Descriptor,
 ) -> Result<()> {
+    // Unknown generations fail before querying historical provenance.
     valid(m.generations().iter().any(|g| g.id == d.generation))?;
-    if d.generation != m.current_generation().id {
-        let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_images WHERE object=? AND origin IS NOT NULL AND descriptor=?)")
-            .bind(d.object.as_slice()).bind(d.encode()?).fetch_one(conn).await?;
-        valid(admitted)?;
-    }
+    let admitted = if d.generation != m.current_generation().id {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_images WHERE object=? AND origin IS NOT NULL AND descriptor=?)")
+            .bind(d.object.as_slice()).bind(d.encode()?).fetch_one(conn).await?
+    } else {
+        false
+    };
+    aven_protocol::tail::eligible_image(m, d.generation, admitted)?;
     Ok(())
 }
 impl Database {
@@ -512,6 +517,76 @@ pub(in crate::sync::encrypted_tail) async fn admit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn invalid_workspaces_refuse_authenticated_declare_and_existing_dispatch() {
+        use crate::ids::InvalidWorkspaceId;
+        use crate::sync::seed_claim::membership::test_support::Fixture;
+        use aven_protocol::artifact::catalog::{Artifact, Chunk};
+
+        let f = Fixture::new().await;
+        let membership = Membership::from_publication(
+            f.seed.genesis(),
+            &f.package.descriptor,
+            f.publication.record(),
+        )
+        .unwrap();
+        let binding = membership.publication().binding();
+        let context = Context {
+            vault: binding.vault_id,
+            genesis: binding.genesis_commitment,
+            device: f.seed.genesis().device_id(),
+            head: membership.head(),
+            stream: binding.stream_id,
+            descriptor: binding.descriptor_commitment,
+        };
+        // A structurally valid, not-yet-uploaded object recipe.
+        let descriptor = Descriptor {
+            vault: context.vault,
+            stream: context.stream,
+            generation: membership.current_generation().id,
+            object: [44; 32],
+            artifact: Artifact {
+                total: 1,
+                aggregate: [45; 32],
+                chunks: vec![Chunk {
+                    length: 223,
+                    hash: [46; 32],
+                    nonce: [47; 24],
+                }],
+            },
+        }
+        .encode()
+        .unwrap();
+        for op in [
+            Operation::Declare {
+                workspace: "invalid".into(),
+                descriptor: descriptor.clone(),
+            },
+            Operation::Status {
+                workspace: "0123456789ABCDEI".into(),
+                object: [44; 32],
+                descriptor_commitment: hash(&descriptor),
+            },
+        ] {
+            let error = f
+                .db
+                .encrypted_image_exchange(&context, f.seed.bearer(), op, LifecyclePolicy::default())
+                .await
+                .err()
+                .unwrap();
+            assert!(error.is::<InvalidWorkspaceId>());
+            assert_eq!(
+                error.to_string(),
+                "workspace ID must be 16 Crockford Base32 characters"
+            );
+        }
+        let mut conn = f.db.acquire_reader().await.unwrap();
+        let counts: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM server_e2ee_images), (SELECT count(*) FROM server_e2ee_image_scopes), (SELECT count(*) FROM server_e2ee_image_tickets)",
+        ).fetch_one(&mut *conn).await.unwrap();
+        assert_eq!(counts, (0, 0, 0));
+    }
 
     #[tokio::test]
     async fn retired_declaration_cannot_bypass_active_object_limit() {

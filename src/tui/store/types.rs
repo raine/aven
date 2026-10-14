@@ -671,6 +671,8 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) phase: crate::sync::encrypted::LocalPhase,
     pub(crate) interval_seconds: u64,
     pub(crate) daemon_wake: SyncStatusCheck,
+    pub(crate) daemon_sync: aven_core::local_state::DaemonSyncState,
+    pub(crate) daemon_service: Option<crate::status::DaemonStatusReport>,
     pub(crate) protected_storage: SyncStatusCheck,
     pub(crate) pending_changes: i64,
     pub(crate) conflicts: i64,
@@ -681,6 +683,9 @@ pub(crate) struct TuiSyncStatus {
     pub(crate) invitation: Option<crate::sync::encrypted::InvitationStatus>,
     /// Time of the latest server authentication refusal, cleared by a successful sync.
     pub(crate) access_refused_at: Option<String>,
+    /// Time the server reported this sync's vault deleted, cleared by reset or
+    /// a successful `Sync now`.
+    pub(crate) vault_deleted_at: Option<String>,
 }
 
 impl Default for TuiSyncStatus {
@@ -693,6 +698,8 @@ impl Default for TuiSyncStatus {
             phase: crate::sync::encrypted::LocalPhase::NotSetUp,
             interval_seconds: 30,
             daemon_wake: SyncStatusCheck::new(true, "not checked"),
+            daemon_sync: Default::default(),
+            daemon_service: None,
             protected_storage: SyncStatusCheck::new(true, "available"),
             pending_changes: 0,
             conflicts: 0,
@@ -701,6 +708,7 @@ impl Default for TuiSyncStatus {
             server: None,
             invitation: None,
             access_refused_at: None,
+            vault_deleted_at: None,
         }
     }
 }

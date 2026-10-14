@@ -5,6 +5,9 @@ description: Find, capture, and manage work in the terminal interface.
 
 The TUI is aven's keyboard-driven interface for managing tasks locally.
 
+Some icons require a Nerd Font selected in your terminal profile. If you see
+blanks or boxes, follow the [terminal font setup](/getting-started/#terminal-font).
+
 ```sh
 aven
 ```
@@ -60,17 +63,12 @@ Workspace scope shows tasks across projects. Project scope narrows every view to
 | `g p` | Choose a project scope |
 | `g w` | Switch workspace |
 
-The project and workspace pickers accept typing immediately to filter their
-options. Use `Up` and `Down` to move, `Enter` to choose, and `Esc` to cancel.
+Type in the project and workspace pickers to filter them.
 
 The header and sidebar show the active workspace, scope, view, and filters.
-Click **Views**, **Scope**, or **Projects** to independently collapse or expand
-that section. The headings remain visible, with ▾ for expanded and ▸ for
-collapsed. Sections default to expanded. Collapse preferences persist across application
-restarts in the local database, shared across its workspaces and projects. They
-are not synced. Refreshes and view or scope changes preserve these preferences. Collapsing Projects preserves
-the selected project scope. Focus a heading with sidebar navigation and press
-`Enter` to toggle it with the keyboard.
+Click a sidebar heading, or focus it and press `Enter`, to collapse or expand
+that section. Choose which views the sidebar lists with
+[`tui.sidebar.views`](/configuration/#tui-sidebar-views).
 
 Use `Tab` (or `Left` from the task list) to focus the sidebar. Browse with
 `Up`/`Down` or `k`/`j`, page with `PageUp`/`PageDown` or `Ctrl-u`/`Ctrl-d`, and
@@ -79,15 +77,12 @@ page navigation and mouse wheel movement stop at the first and last selectable
 rows. While browsing tasks, the wheel over the visible sidebar focuses and
 browses it without changing the active scope or task selection. Active task
 detail and capturing overlays retain wheel ownership. Press `Enter` to activate
-the highlighted view or project, or `Esc`/`Tab` to return to tasks without activating it.
-
-Configure the ordered sidebar view list in
-[`tui.sidebar.views`](/configuration/#tui-sidebar-views). Hidden views remain
-available through the header view menu, command palette, and shortcuts.
+the highlighted view or project, or `Esc`/`Tab` to return to tasks without
+activating it.
 
 ### Search, filter, and order
 
-Press `/` to search titles, descriptions, projects, labels, notes, metadata, refs, and attachment text. Results update while you type. `Enter` opens the selected preview result, while `Tab` accepts the query and opens Search results.
+Press `/` to search task text, notes, labels, metadata, and refs as you type. `Enter` opens the selected result, and `Tab` opens the full Search results view.
 
 Filters constrain the current view. Useful filter commands include:
 
@@ -111,13 +106,11 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 <p class="media-caption">Set task metadata, scheduling, title, and description in the same form.</p>
 
-`Enter` opens the focused metadata control, creates from the title, and inserts a newline in the description. `Ctrl-Enter` creates from any field in terminals that report modified Enter keys. `Ctrl-s` is the portable create shortcut. In text fields, use `Ctrl-Left` or `Alt-Left` and their right-arrow equivalents to move by word, and `Alt-Backspace` to delete the previous word. `Alt-B` and `Alt-F` are aliases for terminals that encode Option as an escape prefix.
+Press `Ctrl-s` to create the task from any field, or `Ctrl-Enter` in terminals that support it. `Enter` creates from the title, opens pickers on metadata fields, and adds a newline in the description. Text fields support `Alt-Left` and `Alt-Right` to move by word and `Alt-Backspace` to delete one.
 
-Press `Ctrl-g` to create the task and immediately start another. The next draft retains the project, status choice, priority, and labels, while clearing task-specific content such as the title, description, schedule, and attachments. This shortcut applies to standalone, non-repeating tasks.
+Press `Ctrl-g` to create the task and start another with the same project, status, priority, and labels. It isn't available for repeating tasks.
 
-The composer shows automatically derived statuses with an `(auto)` marker. A plain draft uses `inbox`. Choosing any priority other than `none` changes the automatic status to `todo`; returning to `none` restores `inbox` unless the task repeats. Repeating tasks also derive `todo`. These inputs compose independently, so clearing either one leaves `todo` while the other still applies.
-
-Choosing a status makes it explicit, including choosing `inbox`, and an explicit status stays unchanged when priority or recurrence changes. Choose **Auto** in the status picker to restore derivation. This priority behavior applies only to direct human choices in the TUI composer. CLI creation, agent creation, natural-language intake, and priority edits on existing tasks leave status unchanged unless a status is supplied or selected separately.
+New tasks default to `inbox`, or `todo` when they have a priority or repeat. The status field marks this default with `(auto)`. Choosing a status overrides it; choose **Auto** to go back.
 
 ### Set a schedule
 
@@ -130,7 +123,7 @@ See [Scheduling tasks](/schedule-tasks/) for availability and deadlines, and
 
 ### Create with AI
 
-Press `Ctrl-n` when the visible title and description contain rough notes, pasted context, or dictated input. The configured task-intake agent produces a structured draft for review. See [`agent.task_intake`](/configuration/#agent-task-intake).
+Press `Ctrl-n` when the visible title and description contain rough notes, pasted context, or dictated input. The configured task-intake agent produces a structured draft for review. See [`agent.task_intake`](/configuration/#agent-task-intake). If you close the TUI before the task is created, Aven sends a [notification](/notifications/) when it is.
 
 ### Attach images
 
@@ -167,13 +160,9 @@ The `t` family contains lifecycle, priority, relationship, recurrence, delete, a
 
 ### Delete and restore
 
-`t D` deletes the selected task after confirmation. Deleted tasks stay available through the `f x` filter. Select a deleted task and press `t R` to restore it.
-
-Canceling with `x` preserves the task as an intentional outcome. Deleting removes it from ordinary task views.
+`t D` deletes the selected task. Show deleted tasks with `f x`, then press `t R` to restore one. Use `x` instead to keep a task as canceled.
 
 ### Mark and change several tasks
-
-Press `Space` to mark or unmark the selected task. The footer shows the marked count.
 
 | Key | Action |
 | --- | --- |
@@ -181,19 +170,17 @@ Press `Space` to mark or unmark the selected task. The footer shows the marked c
 | `t V` | Toggle marks on visible tasks |
 | `t C` | Clear all marks |
 
-Status, priority, project, labels, availability, due date, delete, and column moves apply to the marked set when marks exist. A batch mutation creates one undo step.
+Most edits, deletes, and column moves then apply to every marked task, and `u` undoes them together.
 
 ## Columns
 
-Columns is a presentation layout over the active query. It arranges the same ordered task set into configurable lifecycle lanes.
+Columns shows the current view as lifecycle lanes.
 
 ![aven TUI showing tasks organized across lifecycle columns](/columns.webp)
 
 <p class="media-caption">Columns arranges tasks into lifecycle lanes and shows details for the selected task.</p>
 
-Use `v l` to toggle a compatible query between list and columns. Use `:layout-list` or `:layout-columns` when you want to select a layout explicitly. Use `v w` to select All when you want every available status. All, Open, Ready, Blocked, Overdue, status, Search, and Conflicts queries support columns. Queue, Upcoming, Epics, Recurring Tasks, and Recent Actions use their specialized list layouts, shown as `list only` in the header. Up and down move within a lane. Left and right switch lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination.
-
-Moving a task into a lane assigns the lane's first configured status. Choosing its existing lane preserves its exact status. This matters when a lane groups several statuses, such as `done` and `canceled`.
+Press `v l` to switch between list and columns. Views with their own layout, such as Queue and Upcoming, show `list only` in the header. Arrow keys move within and between lanes. Press `<` or `>` to move the selected or marked tasks one lane, or `m` to choose a destination. A moved task takes the lane's first status.
 
 Press `g d` to toggle the selected-task preview. Configure lane names and status groups under [`tui.columns`](/configuration/#tui-columns).
 
@@ -221,9 +208,7 @@ The `y` family copies task information from either the list or detail:
 | `y n` | Notes |
 | `y m` | Complete task report as Markdown |
 
-When tasks are marked, `y r`, `y i`, and `y t` copy one display ref, durable ID, or title per task, separated by newlines in visible list order. Description, combined text, notes, and Markdown report copies are single-task actions and are unavailable while marked-task mode is active.
-
-The Markdown report includes the title, display ref, status, project, priority, labels, scheduling metadata, description, notes, relationships, recurrence details, unresolved conflict variants, and attachment metadata. Attachment files are not included. It also records the durable task ID, workspace, and creation and update times.
+With tasks marked, `y r`, `y i`, and `y t` copy one line per marked task.
 
 In detail, drag across rendered title or description text and press `y` to copy only that selection.
 
@@ -240,9 +225,7 @@ In detail, drag across rendered title or description text and press `y` to copy 
 
 ### Publish a task report as a GitHub gist
 
-From task detail, press `t g` and confirm to publish the complete Markdown task report as a secret GitHub gist. This runs the authenticated GitHub CLI and sends the report's task content to GitHub over the network. A secret gist is unlisted rather than private: anyone with its URL can view it. After GitHub creates the gist, aven copies its URL to the clipboard.
-
-This action requires an installed and authenticated `gh` command. The confirmation appears before any task content is published. See an [example task report on GitHub](https://gist.github.com/raine/52e230cc05e4dc205e5e1394aa1b32a3).
+From task detail, press `t g` to publish the Markdown task report as a secret GitHub gist and copy its URL. Secret gists are unlisted, not private: anyone with the URL can view them. Requires an authenticated `gh` CLI. See an [example task report](https://gist.github.com/raine/52e230cc05e4dc205e5e1394aa1b32a3).
 
 ### Image attachments
 
@@ -256,17 +239,9 @@ Open the preview to move between attachments, open one in the system viewer, or 
 
 ## Projects and relationships
 
-Press `p` to administer projects. Label administration uses `L n` to create,
-`L b` to browse names and usage, `L r` to rename, and `L D` to delete. Rename
-and delete update tasks and recurring templates that use the label. The `t B` and
-`t U` actions add and remove blockers. Press `g B` on a selected task to open one
-of its blockers, or choose one when it has several. Epic membership actions live
-under `t c`, and `v e` opens the Epics view.
-
-Related-task actions add or remove links from the selected task. In task detail,
-you can focus a relationship and open its task. An unlink action operates on the
-focused relationship, requires confirmation, and supports undo. Use contextual
-help or the command palette for the current shortcuts.
+Press `p` to manage projects and `L` to manage labels. `t B` and `t U` add and
+remove blockers, and `g B` jumps to a blocker. Epic actions live under `t c`. In
+task detail, focus a relationship to open or unlink its task.
 
 See [Organizing tasks](/organize-tasks/) for choosing among workspaces, projects,
 labels, epics, dependencies, and related tasks.
@@ -327,27 +302,9 @@ Mouse actions cover the same common outcomes as keyboard commands:
 The in-app command catalog is the authoritative shortcut reference:
 
 - `?` lists commands available in the current mode.
-- `:theme` selects `dark`, `light`, or `terminal` colors for this session.
-  Press Enter on `theme` to see the choices, then use arrow keys and Enter or
-  Tab to cycle values while keeping the choices visible. Typing an argument
-  filters the choices. For example, `:theme terminal` uses your terminal's own
-  colors. This does not change your config.
-- `:` searches command names and descriptions. `:sync` opens the **Sync**
-  dialog; `:config-status` remains an alias. From a task-list surface, choose
-  `:add-device` to invite another device to sync. The **Add device** overlay
-  shows the invitation as a QR code with the time left and the command to run
-  on the other device, copies its text when you press `c`, and closes with
-  Escape or an outside click. If the QR or clipboard is unavailable, it points
-  to `aven sync invite`. The header and Sync dialog keep showing the open
-  invitation after the overlay closes, and the Sync dialog can cancel it before
-  keys are sent. The TUI keeps waiting until the device joins or the invitation
-  expires.
-  Closing the Sync dialog likewise hides progress without stopping setup,
-  joining, or device removal; quitting the TUI interrupts them, and they can
-  be resumed later. During setup and joining, the dialog shows how much has
-  transferred: encrypted data with a percentage once its size is known, and
-  images as done and left. A resumed setup uploads its data again, so the
-  count restarts from zero.
+- `:` searches command names and descriptions. `Tab` cycles through matches.
+- `:theme` switches between `dark`, `light`, and `terminal` colors for this
+  session without changing your config.
 - Prefix keys show their available continuations in the footer.
 
 | Prefix | Family |
@@ -364,6 +321,13 @@ The in-app command catalog is the authoritative shortcut reference:
 | `c` | Conflict resolution |
 | `C` | Configuration |
 
+## Custom metadata
+
+Task detail shows custom metadata in its own section. Press `e m` to edit a
+field: pick one from the list, type a value, and press `Enter` to save. For
+multiline values, press `Ctrl-x Ctrl-e` to use your `$VISUAL` or `$EDITOR`.
+Define and rename fields with the CLI; see [Task metadata](/task-metadata/).
+
 ## Reference
 
 - [Concepts](/concepts/) defines the task model behind the interface.
@@ -377,26 +341,3 @@ The in-app command catalog is the authoritative shortcut reference:
   sync defaults, and task-intake configuration.
 - [Terminal tips](/tips/) covers terminal input, tmux, and
   image previews.
-
-## Custom metadata
-
-Custom metadata appears in a separate, scrollable section in task detail. Press
-`e m`, run `:edit-metadata`, or activate the section heading to edit one task.
-The field list shows existing workspace fields. Type to filter fields, use arrow
-keys to select, and press `Enter` or click a field to edit it.
-
-Edit short values in the single-line input and press `Enter` to save. `Tab`
-moves between the input and actions. Blank input disables **Save**;
-**Remove field** removes the assignment. `Esc` returns to the field list;
-unsaved text requires confirmation with `y` to discard or `n` / `Esc` to keep
-editing. Successful task edits support undo. Validation errors keep the input open.
-
-For multiline values, choose **editor** or press `Ctrl-x Ctrl-e`, the
-same external-editor shortcut used for descriptions. Aven uses `$VISUAL`, then
-`$EDITOR`, falling back to `vi`. Returning from the editor updates the draft;
-**Save** commits it. Multiline values have a compact read-only preview. Pasting
-multiple lines preserves the text and switches to that preview.
-
-Custom values are edited on existing tasks. Recurring occurrence edits affect
-that task, not its series template. Metadata field definitions and renames are
-managed through the CLI.

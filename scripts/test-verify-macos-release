@@ -6,7 +6,7 @@ if [[ $(uname -s) != Darwin ]]; then
   exit 2
 fi
 if [[ $# -ne 1 ]]; then
-  echo "usage: test-verify-macos-release SIGNED_BINARY" >&2
+  echo "usage: test-verify-macos-release SIGNED_BINARY_OR_APP" >&2
   exit 2
 fi
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -21,7 +21,16 @@ reject() {
   fi
 }
 
-architecture=$(/usr/bin/lipo -archs "$1")
+# Alter a signed code page without changing the Mach-O header or embedded signature.
+tamper_code_page() {
+  printf '\377\377\377\377' | /bin/dd of="$1" bs=1 seek=16384 conv=notrunc 2>/dev/null
+}
+
+executable=$1
+if [[ -d $1 && $1 == *.app ]]; then
+  executable="$1/Contents/MacOS/aven"
+fi
+architecture=$(/usr/bin/lipo -archs "$executable")
 "$verify" "$1" "$architecture"
 case $architecture in
   arm64) other_architecture=x86_64 ;;
@@ -32,6 +41,50 @@ reject "$1" "$other_architecture"
 reject "$1" invalid
 reject "$tmp/missing"
 
+if [[ $executable != "$1" ]]; then
+  fixture() {
+    rm -rf "$tmp/Aven.app"
+    /bin/cp -R "$1" "$tmp/Aven.app"
+  }
+  app="$tmp/Aven.app"
+
+  # Rejections below come from each change, not from copying the bundle.
+  fixture "$1"
+  "$verify" "$app" "$architecture" >/dev/null
+
+  fixture "$1"
+  /usr/bin/codesign --force --sign - --identifier fi.zendit.Aven "$app"
+  reject "$app" "$architecture"
+
+  fixture "$1"
+  /usr/bin/codesign --remove-signature "$app"
+  reject "$app" "$architecture"
+
+  fixture "$1"
+  tamper_code_page "$app/Contents/MacOS/aven"
+  reject "$app" "$architecture"
+
+  fixture "$1"
+  /usr/bin/plutil -replace CFBundleName -string Other "$app/Contents/Info.plist"
+  reject "$app" "$architecture"
+
+  fixture "$1"
+  printf x >>"$app/Contents/Resources/Aven.icns"
+  reject "$app" "$architecture"
+
+  fixture "$1"
+  : >"$app/Contents/Resources/extra"
+  reject "$app" "$architecture"
+
+  fixture "$1"
+  /bin/mv "$app/Contents/MacOS/aven" "$app/Contents/MacOS/aven-real"
+  /bin/ln -s aven-real "$app/Contents/MacOS/aven"
+  reject "$app" "$architecture"
+
+  echo "ok: signed app accepted; wrong architecture, invalid argument, missing, ad-hoc, unsigned, tampered executable, Info.plist and resource, extra file and symlinked executable rejected"
+  exit 0
+fi
+
 cp "$1" "$tmp/adhoc"
 /usr/bin/codesign --force --sign - --identifier fi.zendit.Aven "$tmp/adhoc"
 reject "$tmp/adhoc" "$architecture"
@@ -40,8 +93,7 @@ cp "$1" "$tmp/unsigned"
 /usr/bin/codesign --remove-signature "$tmp/unsigned"
 reject "$tmp/unsigned" "$architecture"
 
-# Alter a signed code page without changing the Mach-O header or embedded signature.
 cp "$1" "$tmp/tampered"
-printf '\377\377\377\377' | /bin/dd of="$tmp/tampered" bs=1 seek=16384 conv=notrunc 2>/dev/null
+tamper_code_page "$tmp/tampered"
 reject "$tmp/tampered" "$architecture"
 echo "ok: signed release accepted; wrong architecture, invalid argument, missing, ad-hoc, unsigned and tampered binaries rejected"

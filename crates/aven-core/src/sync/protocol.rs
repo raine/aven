@@ -287,18 +287,7 @@ mod tests {
 
     #[test]
     fn baseline_vocabulary_is_explicit_and_complete() {
-        let source = include_str!("../change_log.rs");
-        let operations = source
-            .lines()
-            .filter_map(|line| {
-                let (_, value) = line
-                    .trim()
-                    .strip_prefix("pub const ")?
-                    .split_once(": &str = \"")?;
-                value.strip_suffix("\";")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(operations, BASELINE_OPERATIONS);
+        assert_eq!(crate::change_log::op_type::ALL, BASELINE_OPERATIONS);
         assert_eq!(crate::choices::STATUSES, STATUSES);
         assert_eq!(crate::choices::PRIORITIES, PRIORITIES);
         assert_eq!(crate::choices::TASK_SOURCES, SOURCES);

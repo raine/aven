@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Checks the generated Homebrew formula: Ruby syntax, release URLs and
+# checksums, and the macOS Aven.app layout.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+generate="$script_dir/homebrew-formula"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+expect() {
+  grep -qF -- "$1" "$tmp/aven.rb" || fail "formula lacks: $1"
+}
+
+i=0
+for name in aven-darwin-arm64 aven-darwin-amd64 aven-linux-arm64 aven-linux-amd64 \
+  aven-darwin-arm64-app aven-darwin-amd64-app; do
+  i=$((i + 1))
+  printf '%064d  %s.tar.gz\n' "$i" "$name" >"$tmp/$name.sha256"
+done
+
+"$generate" 1.2.3 "$tmp" >"$tmp/aven.rb"
+ruby -c "$tmp/aven.rb" >/dev/null || fail "formula is not valid Ruby"
+
+base=https://github.com/raine/aven/releases/download/v1.2.3
+expect 'version "1.2.3"'
+expect "url \"$base/aven-darwin-arm64-app.tar.gz\""
+expect "sha256 \"$(printf '%064d' 5)\""
+expect "url \"$base/aven-darwin-amd64-app.tar.gz\""
+expect "sha256 \"$(printf '%064d' 6)\""
+expect "url \"$base/aven-linux-arm64.tar.gz\""
+expect "sha256 \"$(printf '%064d' 3)\""
+expect "url \"$base/aven-linux-amd64.tar.gz\""
+expect "sha256 \"$(printf '%064d' 4)\""
+expect '(prefix/"Aven.app").install "Contents"'
+expect 'bin.install_symlink prefix/"Aven.app/Contents/MacOS/aven"'
+expect 'bin.install "aven"'
+expect '"/usr/bin/codesign", "--verify", "--strict", prefix/"Aven.app"'
+expect 'Identifier=fi.zendit.Aven'
+if grep -q 'def post_install' "$tmp/aven.rb"; then
+  fail "formula defines the deprecated post_install"
+fi
+if grep -q 'def caveats' "$tmp/aven.rb"; then
+  fail "formula asks for a manual daemon repair; the daemon migrates itself"
+fi
+if grep -qE 'aven-darwin-(arm64|amd64)\.tar\.gz' "$tmp/aven.rb"; then
+  fail "formula still uses the bare macOS archive"
+fi
+
+reject() {
+  if "$generate" "$@" >/dev/null 2>&1; then
+    fail "accepted invalid input: $*"
+  fi
+}
+reject v1.2.3 "$tmp"
+reject 1.2.3-signtest.1 "$tmp"
+reject 1.2.3
+printf 'not-a-checksum  aven-linux-amd64.tar.gz\n' >"$tmp/aven-linux-amd64.sha256"
+reject 1.2.3 "$tmp"
+rm "$tmp/aven-linux-amd64.sha256"
+reject 1.2.3 "$tmp"
+
+echo "ok: formula installs Aven.app with a bin symlink on macOS and the bare binary on Linux; invalid versions and checksums rejected"

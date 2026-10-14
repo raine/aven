@@ -48,6 +48,17 @@ fn dependency_add_list_ready_blocked_and_remove_workflow() {
         &["depends_on open=1 total=1", "blocks open=1 total=1", &root],
     );
 
+    let full = ok(env.aven(&db, ["show", &blocked, "--full"]));
+    contains_all(
+        &full,
+        &[
+            "depends_on open=1 total=1",
+            "blocks open=1 total=1",
+            &root,
+            &blocked_by_blocked,
+        ],
+    );
+
     let ready = ok(env.aven(&db, ["list", "--ready"]));
     contains_all(&ready, &[&root, &ready_task]);
     contains_none(&ready, &[&blocked, &blocked_by_blocked]);
@@ -68,6 +79,13 @@ fn dependency_add_list_ready_blocked_and_remove_workflow() {
         &ready_after_remove,
         &[&blocked_by_blocked, &root, &ready_task],
     );
+
+    ok(env.aven(&db, ["edit", &root, "--status", "done"]));
+    contains_all(
+        &ok(env.aven(&db, ["dep", "list", &root])),
+        &["blocks open=0 total=1"],
+    );
+    contains_none(&ok(env.aven(&db, ["list", "--all"])), &["blocks=1"]);
 }
 
 #[test]
@@ -84,81 +102,6 @@ fn dependency_self_and_cycle_rejections() {
     ok(env.aven(&db, ["dep", "add", &task_b, &task_a]));
     let cycle_error = fail(env.aven(&db, ["dep", "add", &task_a, &task_b]));
     contains_all(&cycle_error, &["error dependency-cycle"]);
-}
-
-#[test]
-fn dependency_filter_ignores_done_canceled_and_deleted_blockers() {
-    let env = TestEnv::new();
-    let db = env.db("dependency-state-filtering.sqlite");
-
-    let done_blocker = extract_ref(&ok(
-        env.aven(&db, ["add", "done blocker", "--project", "app"])
-    ));
-    let done_blocked = extract_ref(&ok(
-        env.aven(&db, ["add", "blocked by done", "--project", "app"])
-    ));
-    let canceled_blocker = extract_ref(&ok(
-        env.aven(&db, ["add", "canceled blocker", "--project", "app"])
-    ));
-    let canceled_blocked = extract_ref(&ok(
-        env.aven(&db, ["add", "blocked by canceled", "--project", "app"])
-    ));
-    let deleted_blocker = extract_ref(&ok(
-        env.aven(&db, ["add", "deleted blocker", "--project", "app"])
-    ));
-    let deleted_blocked = extract_ref(&ok(
-        env.aven(&db, ["add", "blocked by deleted", "--project", "app"])
-    ));
-
-    ok(env.aven(&db, ["edit", &done_blocker, "--status", "done"]));
-    ok(env.aven(&db, ["edit", &canceled_blocker, "--status", "canceled"]));
-    ok(env.aven(&db, ["delete", &deleted_blocker]));
-
-    ok(env.aven(&db, ["dep", "add", &done_blocked, &done_blocker]));
-    ok(env.aven(&db, ["dep", "add", &canceled_blocked, &canceled_blocker]));
-    ok(env.aven(&db, ["dep", "add", &deleted_blocked, &deleted_blocker]));
-
-    let ready = ok(env.aven(&db, ["list", "--ready"]));
-    contains_all(
-        &ready,
-        &[&done_blocked, &canceled_blocked, &deleted_blocked],
-    );
-
-    let blocked = ok(env.aven(&db, ["list", "--blocked"]));
-    contains_none(
-        &blocked,
-        &[&done_blocked, &canceled_blocked, &deleted_blocked],
-    );
-
-    let all = ok(env.aven(&db, ["list", "--all"]));
-    contains_none(&all, &["blocks=1"]);
-
-    let done_dep_list = ok(env.aven(&db, ["dep", "list", &done_blocker]));
-    contains_all(&done_dep_list, &["blocks open=0 total=1"]);
-}
-
-#[test]
-fn dependency_show_full_prints_dependents_sections() {
-    let env = TestEnv::new();
-    let db = env.db("dependency-show-full.sqlite");
-
-    let root = extract_ref(&ok(env.aven(&db, ["add", "dep-root", "--project", "app"])));
-    let middle = extract_ref(&ok(env.aven(&db, ["add", "dep-middle", "--project", "app"])));
-    let leaf = extract_ref(&ok(env.aven(&db, ["add", "dep-leaf", "--project", "app"])));
-
-    ok(env.aven(&db, ["dep", "add", &middle, &root]));
-    ok(env.aven(&db, ["dep", "add", &leaf, &middle]));
-
-    let full = ok(env.aven(&db, ["show", &middle, "--full"]));
-    contains_all(
-        &full,
-        &[
-            "depends_on open=1 total=1",
-            "blocks open=1 total=1",
-            &root,
-            &leaf,
-        ],
-    );
 }
 
 #[test]

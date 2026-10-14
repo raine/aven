@@ -19,8 +19,8 @@ use crate::sync::encrypted::{self, DaemonRound};
 mod service;
 
 pub use service::{
-    InstalledService, ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, install, repair,
-    restart, status_snapshot, uninstall,
+    InstalledService, ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, install,
+    reload_service_definition, repair, restart, status_snapshot, uninstall,
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
@@ -50,14 +50,24 @@ pub struct DaemonRunArgs {
 }
 
 pub async fn run(args: DaemonRunArgs) -> Result<()> {
-    args.config.ensure_automatic_sync_enabled()?;
+    args.config.ensure_daemon_has_work()?;
     let wake_addr = args.config.wake_addr()?;
+    #[cfg(target_os = "macos")]
+    if move_service_into_bundle().await {
+        return Ok(());
+    }
     let interval_seconds = args.config.sync_interval_seconds();
     let database = Database::open(&args.db_path).await?;
     let socket = UdpSocket::bind(wake_addr).await.with_context(|| {
         format!("could not bind daemon wake address {wake_addr}; is another daemon running?")
     })?;
-    println!("daemon db={} wake={}", args.db_path.display(), wake_addr);
+    println!(
+        "daemon db={} wake={} sync={} reminders={}",
+        args.db_path.display(),
+        wake_addr,
+        args.config.automatic_sync_is_enabled(),
+        args.config.reminders.enabled
+    );
     let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
     let lifecycle_policy = args.config.local.attachment_lifecycle.policy();
     let binary_fingerprint = current_binary_fingerprint()?;
@@ -82,12 +92,19 @@ async fn run_loop(
     lifecycle_policy: aven_core::attachments::LifecyclePolicy,
     binary_fingerprint: BinaryFingerprint,
 ) -> Result<()> {
+    let sync_on = config.automatic_sync_is_enabled();
+    let reminders_on = config.reminders.enabled;
+    let mut next_reminder = Instant::now();
+    // Reminders wait while sync rounds have more work, so they never judge a
+    // partly synced database.
+    let mut sync_catching_up = false;
     let mut wake_buf = [0_u8; 16];
     let mut backoff_seconds = 1_u64;
     let mut next_sync = Instant::now();
     let mut retry_not_before = None;
     let mut awaiting_setup = false;
     let mut access_refused = false;
+    let mut vault_deleted = false;
     let mut next_attachment_maintenance = Instant::now();
     let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     let mut sync = encrypted::DaemonSync::default();
@@ -98,14 +115,20 @@ async fn run_loop(
                 break;
             }
             result = socket.recv_from(&mut wake_buf) => {
+                let mut retry_now = false;
+                if let Ok((len, _)) = &result {
+                    retry_now = &wake_buf[..*len] == b"r";
+                }
                 if let Err(err) = result {
                     warn!(error = %err, "daemon wake receive failed");
                 } else {
                     debug!("daemon wake received");
                 }
-                drain_wakes(&socket, &mut wake_buf);
+                retry_now |= drain_wakes(&socket, &mut wake_buf);
                 let now = Instant::now();
-                if retry_not_before.is_none_or(|deadline| now >= deadline) {
+                next_reminder = now;
+                if wake_can_sync(retry_now, retry_not_before, now) {
+                    retry_not_before = None;
                     next_sync = now;
                 }
             }
@@ -116,26 +139,37 @@ async fn run_loop(
                 }
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
             }
-            _ = sleep_until(next_attachment_maintenance) => {
+            _ = sleep_until(next_reminder), if reminders_on && !sync_catching_up => {
+                next_reminder = Instant::now() + crate::reminders::remind(&database, &config.reminders).await;
+            }
+            _ = sleep_until(next_attachment_maintenance), if sync_on => {
                 maintain_attachments(&database, &blob_dir, lifecycle_policy).await;
                 next_attachment_maintenance =
                     Instant::now() + crate::sync::ATTACHMENT_MAINTENANCE_INTERVAL;
             }
-            _ = sleep_until(next_sync) => {
+            _ = sleep_until(next_sync), if sync_on => {
                 retry_not_before = None;
-                match sync_once(&database, config, &mut sync).await {
+                let round = sync_once(&database, config, &mut sync).await;
+                sync_catching_up = matches!(&round, Ok(DaemonRound::Completed(outcome)) if outcome.more_work_ready());
+                match round {
                     Ok(DaemonRound::Completed(outcome)) => {
+                        if let Err(error) = database.record_daemon_sync_round(chrono::Utc::now().timestamp(), None).await {
+                            warn!(%error, "could not persist daemon sync health");
+                        }
                         backoff_seconds = 1;
                         awaiting_setup = false;
                         access_refused = false;
+                        vault_deleted = false;
                         next_sync = if outcome.more_work_ready() {
                             Instant::now() + DAEMON_INCOMPLETE_RESCHEDULE
                         } else {
+                            next_reminder = Instant::now();
                             Instant::now() + Duration::from_secs(interval_seconds)
                         };
                     }
                     Ok(DaemonRound::NotSetUp) => {
                         access_refused = false;
+                        vault_deleted = false;
                         if !awaiting_setup {
                             awaiting_setup = true;
                             println!("daemon-sync-not-set-up hint=\"run `aven sync setup` or `aven sync join`\"");
@@ -147,6 +181,17 @@ async fn run_loop(
                         debug!("daemon sync deferred");
                         next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
                     }
+                    // Rounds check the recorded deletion locally and send no
+                    // request until the user resets sync or `aven sync`
+                    // succeeds.
+                    Ok(DaemonRound::VaultDeleted) => {
+                        if !vault_deleted {
+                            vault_deleted = true;
+                            println!("daemon-sync-vault-deleted hint=\"this sync's vault was deleted; run `aven sync reset`, then `aven sync setup` with a new setup code\"");
+                        }
+                        backoff_seconds = 1;
+                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
+                    }
                     // Refusals persist until the user acts elsewhere, so
                     // backing off only repeats the warning.
                     Err(err) if is_access_refusal(&err) => {
@@ -157,12 +202,14 @@ async fn run_loop(
                         backoff_seconds = 1;
                         next_sync = Instant::now() + Duration::from_secs(interval_seconds);
                         retry_not_before = Some(next_sync);
+                        record_failure(&database, &err, interval_seconds).await;
                     }
                     Err(err) => {
                         let retry_seconds = backoff_seconds;
                         backoff_seconds = (backoff_seconds * 2).min(300);
                         next_sync = Instant::now() + Duration::from_secs(retry_seconds);
                         retry_not_before = Some(next_sync);
+                        record_failure(&database, &err, retry_seconds).await;
                         warn!(error = %daemon_error(&err), retry_seconds, "daemon sync failed");
                     }
                 }
@@ -170,6 +217,58 @@ async fn run_loop(
         }
     }
     Ok(())
+}
+
+/// Points the LaunchAgent at Aven.app's executable when it still runs it
+/// through a symlink, then has a separate process reload the service. Returns
+/// true when launchd stopped this daemon for the reload.
+#[cfg(target_os = "macos")]
+async fn move_service_into_bundle() -> bool {
+    use std::os::unix::process::CommandExt as _;
+
+    let program = match service::prepare_bundle_migration() {
+        Ok(service::BundleMigration::Prepared { program }) => program,
+        Ok(service::BundleMigration::NotNeeded) => return false,
+        Ok(service::BundleMigration::Skipped(reason)) => {
+            println!("daemon-bundle-migration-skipped reason={reason}");
+            return false;
+        }
+        Err(error) => {
+            warn!(error = %format!("{error:#}"), "daemon bundle migration failed");
+            return false;
+        }
+    };
+    println!("daemon-bundle-migration program={}", program.display());
+    let mut command = std::process::Command::new(&program);
+    command
+        .args(["internal", "reload-daemon"])
+        .stdin(std::process::Stdio::null());
+    // Bootout ends every process in the job's process group, including a
+    // reload started from it, so the reload runs in its own session.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = match tokio::process::Command::from(command).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            warn!(error = %error, "daemon reload could not start");
+            return false;
+        }
+    };
+    // If the reload fails before stopping this daemon, keep running on the
+    // loaded definition; the rewritten plist applies at the next login.
+    tokio::select! {
+        _ = shutdown_signal() => true,
+        status = child.wait() => {
+            warn!(status = ?status, "daemon reload exited without stopping the daemon");
+            false
+        }
+    }
 }
 
 fn daemon_error(error: &anyhow::Error) -> String {
@@ -227,8 +326,54 @@ fn binary_fingerprint(launch_path: &Path) -> Result<BinaryFingerprint> {
     })
 }
 
-fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) {
-    while socket.try_recv_from(wake_buf).is_ok() {}
+fn wake_can_sync(retry_now: bool, deadline: Option<Instant>, now: Instant) -> bool {
+    retry_now || deadline.is_none_or(|deadline| now >= deadline)
+}
+
+fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) -> bool {
+    let mut retry_now = false;
+    while let Ok((len, _)) = socket.try_recv_from(wake_buf) {
+        retry_now |= &wake_buf[..len] == b"r";
+    }
+    retry_now
+}
+
+async fn record_failure(database: &Database, error: &anyhow::Error, retry_seconds: u64) {
+    use crate::sync::error_explanations::{ErrorAction, ErrorSurface, explain};
+    let explanation = explain(ErrorAction::General, ErrorSurface::Tui, error);
+    let code = explanation
+        .map(|explanation| explanation.code.to_string())
+        .or_else(|| crate::sync::error_explanations::codes(error).last())
+        .unwrap_or_else(|| "daemon-sync-failed".to_string());
+    // Persist actionable explanations, not raw chains that may contain URLs or credentials.
+    let message = explanation.map_or_else(
+        || "Background sync failed. Choose Sync now to retry and see the cause.".to_string(),
+        |explanation| explanation.combined(),
+    );
+    let now = chrono::Utc::now().timestamp();
+    if let Err(error) = database
+        .record_daemon_sync_round(now, Some((&code, &message, now + retry_seconds as i64)))
+        .await
+    {
+        warn!(%error, "could not persist daemon sync health");
+    }
+}
+
+/// A successful foreground sync can repair prompt-less key access. The `r` wake
+/// bypasses backoff; ordinary mutation wakes retain the legacy `1` payload.
+pub(crate) async fn retry_after_foreground_sync(database: &Database, config: &AppConfig) {
+    if !config.automatic_sync_is_enabled() {
+        return;
+    }
+    match database.daemon_sync_state().await {
+        Ok(state) if state.error.is_some() => {
+            if let Ok(addr) = config.wake_addr() {
+                send_wake(addr, b"r");
+            }
+        }
+        Err(error) => warn!(%error, "could not read daemon sync health"),
+        _ => {}
+    }
 }
 
 async fn sync_once(
@@ -244,7 +389,7 @@ async fn sync_once(
                 outcome.rounds, outcome.metadata_caught_up, outcome.images
             );
         }
-        DaemonRound::NotSetUp | DaemonRound::Deferred => {}
+        DaemonRound::NotSetUp | DaemonRound::Deferred | DaemonRound::VaultDeleted => {}
     }
     Ok(round)
 }
@@ -272,7 +417,7 @@ async fn maintain_attachments(
 }
 
 pub(crate) fn wake_if_enabled(config: &AppConfig) {
-    if !config.automatic_sync_is_enabled() {
+    if !config.daemon_has_work() {
         return;
     }
     let Ok(addr) = config.wake_addr() else {
@@ -283,8 +428,12 @@ pub(crate) fn wake_if_enabled(config: &AppConfig) {
 }
 
 fn wake(addr: SocketAddr) {
+    send_wake(addr, b"1");
+}
+
+fn send_wake(addr: SocketAddr, payload: &[u8]) {
     let bind_addr = SocketAddr::new(addr.ip(), 0);
-    match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(b"1", addr)) {
+    match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(payload, addr)) {
         Ok(_) => debug!(wake_addr = %addr, "daemon wake sent"),
         Err(err) => warn!(wake_addr = %addr, error = %err, "daemon wake send failed"),
     }
@@ -293,6 +442,83 @@ fn wake(addr: SocketAddr) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_retry_wakes_bypass_backoff() {
+        let now = Instant::now();
+        let deadline = Some(now + Duration::from_secs(300));
+        assert!(!wake_can_sync(false, deadline, now));
+        assert!(wake_can_sync(true, deadline, now));
+        assert!(wake_can_sync(
+            false,
+            deadline,
+            now + Duration::from_secs(300)
+        ));
+        assert!(wake_can_sync(false, None, now));
+    }
+
+    #[tokio::test]
+    async fn draining_preserves_retry_wakes_among_ordinary_wakes() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = socket.local_addr().unwrap();
+        for payload in [b"1", b"r", b"1"] {
+            sender.send_to(payload, addr).await.unwrap();
+        }
+        socket.readable().await.unwrap();
+        assert!(drain_wakes(&socket, &mut [0; 16]));
+        assert!(!drain_wakes(&socket, &mut [0; 16]));
+    }
+
+    #[tokio::test]
+    async fn foreground_recovery_wakes_only_when_enabled_and_error_recorded() {
+        let database = Database::open(Path::new(":memory:")).await.unwrap();
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut config = AppConfig::default();
+        config.sync.enabled = true;
+        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+        let mut buf = [0; 16];
+        retry_after_foreground_sync(&database, &config).await;
+        assert!(socket.recv(&mut buf).is_err());
+        database
+            .record_daemon_sync_round(
+                100,
+                Some(("protected-key-storage-unavailable", "unlock", 400)),
+            )
+            .await
+            .unwrap();
+        config.sync.disable_override = true;
+        retry_after_foreground_sync(&database, &config).await;
+        assert!(socket.recv(&mut buf).is_err());
+        config.sync.disable_override = false;
+        retry_after_foreground_sync(&database, &config).await;
+        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
+        assert_eq!(buf[0], b'r');
+        // Foreground success cannot claim that the daemon recovered.
+        assert!(database.daemon_sync_state().await.unwrap().error.is_some());
+        database.record_daemon_sync_round(200, None).await.unwrap();
+        retry_after_foreground_sync(&database, &config).await;
+        assert!(socket.recv(&mut buf).is_err());
+    }
+
+    #[tokio::test]
+    async fn failure_records_codes_and_explanations_without_raw_details() {
+        let database = Database::open(Path::new(":memory:")).await.unwrap();
+        record_failure(
+            &database,
+            &anyhow::anyhow!("error encrypted-tail-reply url=secret"),
+            1,
+        )
+        .await;
+        let state = database.daemon_sync_state().await.unwrap();
+        let error = state.error.unwrap();
+        assert_eq!(error.code, "encrypted-tail-reply");
+        assert!(!error.message.contains("secret"));
+        assert_eq!(state.next_retry_at, Some(error.since + 1));
+    }
 
     #[test]
     fn wake_if_enabled_sends_to_configured_address() {

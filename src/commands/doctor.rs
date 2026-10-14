@@ -235,7 +235,7 @@ pub(crate) async fn cmd_doctor(
         args.integrity,
     )
     .await;
-    add_daemon_section(&mut report, config);
+    add_daemon_section(&mut report, config, database).await;
 
     report.finish();
     let has_errors = report.has_errors();

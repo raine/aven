@@ -531,3 +531,27 @@ async fn open_errors_include_filesystem_and_connection_causes() {
     assert!(message.contains("file is not a database"), "{message}");
     assert_eq!(format!("{error:#}"), message);
 }
+
+#[tokio::test]
+async fn task_schema_rejects_invalid_status_and_priority_values() {
+    let (_dir, mut conn) = crate::test_support::test_conn().await;
+    sqlx::raw_sql(
+        "INSERT INTO projects(id,key,name,prefix,created_at,updated_at)
+         VALUES ('7KQ9A1X4MV2P8D6S','app','App','APP','t','t');
+         INSERT INTO tasks(id,title,description,project_id,status,priority,created_at,updated_at)
+         VALUES ('7KQ9A1X4MV2P8D6T','checked task','','7KQ9A1X4MV2P8D6S','inbox','none','t','t');",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    for sql in [
+        "UPDATE tasks SET status = 'blocked'",
+        "UPDATE tasks SET priority = 'soon'",
+    ] {
+        let error = sqlx::query(sql).execute(&mut *conn).await.unwrap_err();
+        assert!(
+            error.to_string().contains("CHECK constraint failed"),
+            "{error}"
+        );
+    }
+}

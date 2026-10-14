@@ -125,50 +125,58 @@ async fn canceling_ordinary_task_promotion_keeps_task_ordinary() {
 }
 
 #[tokio::test]
-async fn canceling_new_epic_child_authoring_preserves_list_origin() {
-    let mut app = test_app().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            metadata: Vec::new(),
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent_id = app.store.tasks[parent_index].task.id.clone();
+async fn canceling_new_epic_child_authoring_preserves_origin() {
+    for detail_origin in [false, true] {
+        let mut app = test_app().await;
+        let parent_index = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                metadata: Vec::new(),
+                is_epic: true,
+                ..test_task_draft("Parent epic")
+            },
+        )
+        .await;
+        let parent_id = app.store.tasks[parent_index].task.id.clone();
+        if detail_origin {
+            app.show_detail(3);
+        }
 
-    for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
-        app.handle_normal_key(code).await.unwrap();
+        for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+        app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
+        assert!(matches!(
+            app.authoring
+                .submission_context()
+                .map(|context| context.origin),
+            Some(AddTaskOrigin::EpicChild { .. })
+        ));
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+        assert_eq!(app.detail.is_active(), detail_origin);
+
+        app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(app.overlay.is_none());
+        if detail_origin {
+            assert_eq!(detail_scroll(&app), 3);
+        }
+        assert_eq!(app.detail.is_active(), detail_origin);
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .map(|item| &item.task.id),
+            Some(&parent_id)
+        );
     }
-    app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
-    assert!(matches!(
-        app.authoring
-            .submission_context()
-            .map(|context| context.origin),
-        Some(AddTaskOrigin::EpicChild { .. })
-    ));
-
-    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
-    assert!(!app.detail.is_active());
-
-    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(app.overlay.is_none());
-    assert!(!app.detail.is_active());
-    assert_eq!(
-        app.store
-            .selected_task(app.list.selected_task())
-            .map(|item| &item.task.id),
-        Some(&parent_id)
-    );
 }
 
 #[tokio::test]
@@ -277,57 +285,21 @@ async fn submitting_new_epic_child_from_linked_detail_returns_to_epic() {
         Some(&parent_id)
     );
     assert!(app.detail.is_active());
-    assert!(matches!(
+    let parent = app.store.selected_task(app.list.selected_task()).unwrap();
+    let new_child = parent
+        .epic_children
+        .iter()
+        .find(|child| child.title == "Linked detail child")
+        .expect("created child linked to the epic");
+    assert_eq!(
         app.detail
             .state()
             .and_then(|detail| detail.focused_target()),
-        Some(DetailTargetId::Task {
+        Some(&DetailTargetId::Task {
             section: DetailSection::EpicChildren,
-            ..
+            task_id: new_child.task_id.clone(),
         })
-    ));
-}
-
-#[tokio::test]
-async fn canceling_new_epic_child_authoring_returns_to_detail_origin() {
-    let mut app = test_app().await;
-    create_and_select_task(
-        &mut app,
-        TaskDraft {
-            metadata: Vec::new(),
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    app.show_detail(3);
-
-    for code in [KeyCode::Char('t'), KeyCode::Char('c'), KeyCode::Char('a')] {
-        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
-    }
-    app.dispatch_key(key(KeyCode::Enter), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::AddTask(_))));
-    assert!(matches!(
-        app.authoring
-            .submission_context()
-            .map(|context| context.origin),
-        Some(AddTaskOrigin::EpicChild { .. })
-    ));
-
-    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
-    assert!(app.detail.is_active());
-
-    app.dispatch_key(key(KeyCode::Esc), (80, 24).into())
-        .await
-        .unwrap();
-    assert!(app.overlay.is_none());
-    assert!(app.detail.is_active());
-    assert!(app.detail.is_active());
+    );
 }
 
 #[tokio::test]
@@ -668,6 +640,10 @@ async fn focused_detail_child_routes_actions_and_preserves_parent_detail() {
         app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
     }
     assert_eq!(toast_message(&app).as_deref(), Some("copied task title"));
+    assert_eq!(
+        crate::tui::platform::clipboard_text_for_test().as_deref(),
+        Some("Child task")
+    );
     assert_eq!(
         app.detail
             .state()
@@ -1465,18 +1441,13 @@ async fn assert_six_child_removal_keyboard_reachability(removal_index: usize) {
 }
 
 #[tokio::test]
-async fn removing_first_of_six_children_keeps_disclosure_and_hidden_child_keyboard_reachable() {
-    assert_six_child_removal_keyboard_reachability(0).await;
-}
-
-#[tokio::test]
-async fn removing_middle_of_six_children_keeps_disclosure_and_hidden_child_keyboard_reachable() {
-    assert_six_child_removal_keyboard_reachability(2).await;
-}
-
-#[tokio::test]
-async fn removing_last_of_six_children_keeps_disclosure_keyboard_reachable() {
-    assert_six_child_removal_keyboard_reachability(5).await;
+async fn removing_six_child_boundary_rows_keeps_disclosure_keyboard_reachable() {
+    for removal_index in [0, 2, 5] {
+        Box::pin(assert_six_child_removal_keyboard_reachability(
+            removal_index,
+        ))
+        .await;
+    }
 }
 
 #[tokio::test]

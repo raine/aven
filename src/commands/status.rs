@@ -4,8 +4,21 @@ use crate::config::AppConfig;
 use crate::render::print_json_pretty;
 use crate::status::DaemonStatusReport;
 
-pub(crate) fn cmd_daemon_status(config: &AppConfig, json: bool) -> Result<()> {
-    let report = crate::status::build_daemon_status(config, crate::daemon::status_snapshot()?);
+pub(crate) async fn cmd_daemon_status(
+    config: &AppConfig,
+    db_path: &std::path::Path,
+    json: bool,
+) -> Result<()> {
+    let sync = if db_path.exists() {
+        aven_core::db::Database::open(db_path)
+            .await?
+            .daemon_sync_state()
+            .await?
+    } else {
+        Default::default()
+    };
+    let report = crate::status::build_daemon_status(config, crate::daemon::status_snapshot()?)
+        .with_sync(sync);
     if json {
         print_json_pretty(&report)
     } else {
@@ -47,6 +60,23 @@ fn print_daemon_status(report: &DaemonStatusReport) {
     }
     if let Some(path) = &report.paths.stderr_log {
         println!("Errors: {}", path.display());
+    }
+    println!(
+        "Last daemon sync: {}",
+        report
+            .sync
+            .last_success_at
+            .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
+            .map_or_else(|| "never recorded".to_string(), |at| at.to_rfc3339())
+    );
+    if let Some(error) = &report.sync.error {
+        println!(
+            "Daemon error: {} since {}",
+            error.code,
+            chrono::DateTime::from_timestamp(error.since, 0)
+                .map_or_else(|| error.since.to_string(), |at| at.to_rfc3339())
+        );
+        println!("Next: {}", error.message);
     }
     for guidance in &report.guidance {
         println!("Next: {guidance}");

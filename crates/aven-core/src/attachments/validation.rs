@@ -103,7 +103,7 @@ mod tests {
         let valid = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
         assert!(validate_sha256(valid).is_ok());
         assert!(validate_sha256("short").is_err());
-        assert!(validate_sha256(&format!("{valid}g")).is_err());
+        assert!(validate_sha256(&format!("{}g", &valid[..63])).is_err());
         assert!(validate_sha256(&valid.to_ascii_uppercase()).is_err());
     }
 
@@ -132,8 +132,15 @@ mod tests {
         assert!(validate_filename(Some("")).is_err());
         assert!(validate_filename(Some("a/photo.png")).is_err());
         assert!(validate_filename(Some("a\\photo.png")).is_err());
-        let long = "a".repeat(256);
-        assert!(validate_filename(Some(&long)).is_err());
+        for (name, accepted) in [
+            ("a".repeat(255), true),
+            ("a".repeat(256), false),
+            ("é".repeat(127), true),
+            ("é".repeat(128), false),
+        ] {
+            assert_eq!(validate_filename(Some(&name)).is_ok(), accepted);
+        }
+        assert!(validate_filename(Some("photo\n.png")).is_err());
     }
 
     #[test]
@@ -141,16 +148,37 @@ mod tests {
         assert!(validate_alt_text(Some("a photo of a cat")).is_ok());
         assert!(validate_alt_text(None).is_ok());
         assert!(validate_alt_text(Some("")).is_ok());
-        let long = "a".repeat(501);
-        assert!(validate_alt_text(Some(&long)).is_err());
+        for (text, accepted) in [
+            ("a".repeat(500), true),
+            ("a".repeat(501), false),
+            ("é".repeat(250), true),
+            ("é".repeat(251), false),
+        ] {
+            assert_eq!(validate_alt_text(Some(&text)).is_ok(), accepted);
+        }
         assert!(validate_alt_text(Some("a\nb")).is_err());
     }
 
     #[test]
     fn validates_dimensions() {
         assert!(validate_dimensions(None, None).is_err());
-        assert!(validate_dimensions(Some(1920), Some(1080)).is_ok());
-        assert!(validate_dimensions(Some(0), Some(1080)).is_err());
+        for (width, height, accepted) in [
+            (1920, 1080, true),
+            (0, 1080, false),
+            (-1, 1, false),
+            (i64::MAX, 1, false),
+            (16384, 1, true),
+            (16385, 1, false),
+            (1, 16385, false),
+            (10000, 4000, true),
+            (10000, 4001, false),
+        ] {
+            assert_eq!(
+                validate_dimensions(Some(width), Some(height)).is_ok(),
+                accepted,
+                "{width}x{height}"
+            );
+        }
         assert!(validate_dimensions(Some(1920), None).is_err());
         assert!(validate_dimensions(None, Some(1080)).is_err());
     }

@@ -111,6 +111,11 @@ jobs:
         env:
           EXPECTED_SHA: ${{ matrix.revision == 'baseline' && 'e3c2bcb0891340479f9a5a674a60665eccfeec87' || github.sha }}
         run: test "$(cat unsigned/commit-sha)" = "$EXPECTED_SHA"
+      - name: Assemble Aven.app
+        run: |
+          version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          mkdir unsigned-app
+          scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app
       - name: Sign
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
@@ -118,11 +123,11 @@ jobs:
           APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
         run: |
           chmod 755 "unsigned/${BIN_NAME}"
-          scripts/sign-macos-release "unsigned/${BIN_NAME}"
+          scripts/sign-macos-release "unsigned/${BIN_NAME}" unsigned-app/Aven.app
       - name: Package and qualify
         run: |
           mkdir qualified extracted
-          tar -C unsigned -czf "qualified/${{ matrix.artifact }}.tar.gz" "$BIN_NAME"
+          scripts/package-macos-binary "unsigned/${BIN_NAME}" "qualified/${{ matrix.artifact }}.tar.gz"
           (cd qualified && shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256")
           (cd qualified && shasum -a 256 -c "${{ matrix.artifact }}.sha256")
           tar -xzf "qualified/${{ matrix.artifact }}.tar.gz" -C extracted
@@ -132,6 +137,12 @@ jobs:
           "extracted/${BIN_NAME}" --version </dev/null
           "extracted/${BIN_NAME}" --help </dev/null
           (cd extracted && shasum -a 256 "$BIN_NAME") > qualified/binary.sha256
+          tar --no-mac-metadata -C unsigned-app -czf "qualified/${{ matrix.artifact }}-app.tar.gz" Aven.app
+          (cd qualified && shasum -a 256 "${{ matrix.artifact }}-app.tar.gz" > "${{ matrix.artifact }}-app.sha256")
+          tar -xzf "qualified/${{ matrix.artifact }}-app.tar.gz" -C extracted
+          scripts/verify-macos-release extracted/Aven.app "${{ matrix.architecture }}" > qualified/app-signature.txt
+          scripts/test-verify-macos-release extracted/Aven.app
+          "extracted/Aven.app/Contents/MacOS/${BIN_NAME}" --version </dev/null
           cp unsigned/commit-sha qualified/commit-sha
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -181,10 +192,19 @@ jobs:
           cmp baseline/requirement.txt candidate/requirement.txt
           codesign --verify --strict -R="$(cat baseline/requirement.txt)" "candidate/${BIN_NAME}"
           codesign --verify --strict -R="$(cat candidate/requirement.txt)" "baseline/${BIN_NAME}"
+          # Upgrading a bare install to the bundle must keep the Keychain identity.
+          (cd candidate && shasum -a 256 -c "${{ matrix.artifact }}-app.sha256")
+          tar -xzf "candidate/${{ matrix.artifact }}-app.tar.gz" -C candidate
+          scripts/verify-macos-release candidate/Aven.app "${{ matrix.architecture }}" > candidate/verified-app-signature.txt
+          sed -n 's/^designated => //p' candidate/verified-app-signature.txt > candidate/app-requirement.txt
+          cmp baseline/requirement.txt candidate/app-requirement.txt
+          codesign --verify --strict -R="$(cat baseline/requirement.txt)" candidate/Aven.app
+          codesign --verify --strict -R="$(cat candidate/app-requirement.txt)" "baseline/${BIN_NAME}"
           {
             echo '### macOS artifact identity continuity: ${{ matrix.architecture }}'
             echo "Baseline: $(cat baseline/commit-sha)"
             echo "Candidate: $(cat candidate/commit-sha)"
             echo 'Different signed binaries have equal, mutually satisfied designated requirements.'
+            echo 'The candidate Aven.app has the same requirement and mutually satisfies the baseline binary.'
             echo 'Actions artifacts only: no GitHub release or Homebrew tap update.'
           } >> "$GITHUB_STEP_SUMMARY"

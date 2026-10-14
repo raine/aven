@@ -34,6 +34,20 @@ license-files = [
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
+skip = [
+    # SQLx 0.9 requires sha2 0.10; the application's crypto uses sha2 0.11.
+    { name = "sha2", version = "=0.10.9" },
+    { name = "digest", version = "=0.10.7" },
+    { name = "block-buffer", version = "=0.10.4" },
+    { name = "crypto-common", version = "=0.1.6" },
+    { name = "cpufeatures", version = "=0.2.17" },
+    # SQLx, hashlink, and kasuari require hashbrown 0.16; Ratatui uses 0.17.
+    { name = "hashbrown", version = "=0.16.1" },
+    # Derive macros require syn 2; async-trait and serde_repr require syn 3.
+    { name = "syn", version = "=2.0.119" },
+    # Proptest's rand 0.9 requires getrandom 0.3; the application uses 0.4.
+    { name = "getrandom", version = "=0.3.4" },
+]
 
 [sources]
 unknown-registry = "deny"

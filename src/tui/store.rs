@@ -561,15 +561,16 @@ impl TuiStore {
         // Parts of the sync status may be unreadable mid-operation; the refresh
         // keeps these last-known values until they can be read again.
         candidate.sync_status = self.sync_status.clone();
-        let fallback_scope = match candidate
-            .load(
-                &self.database,
-                &self.app_config,
-                restore,
-                recurrence_detail_id.as_ref(),
-                fail_at,
-            )
-            .await
+        // Every TUI refresh path awaits the projection load; boxing it keeps the
+        // refresh futures nested inside each action small.
+        let fallback_scope = match Box::pin(candidate.load(
+            &self.database,
+            &self.app_config,
+            restore,
+            recurrence_detail_id.as_ref(),
+            fail_at,
+        ))
+        .await
         {
             Ok(fallback_scope) => fallback_scope,
             Err(error) => {

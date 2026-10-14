@@ -20,6 +20,7 @@ aven reads `config.yaml` from `AVEN_CONFIG_DIR` when set, otherwise from `~/.con
 | `sync.enabled` | `true` or `false` |
 | `sync.interval_seconds` | Positive integer, with the default resolved to `30` |
 | `sync.qr_glyphs` | `auto`, `sextant`, or `half-block` |
+| `reminders.enabled` | `true` or `false` |
 | `update.automatic_checks` | `true` or `false` |
 | `local.db_path` | JSON-quoted path, or `null` when unset |
 | `local.image_optimization` | `off`, `paste`, or `on` |
@@ -71,6 +72,12 @@ sync:
 
 daemon:
   wake_addr: "127.0.0.1:47631"
+
+reminders:
+  enabled: false
+  digest_time: "09:00"
+  due_digest: true
+  available: true
 
 update:
   automatic_checks: true

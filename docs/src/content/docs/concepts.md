@@ -85,7 +85,7 @@ Availability and due dates describe independent parts of a task's timeline:
 
 A task may use either field or both. A future due date does not defer work. A passed due date does not reveal a deferred task. Combine Upcoming and Overdue when you need to inspect deferred work whose deadline passed.
 
-Availability is a timestamp because it can represent a local time of day or an exact UTC instant. Due dates are date-only values because the deadline applies to the local calendar day. Neither field creates reminders, notifications, recurrence, or automatic status changes.
+Availability is a timestamp because it can represent a local time of day or an exact UTC instant. Due dates are date-only values because the deadline applies to the local calendar day. Neither field creates recurrence or automatic status changes. With [reminders](/notifications/#reminders) on, the daemon notifies when tasks are due or become available.
 
 See [Scheduling tasks](/schedule-tasks/) for one-time planning workflows and date
 input examples.

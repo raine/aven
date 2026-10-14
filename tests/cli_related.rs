@@ -10,6 +10,10 @@ fn related_links_are_symmetric_idempotent_and_removable_from_either_side() {
     let second = extract_ref(&ok(env.aven(&db, ["add", "second", "--project", "app"])));
 
     contains_all(
+        &fail(env.aven(&db, ["related", "add", &first, &first])),
+        &["error related-self"],
+    );
+    contains_all(
         &ok(env.aven(&db, ["related", "add", &first, &second])),
         &["related-added", "changed=yes"],
     );
@@ -136,6 +140,14 @@ fn related_export_uses_v3_and_round_trips_tombstone_state() {
         &ok(env.aven(&target, ["doctor", "--integrity"])),
         &["related link changes", "0 invalid"],
     );
+    let reexport = env.path("related-reexport.json");
+    ok(env.aven(&target, ["export", "--output", reexport.to_str().unwrap()]));
+    let restored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(reexport).unwrap()).unwrap();
+    assert_eq!(
+        restored["tables"]["task_related_links"],
+        snapshot["tables"]["task_related_links"]
+    );
 }
 
 #[test]
@@ -158,15 +170,4 @@ fn task_references_in_prose_do_not_create_related_links() {
     let links: serde_json::Value =
         serde_json::from_str(&ok(env.aven(&db, ["related", "list", &task, "--json"]))).unwrap();
     assert_eq!(links, serde_json::json!([]));
-}
-
-#[test]
-fn related_self_link_is_rejected() {
-    let env = TestEnv::new();
-    let db = env.db("related-self.sqlite");
-    let task = extract_ref(&ok(env.aven(&db, ["add", "task", "--project", "app"])));
-    contains_all(
-        &fail(env.aven(&db, ["related", "add", &task, &task])),
-        &["error related-self"],
-    );
 }

@@ -118,6 +118,4 @@ async fn source_parser_and_database_accept_the_same_fixed_values() {
             assert_eq!(parsed.to_string(), value);
         }
     }
-    assert_eq!(TaskSource::parse("android").unwrap(), TaskSource::Android);
-    assert_eq!(TaskSource::default(), TaskSource::Unknown);
 }

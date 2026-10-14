@@ -286,32 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn detail_down_scroll_stops_at_cap() {
-        let scroll = handle_detail_scroll_key(
-            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-            4,
-            80,
-            24,
-            None,
-        );
-
-        assert_eq!(scroll, 0);
-    }
-
-    #[test]
-    fn detail_up_scroll_moves_after_resisted_down_scroll() {
-        let scroll = handle_detail_scroll_key(
-            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
-            4,
-            80,
-            24,
-            None,
-        );
-
-        assert_eq!(scroll, 0);
-    }
-
-    #[test]
     fn scroll_with_delta_caps_to_range() {
         assert_eq!(scroll_with_delta(2, 3, 5), 5);
         assert_eq!(scroll_with_delta(2, -1, 5), 1);
@@ -320,15 +294,29 @@ mod tests {
     }
 
     #[test]
-    fn ignored_detail_keys_clamp_stale_scroll_to_cap() {
-        let scroll = handle_detail_scroll_key(
-            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
-            4,
-            80,
-            24,
-            None,
-        );
-
-        assert_eq!(scroll, 0);
+    fn detail_keys_move_within_cap_and_clamp_stale_scroll() {
+        for code in [KeyCode::Char('j'), KeyCode::Char('k'), KeyCode::Char('z')] {
+            let scroll =
+                handle_detail_scroll_key(KeyEvent::new(code, KeyModifiers::NONE), 4, 80, 24, None);
+            assert_eq!(scroll, 0, "{code:?}");
+        }
+        for (code, initial, expected) in [
+            (KeyCode::Down, 4, 5),
+            (KeyCode::Down, 5, 5),
+            (KeyCode::Up, 5, 4),
+            (KeyCode::Up, 0, 0),
+            (KeyCode::Char('z'), 8, 5),
+        ] {
+            assert_eq!(
+                handle_detail_scroll_key_with_cap(
+                    KeyEvent::new(code, KeyModifiers::NONE),
+                    initial,
+                    24,
+                    5
+                ),
+                expected,
+                "{code:?} at {initial}"
+            );
+        }
     }
 }

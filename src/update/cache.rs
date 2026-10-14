@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::release::{FetchResult, fetch_latest};
 use super::{CheckOutcome, Release, current_version};
 
-const CACHE_SCHEMA: u32 = 2;
+const CACHE_SCHEMA: u32 = 3;
 const SUCCESS_INTERVAL: u64 = 24 * 60 * 60;
 const DISMISS_INTERVAL: u64 = 7 * 24 * 60 * 60;
 const FAILURE_BACKOFF: [u64; 4] = [15 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60];
@@ -292,6 +292,7 @@ mod tests {
             archive_name: "aven-test.tar.gz".to_string(),
             archive_url: "https://github.com/raine/aven/releases/download/v99.0.0/a".to_string(),
             checksum_url: "https://github.com/raine/aven/releases/download/v99.0.0/b".to_string(),
+            app: None,
         });
         assert!(matches!(
             outcome_from_cache(&cache, true).unwrap(),

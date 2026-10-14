@@ -1,10 +1,6 @@
 use anyhow::{Result, ensure};
-use subtle::ConstantTimeEq;
 
-use super::{
-    ClaimAuthentication, ClaimRefusal, ClaimResult, Genesis, SetupAuthority, codec,
-    credential_verifier,
-};
+use super::{ClaimAuthentication, ClaimRefusal, ClaimResult, Genesis, SetupAuthority, codec};
 use crate::db::{self, Database, begin_immediate};
 
 const SERVER_SETUP_KEY: &str = "e2ee_server_setup";
@@ -77,17 +73,13 @@ impl Database {
             ClaimAuthentication::SetupSecret(secret) => {
                 expired_secret = expired
                     .as_ref()
-                    .is_some_and(|setup| setup.authorizes(genesis.setup, secret));
+                    .is_some_and(|setup| setup.authorizes(genesis.setup_id(), secret));
                 issued
                     .as_ref()
-                    .is_some_and(|setup| setup.authorizes(genesis.setup, secret))
+                    .is_some_and(|setup| setup.authorizes(genesis.setup_id(), secret))
             }
             ClaimAuthentication::SeedBearer(token) => {
-                stored.is_some()
-                    && bool::from(
-                        credential_verifier(genesis.context.vault_id, genesis.device, token)
-                            .ct_eq(&genesis.verifier),
-                    )
+                stored.is_some() && genesis.authorizes_bearer(token)
             }
         };
         ensure!(
@@ -236,7 +228,7 @@ impl Database {
         ensure!(!claimed, "error e2ee-server-already-claimed");
         ensure_empty_server_domain(&mut tx).await?;
         let id = match db::get_meta(&mut tx, SERVER_SETUP_KEY).await? {
-            Some(value) => parse_server_setup(&value)?.0.id,
+            Some(value) => parse_server_setup(&value)?.0.id(),
             None => fresh_id,
         };
         let value = format!(

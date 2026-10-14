@@ -6,15 +6,22 @@ use aven_core::api::{
     QueueDateKind, QueueMutation, QueueMutationKind, QueueReason, RecurrenceDuePolicy,
     RecurrenceFrequency, RecurrenceHistoryKind, RecurrenceOutcome, RecurrenceProjectionState,
     RecurrenceRule, RecurrenceScheduleInput, RecurrenceSeriesState, Store, TaskCapture,
-    UpdateRecurrenceTemplate, UpdateTask,
+    TaskListDirection, TaskListQuery, TaskListSort, UpdateRecurrenceTemplate, UpdateTask,
 };
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::db::Database;
-use aven_core::ids::{TaskId, WorkspaceId};
+use aven_core::ids::{ProjectId, TaskId, WorkspaceId};
 use aven_core::recurrence::RecurrenceSeriesId;
 use aven_core::test_support::encrypted_sync::EncryptedSyncServer;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, SqliteConnection};
+
+fn project_query(project_id: ProjectId) -> TaskListQuery {
+    TaskListQuery {
+        project_id: Some(project_id),
+        ..TaskListQuery::new(TaskListSort::Updated, TaskListDirection::Desc)
+    }
+}
 
 #[tokio::test]
 async fn consumer_navigation_reads_project_and_search_rows_by_stable_identity() {
@@ -62,9 +69,10 @@ async fn consumer_navigation_reads_project_and_search_rows_by_stable_identity() 
         .unwrap();
 
     let project_rows = store
-        .project_tasks(&workspace.id, &project.id)
+        .task_list(&workspace.id, project_query(project.id.clone()))
         .await
-        .unwrap();
+        .unwrap()
+        .rows;
     assert_eq!(project_rows.len(), 1);
     assert_eq!(project_rows[0].id, ios.id);
     assert_eq!(project_rows[0].project_key, "ios");
@@ -92,7 +100,7 @@ async fn consumer_navigation_reads_project_and_search_rows_by_stable_identity() 
         .await
         .unwrap();
     let cross_workspace = store
-        .project_tasks(&workspace.id, &foreign_project.id)
+        .task_list(&workspace.id, project_query(foreign_project.id))
         .await
         .unwrap_err();
     assert_eq!(cross_workspace.code, ErrorCode::NotFound);
@@ -111,7 +119,7 @@ async fn consumer_navigation_reads_project_and_search_rows_by_stable_identity() 
         .await
         .unwrap();
     let unavailable = store
-        .project_tasks(&workspace.id, &project.id)
+        .task_list(&workspace.id, project_query(project.id.clone()))
         .await
         .unwrap_err();
     assert_eq!(unavailable.code, ErrorCode::NotFound);
@@ -1377,67 +1385,46 @@ fn monthly_series(title: &str) -> CreateRecurrenceSeries {
 
 #[test]
 fn consumer_api_reuses_pure_recurrence_enums() {
-    let frequency: aven_core::recurrence::RecurrenceFrequency = RecurrenceFrequency::Weekly;
-    let due_policy: aven_core::recurrence::RecurrenceDuePolicy = RecurrenceDuePolicy::SameDay;
-    let state: aven_core::recurrence::RecurrenceSeriesState = RecurrenceSeriesState::Paused;
-    let outcome: aven_core::recurrence::RecurrenceOutcome = RecurrenceOutcome::Skipped;
-    let projection: aven_core::recurrence::RecurrenceProjectionState =
+    let _frequency: aven_core::recurrence::RecurrenceFrequency = RecurrenceFrequency::Weekly;
+    let _due_policy: aven_core::recurrence::RecurrenceDuePolicy = RecurrenceDuePolicy::SameDay;
+    let _state: aven_core::recurrence::RecurrenceSeriesState = RecurrenceSeriesState::Paused;
+    let _outcome: aven_core::recurrence::RecurrenceOutcome = RecurrenceOutcome::Skipped;
+    let _projection: aven_core::recurrence::RecurrenceProjectionState =
         RecurrenceProjectionState::Archived;
-    let history_kind: aven_core::query::RecurrenceHistoryKind = RecurrenceHistoryKind::Missed;
-
-    assert_eq!(
-        frequency,
-        aven_core::recurrence::RecurrenceFrequency::Weekly
-    );
-    assert_eq!(
-        due_policy,
-        aven_core::recurrence::RecurrenceDuePolicy::SameDay
-    );
-    assert_eq!(state, aven_core::recurrence::RecurrenceSeriesState::Paused);
-    assert_eq!(outcome, aven_core::recurrence::RecurrenceOutcome::Skipped);
-    assert_eq!(
-        projection,
-        aven_core::recurrence::RecurrenceProjectionState::Archived
-    );
-    assert_eq!(
-        history_kind,
-        aven_core::query::RecurrenceHistoryKind::Missed
-    );
+    let _history_kind: aven_core::query::RecurrenceHistoryKind = RecurrenceHistoryKind::Missed;
 }
 
 #[tokio::test]
 async fn consumer_api_round_trips_monthly_and_yearly_recurrence_rules() {
     let directory = tempfile::tempdir().unwrap();
-    let store = Store::open(directory.path().join("monthly.sqlite"))
-        .await
-        .unwrap();
+    let path = directory.path().join("monthly.sqlite");
+    let store = Store::open(&path).await.unwrap();
     let workspace = store.resolve_workspace("default").await.unwrap();
-    let created = store
-        .create_recurrence_series(&workspace.id, monthly_series("monthly review"))
-        .await
-        .unwrap();
-
-    assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Monthly);
-    assert_eq!(
-        store
-            .show_recurrence_series(&workspace.id, &created.series_ref)
+    let mut expected = Vec::new();
+    for (frequency, interval) in [
+        (RecurrenceFrequency::Monthly, 1),
+        (RecurrenceFrequency::Yearly, 2),
+    ] {
+        let mut request = daily_series("periodic review");
+        request.schedule.rule.frequency = frequency;
+        request.schedule.rule.interval = interval;
+        let rule = request.schedule.rule.clone();
+        let created = store
+            .create_recurrence_series(&workspace.id, request)
             .await
-            .unwrap()
-            .series
-            .rule
-            .frequency,
-        RecurrenceFrequency::Monthly
-    );
-
-    let mut yearly = daily_series("biennial review");
-    yearly.schedule.rule.frequency = RecurrenceFrequency::Yearly;
-    yearly.schedule.rule.interval = 2;
-    let created = store
-        .create_recurrence_series(&workspace.id, yearly)
-        .await
-        .unwrap();
-    assert_eq!(created.series.rule.frequency, RecurrenceFrequency::Yearly);
-    assert_eq!(created.series.rule.interval, 2);
+            .unwrap();
+        assert_eq!(created.series.rule, rule);
+        expected.push((created.series_ref, rule));
+    }
+    drop(store);
+    let reopened = Store::open(&path).await.unwrap();
+    for (series_ref, rule) in expected {
+        let shown = reopened
+            .show_recurrence_series(&workspace.id, &series_ref)
+            .await
+            .unwrap();
+        assert_eq!(shown.series.rule, rule);
+    }
 }
 
 #[tokio::test]

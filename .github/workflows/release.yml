@@ -129,6 +129,12 @@ jobs:
         with:
           name: unsigned-${{ matrix.artifact }}
           path: unsigned
+      # The bundle copies the unsigned binary, so both are signed from the same bytes.
+      - name: Assemble Aven.app
+        run: |
+          version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          mkdir unsigned-app
+          scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app
       - name: Sign
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
@@ -136,20 +142,45 @@ jobs:
           APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
         run: |
           chmod 755 "unsigned/${BIN_NAME}"
-          scripts/sign-macos-release "unsigned/${BIN_NAME}"
+          scripts/sign-macos-release "unsigned/${BIN_NAME}" unsigned-app/Aven.app
       - name: Package
         run: |
-          tar -C unsigned -czf "${{ matrix.artifact }}.tar.gz" "$BIN_NAME"
+          scripts/package-macos-binary "unsigned/${BIN_NAME}" "${{ matrix.artifact }}.tar.gz"
           shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
+          tar --no-mac-metadata -C unsigned-app -czf "${{ matrix.artifact }}-app.tar.gz" Aven.app
+          shasum -a 256 "${{ matrix.artifact }}-app.tar.gz" > "${{ matrix.artifact }}-app.sha256"
       - name: Smoke test packaged binary
         run: |
           package_dir="package-${{ matrix.artifact }}"
           mkdir "$package_dir"
           shasum -a 256 -c "${{ matrix.artifact }}.sha256"
+          # macOS tar hides AppleDouble ._ entries when listing; the updater does not.
+          entries=$(python3 -I -c 'import sys, tarfile
+          for m in tarfile.open(sys.argv[1]):
+              print("file" if m.isreg() else "other", m.name)' "${{ matrix.artifact }}.tar.gz")
+          if [[ $entries != "file $BIN_NAME" ]]; then
+            echo "::error::bare archive must contain only $BIN_NAME"
+            exit 1
+          fi
           tar -xzf "${{ matrix.artifact }}.tar.gz" -C "$package_dir"
           cmp "unsigned/${BIN_NAME}" "$package_dir/${BIN_NAME}"
           scripts/verify-macos-release "$package_dir/${BIN_NAME}" "${{ matrix.architecture }}"
           scripts/test-verify-macos-release "$package_dir/${BIN_NAME}"
+          "$package_dir/${BIN_NAME}" --help </dev/null
+      - name: Smoke test packaged app
+        run: |
+          package_dir="package-${{ matrix.artifact }}-app"
+          mkdir "$package_dir"
+          shasum -a 256 -c "${{ matrix.artifact }}-app.sha256"
+          if tar -tzf "${{ matrix.artifact }}-app.tar.gz" | grep -v '^Aven\.app/'; then
+            echo "::error::app archive contains entries outside Aven.app/"
+            exit 1
+          fi
+          tar -xzf "${{ matrix.artifact }}-app.tar.gz" -C "$package_dir"
+          diff -r unsigned-app/Aven.app "$package_dir/Aven.app"
+          scripts/verify-macos-release "$package_dir/Aven.app" "${{ matrix.architecture }}"
+          scripts/test-verify-macos-release "$package_dir/Aven.app"
+          ln -s "$PWD/$package_dir/Aven.app/Contents/MacOS/${BIN_NAME}" "$package_dir/${BIN_NAME}"
           "$package_dir/${BIN_NAME}" --help </dev/null
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -157,6 +188,8 @@ jobs:
           path: |
             ${{ matrix.artifact }}.tar.gz
             ${{ matrix.artifact }}.sha256
+            ${{ matrix.artifact }}-app.tar.gz
+            ${{ matrix.artifact }}-app.sha256
 
   release:
     needs: [build, sign-macos]
@@ -197,54 +230,16 @@ jobs:
           repository: raine/homebrew-aven
           token: ${{ secrets.RELEASE_TOKEN }}
           path: tap
+      - uses: actions/checkout@v5
+        with:
+          path: source
+          persist-credentials: false
       - name: Generate formula and push to tap
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           VERSION="${VERSION#v}"
-          SHA_MAC_ARM=$(awk '{print $1}' aven-darwin-arm64.sha256)
-          SHA_MAC_INTEL=$(awk '{print $1}' aven-darwin-amd64.sha256)
-          SHA_LINUX_ARM=$(awk '{print $1}' aven-linux-arm64.sha256)
-          SHA_LINUX_INTEL=$(awk '{print $1}' aven-linux-amd64.sha256)
-
-          cat > tap/Formula/aven.rb << EOF
-          class Aven < Formula
-            desc "Local-first task manager CLI and sync server"
-            homepage "https://github.com/raine/aven"
-            version "${VERSION}"
-            license "MIT"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/raine/aven/releases/download/v${VERSION}/aven-darwin-arm64.tar.gz"
-                sha256 "${SHA_MAC_ARM}"
-              else
-                url "https://github.com/raine/aven/releases/download/v${VERSION}/aven-darwin-amd64.tar.gz"
-                sha256 "${SHA_MAC_INTEL}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-                url "https://github.com/raine/aven/releases/download/v${VERSION}/aven-linux-arm64.tar.gz"
-                sha256 "${SHA_LINUX_ARM}"
-              else
-                url "https://github.com/raine/aven/releases/download/v${VERSION}/aven-linux-amd64.tar.gz"
-                sha256 "${SHA_LINUX_INTEL}"
-              end
-            end
-
-            def install
-              bin.install "aven"
-              generate_completions_from_executable(bin/"aven", "completions")
-            end
-
-            test do
-              assert_match "Local-first task manager", shell_output("#{bin}/aven --help")
-            end
-          end
-          EOF
-          sed -i 's/^          //' tap/Formula/aven.rb
+          source/scripts/homebrew-formula "$VERSION" . > tap/Formula/aven.rb
 
           cd tap
           git config user.name "github-actions[bot]"

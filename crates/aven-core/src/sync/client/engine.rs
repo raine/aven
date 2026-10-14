@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::errors::{code, has_code, is_access_refusal};
+use super::errors::{code, has_code, is_access_refusal, is_vault_deleted};
 use super::exchange::Link;
 use super::host::{ClientHost, key_store};
 use super::keys::peer::InvitationProgress;
@@ -94,7 +94,7 @@ fn jittered(interval: Duration) -> Duration {
     interval
 }
 
-pub const NOT_SET_UP: &str = "error sync-not-set-up hint=\"run `aven sync setup` with an invitation from your hosting provider or `aven server setup`, or `aven sync join` on a new database\"";
+pub const NOT_SET_UP: &str = "error sync-not-set-up hint=\"run `aven sync setup` with an invitation from Aven Cloud, your hosting provider or `aven server setup`, or `aven sync join` on a new database\"";
 
 /// True when this database takes part in sync, including an interrupted
 /// setup or join.
@@ -407,8 +407,11 @@ async fn setup(
     }
     let _timer = bootstrap::StageTimer::start("drain");
     let client = tail::Client::new(&server, link.clone())?;
-    let outcome = drain(&client, &store, database, host, &blob_dir, ROUND_LIMIT).await?;
-    Ok((server, outcome))
+    let outcome = drain(&client, &store, database, host, &blob_dir, ROUND_LIMIT).await;
+    if let Err(error) = &outcome {
+        remember_vault_deletion(database, error).await;
+    }
+    Ok((server, outcome?))
 }
 
 /// A created device invitation whose inviting device waits for admission.
@@ -807,8 +810,11 @@ pub async fn run_join(
         ROUND_LIMIT,
         Some(progress),
     )
-    .await?;
-    Ok((server, outcome))
+    .await;
+    if let Err(error) = &outcome {
+        remember_vault_deletion(database, error).await;
+    }
+    Ok((server, outcome?))
 }
 
 /// Explains why a join request could not use this invitation. Every refusal
@@ -907,10 +913,10 @@ fn explain_setup_refusal(error: anyhow::Error) -> anyhow::Error {
             "error sync-setup-storage-already-claimed hint=\"this server already belongs to another sync; nothing here was changed; to use that sync, join it from an empty database\"",
         ),
         Some("bootstrap-setup-invitation-rejected") => error.context(
-            "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; get the current invitation from your hosting provider, or run `aven server setup` if you host the server yourself\"",
+            "error sync-setup-invitation-rejected hint=\"this setup invitation expired, was replaced, or is for different storage; nothing here was changed; get the current invitation from Aven Cloud or your hosting provider, or run `aven server setup` if you host the server yourself\"",
         ),
         Some("bootstrap-setup-invitation-expired") => error.context(
-            "error sync-setup-invitation-expired hint=\"this setup invitation expired; nothing here was changed; get a new invitation from your hosting provider, or run `aven server setup` again if you host the server yourself\"",
+            "error sync-setup-invitation-expired hint=\"this setup invitation expired; nothing here was changed; get a new invitation from Aven Cloud or your hosting provider, or run `aven server setup` again if you host the server yourself\"",
         ),
         _ => error,
     }
@@ -968,8 +974,23 @@ fn explain_round_error(error: anyhow::Error) -> anyhow::Error {
 /// Changes from the server were downloaded; local changes stay queued.
 const KEY_CHANGE_REQUIRED: &str = "error sync-key-change-required hint=\"an invitation expired after keys may have been sent to a device that never joined; this device downloads changes but uploads new ones only after sync changes keys; check the connection and run `aven sync` again\"";
 
-async fn remember_access_refusal(database: &Database, error: &anyhow::Error) {
-    if is_access_refusal(error)
+/// Remembers a vault deletion, which stops daemon rounds until the user acts.
+async fn remember_vault_deletion(database: &Database, error: &anyhow::Error) {
+    if is_vault_deleted(error)
+        && let Err(state_error) = database.record_sync_vault_deletion().await
+    {
+        tracing::warn!(
+            error = %state_error,
+            "could not persist sync vault deletion"
+        );
+    }
+}
+
+/// A vault deletion is not an access refusal, so it records only itself.
+async fn remember_refusal(database: &Database, error: &anyhow::Error) {
+    if is_vault_deleted(error) {
+        remember_vault_deletion(database, error).await;
+    } else if is_access_refusal(error)
         && let Err(state_error) = database.record_sync_access_refusal().await
     {
         tracing::warn!(
@@ -987,7 +1008,7 @@ async fn track_access_result<T>(database: &Database, result: Result<T>) -> Resul
             Ok(value)
         }
         Err(error) => {
-            remember_access_refusal(database, &error).await;
+            remember_refusal(database, &error).await;
             Err(error)
         }
     }
@@ -1008,19 +1029,13 @@ async fn drain_associated(
     let result = drain(&client, &store, database, host, &blob_dir, round_limit)
         .await
         .map_err(explain_round_error);
-    match result {
-        Ok(outcome) => {
-            database.clear_sync_access_refusal().await?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            remember_access_refusal(database, &error).await;
-            Err(error)
-        }
-    }
+    track_access_result(database, result).await
 }
 
 /// Runs one interactive drain, waiting briefly for another sync to finish.
+/// This is the user-started recheck of a recorded vault deletion: it ignores
+/// the record and clears it on success. Automatic callers must not sync while
+/// [`StatusReport::vault_deleted_at`] is set.
 pub async fn run_to_completion(
     link: Link,
     database: &Database,
@@ -1029,7 +1044,9 @@ pub async fn run_to_completion(
     host.ensure_sync_allowed()?;
     ensure!(is_set_up(database).await?, NOT_SET_UP);
     let _guard = coordination::acquire(database).await?;
-    drain_associated(link, database, host, ROUND_LIMIT).await
+    let outcome = drain_associated(link, database, host, ROUND_LIMIT).await?;
+    database.clear_sync_vault_deletion().await?;
+    Ok(outcome)
 }
 
 pub enum DaemonRound {
@@ -1038,6 +1055,9 @@ pub enum DaemonRound {
     Deferred,
     /// The database has not been set up or joined; it stays local.
     NotSetUp,
+    /// The server reported the vault deleted. Later rounds make no request
+    /// until sync is reset or a user-started sync succeeds.
+    VaultDeleted,
 }
 
 /// One bounded daemon round that never waits for another sync.
@@ -1054,9 +1074,13 @@ pub async fn daemon_round(
     let Some(_guard) = coordination::try_acquire(database)? else {
         return Ok(DaemonRound::Deferred);
     };
-    drain_associated(link, database, host, round_limit)
-        .await
-        .map(DaemonRound::Completed)
+    if database.sync_vault_deletion().await?.is_some() {
+        return Ok(DaemonRound::VaultDeleted);
+    }
+    match drain_associated(link, database, host, round_limit).await {
+        Err(error) if is_vault_deleted(&error) => Ok(DaemonRound::VaultDeleted),
+        result => result.map(DaemonRound::Completed),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1232,6 +1256,7 @@ pub enum SyncState {
     KeyChangePending,
     Ready,
     AccessRefused,
+    VaultDeleted,
 }
 
 #[derive(Serialize)]
@@ -1251,6 +1276,7 @@ pub struct StatusReport {
     pub invitation: &'static str,
     pub invitation_expires_at: Option<u64>,
     pub access_refused_at: Option<String>,
+    pub vault_deleted_at: Option<String>,
 }
 
 /// Local observation only; contacts no server. Waits briefly for a running
@@ -1274,6 +1300,10 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
             .sync_access_refusal()
             .await?
             .map(|refusal| refusal.at),
+        vault_deleted_at: database
+            .sync_vault_deletion()
+            .await?
+            .map(|deletion| deletion.at),
     };
     if !is_set_up(database).await? {
         return Ok(report);
@@ -1321,13 +1351,15 @@ pub async fn status_report(database: &Database, host: &dyn ClientHost) -> Result
             }
         };
     }
-    if report.access_refused_at.is_some()
-        && !matches!(
-            report.state,
-            SyncState::SetupIncomplete | SyncState::JoinIncomplete
-        )
-    {
-        report.state = SyncState::AccessRefused;
+    if !matches!(
+        report.state,
+        SyncState::SetupIncomplete | SyncState::JoinIncomplete
+    ) {
+        if report.vault_deleted_at.is_some() {
+            report.state = SyncState::VaultDeleted;
+        } else if report.access_refused_at.is_some() {
+            report.state = SyncState::AccessRefused;
+        }
     }
     Ok(report)
 }
@@ -1356,6 +1388,22 @@ mod tests {
         // Newly synced images raise what remains, never lower what is done.
         assert_eq!(images_done(Some((1, 9)), 12), 1);
         assert_eq!(images_done(Some((1, 12)), 11), 2);
+    }
+
+    #[test]
+    fn unfrozen_setup_refusals_offer_hosted_and_self_hosted_recovery() {
+        for code in [
+            "bootstrap-setup-invitation-rejected",
+            "bootstrap-setup-invitation-expired",
+        ] {
+            let error = explain_setup_refusal(anyhow::anyhow!("error {code}"));
+            assert!(error.to_string().contains("hosting provider"));
+            assert!(error.to_string().contains("`aven server setup`"));
+            assert!(error.to_string().contains("nothing here was changed"));
+            let frozen = explain_fenced_setup_refusal(anyhow::anyhow!("error {code}"));
+            assert!(frozen.to_string().contains("already frozen"));
+            assert!(frozen.to_string().contains("same server storage"));
+        }
     }
 
     #[test]
@@ -1404,5 +1452,290 @@ mod tests {
         assert!(hint.contains("#recover-from-device-loss"), "{hint}");
         let other = explain_change_limit(anyhow::anyhow!("error membership-invalid"));
         assert_eq!(other.to_string(), "error membership-invalid");
+    }
+}
+
+#[cfg(test)]
+mod hosting_tests {
+    use super::*;
+    use crate::sync::client::keys::test_support::isolated_store;
+    use crate::sync::client::{HttpHeader, HttpResponse, Session, Step};
+    use crate::sync::seed_claim::SeedAuthority;
+    use aven_protocol::refusal::{
+        BOOTSTRAP_HOSTING, ENROLLMENT_HOSTING, IMAGE_HOSTING, TAIL_HOSTING,
+    };
+
+    async fn exchange_family(mode: usize, link: Link, seed: &SeedAuthority) -> Result<()> {
+        let origin = "http://127.0.0.1:3746";
+        let context = crate::sync::encrypted_tail::Context {
+            vault: [1; 32],
+            genesis: [2; 32],
+            device: [3; 32],
+            head: [4; 32],
+            stream: [5; 32],
+            descriptor: [6; 32],
+        };
+        match mode {
+            0 => {
+                bootstrap::Client::new(origin, link)?
+                    .exchange(
+                        seed.genesis(),
+                        seed.bearer(),
+                        bootstrap::Operation::Status { bootstrap: [7; 32] },
+                    )
+                    .await?;
+            }
+            1 => {
+                use crate::sync::bootstrap_staging::{
+                    Component,
+                    batch::{Header, Slot},
+                };
+                bootstrap::Client::new(origin, link)?
+                    .put_batch(
+                        seed.bearer(),
+                        &Header {
+                            vault: [1; 32],
+                            genesis: [2; 32],
+                            bootstrap: [7; 32],
+                            commitment: [6; 32],
+                            records: vec![Slot {
+                                component: Component::DataCatalog,
+                                index: 0,
+                                len: 1,
+                            }],
+                        },
+                        &[&[42]],
+                    )
+                    .await?;
+            }
+            2 => {
+                enrollment::Client::new(origin, link)?
+                    .exchange(
+                        enrollment::Operation::Post {
+                            vault: [1; 32],
+                            handle: [7; 32],
+                            request: vec![42],
+                        },
+                        Some(seed.bearer()),
+                    )
+                    .await?;
+            }
+            3 => {
+                tail::Client::new(origin, link)?
+                    .exchange(
+                        &context,
+                        seed.bearer(),
+                        crate::sync::encrypted_tail::Operation::Features,
+                    )
+                    .await?;
+            }
+            4 => {
+                tail::Client::new(origin, link)?
+                    .batch_exchange(
+                        &context,
+                        seed.bearer(),
+                        crate::sync::encrypted_tail::BatchOperation::Resolve {
+                            operation_ids: vec![],
+                        },
+                    )
+                    .await?;
+            }
+            5 => {
+                tail::Client::new(origin, link)?
+                    .image_exchange(
+                        &context,
+                        seed.bearer(),
+                        crate::sync::encrypted_tail::attachments::Operation::Release {
+                            workspace: "fixture".into(),
+                            object: [7; 32],
+                            descriptor_commitment: [6; 32],
+                            reservation: [8; 32],
+                        },
+                    )
+                    .await?;
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn endpoint_hosting_refusals_retain_keys_frozen_intent_and_local_access_then_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let db = Database::open(&root.path().join("client.sqlite"))
+            .await
+            .unwrap();
+        let store = isolated_store(&db, &root.path().join("keys")).await;
+        let seed = store.prepare_seed_claim(&db, [9; 32]).await.unwrap();
+        let protected = seed.protected_storage_bytes();
+        store.prepare_seed_source(&db).await.unwrap();
+        db.capture_local_shared_state_for_setup(root.path())
+            .await
+            .unwrap();
+        store
+            .package_seed_capture(&db, root.path(), [9; 32])
+            .await
+            .unwrap();
+        store.prepare_seed_adoption_intent(&db).await.unwrap();
+        let intent = db.seed_publication_intent_bytes().await.unwrap().unwrap();
+        let paths = [
+            bootstrap::PATH,
+            bootstrap::PATH,
+            enrollment::PATH,
+            tail::PATH,
+            tail::BATCH_PATH,
+            tail::IMAGES_PATH,
+        ];
+        let families = [
+            &BOOTSTRAP_HOSTING,
+            &BOOTSTRAP_HOSTING,
+            &ENROLLMENT_HOSTING,
+            &TAIL_HOSTING,
+            &TAIL_HOSTING,
+            &IMAGE_HOSTING,
+        ];
+        for (mode, family) in families.into_iter().enumerate() {
+            for (status, wire_code, client_code) in [
+                (403, family.blocked, "sync-hosting-blocked"),
+                (403, family.deleted, "sync-vault-deleted"),
+                (429, family.quota, "sync-hosting-quota"),
+                (503, family.unavailable, "sync-hosting-unavailable"),
+            ] {
+                let mut session = Session::new(|link| async {
+                    track_access_result(&db, exchange_family(mode, link, &seed).await).await
+                });
+                let Step::Request(request) = session.next().await.unwrap() else {
+                    panic!("expected request")
+                };
+                assert_eq!(url::Url::parse(&request.url).unwrap().path(), paths[mode]);
+                assert!(
+                    request
+                        .headers
+                        .iter()
+                        .any(|header| header.name == "authorization")
+                );
+                let frozen_request = request.body.clone();
+                session
+                    .accept_response(
+                        request.context,
+                        HttpResponse {
+                            status,
+                            headers: vec![HttpHeader {
+                                name: "content-type".into(),
+                                value: "application/json".into(),
+                            }],
+                            body: serde_json::to_vec(&serde_json::json!({"error": wire_code}))
+                                .unwrap(),
+                        },
+                    )
+                    .unwrap();
+                let error = session
+                    .next()
+                    .await
+                    .expect_err("hosting must stop the exchange");
+                assert!(has_code(&error, client_code), "{error:#}");
+                assert!(!is_access_refusal(&error));
+                assert!(db.sync_access_refusal().await.unwrap().is_none());
+                let deleted = client_code == "sync-vault-deleted";
+                assert_eq!(db.sync_vault_deletion().await.unwrap().is_some(), deleted);
+                assert_eq!(
+                    db.seed_publication_intent_bytes().await.unwrap().unwrap(),
+                    intent
+                );
+                assert_eq!(
+                    store
+                        .prepare_seed_claim(&db, [9; 32])
+                        .await
+                        .unwrap()
+                        .protected_storage_bytes(),
+                    protected
+                );
+                assert!(
+                    !db.list_workspaces().await.unwrap().is_empty(),
+                    "local data stays readable"
+                );
+
+                // Lifting hosting policy retries the same operation; it does not
+                // replace credentials or clear protected publication evidence.
+                let mut retry = Session::new(|link| async {
+                    track_access_result(&db, exchange_family(mode, link, &seed).await).await
+                });
+                let Step::Request(request) = retry.next().await.unwrap() else {
+                    panic!("expected retry")
+                };
+                let body = if mode < 3 {
+                    assert_eq!(request.body, frozen_request);
+                    serde_json::json!(if mode == 0 {
+                        "Missing"
+                    } else if mode == 1 {
+                        "Stored"
+                    } else {
+                        "Done"
+                    })
+                } else {
+                    let mut envelope: serde_json::Value =
+                        serde_json::from_slice(&request.body).unwrap();
+                    envelope["operation"] = match mode {
+                        3 => serde_json::json!({"Features": {"count": 128, "bytes": 1048576}}),
+                        4 => serde_json::json!({"Resolved": []}),
+                        _ => serde_json::json!("Done"),
+                    };
+                    envelope
+                };
+                retry
+                    .accept_response(
+                        request.context,
+                        HttpResponse {
+                            status: 200,
+                            headers: vec![HttpHeader {
+                                name: "content-type".into(),
+                                value: "application/json".into(),
+                            }],
+                            body: serde_json::to_vec(&body).unwrap(),
+                        },
+                    )
+                    .unwrap();
+                assert!(matches!(retry.next().await.unwrap(), Step::Done(())));
+                assert!(db.sync_access_refusal().await.unwrap().is_none());
+                // Only a user-started sync clears a recorded deletion.
+                assert_eq!(db.sync_vault_deletion().await.unwrap().is_some(), deleted);
+                db.clear_sync_vault_deletion().await.unwrap();
+                assert_eq!(
+                    db.seed_publication_intent_bytes().await.unwrap().unwrap(),
+                    intent
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn official_http_is_rejected_before_a_session_can_dispatch_credentials() {
+        for origin in [
+            "http://sync.aventasks.dev",
+            "HTTP://SYNC.AVENTASKS.DEV.:443",
+            "http://%73ync.aventasks.dev:3746",
+        ] {
+            for mode in 0..3 {
+                let mut session = Session::new(|link| async move {
+                    match mode {
+                        0 => {
+                            bootstrap::Client::new(origin, link)?;
+                        }
+                        1 => {
+                            enrollment::Client::new(origin, link)?;
+                        }
+                        _ => {
+                            tail::Client::new(origin, link)?;
+                        }
+                    }
+                    Ok(())
+                });
+                let error = session
+                    .next()
+                    .await
+                    .expect_err("must refuse before yielding a request");
+                assert!(has_code(&error, "sync-cloud-https-required"), "{error:#}");
+            }
+        }
     }
 }

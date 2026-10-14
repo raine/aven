@@ -570,16 +570,10 @@ async fn lost_image_response(stage: &'static str) {
     );
 }
 #[tokio::test]
-async fn lost_http_put_reply_reuses_recipe_and_ticket_after_membership_advance() {
-    lost_image_response("Put").await;
-}
-#[tokio::test]
-async fn lost_http_complete_reply_reuses_recipe_and_ticket_after_membership_advance() {
-    lost_image_response("Complete").await;
-}
-#[tokio::test]
-async fn lost_http_ref_reply_reuses_accepted_record_after_membership_advance() {
-    lost_image_response("Append").await;
+async fn lost_http_image_replies_preserve_identity_after_membership_advance() {
+    for stage in ["Put", "Complete", "Append"] {
+        lost_image_response(stage).await;
+    }
 }
 
 async fn stale_round_race(count: usize) {

@@ -73,7 +73,7 @@ async fn clicking_detail_markdown_link_opens_browser() {
 }
 
 #[tokio::test]
-async fn q_closes_detail_overlay() {
+async fn q_closes_detail_without_quitting() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail target")).await;
     app.show_detail(0);
@@ -84,6 +84,7 @@ async fn q_closes_detail_overlay() {
 
     assert!(app.overlay.is_none());
     assert!(!app.should_quit);
+    assert!(app.detail.is_inactive());
 }
 
 #[tokio::test]
@@ -141,46 +142,28 @@ async fn detail_routes_global_overlays_and_refresh() {
 }
 
 #[tokio::test]
-async fn help_key_opens_detail_help_from_detail_overlay() {
+async fn detail_help_round_trip_preserves_task_and_scroll() {
     let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
-    app.show_detail(0);
+    let selected = create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
+    let task_id = app.store.tasks[selected].task.id.clone();
+    app.show_detail(4);
 
-    app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
-        .await
-        .unwrap();
+    for close in [KeyCode::Esc, KeyCode::Char('?')] {
+        app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
+        assert_eq!(app.list.focus(), Focus::Tasks);
 
-    assert!(matches!(app.overlay, Some(OverlayState::DetailHelp { .. })));
-    assert_eq!(app.list.focus(), Focus::Tasks);
-    assert!(app.list.selected_task().is_some());
-}
-
-#[tokio::test]
-async fn closing_detail_help_returns_to_detail_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
-    app.show_detail(0);
-    app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
-
-    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
-
-    assert!(app.overlay.is_none());
-    assert!(app.detail.is_active());
-}
-
-#[tokio::test]
-async fn second_help_key_returns_from_detail_help_to_detail_overlay() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Detail help target")).await;
-    app.show_detail(0);
-    app.overlay = Some(OverlayState::DetailHelp { scroll: 0 });
-
-    app.dispatch_key(key(KeyCode::Char('?')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(app.overlay.is_none());
-    assert!(app.detail.is_active());
+        app.dispatch_key(key(close), (80, 24).into()).await.unwrap();
+        assert!(app.overlay.is_none());
+        assert!(app.detail.is_active());
+        assert_eq!(detail_scroll(&app), 4);
+        assert_eq!(
+            app.store.tasks[app.list.selected_task().unwrap()].task.id,
+            task_id
+        );
+    }
 }
 
 #[tokio::test]
@@ -339,6 +322,7 @@ async fn detail_tab_jumps_to_notes_below_viewport() {
     let selected = create_and_select_task(&mut app, draft).await;
     let expected =
         crate::tui::ui::detail_section_scroll_target(&app.store.tasks[selected], 0, 80, 24, false);
+    assert!(expected > 0);
     app.show_detail(0);
 
     app.dispatch_key(key(KeyCode::Tab), (80, 24).into())
@@ -378,6 +362,7 @@ async fn detail_tab_remains_unchanged_when_notes_are_visible() {
         .await
         .unwrap();
 
+    assert_eq!(detail_scroll(&app), 0);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
     assert_eq!(app.list.focus(), Focus::Tasks);
@@ -393,8 +378,11 @@ async fn detail_scroll_keys_update_detail_offset() {
         .join("\n");
     create_and_select_task(&mut app, draft).await;
     app.show_detail(0);
+    assert_eq!(detail_scroll(&app), 0);
 
     app.dispatch_key(ctrl_d(), (80, 24).into()).await.unwrap();
+    let first_page = detail_scroll(&app);
+    assert!(first_page > 1);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
@@ -404,7 +392,10 @@ async fn detail_scroll_keys_update_detail_offset() {
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
+    assert!(detail_scroll(&app) > first_page);
+
     app.dispatch_key(ctrl_u(), (80, 24).into()).await.unwrap();
+    assert_eq!(detail_scroll(&app), first_page);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
@@ -414,11 +405,14 @@ async fn detail_scroll_keys_update_detail_offset() {
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
+    assert_eq!(detail_scroll(&app), first_page - 1);
+
     app.dispatch_key(key(KeyCode::PageUp), (80, 24).into())
         .await
         .unwrap();
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
+    assert_eq!(detail_scroll(&app), 0);
 }
 
 #[tokio::test]
@@ -432,12 +426,14 @@ async fn detail_scroll_resists_down_input_at_bottom() {
             .await
             .unwrap();
     }
+    assert_eq!(detail_scroll(&app), 0);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
     app.dispatch_key(key(KeyCode::Char('k')), (80, 24).into())
         .await
         .unwrap();
+    assert_eq!(detail_scroll(&app), 0);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 }
@@ -497,15 +493,9 @@ async fn mouse_wheel_scrolls_help_overlay() {
         app.overlay,
         Some(OverlayState::Help { scroll: 0 })
     ));
-}
-
-#[tokio::test]
-async fn mouse_wheel_clamps_help_overlay() {
-    let mut app = test_app().await;
     let expected =
         crate::tui::ui::help_scroll_cap(&app.theme, (80, 24).into(), &app.undo_description());
-    app.overlay = Some(OverlayState::Help { scroll: 0 });
-
+    assert!(expected > 1);
     for _ in 0..200 {
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
@@ -751,6 +741,7 @@ async fn detail_drag_selects_rendered_text_and_coexists_with_scrolling() {
         .unwrap();
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
+    assert_eq!(detail_scroll(&app), 1);
     let item = app.store.selected_task(app.list.selected_task()).unwrap();
     assert_eq!(
         crate::tui::ui::detail_selected_text(&crate::tui::theme::Theme::dark(), item, &selection)
@@ -773,34 +764,24 @@ async fn detail_mouse_wheel_updates_detail_offset() {
         .map(|index| format!("line {index}"))
         .collect::<Vec<_>>()
         .join("\n");
-    create_and_select_task(&mut app, draft).await;
+    let selected = create_and_select_task(&mut app, draft).await;
+    let expected = crate::tui::ui::detail_scroll_cap(&app.store.tasks[selected], 80, 24);
+    assert!(expected > 1);
     app.show_detail(0);
 
     app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
         .await
         .unwrap();
+    assert_eq!(detail_scroll(&app), 1);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
 
     app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollUp), (80, 24).into())
         .await
         .unwrap();
+    assert_eq!(detail_scroll(&app), 0);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
-}
-
-#[tokio::test]
-async fn detail_mouse_wheel_clamps_detail_offset() {
-    let mut app = test_app().await;
-    let mut draft = test_task_draft("Mouse detail clamp target");
-    draft.description = (0..100)
-        .map(|index| format!("line {index}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let selected = create_and_select_task(&mut app, draft).await;
-    let expected = crate::tui::ui::detail_scroll_cap(&app.store.tasks[selected], 80, 24);
-    app.show_detail(0);
-
     for _ in 0..200 {
         app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
             .await
@@ -917,4 +898,62 @@ async fn wrapped_help_keyboard_and_mouse_reach_matching_endpoints_after_resize()
             );
         }
     }
+}
+
+#[tokio::test]
+async fn detail_first_and_last_shortcuts_scroll_without_changing_tasks() {
+    let mut app = test_app().await;
+    let mut draft = test_task_draft("Jump scroll target");
+    draft.description = (0..100)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let index = create_and_select_task(&mut app, draft).await;
+    let task_id = app.store.tasks[index].task.id.clone();
+    app.store
+        .add_note_to_task(&task_id, "Focusable note".to_string())
+        .await
+        .unwrap();
+    app.refresh().await.unwrap();
+    let selected = app.list.selected_task();
+    app.show_detail(0);
+    let size = (80, 24).into();
+    let cap = app.detail_document_for_query(size).unwrap().scroll_cap();
+    assert!(cap > 0);
+
+    for focus in [false, true] {
+        for bottom in [KeyCode::Char('G'), KeyCode::End] {
+            if focus {
+                app.dispatch_key(key(KeyCode::Tab), size).await.unwrap();
+                assert!(app.detail.state().unwrap().focused_target().is_some());
+            }
+            app.dispatch_key(key(bottom), size).await.unwrap();
+            assert_eq!(detail_scroll(&app), cap);
+            assert!(app.detail.state().unwrap().focused_target().is_none());
+            assert_eq!(app.list.selected_task(), selected);
+
+            if focus {
+                app.dispatch_key(key(KeyCode::Tab), size).await.unwrap();
+                assert!(app.detail.state().unwrap().focused_target().is_some());
+            }
+            let before_prefix = detail_scroll(&app);
+            app.dispatch_key(key(KeyCode::Char('g')), size)
+                .await
+                .unwrap();
+            assert_eq!(detail_scroll(&app), before_prefix);
+            assert!(!app.pending_shortcut.is_empty());
+            app.dispatch_key(key(KeyCode::Char('g')), size)
+                .await
+                .unwrap();
+            assert_eq!(detail_scroll(&app), 0);
+            assert!(app.pending_shortcut.is_empty());
+            assert!(app.detail.state().unwrap().focused_target().is_none());
+            assert_eq!(app.list.selected_task(), selected);
+        }
+    }
+    app.show_detail(cap);
+    app.dispatch_key(key(KeyCode::Home), size).await.unwrap();
+    assert_eq!(detail_scroll(&app), 0);
+    assert!(app.detail.is_active());
+    assert!(app.overlay.is_none());
 }

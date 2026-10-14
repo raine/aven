@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# Exercises scripts/install against local release fixtures. Downloads are
+# served from a fixture directory, so no network access is needed.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+tmp=$(mktemp -d)
+trap 'chmod -R u+w "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+sha256_line() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$(dirname "$1")" && sha256sum "$(basename "$1")")
+  else
+    (cd "$(dirname "$1")" && shasum -a 256 "$(basename "$1")")
+  fi
+}
+
+# A stand-in for the aven executable: prints help and records daemon commands.
+fake_aven() {
+  cat <<EOF
+#!/bin/sh
+if [ "\$1" = daemon ]; then
+  printf '%s\n' "\$0 \$*" >>"$tmp/daemon.log"
+  exit 0
+fi
+echo "Local-first task manager $1"
+EOF
+}
+
+# release_dir NAME: an empty directory standing in for a release download URL.
+release_dir() {
+  mkdir -p "$tmp/releases/$1"
+  printf '%s\n' "$tmp/releases/$1"
+}
+
+add_checksum() {
+  sha256_line "$1" >"${1%.tar.gz}.sha256"
+}
+
+add_app_archive() {
+  local release=$1 platform=$2 label=$3
+  local stage="$tmp/stage-$label"
+  mkdir -p "$stage/Aven.app/Contents/MacOS" "$stage/Aven.app/Contents/Resources"
+  printf '<plist/>\n' >"$stage/Aven.app/Contents/Info.plist"
+  printf 'icon\n' >"$stage/Aven.app/Contents/Resources/Aven.icns"
+  fake_aven "$label" >"$stage/Aven.app/Contents/MacOS/aven"
+  chmod 755 "$stage/Aven.app/Contents/MacOS/aven"
+  tar -C "$stage" -czf "$release/aven-$platform-app.tar.gz" Aven.app
+  add_checksum "$release/aven-$platform-app.tar.gz"
+}
+
+add_bare_archive() {
+  local release=$1 platform=$2 label=$3
+  local stage="$tmp/stage-bare-$label"
+  mkdir -p "$stage"
+  fake_aven "$label" >"$stage/aven"
+  chmod 755 "$stage/aven"
+  tar -C "$stage" -czf "$release/aven-$platform.tar.gz" aven
+  add_checksum "$release/aven-$platform.tar.gz"
+}
+
+# run_install RELEASE PLATFORM HOME INSTALL_DIR: runs the installer flow in a
+# subshell with downloads served from RELEASE.
+run_install() {
+  local release=$1 platform=$2 home=$3 install_dir=$4
+  (
+    # shellcheck source=scripts/install
+    source "$script_dir/install"
+    fetch_url() {
+      cp "$release/${1##*/}" "$2" 2>/dev/null
+    }
+    fetch_stdout() {
+      fail "the fixture pins a version"
+    }
+    export HOME=$home AVEN_VERSION=v1.2.3 AVEN_INSTALL_DIR=$install_dir
+    install_from_release "$platform"
+    verify_installation "$install_dir_result"
+  )
+}
+
+reject_install() {
+  local name=$1 reason=$2
+  shift 2
+  if run_install "$@" >"$tmp/$name.log" 2>&1; then
+    fail "$name: installer accepted the release"
+  fi
+  grep -q "$reason" "$tmp/$name.log" || fail "$name: expected '$reason': $(cat "$tmp/$name.log")"
+}
+
+listing() {
+  (cd "$1" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort)
+}
+
+home="$tmp/home"
+bin="$tmp/bin"
+mkdir -p "$home" "$bin"
+app="$home/.local/share/aven/Aven.app"
+executable="$app/Contents/MacOS/aven"
+
+# A fresh macOS install puts Aven.app under ~/.local/share and links the binary.
+first=$(release_dir first)
+add_app_archive "$first" darwin-arm64 first
+add_bare_archive "$first" darwin-arm64 bare
+run_install "$first" darwin-arm64 "$home" "$bin" >"$tmp/first.log" 2>&1 ||
+  fail "fresh install failed: $(cat "$tmp/first.log")"
+[[ -L $bin/aven && $(readlink "$bin/aven") == "$executable" ]] || fail "bin/aven is not a symlink to the bundle"
+[[ $("$bin/aven") == "Local-first task manager first" ]] || fail "linked executable did not run"
+[[ $(listing "$bin") == aven ]] || fail "install directory has leftovers: $(listing "$bin")"
+[[ $(listing "$home/.local/share/aven") == "Aven.app
+Aven.app/Contents
+Aven.app/Contents/Info.plist
+Aven.app/Contents/MacOS
+Aven.app/Contents/MacOS/aven
+Aven.app/Contents/Resources
+Aven.app/Contents/Resources/Aven.icns" ]] || fail "unexpected bundle layout: $(listing "$home/.local/share/aven")"
+# An installed daemon moves itself into the bundle when it restarts on the new
+# executable, so the installer leaves it alone.
+[[ ! -e $tmp/daemon.log ]] || fail "installer ran a daemon command"
+
+# Reinstalling replaces the whole bundle, including files the new one lacks.
+printf 'stale\n' >"$app/Contents/stale"
+second=$(release_dir second)
+add_app_archive "$second" darwin-arm64 second
+run_install "$second" darwin-arm64 "$home" "$bin" >"$tmp/second.log" 2>&1 ||
+  fail "reinstall failed: $(cat "$tmp/second.log")"
+[[ $("$bin/aven") == "Local-first task manager second" ]] || fail "reinstall did not replace the bundle"
+[[ ! -e $app/Contents/stale ]] || fail "reinstall merged into the old bundle"
+[[ $(listing "$home/.local/share/aven" | grep -c '^[^/]*$') == 1 ]] || fail "reinstall left staging bundles"
+
+# A bare binary from an older install is replaced by the symlink.
+rm "$bin/aven"
+fake_aven old >"$bin/aven"
+chmod 755 "$bin/aven"
+run_install "$second" darwin-arm64 "$home" "$bin" >"$tmp/migrate.log" 2>&1 ||
+  fail "bare-to-bundle install failed: $(cat "$tmp/migrate.log")"
+[[ -L $bin/aven && $(readlink "$bin/aven") == "$executable" ]] || fail "bare binary was not replaced by the symlink"
+
+# Rejected archives leave the installed bundle and symlink untouched.
+installed_state() {
+  printf '%s\n' "$(readlink "$bin/aven")"
+  listing "$home/.local/share/aven"
+  cat "$executable"
+}
+before=$(installed_state)
+
+hostile() {
+  local name=$1 reason=$2
+  shift 2
+  local release
+  release=$(release_dir "$name")
+  local stage="$tmp/hostile-$name"
+  mkdir -p "$stage/Aven.app/Contents/MacOS"
+  printf '<plist/>\n' >"$stage/Aven.app/Contents/Info.plist"
+  fake_aven "$name" >"$stage/Aven.app/Contents/MacOS/aven"
+  chmod 755 "$stage/Aven.app/Contents/MacOS/aven"
+  (cd "$stage" && "$@")
+  # shellcheck disable=SC2046 # Archive every top-level entry by name.
+  tar -C "$stage" -czf "$release/aven-darwin-arm64-app.tar.gz" $(cd "$stage" && ls -A)
+  add_checksum "$release/aven-darwin-arm64-app.tar.gz"
+  reject_install "$name" "$reason" "$release" darwin-arm64 "$home" "$bin"
+  [[ $(installed_state) == "$before" ]] || fail "$name: rejected install changed the existing install"
+  [[ ! -e $tmp/daemon.log ]] || fail "$name: rejected install ran a daemon command"
+}
+hostile extra-root 'entries outside Aven.app' touch evil
+hostile symlink 'links or special files' ln -s /etc Aven.app/Contents/link
+hostile symlinked-executable 'links or special files' \
+  sh -c 'rm Aven.app/Contents/MacOS/aven && ln -s /bin/sh Aven.app/Contents/MacOS/aven'
+hostile hardlink 'links or special files' ln Aven.app/Contents/Info.plist Aven.app/Contents/hard
+hostile missing-executable 'does not contain an Aven.app executable' rm Aven.app/Contents/MacOS/aven
+[[ ! -e $tmp/evil ]] || fail "archive escaped the extraction directory"
+
+bad_sum=$(release_dir bad-sum)
+add_app_archive "$bad_sum" darwin-arm64 bad-sum
+printf '%064d  aven-darwin-arm64-app.tar.gz\n' 0 >"$bad_sum/aven-darwin-arm64-app.sha256"
+reject_install bad-sum 'Checksum verification failed' "$bad_sum" darwin-arm64 "$home" "$bin"
+[[ $(installed_state) == "$before" ]] || fail "checksum mismatch changed the existing install"
+
+# A symlink at the bundle path is never replaced.
+link_home="$tmp/link-home"
+mkdir -p "$link_home/.local/share/aven" "$tmp/elsewhere.app"
+ln -s "$tmp/elsewhere.app" "$link_home/.local/share/aven/Aven.app"
+reject_install bundle-symlink 'exists and is not a directory' "$second" darwin-arm64 "$link_home" "$tmp/link-bin"
+[[ -L $link_home/.local/share/aven/Aven.app && -z $(ls -A "$tmp/elsewhere.app") ]] ||
+  fail "installer replaced a symlinked bundle path"
+
+# Releases without an app archive, such as pinned older versions, install the bare binary.
+old_home="$tmp/old-home"
+old_bin="$tmp/old-bin"
+mkdir -p "$old_home"
+old=$(release_dir old)
+add_bare_archive "$old" darwin-arm64 old
+run_install "$old" darwin-arm64 "$old_home" "$old_bin" >"$tmp/old.log" 2>&1 ||
+  fail "bare fallback failed: $(cat "$tmp/old.log")"
+[[ -f $old_bin/aven && ! -L $old_bin/aven ]] || fail "bare fallback did not install a regular file"
+[[ ! -e $old_home/.local ]] || fail "bare fallback created the bundle directory"
+grep -q 'has no Aven.app archive' "$tmp/old.log" || fail "bare fallback was not reported"
+[[ ! -e $tmp/daemon.log ]] || fail "bare fallback ran a daemon command"
+
+# Another bare release replaces a bare install in place.
+run_install "$old" darwin-arm64 "$old_home" "$old_bin" >"$tmp/old-again.log" 2>&1 ||
+  fail "bare reinstall failed: $(cat "$tmp/old-again.log")"
+[[ -f $old_bin/aven && ! -L $old_bin/aven ]] || fail "bare reinstall did not install a regular file"
+
+# A release without an app archive never replaces a bundled install: the bare
+# binary would replace bin/aven while a migrated daemon keeps running the
+# newer bundle.
+plist="$home/Library/LaunchAgents/com.raine.aven.daemon.plist"
+mkdir -p "$(dirname "$plist")"
+printf '<plist><array><string>%s</string></array></plist>\n' "$executable" >"$plist"
+plist_before=$(cat "$plist")
+reject_install downgrade 'cannot replace the Aven.app install' "$old" darwin-arm64 "$home" "$bin"
+grep -q 'Install a release that includes Aven.app' "$tmp/downgrade.log" || fail "downgrade refusal gave no next step"
+[[ $(installed_state) == "$before" ]] || fail "downgrade changed the bundled install"
+[[ $(listing "$bin") == aven ]] || fail "downgrade left files in the install directory: $(listing "$bin")"
+[[ $(cat "$plist") == "$plist_before" ]] || fail "downgrade changed the LaunchAgent"
+[[ ! -e $tmp/daemon.log ]] || fail "downgrade ran a daemon command"
+
+# The standard bundle also blocks a bare install into another directory.
+reject_install downgrade-other-dir 'cannot replace the Aven.app install' "$old" darwin-arm64 "$home" "$tmp/other-bin"
+[[ ! -e $tmp/other-bin ]] || fail "downgrade into another directory created it"
+[[ $(installed_state) == "$before" ]] || fail "downgrade into another directory changed the bundled install"
+
+# A custom install directory whose aven links into a bundle elsewhere is
+# protected without a standard bundle.
+custom_home="$tmp/custom-home"
+custom_bin="$tmp/custom-bin"
+custom_app="$tmp/custom/Aven.app/Contents/MacOS/aven"
+mkdir -p "$custom_home" "$custom_bin" "$(dirname "$custom_app")"
+fake_aven custom >"$custom_app"
+chmod 755 "$custom_app"
+ln -s "$custom_app" "$custom_bin/aven"
+reject_install downgrade-custom-link 'cannot replace the Aven.app install' "$old" darwin-arm64 "$custom_home" "$custom_bin"
+[[ $(readlink "$custom_bin/aven") == "$custom_app" && $(listing "$custom_bin") == aven ]] ||
+  fail "downgrade replaced a custom bundle symlink"
+[[ ! -e $custom_home/.local && ! -e $tmp/daemon.log ]] || fail "custom downgrade touched the bundle path or daemon"
+
+# Linux keeps installing the bare binary.
+linux_home="$tmp/linux-home"
+linux_bin="$tmp/linux-bin"
+mkdir -p "$linux_home"
+linux=$(release_dir linux)
+add_bare_archive "$linux" linux-amd64 linux
+add_app_archive "$linux" linux-amd64 linux-app
+run_install "$linux" linux-amd64 "$linux_home" "$linux_bin" >"$tmp/linux.log" 2>&1 ||
+  fail "linux install failed: $(cat "$tmp/linux.log")"
+[[ -f $linux_bin/aven && ! -L $linux_bin/aven ]] || fail "linux install did not install a regular file"
+[[ $("$linux_bin/aven") == "Local-first task manager linux" ]] || fail "linux install used the wrong archive"
+[[ ! -e $linux_home/.local && ! -e $tmp/daemon.log ]] || fail "linux install touched the bundle path or daemon"
+
+echo "ok: macOS installs Aven.app with a bin symlink and leaves the daemon alone; reinstall replaces the bundle; hostile archives, checksum mismatches and symlinked bundle paths are rejected; releases without an app archive install the bare binary but never over a bundled install; Linux installs the bare binary"

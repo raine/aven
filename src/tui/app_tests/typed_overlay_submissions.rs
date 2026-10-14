@@ -16,6 +16,13 @@ async fn add_project_submit_uses_intent_independent_of_title() {
         toast_message(&app).as_deref(),
         Some("created project mobile-app · u undo")
     );
+    assert!(app.overlay.is_none());
+    assert!(
+        app.store
+            .projects
+            .iter()
+            .any(|project| project.key == "mobile-app")
+    );
 }
 
 #[tokio::test]
@@ -124,7 +131,8 @@ async fn delete_project_name_mismatch_keeps_confirmation_open() {
 #[tokio::test]
 async fn search_selected_blocker_adds_dependency() {
     let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("Blocker needle")).await;
+    let blocker = create_and_select_task(&mut app, test_task_draft("Blocker needle")).await;
+    let blocker_id = app.store.tasks[blocker].task.id.clone();
     let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked")).await;
     let blocked_id = app.store.tasks[blocked_index].task.id.clone();
 
@@ -140,7 +148,14 @@ async fn search_selected_blocker_adds_dependency() {
         .iter()
         .position(|item| item.task.id == blocked_id)
         .unwrap();
-    assert_eq!(app.store.tasks[blocked_index].depends_on.len(), 1);
+    assert_eq!(
+        app.store.tasks[blocked_index]
+            .depends_on
+            .iter()
+            .map(|link| &link.task_id)
+            .collect::<Vec<_>>(),
+        vec![&blocker_id]
+    );
     let toast = toast_message(&app);
     assert!(
         toast.is_some() && toast.as_deref().unwrap().contains("added dependency"),
@@ -239,7 +254,7 @@ async fn add_dependency_search_tab_keeps_picker_context() {
 }
 
 #[tokio::test]
-async fn remove_shortcut_opens_current_dependency_picker() {
+async fn submitting_dependency_removal_removes_dependency() {
     let (_dir, _pool, mut app) = test_app_with_pool().await;
     let (blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
     let blocked_index = app
@@ -252,7 +267,6 @@ async fn remove_shortcut_opens_current_dependency_picker() {
 
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('U')).await.unwrap();
-
     let Some(OverlayState::Picker(state)) = &app.overlay else {
         panic!("expected dependency picker");
     };
@@ -263,22 +277,7 @@ async fn remove_shortcut_opens_current_dependency_picker() {
     ));
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].value, blocker_id.to_string());
-}
 
-#[tokio::test]
-async fn submitting_dependency_removal_removes_dependency() {
-    let (_dir, _pool, mut app) = test_app_with_pool().await;
-    let (_blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
-    let blocked_index = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == blocked_id)
-        .unwrap();
-    app.list.select_task(Some(blocked_index));
-
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('U')).await.unwrap();
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     let blocked_index = app
@@ -430,6 +429,7 @@ async fn layout_shortcut_toggles_columns_and_list() {
 #[tokio::test]
 async fn layout_switch_preserves_query_rows_selection_marks_and_history() {
     let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("other layout task")).await;
     let index = create_and_select_task(&mut app, test_task_draft("layout task")).await;
     let task_id = app.store.tasks[index].task.id.clone();
     app.list.select_task(Some(index));
@@ -450,7 +450,7 @@ async fn layout_switch_preserves_query_rows_selection_marks_and_history() {
         Some("active query does not support columns layout")
     );
 
-    app.store.show_view(TaskQuery::All).await.unwrap();
+    app.show_view(TaskQuery::All).await.unwrap();
     app.list.select_task(
         app.store
             .tasks
@@ -476,13 +476,18 @@ async fn layout_switch_preserves_query_rows_selection_marks_and_history() {
             .map(|item| item.task.id.clone())
             .collect::<Vec<_>>()
     );
-    assert_eq!(task_ids, all_ids);
+    assert_eq!(
+        task_ids.iter().collect::<std::collections::BTreeSet<_>>(),
+        all_ids.iter().collect::<std::collections::BTreeSet<_>>()
+    );
     assert_eq!(
         app.store.tasks[app.list.selected_task().unwrap()].task.id,
         task_id
     );
     assert!(app.list.marked_task_ids().contains(&task_id));
-    assert!(app.list.navigation_is_empty());
+    assert!(!app.list.navigation_is_empty());
+    app.go_back().await.unwrap();
+    assert_eq!(app.store.view_state.query, TaskQuery::Queue);
 }
 
 #[tokio::test]
@@ -897,8 +902,8 @@ async fn column_view_navigates_within_and_between_lanes() {
             .selected_task(app.list.selected_task())
             .unwrap()
             .task
-            .status,
-        TaskStatus::Active
+            .title,
+        "active two"
     );
     app.move_left();
     assert_eq!(app.list.selected_task(), Some(todo));
@@ -908,8 +913,8 @@ async fn column_view_navigates_within_and_between_lanes() {
             .selected_task(app.list.selected_task())
             .unwrap()
             .task
-            .status,
-        TaskStatus::Active
+            .title,
+        "active one"
     );
 }
 

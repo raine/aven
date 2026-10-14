@@ -788,7 +788,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(preferred.resolved_from, TargetSource::Marked);
-        assert_eq!(preferred.tasks.len(), 2);
+        assert_eq!(
+            preferred
+                .tasks
+                .iter()
+                .map(|item| &item.task.id)
+                .collect::<Vec<_>>(),
+            [&first.task.id, &second.task.id]
+        );
         assert!(
             resolve_command_targets(CustomTuiCommandTarget::MarkedOrFocused, None, &[]).is_err()
         );

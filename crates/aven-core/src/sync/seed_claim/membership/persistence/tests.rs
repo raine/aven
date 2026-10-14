@@ -225,13 +225,17 @@ async fn admission_writes_are_atomic_and_missing_history_never_authorizes() {
     let a = auth(&f, m.head(), f.seed.genesis().device_id(), f.seed.bearer());
     let (d, peer, raw) = prepare(Device::seed(&f.seed), &m, &f, 3700);
     register(&f, &a, &d, &peer).await;
-    for (table, action) in [
+    for (step, (table, action)) in [
         ("server_membership_transitions", "INSERT"),
         ("server_membership_invitations", "UPDATE"),
         ("server_e2ee_membership_head", "UPDATE"),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // A fresh name per step: a pooled connection may still cache the dropped trigger.
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "CREATE TRIGGER fail BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'fault'); END"
+            "CREATE TRIGGER fail_{step} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'fault'); END"
         )))
         .execute(&mut *f.db.acquire_writer().await.unwrap())
         .await
@@ -241,7 +245,7 @@ async fn admission_writes_are_atomic_and_missing_history_never_authorizes() {
                 .await
                 .is_err()
         );
-        sqlx::query("DROP TRIGGER fail")
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TRIGGER fail_{step}")))
             .execute(&mut *f.db.acquire_writer().await.unwrap())
             .await
             .unwrap();

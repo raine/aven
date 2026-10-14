@@ -200,6 +200,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         scroll: u16,
+        terminal_size: Size,
     ) -> Result<bool> {
         let Some(target) = self
             .detail
@@ -213,7 +214,10 @@ impl App {
             return Ok(false);
         }
         if target == DetailTargetId::CustomMetadata {
-            if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
+            if let Some(outcome) = self
+                .handle_detail_shortcut(key, scroll, terminal_size)
+                .await?
+            {
                 self.overlay = outcome;
                 return Ok(true);
             }
@@ -240,6 +244,10 @@ impl App {
                 .resolve_detail_in_domain(key, &self.command_catalog, domain),
         };
         match shortcut {
+            DetailShortcutResolution::Action(action @ (Action::First | Action::Last)) => {
+                self.jump_detail_scroll(action, terminal_size);
+                Ok(true)
+            }
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
                 self.navigate_back_from_detail().await?;
@@ -463,6 +471,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         scroll: u16,
+        terminal_size: Size,
     ) -> Result<Option<Option<OverlayState>>> {
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return Ok(None);
@@ -473,6 +482,10 @@ impl App {
             &self.command_catalog,
             crate::tui::event::RoutingDomain::DetailParent,
         ) {
+            DetailShortcutResolution::Action(action @ (Action::First | Action::Last)) => {
+                self.jump_detail_scroll(action, terminal_size);
+                Ok(Some(self.overlay.take()))
+            }
             DetailShortcutResolution::Action(Action::GoBack) => {
                 self.pending_shortcut_scroll = 0;
                 self.navigate_back_from_detail().await?;
@@ -544,6 +557,20 @@ impl App {
         }
     }
 
+    fn jump_detail_scroll(&mut self, action: Action, terminal_size: Size) {
+        self.pending_shortcut_scroll = 0;
+        let scroll = if action == Action::First {
+            0
+        } else {
+            self.detail_document_for_query(terminal_size)
+                .map_or(0, |document| document.scroll_cap())
+        };
+        if let Some(detail) = self.detail.state_mut() {
+            detail.set_focused_target(None);
+        }
+        self.show_detail(scroll);
+    }
+
     pub(super) async fn handle_detail_overlay_key(
         &mut self,
         key: KeyEvent,
@@ -610,17 +637,23 @@ impl App {
             && self
                 .command_catalog
                 .custom_shortcut_starts_with(crate::tui::event::CommandContext::Detail, &[key.code])
-            && self.handle_focused_detail_shortcut(key, scroll).await?
+            && self
+                .handle_focused_detail_shortcut(key, scroll, terminal_size)
+                .await?
         {
             return Ok(());
         }
         if !self.pending_shortcut.is_empty()
-            && self.handle_focused_detail_shortcut(key, scroll).await?
+            && self
+                .handle_focused_detail_shortcut(key, scroll, terminal_size)
+                .await?
         {
             return Ok(());
         }
         if (!self.pending_shortcut.is_empty() || key.code == KeyCode::Char('g'))
-            && let Some(outcome) = self.handle_detail_shortcut(key, scroll).await?
+            && let Some(outcome) = self
+                .handle_detail_shortcut(key, scroll, terminal_size)
+                .await?
         {
             self.overlay = outcome;
             return Ok(());
@@ -710,7 +743,10 @@ impl App {
                     focused_scroll = self.detail_focus_scroll(scroll, terminal_size);
                 }
                 _ => {
-                    if self.handle_focused_detail_shortcut(key, scroll).await? {
+                    if self
+                        .handle_focused_detail_shortcut(key, scroll, terminal_size)
+                        .await?
+                    {
                         return Ok(());
                     }
                 }
@@ -741,7 +777,10 @@ impl App {
             return Ok(());
         }
 
-        if let Some(outcome) = self.handle_detail_shortcut(key, scroll).await? {
+        if let Some(outcome) = self
+            .handle_detail_shortcut(key, scroll, terminal_size)
+            .await?
+        {
             self.overlay = outcome;
             return Ok(());
         }

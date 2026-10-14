@@ -41,6 +41,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub daemon: DaemonConfig,
     #[serde(default)]
+    pub reminders: RemindersConfig,
+    #[serde(default)]
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub project: ProjectConfig,
@@ -296,6 +298,49 @@ impl Default for DaemonConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemindersConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Local time, `HH:MM`, from which the daily due digest is sent.
+    #[serde(default = "default_digest_time")]
+    pub digest_time: String,
+    #[serde(default = "default_true")]
+    pub due_digest: bool,
+    #[serde(default = "default_true")]
+    pub available: bool,
+}
+
+impl Default for RemindersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            digest_time: default_digest_time(),
+            due_digest: true,
+            available: true,
+        }
+    }
+}
+
+impl RemindersConfig {
+    pub(crate) fn digest_time(&self) -> Result<chrono::NaiveTime> {
+        chrono::NaiveTime::parse_from_str(&self.digest_time, "%H:%M").with_context(|| {
+            format!(
+                "reminders.digest_time must be HH:MM, got {:?}",
+                self.digest_time
+            )
+        })
+    }
+}
+
+fn default_digest_time() -> String {
+    "09:00".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
 impl ProjectOverrideConfig {
     pub fn project_key(&self) -> String {
         crate::projects::normalize_key(&self.project)
@@ -344,6 +389,7 @@ impl AppConfig {
 
     pub fn validate(&self) -> Result<()> {
         tui::validate(&self.tui)?;
+        self.reminders.digest_time()?;
         custom_commands::validate(&self.tui.commands)
     }
 
@@ -374,19 +420,28 @@ impl AppConfig {
         self.sync.enabled && self.sync_is_allowed()
     }
 
+    /// The daemon runs when it has sync or reminders to do.
+    pub(crate) fn daemon_has_work(&self) -> bool {
+        self.automatic_sync_is_enabled() || self.reminders.enabled
+    }
+
+    pub(crate) fn ensure_daemon_has_work(&self) -> Result<()> {
+        if !self.daemon_has_work() {
+            if self.sync.enabled {
+                self.ensure_sync_allowed()?;
+            }
+            bail!(
+                "error daemon-no-work hint=\"run `aven config set sync.enabled true` or `aven config set reminders.enabled true`\""
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn ensure_sync_allowed(&self) -> Result<()> {
         if !self.sync_is_allowed() {
             return Err(anyhow::anyhow!("error sync-disabled-by-environment").context(
                 "error sync-disabled hint=\"sync is disabled by AVEN_SYNC_DISABLED; unset it to allow sync\"",
             ));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn ensure_automatic_sync_enabled(&self) -> Result<()> {
-        self.ensure_sync_allowed()?;
-        if !self.sync.enabled {
-            bail!("error sync-disabled hint=\"run `aven config set sync.enabled true`\"");
         }
         Ok(())
     }

@@ -111,60 +111,38 @@ mod tests {
     }
 
     #[test]
-    fn toast_uses_icon_and_message() {
-        let backend = TestBackend::new(60, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                render_toast(
-                    frame,
-                    &Theme::dark(),
-                    &Toast::new("filters cleared", ToastSeverity::Success),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("✓ filters cleared"));
-    }
-
-    #[test]
-    fn toast_tone_uses_explicit_severity() {
-        assert_eq!(toast_tone(&Theme::dark(), ToastSeverity::Info).icon, "•");
-        assert_eq!(toast_tone(&Theme::dark(), ToastSeverity::Warning).icon, "!");
-        assert_eq!(toast_tone(&Theme::dark(), ToastSeverity::Error).icon, "!");
-        assert_eq!(toast_tone(&Theme::dark(), ToastSeverity::Success).icon, "✓");
-    }
-
-    #[test]
-    fn toast_tone_uses_severity_colors() {
+    fn toast_renders_explicit_severity_with_icon_and_color() {
         let theme = Theme::dark();
-        assert_eq!(toast_tone(&theme, ToastSeverity::Info).color, theme.info);
-        assert_eq!(
-            toast_tone(&theme, ToastSeverity::Warning).color,
-            theme.warning
-        );
-        assert_eq!(toast_tone(&theme, ToastSeverity::Error).color, theme.danger);
-        assert_eq!(
-            toast_tone(&theme, ToastSeverity::Success).color,
-            theme.success
-        );
-    }
-
-    #[test]
-    fn neutral_message_text_can_render_as_info() {
-        let backend = TestBackend::new(60, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                render_toast(
-                    frame,
-                    &Theme::dark(),
-                    &Toast::new("nothing to undo", ToastSeverity::Info),
-                )
-            })
-            .unwrap();
-        let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("• nothing to undo"));
+        for (severity, message, icon, color) in [
+            (ToastSeverity::Info, "nothing to undo", "•", theme.info),
+            (ToastSeverity::Warning, "saved", "!", theme.warning),
+            (ToastSeverity::Error, "saved", "!", theme.danger),
+            (
+                ToastSeverity::Success,
+                "filters cleared",
+                "✓",
+                theme.success,
+            ),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+            terminal
+                .draw(|frame| render_toast(frame, &theme, &Toast::new(message, severity)))
+                .unwrap();
+            assert!(buffer_text(terminal.backend()).contains(&format!("{icon} {message}")));
+            let buffer = terminal.backend().buffer();
+            let icon_cell = buffer
+                .content
+                .iter()
+                .find(|cell| cell.symbol() == icon)
+                .unwrap();
+            assert_eq!(icon_cell.fg, color);
+            let stripe = buffer
+                .content
+                .iter()
+                .find(|cell| cell.symbol() == "▌")
+                .unwrap();
+            assert_eq!(stripe.fg, color);
+        }
     }
 
     #[test]

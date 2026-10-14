@@ -63,6 +63,8 @@ async fn bulk_footer_mouse_opens_actions_and_clears_marks() {
 async fn task_row_click_selects_task() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("task one")).await;
+    create_and_select_task(&mut app, test_task_draft("task two")).await;
+    app.list.select_task(Some(1));
 
     let click = row_column_task_click_event((80, 24), 1);
     app.dispatch_mouse(click, (80, 24).into()).await.unwrap();
@@ -333,6 +335,7 @@ async fn task_row_click_stale_state_is_reset_after_non_task_hit() {
 
     assert_eq!(app.list.selected_task(), Some(0));
     assert!(app.overlay.is_none());
+    assert!(app.detail.is_inactive());
 }
 
 #[tokio::test]

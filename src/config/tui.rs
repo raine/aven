@@ -275,31 +275,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Inbox", "Backlog", "Todo", "Active", "Done"]
         );
+        assert_eq!(load_config("{}\n").unwrap().tui.columns, config.tui.columns);
     }
 
     #[test]
-    fn sidebar_views_default_to_existing_order() {
-        let expected = vec![
-            SidebarView::Queue,
-            SidebarView::Ready,
-            SidebarView::Blocked,
-            SidebarView::Overdue,
-            SidebarView::All,
-            SidebarView::Open,
-            SidebarView::Inbox,
-            SidebarView::Active,
-            SidebarView::Backlog,
-            SidebarView::Todo,
-            SidebarView::Upcoming,
-            SidebarView::Done,
-            SidebarView::Conflicts,
-            SidebarView::Epics,
-            SidebarView::Recurring,
-            SidebarView::RecentActions,
-            SidebarView::Search,
-        ];
+    fn omitted_sidebar_views_load_the_default() {
+        let expected = AppConfig::default().tui.sidebar.views;
 
-        assert_eq!(AppConfig::default().tui.sidebar.views, expected);
         assert_eq!(load_config("{}\n").unwrap().tui.sidebar.views, expected);
         assert_eq!(
             load_config("tui:\n  sidebar: {}\n")
@@ -471,13 +453,14 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(config.tui.columns[0].name, "Work");
-        assert_eq!(config.tui.columns[0].statuses, ["active", "todo"]);
-    }
-
-    #[test]
-    fn empty_config_uses_default_columns() {
-        assert_eq!(load_config("{}\n").unwrap().tui.columns.len(), 5);
+        assert_eq!(
+            config.tui.columns,
+            [
+                TaskColumnConfig::new("Work", &["active", "todo"]),
+                TaskColumnConfig::new("Later", &["inbox", "backlog"]),
+                TaskColumnConfig::new("Closed", &["done", "canceled"]),
+            ]
+        );
     }
 
     #[test]
@@ -523,15 +506,5 @@ mod tests {
         let no_statuses =
             load_config("tui:\n  columns:\n    - name: Empty\n      statuses: []\n").unwrap_err();
         assert!(format!("{no_statuses:#}").contains("must include at least one status"));
-    }
-
-    #[test]
-    fn default_columns_round_trip() {
-        let config = AppConfig::default();
-        let yaml = serde_saphyr::to_string(&config).unwrap();
-        let loaded: AppConfig = serde_saphyr::from_str(&yaml).unwrap();
-
-        loaded.validate().unwrap();
-        assert_eq!(loaded.tui.columns, config.tui.columns);
     }
 }

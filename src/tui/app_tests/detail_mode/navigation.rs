@@ -41,42 +41,30 @@ async fn opening_detail_rebinds_after_the_summary_task_disappears() {
 
 #[tokio::test]
 async fn go_to_blocker_reports_no_upstream_blockers() {
-    let mut app = test_app().await;
-    let task_index = create_and_select_task(&mut app, test_task_draft("Unblocked task")).await;
-    app.list.select_task(Some(task_index));
+    for downstream in [false, true] {
+        let mut app = test_app().await;
+        let selected = if downstream {
+            let (blocker_id, _blocked_id) = create_blocked_pair(&mut app).await;
+            app.store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == blocker_id)
+                .unwrap()
+        } else {
+            create_and_select_task(&mut app, test_task_draft("Unblocked task")).await
+        };
+        app.list.select_task(Some(selected));
 
-    for code in [KeyCode::Char('g'), KeyCode::Char('B')] {
-        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        for code in [KeyCode::Char('g'), KeyCode::Char('B')] {
+            app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        }
+
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            toast_message(&app).as_deref(),
+            Some("selected task has no blockers")
+        );
     }
-
-    assert!(app.overlay.is_none());
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("selected task has no blockers")
-    );
-}
-
-#[tokio::test]
-async fn go_to_blocker_ignores_downstream_blocks() {
-    let mut app = test_app().await;
-    let (_blocker_id, blocked_id) = create_blocked_pair(&mut app).await;
-    let blocker_index = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.blocks.iter().any(|link| link.task_id == blocked_id))
-        .expect("blocker with downstream task");
-    app.list.select_task(Some(blocker_index));
-
-    app.execute(crate::tui::event::Action::GoToBlocker)
-        .await
-        .unwrap();
-
-    assert!(app.overlay.is_none());
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("selected task has no blockers")
-    );
 }
 
 #[tokio::test]
@@ -262,124 +250,76 @@ async fn detail_next_and_previous_task_stay_in_detail() {
 }
 
 #[tokio::test]
-async fn focused_blocker_routes_status_picker_to_blocker() {
-    let mut app = test_app().await;
-    let task_index = create_and_select_task(&mut app, test_task_draft("Blocked task")).await;
-    let task_id = app.store.tasks[task_index].task.id.clone();
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker = app.store.tasks[blocker_index].clone();
-    let task_index = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == task_id)
-        .unwrap();
-    app.store.tasks[task_index].depends_on = vec![detail_link(&blocker)];
-    app.list.select_task(Some(task_index));
-    app.show_detail(0);
-    app.detail
-        .state_mut()
-        .unwrap()
-        .set_focused_target(Some(DetailTargetId::Task {
-            section: DetailSection::DependsOn,
-            task_id: blocker.task.id.clone(),
-        }));
+async fn focused_relationship_routes_status_picker_to_target() {
+    for section in [
+        DetailSection::DependsOn,
+        DetailSection::Blocks,
+        DetailSection::EpicParent,
+    ] {
+        let mut app = test_app().await;
+        let root = create_and_select_task(&mut app, test_task_draft("Detail root")).await;
+        let root_id = app.store.tasks[root].task.id.clone();
+        let target = create_and_select_task(
+            &mut app,
+            TaskDraft {
+                is_epic: section == DetailSection::EpicParent,
+                ..test_task_draft("Related target")
+            },
+        )
+        .await;
+        let target = app.store.tasks[target].clone();
+        let root = app
+            .store
+            .tasks
+            .iter()
+            .position(|item| item.task.id == root_id)
+            .unwrap();
+        match section {
+            DetailSection::DependsOn => {
+                app.store.tasks[root].depends_on = vec![detail_link(&target)]
+            }
+            DetailSection::Blocks => app.store.tasks[root].blocks = vec![detail_link(&target)],
+            DetailSection::EpicParent => {
+                app.store.tasks[root].epic_parent = Some(detail_link(&target))
+            }
+            _ => unreachable!(),
+        }
+        app.list.select_task(Some(root));
+        app.show_detail(0);
+        app.detail
+            .state_mut()
+            .unwrap()
+            .set_focused_target(Some(DetailTargetId::Task {
+                section,
+                task_id: target.task.id.clone(),
+            }));
 
-    app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
-        .await
-        .unwrap();
+        app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                &app.footer_choice,
+                Some(choice) if choice.mode == FooterChoiceMode::Status
+                    && choice.selection.single_id() == Some(&target.task.id)
+            ),
+            "section {section:?}"
+        );
 
-    assert!(matches!(
-        &app.footer_choice,
-        Some(choice)
-            if choice.mode == FooterChoiceMode::Status
-                && choice.selection.single_id() == Some(&blocker.task.id)
-    ));
-
-    app.footer_choice = None;
-    for code in [KeyCode::Char('t'), KeyCode::Char('U')] {
-        app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+        if section == DetailSection::DependsOn {
+            app.footer_choice = None;
+            for code in [KeyCode::Char('t'), KeyCode::Char('U')] {
+                app.dispatch_key(key(code), (80, 24).into()).await.unwrap();
+            }
+            assert!(matches!(
+                &app.overlay,
+                Some(OverlayState::Confirm(ConfirmState {
+                    intent: ConfirmIntent::UnlinkDependency { selection, depends_on_task_id },
+                    ..
+                })) if selection.single_id() == Some(&root_id) && depends_on_task_id == &target.task.id
+            ));
+        }
     }
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            intent: ConfirmIntent::UnlinkDependency { .. },
-            ..
-        }))
-    ));
-}
-
-#[tokio::test]
-async fn focused_blocked_task_routes_status_picker_to_blocked_task() {
-    let mut app = test_app().await;
-    let blocker_index = create_and_select_task(&mut app, test_task_draft("Blocker")).await;
-    let blocker_id = app.store.tasks[blocker_index].task.id.clone();
-    let blocked_index = create_and_select_task(&mut app, test_task_draft("Blocked task")).await;
-    let blocked = app.store.tasks[blocked_index].clone();
-    let blocker_index = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == blocker_id)
-        .unwrap();
-    app.store.tasks[blocker_index].blocks = vec![detail_link(&blocked)];
-    app.list.select_task(Some(blocker_index));
-    app.show_detail(0);
-    app.detail
-        .state_mut()
-        .unwrap()
-        .set_focused_target(Some(DetailTargetId::Task {
-            section: DetailSection::Blocks,
-            task_id: blocked.task.id.clone(),
-        }));
-
-    app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        &app.footer_choice,
-        Some(choice)
-            if choice.mode == FooterChoiceMode::Status
-                && choice.selection.single_id() == Some(&blocked.task.id)
-    ));
-}
-
-#[tokio::test]
-async fn focused_epic_parent_routes_status_picker_to_parent() {
-    let mut app = test_app().await;
-    let parent_index = create_and_select_task(
-        &mut app,
-        TaskDraft {
-            metadata: Vec::new(),
-            is_epic: true,
-            ..test_task_draft("Parent epic")
-        },
-    )
-    .await;
-    let parent = app.store.tasks[parent_index].clone();
-    let child_index = create_and_select_task(&mut app, test_task_draft("Child task")).await;
-    app.store.tasks[child_index].epic_parent = Some(detail_link(&parent));
-    app.list.select_task(Some(child_index));
-    app.show_detail(0);
-    app.detail
-        .state_mut()
-        .unwrap()
-        .set_focused_target(Some(DetailTargetId::Task {
-            section: DetailSection::EpicParent,
-            task_id: parent.task.id.clone(),
-        }));
-
-    app.dispatch_key(key(KeyCode::Char('s')), (80, 24).into())
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        &app.footer_choice,
-        Some(choice)
-            if choice.mode == FooterChoiceMode::Status
-                && choice.selection.single_id() == Some(&parent.task.id)
-    ));
 }
 
 #[tokio::test]

@@ -6,7 +6,7 @@ description: Synchronize Aven data with end-to-end encryption, resolve conflicts
 Sync keeps the same aven tasks available across laptops, agents, and other devices. Each client writes to its own local SQLite database first, so task capture and updates stay fast and work offline.
 
 Sync is end-to-end encrypted. Devices encrypt tasks, history, and images before
-upload, so the self-hosted server cannot read your tasks or images. One
+upload, so the server cannot read your tasks or images. One
 device starts the sync from its database, and each other device joins with an
 invitation from a device that already syncs.
 
@@ -16,6 +16,12 @@ if every device is lost, the server cannot restore your data. Keep regular
 for what the server can still see.
 
 ## Start a server
+
+:::tip[No server to run?]
+[Aven Cloud](https://cloud.aventasks.dev/) is in free preview. Get a setup
+invitation there, skip this section, and continue with
+[Set up sync from one device](#set-up-sync-from-one-device).
+:::
 
 The sync server is a single `aven server` process that you host yourself on a
 machine all your devices can reach. The recommended setup is a private network

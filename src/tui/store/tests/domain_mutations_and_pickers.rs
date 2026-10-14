@@ -228,9 +228,22 @@ async fn project_picker_includes_inference_creation_and_existing_projects() {
 #[tokio::test]
 async fn priority_picker_includes_all_priorities() {
     let store = test_store().await;
-    let items = store.priority_picker_items("none");
-    assert_eq!(items.len(), PRIORITIES.len());
-    assert!(items[0].selected);
+    let items = store.priority_picker_items("high");
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        PRIORITIES
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.selected)
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        ["high"]
+    );
 }
 
 #[tokio::test]
@@ -241,7 +254,14 @@ async fn existing_project_picker_items_excludes_infer_project() {
     let items = store.existing_project_picker_items("mobile-app");
     assert!(!items.iter().any(|item| item.label == "Infer project"));
     assert!(items.iter().any(|item| item.value == "mobile-app"));
-    assert!(items.iter().any(|item| item.selected));
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.selected)
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        ["mobile-app"]
+    );
 }
 
 #[tokio::test]

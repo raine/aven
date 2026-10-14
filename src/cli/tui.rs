@@ -101,6 +101,9 @@ pub(crate) enum InternalSubcommand {
     DemoSnapshot(InternalDemoSnapshotArgs),
     #[command(name = "natural-add", hide = true)]
     NaturalAdd(InternalNaturalAddArgs),
+    /// Reloads the daemon's LaunchAgent from its plist on disk.
+    #[command(name = "reload-daemon", hide = true)]
+    ReloadDaemon,
 }
 
 #[derive(Args)]

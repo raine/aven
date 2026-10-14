@@ -88,33 +88,18 @@ async fn epics_view_closed_filter_includes_and_isolates_closed_epics() {
 }
 
 #[tokio::test]
-async fn epics_view_starts_with_parents_collapsed() {
-    let mut store = test_store().await;
-    let (parent_id, child_id, _) = create_epic_child_pair(&mut store).await;
-
-    assert!(!store.view_state.expanded_epic_ids.contains(&parent_id));
-    assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
-    let rollup = store
-        .tasks
-        .iter()
-        .find(|item| item.task.id == parent_id)
-        .unwrap()
-        .epic_rollup
-        .as_ref()
-        .unwrap();
-    assert_eq!(rollup.total, 1);
-    assert_eq!(rollup.open, 1);
-    assert_eq!(rollup.done, 0);
-    assert_eq!(rollup.canceled, 0);
-    assert_eq!(rollup.ready, 1);
-}
-
-#[tokio::test]
 async fn toggle_epic_expands_and_collapses_parent() {
     let mut store = test_store().await;
     let (parent_task_id, child_id, parent_index) = create_epic_child_pair(&mut store).await;
 
     assert!(!store.view_state.expanded_epic_ids.contains(&parent_task_id));
+    assert!(!store.tasks.iter().any(|task| task.task.id == child_id));
+    let rollup = store.tasks[parent_index].epic_rollup.as_ref().unwrap();
+    assert_eq!(rollup.total, 1);
+    assert_eq!(rollup.open, 1);
+    assert_eq!(rollup.done, 0);
+    assert_eq!(rollup.canceled, 0);
+    assert_eq!(rollup.ready, 1);
 
     store
         .toggle_selected_epic(Some(parent_index))

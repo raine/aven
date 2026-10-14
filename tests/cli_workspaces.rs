@@ -39,11 +39,28 @@ fn search_project_resolution_uses_selected_workspace() {
             "--workspace",
             "client",
             "add",
-            "workspace search needle",
+            "Selected project result",
             "--project",
             "Client Docs",
+            "--description",
+            "needle in selected description",
         ],
     )));
+
+    let unrelated = extract_ref(&ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "client",
+            "add",
+            "needle",
+            "--project",
+            "Operations",
+            "--priority",
+            "urgent",
+        ],
+    )));
+    let default_task = extract_ref(&ok(env.aven(&db, ["add", "needle", "--project", "app"])));
 
     let scoped = ok(env.aven(
         &db,
@@ -54,9 +71,19 @@ fn search_project_resolution_uses_selected_workspace() {
             "--project",
             "Client Docs",
             "needle",
+            "--limit",
+            "1",
         ],
     ));
-    contains_all(&scoped, &[&client_task, "workspace search needle"]);
+    contains_all(
+        &scoped,
+        &[&client_task, "Selected project result", "match=description"],
+    );
+    contains_none(&scoped, &[&unrelated, &default_task]);
+
+    let all = ok(env.aven(&db, ["--workspace", "client", "search", "needle"]));
+    contains_all(&all, &[&client_task, &unrelated]);
+    contains_none(&all, &[&default_task]);
 
     let wrong_workspace = fail(env.aven(&db, ["search", "--project", "Client Docs", "needle"]));
     contains_all(

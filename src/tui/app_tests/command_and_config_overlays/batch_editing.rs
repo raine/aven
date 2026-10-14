@@ -21,27 +21,6 @@ fn task_item<'a>(app: &'a App, task_id: &crate::ids::TaskId) -> &'a crate::query
 }
 
 #[tokio::test]
-async fn status_shortcut_uses_footer_chooser_for_unmarked_task() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("unmarked")).await;
-
-    app.handle_normal_key(KeyCode::Char('s')).await.unwrap();
-
-    assert_eq!(
-        app.footer_choice.as_ref().map(|choice| choice.mode),
-        Some(FooterChoiceMode::Status)
-    );
-    assert!(app.overlay.is_none());
-
-    app.dispatch_key(key(KeyCode::Char('t')), (80, 24).into())
-        .await
-        .unwrap();
-
-    let selected = app.list.selected_task().unwrap();
-    assert_eq!(app.store.tasks[selected].task.status, TaskStatus::Todo);
-}
-
-#[tokio::test]
 async fn command_palette_captures_bulk_scope_and_single_target_limits() {
     let mut app = test_app().await;
     let [first_id, second_id] = create_and_select_titled_tasks(&mut app, ["first", "second"]).await;
@@ -252,24 +231,6 @@ async fn empty_project_retry_keeps_captured_targets() {
 }
 
 #[tokio::test]
-async fn priority_shortcut_uses_footer_chooser_for_marked_tasks() {
-    let mut app = test_app().await;
-    let [first_id, second_id, _third_id] =
-        create_and_select_titled_tasks(&mut app, ["first", "second", "third"]).await;
-    app.list.mark(first_id);
-    app.list.mark(second_id);
-
-    app.begin_edit_priority();
-
-    assert!(app.overlay.is_none());
-    assert_eq!(
-        app.footer_choice.as_ref().map(|choice| choice.mode),
-        Some(FooterChoiceMode::Priority)
-    );
-    assert_eq!(app.view().visible_marked_task_count, 2);
-}
-
-#[tokio::test]
 async fn priority_footer_applies_only_to_captured_marked_tasks() {
     let mut app = test_app().await;
     let [first_id, second_id, third_id] =
@@ -277,6 +238,12 @@ async fn priority_footer_applies_only_to_captured_marked_tasks() {
     app.list.mark(first_id.clone());
     app.list.mark(second_id.clone());
     app.begin_edit_priority();
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        app.footer_choice.as_ref().map(|choice| choice.mode),
+        Some(FooterChoiceMode::Priority)
+    );
+    assert_eq!(app.view().visible_marked_task_count, 2);
 
     app.list.clear_marks();
     app.list.mark(third_id.clone());
@@ -575,7 +542,8 @@ async fn edit_labels_shortcut_uses_one_mark_as_single_task_scope() {
     let mut app = test_app().await;
     let index = create_and_select_task(&mut app, test_task_draft("marked")).await;
     let id = app.store.tasks[index].task.id.clone();
-    app.list.mark(id);
+    create_and_select_task(&mut app, test_task_draft("cursor target")).await;
+    app.list.mark(id.clone());
 
     app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
@@ -583,23 +551,8 @@ async fn edit_labels_shortcut_uses_one_mark_as_single_task_scope() {
     assert!(matches!(
         &app.overlay,
         Some(OverlayState::TagCombobox(state))
-            if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
+            if matches!(&state.intent, TagComboboxIntent::EditLabels { selection } if selection.single_id() == Some(&id))
                 && state.title == EDIT_LABELS_TITLE
-    ));
-}
-
-#[tokio::test]
-async fn edit_labels_shortcut_uses_selected_task_without_marks() {
-    let mut app = test_app().await;
-    create_and_select_task(&mut app, test_task_draft("selected")).await;
-
-    app.handle_normal_key(KeyCode::Char('e')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-
-    assert!(matches!(
-        &app.overlay,
-        Some(OverlayState::TagCombobox(state))
-            if matches!(state.intent, TagComboboxIntent::EditLabels { .. })
     ));
 }
 

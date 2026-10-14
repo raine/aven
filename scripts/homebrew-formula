@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Prints the Homebrew formula for a release. CHECKSUM_DIR holds the release's
+# .sha256 files.
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: homebrew-formula VERSION CHECKSUM_DIR" >&2
+  exit 2
+fi
+version=$1
+checksum_dir=$2
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "version must be MAJOR.MINOR.PATCH: $version" >&2
+  exit 2
+fi
+
+checksum() {
+  local file="$checksum_dir/$1.sha256"
+  local sum
+  sum=$(awk '{print $1; exit}' "$file")
+  if [[ ! $sum =~ ^[0-9a-f]{64}$ ]]; then
+    echo "invalid checksum in $file" >&2
+    exit 1
+  fi
+  printf '%s\n' "$sum"
+}
+
+sha_mac_arm=$(checksum aven-darwin-arm64-app)
+sha_mac_intel=$(checksum aven-darwin-amd64-app)
+sha_linux_arm=$(checksum aven-linux-arm64)
+sha_linux_intel=$(checksum aven-linux-amd64)
+url="https://github.com/raine/aven/releases/download/v${version}"
+
+cat <<EOF
+class Aven < Formula
+  desc "Local-first task manager CLI and sync server"
+  homepage "https://github.com/raine/aven"
+  version "${version}"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "${url}/aven-darwin-arm64-app.tar.gz"
+      sha256 "${sha_mac_arm}"
+    else
+      url "${url}/aven-darwin-amd64-app.tar.gz"
+      sha256 "${sha_mac_intel}"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "${url}/aven-linux-arm64.tar.gz"
+      sha256 "${sha_linux_arm}"
+    else
+      url "${url}/aven-linux-amd64.tar.gz"
+      sha256 "${sha_linux_intel}"
+    end
+  end
+
+  def install
+    if OS.mac?
+      # Homebrew stages an archive with one top-level directory from inside
+      # it, so the working directory is Aven.app.
+      (prefix/"Aven.app").install "Contents"
+      bin.install_symlink prefix/"Aven.app/Contents/MacOS/aven"
+    else
+      bin.install "aven"
+    end
+    generate_completions_from_executable(bin/"aven", "completions")
+  end
+
+  test do
+    assert_match "Local-first task manager", shell_output("#{bin}/aven --help")
+    if OS.mac?
+      system "/usr/bin/codesign", "--verify", "--strict", prefix/"Aven.app"
+      assert_match "Identifier=fi.zendit.Aven", shell_output("/usr/bin/codesign -dv #{prefix}/Aven.app 2>&1")
+    end
+  end
+end
+EOF

@@ -535,48 +535,78 @@ fn inactive_composer_headers_stay_distinct_from_placeholders() {
 
 #[test]
 fn composer_help_scrolls_with_a_stable_dialog_and_scrollbar() {
-    let top = render_overlay_view_at(
-        add_task_overlay(AddTaskView {
-            mode: borrow_value(AddTaskMode::Help { scroll: 0 }),
-            ..add_task_view()
-        }),
-        100,
-        20,
-    );
-    let bottom = render_overlay_view_at(
-        add_task_overlay(AddTaskView {
-            mode: borrow_value(AddTaskMode::Help {
-                scroll: composer_help_scroll_cap(20, false, false),
-            }),
-            ..add_task_view()
-        }),
-        100,
-        20,
-    );
-
-    let top_border = top.lines().position(|line| line.contains("Composer help"));
-    let bottom_border = bottom
-        .lines()
-        .position(|line| line.contains("Composer help"));
-    let top_end = top.lines().position(|line| line.contains('╰'));
-    let bottom_end = bottom.lines().position(|line| line.contains('╰'));
-    assert_eq!(top_border, bottom_border);
-    assert_eq!(top_end, bottom_end);
-    assert!(top.contains('▲'));
-    assert!(top.contains('▼'));
-    assert!(top.contains("Tab / Shift+Tab"));
-    assert!(!top.contains("confirm discard"));
-    assert!(!bottom.contains("Tab / Shift+Tab"));
-    assert!(bottom.contains("confirm discard"));
-    assert!(bottom.contains("j/k scroll"));
+    for (height, full_frame, schedule_expanded) in [
+        (16, false, false),
+        (20, false, false),
+        (20, true, false),
+        (30, false, false),
+        (30, false, true),
+        (30, true, true),
+    ] {
+        let render = |scroll| {
+            let state = AddTaskView {
+                mode: borrow_value(AddTaskMode::Help { scroll }),
+                schedule_expanded,
+                ..add_task_view()
+            };
+            let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    if full_frame {
+                        render_add_task_full_frame(frame, &Theme::dark(), &state);
+                    } else {
+                        render_add_task(frame, &Theme::dark(), &state);
+                    }
+                })
+                .unwrap();
+            (0..height)
+                .map(|row| buffer_row(terminal.backend().buffer(), row))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let cap = composer_help_scroll_cap(height, full_frame, schedule_expanded);
+        let top = render(0);
+        let bottom = render(cap);
+        let bounds = |text: &str| {
+            (
+                text.lines()
+                    .position(|line| line.contains("Composer help"))
+                    .unwrap(),
+                text.lines()
+                    .enumerate()
+                    .filter(|(_, line)| line.contains('╰'))
+                    .map(|(row, _)| row)
+                    .last()
+                    .unwrap(),
+            )
+        };
+        assert_eq!(bounds(&top), bounds(&bottom));
+        assert!(top.contains('▲'));
+        assert!(top.contains('▼'));
+        assert!(top.contains("Tab / Shift+Tab"));
+        assert!(!top.contains("confirm discard"));
+        assert!(!bottom.contains("Tab / Shift+Tab"));
+        assert!(
+            bottom.contains("confirm discard"),
+            "{height}/{full_frame}/{schedule_expanded}:\n{bottom}"
+        );
+        assert!(bottom.contains("j/k scroll"));
+        assert_eq!(
+            bottom,
+            render(u16::MAX),
+            "cap must reach the final viewport"
+        );
+        assert_ne!(
+            bottom,
+            render(cap - 1),
+            "cap must not overshoot the final viewport"
+        );
+    }
 }
 
 #[test]
 fn composer_help_scroll_cap_matches_add_task_layout() {
-    assert_eq!(composer_help_scroll_cap(20, false, false), 9);
     assert_eq!(composer_help_scroll_cap(20, false, true), 7);
-    assert_eq!(composer_help_scroll_cap(20, true, false), 5);
-    assert_eq!(composer_help_scroll_cap(30, false, false), 4);
 }
 
 #[test]
@@ -739,21 +769,6 @@ fn add_task_overlay_pins_footer_to_bottom() {
 }
 
 #[test]
-fn add_task_overlay_does_not_truncate_title_hints() {
-    let rendered = render_overlay_view(add_task_overlay(AddTaskView { ..add_task_view() }));
-    assert!(rendered.contains("Esc cancel"));
-}
-
-#[test]
-fn add_task_overlay_does_not_truncate_description_hints() {
-    let rendered = render_overlay_view(add_task_overlay(AddTaskView {
-        focus: AddTaskStep::Description,
-        ..add_task_view()
-    }));
-    assert!(rendered.contains("Esc cancel"));
-}
-
-#[test]
 fn add_task_overlay_replaces_footer_when_status_prefix_is_active() {
     let rendered = render_overlay_view(add_task_overlay(AddTaskView {
         status_prefix_active: true,
@@ -839,55 +854,69 @@ fn add_task_description_unfocused_preview_starts_at_top() {
 }
 
 #[test]
-fn hint_lines_style_keys() {
-    let add_task_keys = styled_key_contents(add_task_hint_line(
-        &Theme::dark(),
-        AddTaskStep::Title,
-        false,
-        false,
-        false,
-    ));
-    assert_eq!(
-        add_task_keys,
-        vec!["Enter", "↑/↓", "Tab", "^N", "F1", "Esc"]
-    );
+fn hint_lines_distinguish_keys_from_descriptions() {
+    let theme = Theme::dark();
+    for line in [
+        multiline_hint_line(&theme),
+        add_task_hint_line(&theme, AddTaskStep::Title, false, false, false),
+        add_task_hint_line(&theme, AddTaskStep::Description, false, false, false),
+        add_task_description_hint_line(&theme),
+        add_task_natural_hint_line(&theme),
+        add_task_status_hint_line(&theme),
+        add_task_priority_hint_line(&theme),
+        confirm_hint_line(&theme),
+    ] {
+        for key in line
+            .spans
+            .iter()
+            .filter(|span| !span.content.starts_with(' '))
+        {
+            assert_eq!(key.style.fg, Some(theme.fg));
+            assert!(key.style.add_modifier.contains(Modifier::BOLD));
+        }
+        let description = line
+            .spans
+            .iter()
+            .find(|span| span.content.trim() == "cancel")
+            .unwrap();
+        assert_eq!(description.style.fg, Some(theme.fg_muted));
+        assert!(!description.style.add_modifier.contains(Modifier::BOLD));
+    }
+}
 
-    let multiline_keys = styled_key_contents(multiline_hint_line(&Theme::dark()));
-    assert_eq!(multiline_keys, vec!["Ctrl-Enter / ^S", "Esc"]);
-
-    let add_task_description_keys = styled_key_contents(add_task_hint_line(
-        &Theme::dark(),
-        AddTaskStep::Description,
-        false,
-        false,
-        false,
-    ));
-    assert_eq!(
-        add_task_description_keys,
-        vec!["Ctrl-Enter / ^S", "Tab", "^N", "F1", "Esc"]
-    );
-
-    let add_task_description_editor_keys =
-        styled_key_contents(add_task_description_hint_line(&Theme::dark()));
-    assert_eq!(
-        add_task_description_editor_keys,
-        vec!["Ctrl-Enter / ^S", "Enter", "^P", "^R", "Esc"]
-    );
-
-    let add_task_natural_keys = styled_key_contents(add_task_natural_hint_line(&Theme::dark()));
-    assert_eq!(
-        add_task_natural_keys,
-        vec!["Ctrl-Enter / ^S", "Enter", "Esc"]
-    );
-
-    let status_keys = styled_key_contents(add_task_status_hint_line(&Theme::dark()));
-    assert_eq!(status_keys, vec!["i", "b", "t", "a", "d", "x", "Esc"]);
-
-    let priority_keys = styled_key_contents(add_task_priority_hint_line(&Theme::dark()));
-    assert_eq!(priority_keys, vec!["n", "l", "m", "h", "u", "Esc"]);
-
-    let confirm_keys = styled_key_contents(confirm_hint_line(&Theme::dark()));
-    assert_eq!(confirm_keys, vec!["y", "n", "Esc"]);
+#[test]
+fn composer_footer_tracks_focus_and_create_more_availability() {
+    for (focus, action, wrong_action) in [
+        (AddTaskStep::Title, "Enter create", "Ctrl-Enter / ^S create"),
+        (
+            AddTaskStep::Description,
+            "Ctrl-Enter / ^S create",
+            "Enter create",
+        ),
+        (AddTaskStep::Schedule, "Enter details", "Enter create"),
+        (AddTaskStep::Priority, "Enter choose", "Enter create"),
+        (AddTaskStep::Epic, "Enter/Space toggle", "Enter create"),
+    ] {
+        for create_more_available in [false, true] {
+            let buffer = overlay_buffer(add_task_overlay(AddTaskView {
+                focus,
+                create_more_available,
+                ..add_task_view()
+            }));
+            let footer = (0..buffer.area.height)
+                .map(|row| buffer_row(&buffer, row))
+                .find(|row| row.contains("Esc cancel"))
+                .expect("composer footer");
+            assert!(footer.contains(action), "{focus:?}: {footer}");
+            assert!(!footer.contains(wrong_action), "{focus:?}: {footer}");
+            assert_eq!(
+                footer.contains("^G create more"),
+                create_more_available
+                    && matches!(focus, AddTaskStep::Title | AddTaskStep::Description),
+                "{focus:?}: {footer}",
+            );
+        }
+    }
 }
 
 #[test]

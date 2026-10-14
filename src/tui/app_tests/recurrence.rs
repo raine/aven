@@ -260,6 +260,13 @@ async fn recurrence_history_pagination_replaces_the_resident_page() {
     );
     assert!(first.page.has_more);
     let as_of = first.as_of;
+    let slots = |page: &aven_core::query::RecurrenceHistoryPage| {
+        page.items
+            .iter()
+            .map(|entry| entry.slot_on.clone().expect("occurrence slot"))
+            .collect::<Vec<_>>()
+    };
+    let first_slots = slots(&first.page);
 
     app.handle_overlay_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
         .await
@@ -269,7 +276,13 @@ async fn recurrence_history_pagination_replaces_the_resident_page() {
     };
     assert_eq!(second.page.offset, second.page.limit);
     assert_eq!(second.as_of, as_of);
+    assert!(!second.page.items.is_empty());
     assert!(second.page.items.len() <= second.page.limit);
+    assert!(
+        slots(&second.page)
+            .iter()
+            .all(|slot| !first_slots.contains(slot))
+    );
 
     app.handle_overlay_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
         .await
@@ -279,6 +292,7 @@ async fn recurrence_history_pagination_replaces_the_resident_page() {
     };
     assert_eq!(first_again.page.offset, 0);
     assert_eq!(first_again.as_of, as_of);
+    assert_eq!(slots(&first_again.page), first_slots);
 }
 
 #[tokio::test]

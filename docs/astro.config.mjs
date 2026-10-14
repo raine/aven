@@ -123,6 +123,7 @@ export default defineConfig({
             { label: 'Back up and restore', slug: 'backups' },
             { label: 'Task metadata', slug: 'task-metadata' },
             { label: 'Custom TUI commands', slug: 'custom-commands' },
+            { label: 'Notifications', slug: 'notifications' },
             { label: 'Tips', slug: 'tips' },
           ],
         },

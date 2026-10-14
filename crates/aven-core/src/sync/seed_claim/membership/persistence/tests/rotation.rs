@@ -174,13 +174,17 @@ async fn management_journal_head_and_invitation_failure_roll_back_together() {
     register(&f, &sa, &unused, &candidate).await;
     let pa = auth(&f, m.head(), peer.device(), peer.bearer());
     let record = peer.authority().prepare_revoke(&m, &[sa.device]).unwrap();
-    for (table, action) in [
+    for (step, (table, action)) in [
         ("server_membership_transitions", "INSERT"),
         ("server_e2ee_membership_head", "UPDATE"),
         ("server_membership_invitations", "UPDATE"),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // A fresh name per step: a pooled connection may still cache the dropped trigger.
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "CREATE TRIGGER fault BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'fault'); END"
+            "CREATE TRIGGER fault_{step} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'fault'); END"
         )))
         .execute(&mut *f.db.acquire_writer().await.unwrap())
         .await
@@ -190,7 +194,7 @@ async fn management_journal_head_and_invitation_failure_roll_back_together() {
                 .await
                 .is_err()
         );
-        sqlx::query("DROP TRIGGER fault")
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TRIGGER fault_{step}")))
             .execute(&mut *f.db.acquire_writer().await.unwrap())
             .await
             .unwrap();

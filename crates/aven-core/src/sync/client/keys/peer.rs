@@ -345,7 +345,12 @@ impl ProtectedLocalKeyStore {
             LocalSharedStatePackageKey::new(*package.package_key().protected_storage_bytes()),
         ))
     }
+    // Boxed so this large state machine lives on the heap instead of inside every
+    // caller's future, including each TUI refresh through sync status.
     pub async fn active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
+        Box::pin(self.load_active_inputs(db, locator)).await
+    }
+    async fn load_active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
         let installation = InstallationGuard::acquire(db.path())?;
         self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");

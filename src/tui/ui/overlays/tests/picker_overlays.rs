@@ -55,21 +55,6 @@ fn workspace_picker_shows_direct_filter_hints_and_no_match_state() {
 }
 
 #[test]
-fn priority_picker_shows_priority_icons() {
-    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-        kind: PickerKind::AddTaskPriority,
-        title: "Add task: priority".to_string(),
-        items: borrow_slice(vec![picker_item("urgent", "urgent")]),
-        visible_indices: vec![0],
-        ..picker_view()
-    }));
-    assert!(rendered.contains(priority_icon("urgent")));
-    assert!(rendered.contains("urgent"));
-    assert!(rendered.contains("Enter"));
-    assert!(rendered.contains("submit"));
-}
-
-#[test]
 fn blocker_picker_styles_task_reference_and_title() {
     let item = PickerItem {
         label: "docs  DCS-5283  BNV Multi Blocker Alpha".to_string(),
@@ -196,21 +181,6 @@ fn project_creation_suggestion_keeps_stable_prefix_color() {
 }
 
 #[test]
-fn project_picker_uses_structured_columns() {
-    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-        filter: "claude".to_string(),
-        filter_cursor: 6,
-        ..project_picker_view()
-    }));
-    assert!(rendered.contains("PREFIX"));
-    assert!(rendered.contains("PROJECT"));
-    assert!(rendered.contains("CC"));
-    assert!(rendered.contains("claude-code"));
-    assert!(!rendered.contains("/claude"));
-    assert!(rendered.contains("Enter scope"));
-}
-
-#[test]
 fn project_scope_picker_shows_single_escape_cancellation() {
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
         mode: PickerMode::Filter,
@@ -288,44 +258,6 @@ fn tag_combobox_shows_partial_label_membership() {
     })));
 
     assert!(rendered.contains("~ urgent"));
-}
-
-#[test]
-fn edit_project_uses_structured_project_picker() {
-    for (kind, title) in [
-        (PickerKind::EditProject, "Edit project"),
-        (PickerKind::AddTaskProject, "Add task: project"),
-    ] {
-        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-            kind,
-            title: title.to_string(),
-            filter: "claude".to_string(),
-            filter_cursor: 6,
-            ..project_picker_view()
-        }));
-        assert!(rendered.contains("PREFIX"));
-        assert!(rendered.contains("PROJECT"));
-        assert!(rendered.contains("CC"));
-        assert!(rendered.contains("claude-code"));
-        assert!(rendered.contains("Enter submit"));
-        assert!(rendered.contains(title));
-    }
-}
-
-#[test]
-fn project_path_project_selection_uses_structured_project_picker() {
-    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-        kind: PickerKind::ProjectPathProject,
-        title: "Add project path".to_string(),
-        ..project_picker_view()
-    }));
-
-    assert!(rendered.contains("Add project path"));
-    assert!(rendered.contains("PREFIX"));
-    assert!(rendered.contains("PROJECT"));
-    assert!(rendered.contains("CC"));
-    assert!(rendered.contains("claude-code"));
-    assert!(rendered.contains("Enter select"));
 }
 
 #[test]

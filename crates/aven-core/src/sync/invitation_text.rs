@@ -308,6 +308,7 @@ mod tests {
             "ftp://sync.example.net",
             "https://sync.example.net/x",
             "https://sync.example.net/",
+            "http://sync.aventasks.dev",
         ] {
             assert!(encode(Kind::Device, server, &secret(Kind::Device)).is_err());
             let text = device_text(&payload(1, 2, server, &secret(Kind::Device)));

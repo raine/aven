@@ -146,13 +146,9 @@ impl CommandState {
             .iter()
             .map(|override_| (override_.action, override_.reason))
             .collect::<Vec<_>>();
-        // Argument completion keeps the original choices visible until editing
-        // resets the cycle, even as the input shows the highlighted value.
-        let input = self
-            .cycle_input
-            .as_deref()
-            .filter(|input| self.catalog.choice_command(input).is_some())
-            .unwrap_or(self.input.as_str());
+        // Completion keeps the original matches visible until editing resets
+        // the cycle, even as the input shows the highlighted candidate.
+        let input = self.cycle_input.as_deref().unwrap_or(self.input.as_str());
         self.candidates = self.catalog.query(crate::tui::event::CommandQuery {
             input,
             snapshot: &self.session,

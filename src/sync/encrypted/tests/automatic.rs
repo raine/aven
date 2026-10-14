@@ -108,3 +108,27 @@ async fn daemon_waits_for_setup_then_syncs_encrypted_rounds_on_wake() {
     assert!(!log.contains("daemon sync completed"), "{log}");
     assert!(!log.contains("Synced by the daemon"));
 }
+
+#[tokio::test]
+async fn foreground_sync_success_sends_retry_wake_for_recorded_daemon_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let pair = pair(temp.path()).await;
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    enable_automatic_sync(&pair.a, &socket.local_addr().unwrap().to_string());
+    let database = aven_core::db::Database::open(&pair.a.db()).await.unwrap();
+    database
+        .record_daemon_sync_round(
+            100,
+            Some(("protected-key-storage-unavailable", "authorize", 400)),
+        )
+        .await
+        .unwrap();
+    pair.a.ok(&["sync"]).await;
+    let mut buf = [0; 16];
+    let (len, _) = tokio::time::timeout(Duration::from_secs(1), socket.recv_from(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&buf[..len], b"r");
+    assert!(database.daemon_sync_state().await.unwrap().error.is_some());
+}

@@ -457,21 +457,40 @@ mod tests {
         .unwrap();
 
         assert!(repaint);
-        assert!(!writer.bytes.is_empty());
+        let expected = (8..=13)
+            .map(|row| format!("\x1b[{row};5H{}", " ".repeat(20)))
+            .collect::<String>();
+        assert_eq!(String::from_utf8(writer.bytes).unwrap(), expected);
     }
 
     #[test]
     fn retained_exports_replace_attachment_and_obey_capacity() {
         let mut surface = InlineImageSurface::new();
-        for index in 0..=MAX_EXTERNAL_EXPORTS {
-            surface.retain_export(index.to_string(), tempfile::tempdir().unwrap());
+        let directories = (0..=MAX_EXTERNAL_EXPORTS)
+            .map(|_| tempfile::tempdir().unwrap())
+            .collect::<Vec<_>>();
+        let paths = directories
+            .iter()
+            .map(|dir| dir.path().to_path_buf())
+            .collect::<Vec<_>>();
+        for (index, directory) in directories.into_iter().enumerate() {
+            surface.retain_export(index.to_string(), directory);
         }
-        assert_eq!(surface.export_count(), MAX_EXTERNAL_EXPORTS);
-
-        surface.retain_export(
-            MAX_EXTERNAL_EXPORTS.to_string(),
-            tempfile::tempdir().unwrap(),
+        assert!(!paths[0].exists());
+        assert!(paths[1..].iter().all(|path| path.exists()));
+        let replacement = tempfile::tempdir().unwrap();
+        let replacement_path = replacement.path().to_path_buf();
+        surface.retain_export(MAX_EXTERNAL_EXPORTS.to_string(), replacement);
+        assert!(!paths.last().unwrap().exists());
+        assert!(
+            paths[1..MAX_EXTERNAL_EXPORTS]
+                .iter()
+                .all(|path| path.exists())
         );
         assert_eq!(surface.export_count(), MAX_EXTERNAL_EXPORTS);
+        assert_eq!(
+            surface.export_directory(MAX_EXTERNAL_EXPORTS - 1),
+            replacement_path
+        );
     }
 }

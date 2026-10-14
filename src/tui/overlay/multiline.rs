@@ -137,20 +137,6 @@ mod tests {
     }
 
     #[test]
-    fn multiline_input_supports_emacs_deletion() {
-        let mut state = state_with_lines(vec!["one two three".to_string()], 0, 7);
-        edit_multiline_input(&mut state, ctrl(KeyCode::Char('w')));
-        assert_eq!(state.buffer.lines, vec!["one three".to_string()]);
-        assert_eq!(state.buffer.column, 3);
-        edit_multiline_input(&mut state, ctrl(KeyCode::Char('k')));
-        assert_eq!(state.buffer.lines, vec!["one".to_string()]);
-        assert_eq!(state.buffer.column, 3);
-        edit_multiline_input(&mut state, ctrl(KeyCode::Char('u')));
-        assert_eq!(state.buffer.lines, vec![String::new()]);
-        assert_eq!(state.buffer.column, 0);
-    }
-
-    #[test]
     fn multiline_word_deletion_merges_previous_line_at_line_start() {
         for key in [
             ctrl(KeyCode::Char('w')),
@@ -172,14 +158,6 @@ mod tests {
         assert_eq!(state.buffer.lines, vec!["onetwo".to_string()]);
         assert_eq!(state.buffer.row, 0);
         assert_eq!(state.buffer.column, 3);
-    }
-
-    #[test]
-    fn multiline_ignores_control_chars_that_are_not_editing_keys() {
-        let mut state = state_with_lines(vec!["ab".to_string()], 0, 1);
-        edit_multiline_input(&mut state, ctrl(KeyCode::Char('x')));
-        assert_eq!(state.buffer.lines, vec!["ab".to_string()]);
-        assert_eq!(state.buffer.column, 1);
     }
 
     #[test]

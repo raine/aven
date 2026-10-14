@@ -14,11 +14,16 @@ use crate::tui::ui::{
 };
 
 impl App {
-    pub(super) async fn handle_overlay_key_at_size(
+    // Boxed so callers hold a pointer instead of a future sized for every overlay.
+    pub(super) fn handle_overlay_key_at_size(
         &mut self,
         key: KeyEvent,
         terminal_size: Size,
-    ) -> Result<()> {
+    ) -> impl Future<Output = Result<()>> {
+        Box::pin(self.route_overlay_key(key, terminal_size))
+    }
+
+    async fn route_overlay_key(&mut self, key: KeyEvent, terminal_size: Size) -> Result<()> {
         let overlay = if let Some(overlay) = self.overlay.take() {
             overlay
         } else if self.detail.is_active() {

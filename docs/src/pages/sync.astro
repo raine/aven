@@ -1,5 +1,4 @@
 ---
-import logo from '../assets/aven-logo-grape-violet.svg';
 import Brand from '../components/Brand.astro';
 import GitHubIcon from '../components/GitHubIcon.astro';
 import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
@@ -50,7 +49,7 @@ const transports = [
       </header>
 
       <main id="main">
-        <section class="hero sync-hero" style={`--hero-logo: url("${logo.src}")`} aria-labelledby="sync-heading">
+        <section class="hero sync-hero" aria-labelledby="sync-heading">
           <div class="sync-hero-copy">
             <p class="hero-eyebrow">Sync</p>
             <h1 id="sync-heading">Your tasks,<br /><span>on every machine.</span></h1>
@@ -59,6 +58,7 @@ const transports = [
               <a class="closing-button closing-primary" href="/sync/setup/">Set up sync</a>
               <a class="closing-button" href="/sync/setup/#what-encryption-protects">What encryption protects</a>
             </div>
+            <p class="cloud-footnote">No server to run? <a href="https://cloud.aventasks.dev/">Aven Cloud</a> <span class="cloud-preview">free preview</span></p>
           </div>
           <SyncTopology />
         </section>
@@ -106,6 +106,14 @@ const transports = [
               </a>
             ))}
           </div>
+          <a class="cloud-row" href="https://cloud.aventasks.dev/">
+            <span class="cloud-row-copy">
+              <span class="feature-label yellow">HOSTED <span class="cloud-preview">free preview</span></span>
+              <b>Or don't run a server: Aven Cloud</b>
+              <small>Same end-to-end encryption. Get a setup invitation from Aven Cloud and paste it into <code>aven sync setup</code>.</small>
+            </span>
+            <span class="cloud-row-go" aria-hidden="true">→</span>
+          </a>
         </section>
 
         <section class="closing-section sync-closing" aria-labelledby="closing-heading">

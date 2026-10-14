@@ -105,6 +105,9 @@ fn crc32(bytes: &[u8]) -> u32 {
 #[tokio::test]
 async fn detail_paste_image_path_attaches_to_selected_task() {
     let (dir, pool, mut app) = paste_test_app().await;
+    let mut config = crate::config::AppConfig::default();
+    config.local.image_optimization = crate::config::ImageOptimizationConfig::Off;
+    app.set_config(config);
     let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
     let task_id = app.store.tasks[selected].task.id.clone();
     let image = dir.path().join("photo.png");
@@ -320,33 +323,6 @@ async fn attachment_preview_remove_can_be_cancelled() {
 }
 
 #[tokio::test]
-async fn detail_paste_image_path_obeys_optimization_config() {
-    let (dir, pool, mut app) = paste_test_app().await;
-    let mut config = crate::config::AppConfig::default();
-    config.local.image_optimization = crate::config::ImageOptimizationConfig::Off;
-    app.set_config(config);
-    let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
-    let task_id = app.store.tasks[selected].task.id.clone();
-    let image = dir.path().join("photo.png");
-    let bytes = compressible_png_bytes();
-    std::fs::write(&image, &bytes).unwrap();
-    app.show_detail(0);
-
-    app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
-    finish_attachment_work(&mut app).await;
-    app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
-    finish_attachment_work(&mut app).await;
-
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("image already attached")
-    );
-    let attachments = stored_attachments(&pool, &app, &task_id).await;
-    assert_eq!(attachments.len(), 1);
-    assert_eq!(attachments[0].attachment.byte_size, bytes.len() as i64);
-}
-
-#[tokio::test]
 async fn detail_paste_optimizes_asynchronously_when_enabled() {
     let (dir, pool, mut app) = paste_test_app().await;
     let mut config = crate::config::AppConfig::default();
@@ -522,35 +498,6 @@ async fn attachment_shutdown_finishes_commit_and_clears_pending_state() {
         .await
         .unwrap();
     assert_eq!(attachment_count, 1);
-}
-
-#[tokio::test]
-async fn detail_paste_image_path_ignores_existing_image() {
-    let (dir, pool, mut app) = paste_test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("image target")).await;
-    let task_id = app.store.tasks[selected].task.id.clone();
-    let image = dir.path().join("photo.png");
-    std::fs::write(&image, compressible_png_bytes()).unwrap();
-    app.show_detail(0);
-
-    app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
-    finish_attachment_work(&mut app).await;
-    app.dispatch_paste(image.to_str().unwrap()).await.unwrap();
-    finish_attachment_work(&mut app).await;
-
-    assert_eq!(
-        toast_message(&app).as_deref(),
-        Some("image already attached")
-    );
-    let item = app
-        .store
-        .tasks
-        .iter()
-        .find(|item| item.task.id == task_id)
-        .unwrap();
-    assert!(item.task.description.is_empty());
-    let attachments = stored_attachments(&pool, &app, &task_id).await;
-    assert_eq!(attachments.len(), 1);
 }
 
 #[tokio::test]

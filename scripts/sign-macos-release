@@ -5,8 +5,8 @@ set -euo pipefail
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: sign-macos-release BINARY" >&2
+if [[ $# -lt 1 ]]; then
+  echo "usage: sign-macos-release BINARY_OR_APP..." >&2
   exit 2
 fi
 
@@ -19,13 +19,14 @@ if [[ $APPLE_DEVELOPER_ID_IDENTITY != "Developer ID Application:"* ]]; then
   exit 2
 fi
 
-binary=$1
 # Login Keychain ACLs use the designated requirement, which includes this identifier.
 identifier=fi.zendit.Aven
-if [[ ! -f $binary ]]; then
-  echo "binary not found: $binary" >&2
-  exit 2
-fi
+for target in "$@"; do
+  if [[ ! -f $target && ! ( -d $target && $target == *.app ) ]]; then
+    echo "binary or app bundle not found: $target" >&2
+    exit 2
+  fi
+done
 
 runner_temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 work_dir=$(mktemp -d "$runner_temp/aven-signing.XXXXXX")
@@ -103,9 +104,11 @@ if [[ ! $identity_hash =~ ^[0-9A-F]{40}$ ]]; then
   exit 1
 fi
 
-codesign --force --options runtime --timestamp --identifier "$identifier" \
-  --keychain "$keychain" --sign "$identity_hash" "$binary"
-codesign --verify --strict --verbose=2 "$binary"
-
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-"$script_dir/verify-macos-release" "$binary"
+# A bundle and a bare binary signed this way share one designated requirement.
+for target in "$@"; do
+  codesign --force --options runtime --timestamp --identifier "$identifier" \
+    --keychain "$keychain" --sign "$identity_hash" "$target"
+  codesign --verify --strict --verbose=2 "$target"
+  "$script_dir/verify-macos-release" "$target"
+done

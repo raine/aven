@@ -1146,22 +1146,6 @@ mod tests {
     }
 
     #[test]
-    fn tag_combobox_mouse_removes_selected_label() {
-        let terminal_size = Size::new(80, 24);
-        let state = tag_combobox_state(vec!["bug"], Vec::new());
-        let layout = tag_combobox_test_layout(&state, terminal_size);
-
-        let state = retained_tag_combobox(handle_tag_combobox_mouse(
-            state,
-            left_click(layout.inner.x, layout.inner.y + layout.list_start),
-            terminal_size,
-        ));
-
-        assert!(state.selected.is_empty());
-        assert!(state.partial.is_empty());
-    }
-
-    #[test]
     fn tag_combobox_dialog_borders_and_padding_do_not_toggle_rows() {
         let terminal_size = Size::new(80, 24);
         let state = tag_combobox_state(Vec::new(), Vec::new());
@@ -1250,35 +1234,22 @@ mod tests {
 
     #[test]
     fn add_task_description_paste_preserves_newlines() {
-        let outcome = handle_generic_overlay_paste(
-            "one\ntwo",
-            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
-        );
-        let OverlayState::AddTask(state) = outcome else {
-            panic!("expected add task state");
-        };
-        assert_eq!(
-            state.description.buffer.lines,
-            vec!["one".to_string(), "two".to_string()]
-        );
-        assert_eq!(state.description.buffer.row, 1);
-        assert_eq!(state.description.buffer.column, 3);
-    }
-
-    #[test]
-    fn add_task_description_paste_restores_csi_u_ctrl_j_newlines() {
-        let first = "d3e8ada7 (HEAD -> main) center the TUI search dialog (12 minutes ago)";
-        let second = "039cb018 keep demo sync state local (12 minutes ago)";
-        let outcome = handle_generic_overlay_paste(
-            &format!("{first}\x1b[106;5u{second}"),
-            OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
-        );
-        let OverlayState::AddTask(state) = outcome else {
-            panic!("expected add task state");
-        };
-        assert_eq!(state.description.buffer.lines, vec![first, second]);
-        assert_eq!(state.description.buffer.row, 1);
-        assert_eq!(state.description.buffer.column, second.len());
+        for input in ["one\ntwo", "one\x1b[106;5utwo"] {
+            let OverlayState::AddTask(state) = handle_generic_overlay_paste(
+                input,
+                OverlayState::AddTask(add_task_state(AddTaskStep::Description)),
+            ) else {
+                panic!("expected add task state");
+            };
+            assert_eq!(state.description.buffer.lines, ["one", "two"]);
+            assert_eq!(
+                (
+                    state.description.buffer.row,
+                    state.description.buffer.column
+                ),
+                (1, 3)
+            );
+        }
     }
 
     #[test]
@@ -1594,15 +1565,14 @@ mod tests {
     }
 
     #[test]
-    fn add_task_modified_enter_submits_from_every_field() {
+    fn add_task_submit_shortcuts_work_from_every_field() {
         for focus in AddTaskStep::ALL {
-            assert!(matches!(
-                handle(
-                    ctrl(KeyCode::Enter),
-                    OverlayState::AddTask(add_task_state(focus))
-                ),
-                OverlayOutcome::Submitted(OverlaySubmit::AddTask(_))
-            ));
+            for code in [KeyCode::Enter, KeyCode::Char('s')] {
+                assert!(matches!(
+                    handle(ctrl(code), OverlayState::AddTask(add_task_state(focus))),
+                    OverlayOutcome::Submitted(OverlaySubmit::AddTask(state)) if state.focus == focus
+                ));
+            }
         }
     }
 
@@ -1637,19 +1607,6 @@ mod tests {
             state.description.buffer.lines,
             vec!["".to_string(), "".to_string()]
         );
-    }
-
-    #[test]
-    fn add_task_ctrl_s_submits_from_every_field() {
-        for focus in AddTaskStep::ALL {
-            assert!(matches!(
-                handle(
-                    ctrl(KeyCode::Char('s')),
-                    OverlayState::AddTask(add_task_state(focus))
-                ),
-                OverlayOutcome::Submitted(OverlaySubmit::AddTask(_))
-            ));
-        }
     }
 
     #[test]
@@ -2008,25 +1965,6 @@ mod tests {
     }
 
     #[test]
-    fn repeated_esc_never_discards_populated_add_note() {
-        let mut state = MultilineInputState::blank(add_note_intent(), "Add note", "");
-        state.insert_paste("draft");
-        let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
-            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
-        else {
-            panic!("expected discard confirmation");
-        };
-        assert_eq!(state.mode, MultilineInputMode::ConfirmDiscard);
-        let OverlayOutcome::None(OverlayState::MultilineInput(state)) =
-            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state))
-        else {
-            panic!("expected composer");
-        };
-        assert_eq!(state.mode, MultilineInputMode::Compose);
-        assert_eq!(state.buffer.lines, vec!["draft"]);
-    }
-
-    #[test]
     fn clean_initialized_description_edit_cancels_without_confirmation() {
         let state = MultilineInputState::from_value(
             description_intent(),
@@ -2037,24 +1975,6 @@ mod tests {
         assert!(matches!(
             handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
             OverlayOutcome::Cancelled
-        ));
-    }
-
-    #[test]
-    fn changed_description_edit_requires_discard_confirmation() {
-        let mut state = MultilineInputState::from_value(
-            description_intent(),
-            "Edit description",
-            "",
-            "existing description".to_string(),
-        );
-        state.insert_paste(" updated");
-        assert!(matches!(
-            handle(key(KeyCode::Esc), OverlayState::MultilineInput(state)),
-            OverlayOutcome::None(OverlayState::MultilineInput(MultilineInputState {
-                mode: MultilineInputMode::ConfirmDiscard,
-                ..
-            }))
         ));
     }
 

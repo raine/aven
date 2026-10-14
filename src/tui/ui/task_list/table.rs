@@ -536,106 +536,48 @@ mod tests {
     }
 
     #[test]
-    fn task_header_labels_age_column() {
-        let backend = TestBackend::new(80, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let columns = [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Length(12),
-            Constraint::Length(6),
-            Constraint::Length(9),
-            Constraint::Length(10),
-            Constraint::Length(3),
-            Constraint::Length(5),
-            Constraint::Length(6),
-        ];
-        terminal
-            .draw(|frame| {
-                render_task_header(
-                    frame,
-                    THEME,
-                    frame.area(),
-                    TableLayout::resolve(&columns, &TableColumn::DEFAULT, frame.area().width),
-                    TaskListRenderMode::Flat,
-                    false,
-                    false,
-                    false,
-                )
-            })
-            .unwrap();
-
-        let rendered = buffer_text(terminal.backend().buffer());
-        assert!(rendered.contains("AGE"));
-        assert!(!rendered.contains("IDLE"));
-    }
-
-    #[test]
-    fn task_header_labels_mixed_deferred_time_column() {
-        let backend = TestBackend::new(80, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let columns = [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Length(12),
-            Constraint::Length(6),
-            Constraint::Length(9),
-            Constraint::Length(10),
-            Constraint::Length(3),
-            Constraint::Length(5),
-            Constraint::Length(6),
-        ];
-        terminal
-            .draw(|frame| {
-                render_task_header(
-                    frame,
-                    THEME,
-                    frame.area(),
-                    TableLayout::resolve(&columns, &TableColumn::DEFAULT, frame.area().width),
-                    TaskListRenderMode::Flat,
-                    true,
-                    false,
-                    false,
-                )
-            })
-            .unwrap();
-
-        let rendered = buffer_text(terminal.backend().buffer());
-        assert!(rendered.contains("TIME"));
-        assert!(!rendered.contains("AGE"));
-    }
-
-    #[test]
-    fn due_order_labels_and_populates_due_column() {
-        let backend = TestBackend::new(80, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let columns = [
-            Constraint::Length(12),
-            Constraint::Fill(1),
-            Constraint::Length(12),
-            Constraint::Length(6),
-            Constraint::Length(9),
-            Constraint::Length(10),
-            Constraint::Length(3),
-            Constraint::Length(5),
-            Constraint::Length(6),
-        ];
-        terminal
-            .draw(|frame| {
-                render_task_header(
-                    frame,
-                    THEME,
-                    frame.area(),
-                    TableLayout::resolve(&columns, &TableColumn::DEFAULT, frame.area().width),
-                    TaskListRenderMode::Flat,
-                    false,
-                    true,
-                    false,
-                )
-            })
-            .unwrap();
-        assert!(buffer_text(terminal.backend().buffer()).contains("DUE"));
-
+    fn task_header_tracks_age_deferred_and_due_order() {
+        for (deferred, due_order, heading, absent) in [
+            (false, false, "AGE", "IDLE"),
+            (true, false, "TIME", "AGE"),
+            (false, true, "DUE", "AGE"),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+            let columns = [
+                Constraint::Length(12),
+                Constraint::Fill(1),
+                Constraint::Length(12),
+                Constraint::Length(6),
+                Constraint::Length(9),
+                Constraint::Length(10),
+                Constraint::Length(3),
+                Constraint::Length(5),
+                Constraint::Length(6),
+            ];
+            terminal
+                .draw(|frame| {
+                    render_task_header(
+                        frame,
+                        THEME,
+                        frame.area(),
+                        TableLayout::resolve(&columns, &TableColumn::DEFAULT, frame.area().width),
+                        TaskListRenderMode::Flat,
+                        deferred,
+                        due_order,
+                        false,
+                    )
+                })
+                .unwrap();
+            let rendered = buffer_text(terminal.backend().buffer());
+            assert!(
+                rendered.contains(heading),
+                "{deferred}/{due_order}: {rendered}"
+            );
+            assert!(
+                !rendered.contains(absent),
+                "{deferred}/{due_order}: {rendered}"
+            );
+        }
         let mut item = task_list_item("future deadline");
         item.task.due_on = Some("2999-01-01".to_string());
         let cell = task_time_cell(THEME, &item, 0, TaskListRenderMode::Flat, true, true);

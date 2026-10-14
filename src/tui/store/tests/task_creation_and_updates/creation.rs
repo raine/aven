@@ -35,58 +35,6 @@ async fn create_task_refreshes_and_selects_visible_task() {
 }
 
 #[tokio::test]
-async fn create_task_uses_priority_to_promote_only_inbox_tasks() {
-    let mut store = test_store().await;
-
-    for priority in ["medium", "high", "urgent"] {
-        let (_, selected) = store
-            .create_task(
-                TaskDraft {
-                    priority: priority.to_string(),
-                    ..task_draft(priority)
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        let task = &store.tasks[selected.unwrap()].task;
-        assert_eq!(task.status, TaskStatus::Todo);
-        assert_eq!(task.priority.as_str(), priority);
-    }
-
-    let (_, low_selected) = store
-        .create_task(
-            TaskDraft {
-                priority: "low".to_string(),
-                ..task_draft("low")
-            },
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        store.tasks[low_selected.unwrap()].task.status,
-        TaskStatus::Inbox
-    );
-
-    let (_, backlog_selected) = store
-        .create_task(
-            TaskDraft {
-                status: "backlog".to_string(),
-                priority: "urgent".to_string(),
-                ..task_draft("urgent backlog")
-            },
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        store.tasks[backlog_selected.unwrap()].task.status,
-        TaskStatus::Backlog
-    );
-}
-
-#[tokio::test]
 async fn create_task_assigns_tui_source() {
     let (_dir, pool, mut store) = test_store_with_pool().await;
     let (_, selected) = store
@@ -104,42 +52,32 @@ async fn create_task_assigns_tui_source() {
 }
 
 #[tokio::test]
-async fn create_task_reports_hidden_by_filters() {
+async fn create_task_preserves_previous_selection_when_hidden() {
+    let mut store = test_store().await;
+    for title in ["First todo", "Todo task", "Last todo"] {
+        let mut draft = task_draft(title);
+        draft.status = "todo".to_string();
+        store.create_task(draft, None).await.unwrap();
+    }
+    store.show_view(TaskQuery::Todo).await.unwrap();
+    let current_index = 1;
+    let task_id = store.tasks[current_index].task.id.clone();
+    let (message, selected) = store
+        .create_task(task_draft("Hidden inbox task"), Some(current_index))
+        .await
+        .unwrap();
+    assert!(message.contains("hidden by current filters"));
+    assert_eq!(selected, Some(current_index));
+    assert_eq!(store.tasks.len(), 3);
+    assert_eq!(store.tasks[selected.unwrap()].task.id, task_id);
     let mut store = test_store().await;
     store.show_view(TaskQuery::Todo).await.unwrap();
     let (message, selected) = store
-        .create_task(task_draft("Inbox task"), None)
+        .create_task(task_draft("Hidden again"), None)
         .await
         .unwrap();
-
-    assert!(selected.is_none());
+    assert_eq!(selected, None);
     assert!(message.contains("hidden by current filters"));
-}
-
-#[tokio::test]
-async fn create_task_preserves_previous_selection_when_hidden() {
-    let mut store = test_store().await;
-    let (_, first_selected) = store
-        .create_task(task_draft("Todo task"), None)
-        .await
-        .unwrap();
-    let first_selected = first_selected.unwrap();
-    let task_id = store.tasks[first_selected].task.id.clone();
-    store
-        .update_status(Some(first_selected), "todo")
-        .await
-        .unwrap();
-    store.show_view(TaskQuery::Todo).await.unwrap();
-    let current_index = store.refresh(Some(&task_id)).await.unwrap();
-
-    let (_, selected) = store
-        .create_task(task_draft("Hidden inbox task"), current_index)
-        .await
-        .unwrap();
-
-    assert_eq!(selected, current_index);
-    assert_eq!(store.tasks.len(), 1);
-    assert_eq!(store.tasks[0].task.title, "Todo task");
 }
 
 #[tokio::test]

@@ -3,6 +3,8 @@ use anyhow::Result;
 use aven_core::{
     change_log, choices, db, ids, labels, query, queue, refs, task_fields, types, undo,
 };
+#[cfg(target_os = "macos")]
+mod app_bundle;
 mod attachments;
 mod cli;
 mod clipboard;
@@ -23,6 +25,7 @@ pub mod peer_enrollment_http;
 mod projects;
 pub mod protected_local_keys;
 mod recurrence_input;
+mod reminders;
 mod render;
 mod routing;
 mod schedule_input;
@@ -38,6 +41,8 @@ mod tui;
 mod update;
 mod workspaces;
 
+#[cfg(test)]
+mod conformance;
 #[cfg(test)]
 mod test_support;
 
@@ -59,7 +64,31 @@ use sync::run_server;
 use workspaces::resolve_active_workspace_with_routing;
 
 pub async fn run_cli() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    if launched_as_bare_app() {
+        return Ok(());
+    }
     run_cli_from(std::env::args_os()).await
+}
+
+/// Launch Services starts Aven.app's executable with no arguments and no
+/// terminal when a notification is clicked or the app is opened. There is
+/// nothing to show, so the launch exits quietly instead of failing to start
+/// the TUI.
+#[cfg(target_os = "macos")]
+fn launched_as_bare_app() -> bool {
+    let no_arguments = std::env::args_os()
+        .skip(1)
+        .all(|arg| arg.to_string_lossy().starts_with("-psn_"));
+    no_arguments
+        && std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .is_err()
+        && std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .is_ok_and(|executable| app_bundle::enclosing_bundle(&executable).is_some())
 }
 
 pub fn report_cli_error(error: &anyhow::Error) {
@@ -262,13 +291,16 @@ async fn dispatch_standalone(
                 let database = db::Database::open(&db_path).await?;
                 cmd_internal_natural_add(&database, &config, args).await
             }
+            InternalSubcommand::ReloadDaemon => daemon::reload_service_definition(),
         },
         StandaloneCommand::Daemon(args) => {
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(db, &config)?;
             match args.command {
                 None => daemon::run(daemon::DaemonRunArgs { db_path, config }).await,
-                Some(DaemonSubcommand::Status(args)) => cmd_daemon_status(&config, args.json),
+                Some(DaemonSubcommand::Status(args)) => {
+                    cmd_daemon_status(&config, &db_path, args.json).await
+                }
                 Some(DaemonSubcommand::Install(args)) => {
                     daemon::install(daemon::ServiceInstallArgs {
                         db_path,

@@ -66,6 +66,14 @@ impl App {
                             None => SyncDialogOutcome::Retained(state),
                         }
                     }
+                    crate::tui::ui::SyncDialogHit::CloudLink => {
+                        if let Err(error) = crate::tui::platform::open_url_in_default_browser(
+                            "https://cloud.aventasks.dev/",
+                        ) {
+                            self.set_warning(format!("Could not open Aven Cloud: {error:#}"));
+                        }
+                        SyncDialogOutcome::Retained(state)
+                    }
                     crate::tui::ui::SyncDialogHit::Inside => SyncDialogOutcome::Retained(state),
                     // Clicking away closes the view; unsubmitted forms are
                     // discarded and running work continues.

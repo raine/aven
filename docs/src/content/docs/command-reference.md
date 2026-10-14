@@ -89,7 +89,7 @@ aven edit APP-7KQ9 --available-at "tomorrow at 14:30"
 
 ### Due date input
 
-A due date describes when completion is expected. It does not control visibility, change status, clear availability, or create a reminder or notification. A task can be available before its deadline, deferred beyond its deadline, or have either field on its own.
+A due date describes when completion is expected. It does not control visibility, change status, or clear availability. With [reminders](/notifications/#reminders) on, due and overdue tasks appear in the daily digest. A task can be available before its deadline, deferred beyond its deadline, or have either field on its own.
 
 `aven add --due`, `aven edit --due`, natural task intake, and the TUI use the date expressions from [Availability input](#availability-input), including compact offsets, calendar months, `next week`, named weekdays, and ISO dates. Due dates are local-calendar values stored as `YYYY-MM-DD`. They reject times, UTC timestamps, and Unix timestamps because a deadline is date-only.
 
@@ -1030,13 +1030,17 @@ aven sync status --json
 ```
 
 The state is `not-set-up`, `setup-incomplete`, `join-incomplete`,
-`key-change-pending`, `access-refused`, or `ready`.
+`key-change-pending`, `access-refused`, `vault-deleted`, or `ready`.
 `key-change-pending` means an invitation expired after keys may have been sent
 to a device that never joined; the next `aven sync` changes keys before
 uploading new changes. `access-refused` records when the server refused this
 device's credentials. It may have been removed, but the refusal alone does not
 prove that; check from another device. Local tasks and images remain available,
-and a successful sync clears the state. Set-up databases also report the
+and a successful sync clears the state. `vault-deleted` records when the server
+reported this sync's vault deleted, for example after a reset in the hosting
+portal. Automatic sync stops; local tasks and unsynced changes stay. Run
+`aven sync reset`, then `aven sync setup` with a new setup code. A successful
+`aven sync` also clears the state. Set-up databases also report the
 server, whether local changes wait to sync, open conflicts, pending image
 uploads, downloads, and unavailable images, plus whether an invitation is open
 and its expiry. Text output omits the internal server position; JSON retains it. The versioned JSON report omits invitation text, keys, and task
@@ -1126,8 +1130,8 @@ aven conflict resolve APP-7KQ9 description --value-file ./merged.md
 
 ### `aven daemon`
 
-Run synchronization continuously or manage it as a background service on macOS
-or on Linux with systemd.
+Run synchronization and [reminders](/notifications/#reminders) continuously,
+or manage them as a background service on macOS or on Linux with systemd.
 
 ```sh
 aven daemon
@@ -1138,7 +1142,7 @@ aven daemon restart
 aven daemon repair [--if-installed] [--program <path>]
 ```
 
-Running `aven daemon` in the foreground requires `sync.enabled: true`. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
+Running `aven daemon` in the foreground requires `sync.enabled: true`, `reminders.enabled: true`, or both. With only reminders on, it sends reminders and does not sync. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
 
 `daemon status` is observational. It reports platform support, installation,
 loaded and running state, executable consistency, configuration validity,
@@ -1148,10 +1152,12 @@ service and log paths, and a recovery action. Its JSON states are
 Service management is available on macOS, as a LaunchAgent, and on Linux, as a
 systemd user service named `aven-daemon.service`:
 
-- `install` writes, enables, and starts the service. It records the resolved database, config directory, and executable. On macOS it also records log paths; on Linux output goes to the journal (`journalctl --user -u aven-daemon.service`). `--program` stores an explicit executable path instead of the running binary.
+- `install` writes, enables, and starts the service. It records the resolved database, config directory, and executable. On macOS it also records log paths, and an executable inside `Aven.app` is recorded by its bundle path so Login Items lists the daemon as Aven; on Linux output goes to the journal (`journalctl --user -u aven-daemon.service`). `--program` stores an explicit executable path instead of the running binary.
 - `uninstall` stops and removes the service file.
 - `restart` restarts the service.
 - `repair` rewrites and restarts an installed service from active configuration. `--if-installed` succeeds without changes when the service is absent. `--program` selects the stored executable path.
+
+On macOS, a daemon that runs `Aven.app`'s executable through a symlink, such as Homebrew's `bin/aven`, moves its LaunchAgent to the bundle path when it starts. It keeps the recorded database, environment, and log paths, and reloads the service from a separate process. It leaves a disabled service, or a plist edited outside aven, unchanged; `aven daemon status` then suggests `aven daemon repair`.
 
 On Linux, a systemd user service stops when you log out unless lingering is
 enabled with `loginctl enable-linger`.
@@ -1319,6 +1325,8 @@ aven update [--yes]
 Package-manager installations receive manager-specific update instructions. Direct installations report an available release without changing the executable unless `--yes` is supplied.
 
 A direct update downloads the platform archive, verifies it, replaces the current executable, and asks you to restart running aven processes. Cached release information is used when a fresh check fails and a valid cache entry exists.
+
+On macOS, aven runs from `Aven.app`, and a direct update replaces the whole bundle. A standalone `aven` executable is replaced by a symlink to `~/.local/share/aven/Aven.app/Contents/MacOS/aven`. An installed daemon restarts on the new executable and moves its LaunchAgent into the bundle.
 
 ```sh
 aven update

@@ -23,6 +23,12 @@ Or install the prebuilt release binary with Nix:
 nix profile install https://github.com/raine/aven/releases/latest/download/aven-nix.tar.gz
 ```
 
+## Terminal font
+
+Some TUI icons require a [Nerd Font](https://www.nerdfonts.com/). Install one and
+select it as the font in your terminal profile. Without it, some icons may appear
+as blanks or boxes.
+
 ## Open Aven
 
 ```sh

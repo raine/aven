@@ -167,6 +167,7 @@ async fn detail_back_escape_restores_parent_scroll_and_child_focus() {
     assert_eq!(app.store.tasks[selected].task.id, parent_id);
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
+    assert_eq!(detail_scroll(&app), 7);
     assert_eq!(
         app.detail
             .state_mut()

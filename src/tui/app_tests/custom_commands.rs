@@ -246,23 +246,6 @@ async fn app_projects_active_invocation_paths_and_excludes_environment_values() 
 }
 
 #[tokio::test]
-async fn configured_keybinding_executes_custom_command() {
-    let mut app = test_app().await;
-    let mut app_config = config("/usr/bin/tee", CustomTuiCommandSuccess::Stay);
-    app_config.tui.commands[0].keys = vec!["z d".to_string()];
-    app.set_config(app_config);
-
-    app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
-    assert!(!app.pending_shortcut.is_empty());
-    app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
-    assert!(app.pending_shortcut.is_empty());
-    assert!(toast_message(&app).unwrap().contains("running :dispatch"));
-
-    poll_until_complete(&mut app).await;
-    assert!(toast_message(&app).unwrap().contains("completed"));
-}
-
-#[tokio::test]
 async fn detail_keybinding_override_executes_custom_command() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("Detail task")).await;
@@ -312,21 +295,6 @@ async fn failed_waiting_command_leaves_app_open_with_error() {
 }
 
 #[tokio::test]
-async fn successful_stay_policy_leaves_app_open() {
-    let mut app = test_app().await;
-    app.set_config(config("/usr/bin/tee", CustomTuiCommandSuccess::Stay));
-
-    execute_custom_command(&mut app, 0, "dispatch")
-        .await
-        .unwrap();
-    poll_until_complete(&mut app).await;
-
-    assert!(!app.should_quit);
-    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
-    assert!(toast_message(&app).unwrap().contains("completed"));
-}
-
-#[tokio::test]
 async fn stay_policy_retains_the_current_projection_after_external_mutation() {
     let mut app = test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("Before stay")).await;
@@ -352,6 +320,8 @@ async fn stay_policy_retains_the_current_projection_after_external_mutation() {
 
     assert_eq!(app.store.tasks[selected].task.title, "Before stay");
     assert!(!app.should_quit);
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Info));
+    assert!(toast_message(&app).unwrap().contains("completed"));
 }
 
 #[tokio::test]
@@ -825,58 +795,6 @@ async fn marked_target_requires_marks_and_preserves_visible_order_in_list_and_de
 }
 
 #[tokio::test]
-async fn marked_or_focused_falls_back_then_prefers_marks() {
-    let dir = tempfile::tempdir().unwrap();
-    let fallback_path = dir.path().join("fallback.json");
-    let marked_path = dir.path().join("marked.json");
-    let mut app = test_app().await;
-    let primary = create_and_select_task(&mut app, test_task_draft("primary")).await;
-    let primary_id = app.store.tasks[primary].task.id.clone();
-    let marked = create_and_select_task(&mut app, test_task_draft("marked")).await;
-    let marked_id = app.store.tasks[marked].task.id.clone();
-    let primary = app
-        .store
-        .tasks
-        .iter()
-        .position(|item| item.task.id == primary_id)
-        .unwrap();
-    app.list.select_task(Some(primary));
-    app.set_config(capture_config(
-        &fallback_path,
-        CustomTuiCommandTarget::MarkedOrFocused,
-        vec![],
-    ));
-
-    execute_custom_command(&mut app, 0, "dispatch")
-        .await
-        .unwrap();
-    poll_until_complete(&mut app).await;
-    let fallback = captured_json(&fallback_path);
-    assert_eq!(fallback["targeting"]["resolved_from"], "focused");
-    assert_eq!(
-        fallback["targeting"]["targets"][0]["id"],
-        primary_id.as_str()
-    );
-
-    app.list.mark(marked_id.clone());
-    app.set_config(capture_config(
-        &marked_path,
-        CustomTuiCommandTarget::MarkedOrFocused,
-        vec![],
-    ));
-    execute_custom_command(&mut app, 0, "dispatch")
-        .await
-        .unwrap();
-    poll_until_complete(&mut app).await;
-    let preferred = captured_json(&marked_path);
-    assert_eq!(preferred["targeting"]["resolved_from"], "marked");
-    assert_eq!(
-        preferred["targeting"]["targets"][0]["id"],
-        marked_id.as_str()
-    );
-}
-
-#[tokio::test]
 async fn palette_and_shortcut_invocations_produce_identical_targets() {
     let dir = tempfile::tempdir().unwrap();
     let palette_path = dir.path().join("palette.json");
@@ -909,11 +827,23 @@ async fn palette_and_shortcut_invocations_produce_identical_targets() {
         vec!["z d".to_string()],
     ));
     app.handle_normal_key(KeyCode::Char('z')).await.unwrap();
+    assert!(!app.pending_shortcut.is_empty());
     app.handle_normal_key(KeyCode::Char('d')).await.unwrap();
+    assert!(app.pending_shortcut.is_empty());
+    assert!(toast_message(&app).unwrap().contains("running :dispatch"));
     poll_until_complete(&mut app).await;
+    assert!(toast_message(&app).unwrap().contains("completed"));
 
     let palette = captured_json(&palette_path);
     let shortcut = captured_json(&shortcut_path);
+    assert_eq!(palette["targeting"]["resolved_from"], "marked");
+    for (index, item) in app.store.tasks.iter().enumerate() {
+        assert_eq!(
+            palette["targeting"]["targets"][index]["id"],
+            item.task.id.as_str()
+        );
+    }
+    assert_eq!(palette["targeting"]["targets"].as_array().unwrap().len(), 2);
     assert_eq!(palette["targeting"], shortcut["targeting"]);
     assert_eq!(palette["selection"], shortcut["selection"]);
 }

@@ -95,7 +95,7 @@ async fn visible_counts(pool: &SqlitePool) -> (i64, i64, i64, i64) {
 
 #[tokio::test]
 async fn creates_task_and_attachments_as_one_core_operation() {
-    let (temp, database, _) = setup().await;
+    let (temp, database, pool) = setup().await;
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let blob_dir = temp.path().join("blobs");
 
@@ -128,6 +128,29 @@ async fn creates_task_and_attachments_as_one_core_operation() {
     assert_eq!(tasks[0].task.id, outcome.task.id);
     assert_eq!(tasks[0].attachments.len(), 2);
     assert!(tasks[0].attachments.iter().all(|item| item.has_blob));
+
+    let first = database
+        .delete_task_attachment(&workspace, "ATTACHMENT000001")
+        .await
+        .unwrap()
+        .attachment;
+    let retry = database
+        .delete_task_attachment(&workspace, "ATTACHMENT000001")
+        .await
+        .unwrap()
+        .attachment;
+    assert!(first.deleted && retry.deleted);
+    assert!(first.deleted_at.is_some());
+    assert_eq!(retry.deleted_at, first.deleted_at);
+    assert_eq!(retry.deleted_by_change_id, first.deleted_by_change_id);
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM task_attachments WHERE deleted = 1),
+                (SELECT count(*) FROM changes WHERE op_type = 'attachment_delete')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1));
 }
 
 #[tokio::test]

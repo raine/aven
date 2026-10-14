@@ -546,7 +546,7 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         }],
         Action::NextItem,
     ),
-    BuiltInCommand::implemented(
+    BuiltInCommand::implemented_global_in_detail(
         "first",
         "jump to the first item",
         "Navigation",
@@ -562,7 +562,7 @@ pub(crate) const COMMANDS: &[BuiltInCommand] = &[
         ],
         Action::First,
     ),
-    BuiltInCommand::implemented(
+    BuiltInCommand::implemented_global_in_detail(
         "last",
         "jump to the last item",
         "Navigation",

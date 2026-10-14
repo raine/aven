@@ -104,6 +104,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_override_paths_fall_back_to_git_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("git-fallback");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let config_path = dir.path().join("config.yaml");
+        std::fs::write(
+            &config_path,
+            format!(
+                "project:\n  overrides:\n    - project: Missing\n      paths: ['{}']\n",
+                dir.path().join("missing").display()
+            ),
+        )
+        .unwrap();
+        let config = AppConfig::load_from_path(&config_path).unwrap();
+        let routing = InvocationRouting {
+            invocation_cwd: Ok(repo),
+            ..InvocationRouting::new(&config)
+        };
+        let (database, _) = crate::test_support::open_database(&dir.path().join("db.sqlite"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            inferred_project_key_for_add_with_routing(&database, &Workspace::default(), &routing)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("git-fallback")
+        );
+    }
+
+    #[tokio::test]
     async fn explicit_workspace_bypasses_invalid_cwd() {
         let dir = tempfile::tempdir().unwrap();
         let config = AppConfig::default();

@@ -406,10 +406,13 @@ mod tests {
 
     #[test]
     fn task_preview_fields_show_created_timestamp() {
-        let item = task_list_item("preview");
+        let mut item = task_list_item("preview");
+        item.task.created_at = "unparsed-created-at".to_string();
+        item.task.updated_at = "different-updated-at".to_string();
         let rendered = task_preview_fields_line(THEME, &item).to_string();
 
-        assert!(rendered.contains("created "));
+        assert!(rendered.ends_with("  created unparsed-created-at"));
+        assert!(!rendered.contains("different-updated-at"));
     }
 
     #[test]

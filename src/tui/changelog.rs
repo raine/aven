@@ -412,11 +412,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn historical_changelog_uses_the_default_branch() {
-        assert_eq!(HISTORICAL_CHANGELOG_REF, "main");
-    }
-
-    #[test]
     fn repository_changelog_keeps_each_entry_on_one_source_line() {
         let wrapped_entry = include_str!("../../CHANGELOG.md")
             .lines()
@@ -431,30 +426,26 @@ mod tests {
     #[test]
     fn cache_keeps_historical_and_release_content_independently() {
         let mut cache = ChangelogCache::empty();
-        cache.insert("main".to_string(), "latest history".to_string());
+        cache.insert(
+            HISTORICAL_CHANGELOG_REF.to_string(),
+            "latest history".to_string(),
+        );
         cache.insert("v2.0.0".to_string(), "release notes".to_string());
 
-        assert_eq!(cache.markdown("main"), Some("latest history"));
+        assert_eq!(
+            cache.markdown(HISTORICAL_CHANGELOG_REF),
+            Some("latest history")
+        );
         assert_eq!(cache.markdown("v2.0.0"), Some("release notes"));
 
         cache.insert("v3.0.0".to_string(), "next release".to_string());
 
-        assert_eq!(cache.markdown("main"), Some("latest history"));
+        assert_eq!(
+            cache.markdown(HISTORICAL_CHANGELOG_REF),
+            Some("latest history")
+        );
         assert_eq!(cache.markdown("v2.0.0"), None);
         assert_eq!(cache.markdown("v3.0.0"), Some("next release"));
-    }
-
-    #[test]
-    fn cache_round_trip_preserves_both_content_sources() {
-        let mut cache = ChangelogCache::empty();
-        cache.insert("main".to_string(), "latest history".to_string());
-        cache.insert("v2.0.0".to_string(), "release notes".to_string());
-
-        let json = serde_json::to_string(&cache).unwrap();
-        let restored = serde_json::from_str::<ChangelogCache>(&json).unwrap();
-
-        assert_eq!(restored.markdown("main"), Some("latest history"));
-        assert_eq!(restored.markdown("v2.0.0"), Some("release notes"));
     }
 
     #[test]

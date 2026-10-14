@@ -1,28 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn delete_task_opens_confirmation_with_task_context() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Delete target")).await;
-    let display_ref = app.store.tasks[selected].display_ref.clone();
-
-    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            intent: ConfirmIntent::DeleteTasks { .. },
-            ref title,
-            ref prompt,
-        })) if title == DELETE_TASK_TITLE
-            && prompt.contains(&display_ref)
-            && prompt.contains("Delete target")
-    ));
-    assert!(!app.store.tasks[selected].task.deleted);
-}
-
-#[tokio::test]
 async fn cancel_delete_task_leaves_task_unchanged() {
     let mut app = test_app().await;
     let selected = create_and_select_task(&mut app, test_task_draft("Keep target")).await;
@@ -45,6 +23,16 @@ async fn confirm_delete_task_soft_deletes_selected_task() {
 
     app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(state))
+            if matches!(&state.intent, ConfirmIntent::DeleteTasks { selection }
+                if selection.single_id() == Some(&task_id))
+                && state.title == DELETE_TASK_TITLE
+                && state.prompt.contains(&display_ref)
+                && state.prompt.contains("Delete target")
+    ));
+    assert!(!app.store.tasks[selected].task.deleted);
     app.handle_overlay_key(key(KeyCode::Char('y')))
         .await
         .unwrap();
@@ -97,46 +85,6 @@ async fn delete_task_from_detail_returns_to_detail() {
     assert!(app.overlay.is_none());
     assert!(app.detail.is_active());
     assert!(app.store.tasks[selected].task.deleted);
-}
-
-#[tokio::test]
-async fn rename_project_opens_project_picker_from_task_focus() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.execute(Action::BeginRenameProject).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Picker(PickerState {
-            intent: PickerIntent::RenameProject,
-            ..
-        }))
-    ));
-    assert!(app.notification.is_none());
-}
-
-#[tokio::test]
-async fn delete_project_opens_project_picker_from_task_focus() {
-    let mut app = test_app().await;
-    app.store
-        .create_project("Mobile App".to_string())
-        .await
-        .unwrap();
-
-    app.execute(Action::BeginDeleteProject).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Picker(PickerState {
-            intent: PickerIntent::DeleteProject,
-            ..
-        }))
-    ));
-    assert!(app.notification.is_none());
 }
 
 #[tokio::test]
@@ -325,6 +273,11 @@ async fn rename_project_submission_updates_selected_project() {
         .unwrap();
 
     app.execute(Action::BeginRenameProject).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Picker(state)) if state.intent == PickerIntent::RenameProject
+    ));
+    assert!(app.notification.is_none());
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert!(matches!(
@@ -378,6 +331,11 @@ async fn delete_project_confirmation_removes_selected_project() {
         .unwrap();
 
     app.execute(Action::BeginDeleteProject).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Picker(state)) if state.intent == PickerIntent::DeleteProject
+    ));
+    assert!(app.notification.is_none());
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
     assert!(matches!(

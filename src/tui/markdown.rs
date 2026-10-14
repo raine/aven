@@ -1000,8 +1000,7 @@ mod tests {
         let input = "- Item 1\n  continuation";
         let rendered = render_to_text(input, 40);
         let lines: Vec<&str> = rendered.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[1].starts_with("  "));
+        assert_eq!(lines, ["- Item 1", "  continuation"]);
     }
 
     #[test]
@@ -1015,15 +1014,13 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_image_with_custom_destination_renders_alt_text() {
-        let rendered = render_to_text("![Chart](custom-image:chart)", 80);
-        assert_eq!(rendered, "Chart");
-    }
-
-    #[test]
     fn ordinary_image_renders_alt_text_without_url_suffix() {
-        let rendered = render_to_text("![Chart](https://example.com/chart.png)", 80);
-        assert_eq!(rendered, "Chart");
+        for destination in ["https://example.com/chart.png", "custom-image:chart"] {
+            assert_eq!(
+                render_to_text(&format!("![Chart]({destination})"), 80),
+                "Chart"
+            );
+        }
     }
 
     #[test]
@@ -1040,6 +1037,7 @@ mod tests {
     fn unicode_width_wrapping_respects_display_width() {
         let input = "日本語テスト";
         let rendered = render_to_text(input, 4);
+        assert_eq!(rendered.lines().collect::<String>(), input);
         for line in rendered.lines() {
             assert!(line.width() <= 4, "line too wide: {line:?}");
         }

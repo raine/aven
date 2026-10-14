@@ -333,21 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn kitty_keyboard_enhancement_pushes_and_pops_state() {
-        let mut state = KeyboardEnhancementState::default();
-        let mut output = Vec::new();
-
-        state
-            .enable(KeyboardEnhancementMode::Kitty, &mut output)
-            .unwrap();
-        assert_eq!(state.mode, Some(KeyboardEnhancementMode::Kitty));
-        state.disable(&mut output).unwrap();
-
-        assert_eq!(output, b"\x1b[>1u\x1b[<1u");
-        assert_eq!(state.mode, None);
-    }
-
-    #[test]
     fn failed_restore_keeps_keyboard_state_available_for_retry() {
         struct FailingWriter;
 

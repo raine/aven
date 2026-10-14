@@ -6,47 +6,58 @@ use crate::db::insert_change;
 use crate::workspaces::Workspace;
 
 pub mod op_type {
-    pub const CREATE_TASK: &str = "create_task";
-    pub const MOVE_TASKS: &str = "move_tasks";
-    pub const SET_FIELD: &str = "set_field";
-    pub const RESOLVE_FIELD: &str = "resolve_field";
-    pub const LABEL_ADD: &str = "label_add";
-    pub const LABEL_REMOVE: &str = "label_remove";
-    pub const NOTE_ADD: &str = "note_add";
-    pub const NOTE_EDIT: &str = "note_edit";
-    pub const NOTE_DELETE: &str = "note_delete";
-    pub const DEPENDENCY_ADD: &str = "dependency_add";
-    pub const DEPENDENCY_REMOVE: &str = "dependency_remove";
-    pub const RELATED_ADD: &str = "related_add";
-    pub const RELATED_REMOVE: &str = "related_remove";
-    pub const EPIC_LINK_ADD: &str = "epic_link_add";
-    pub const EPIC_LINK_REMOVE: &str = "epic_link_remove";
-    pub const ATTACHMENT_ADD: &str = "attachment_add";
-    pub const ATTACHMENT_DELETE: &str = "attachment_delete";
-    pub const CREATE_PROJECT: &str = "create_project";
-    pub const SET_PROJECT_METADATA: &str = "set_project_metadata";
-    pub const PROJECT_DELETE: &str = "project_delete";
-    pub const CREATE_LABEL: &str = "create_label";
-    pub const SET_LABEL_NAME: &str = "set_label_name";
-    pub const LABEL_DELETE: &str = "label_delete";
-    pub const LABEL_RESTORE: &str = "label_restore";
-    pub const CREATE_WORKSPACE: &str = "create_workspace";
-    pub const SET_WORKSPACE_FIELD: &str = "set_workspace_field";
-    pub const CREATE_RECURRENCE_SERIES: &str = "create_recurrence_series";
-    pub const UPDATE_RECURRENCE_TEMPLATE: &str = "update_recurrence_template";
-    pub const PROJECT_RECURRENCE_OCCURRENCE: &str = "project_recurrence_occurrence";
-    pub const RESOLVE_RECURRENCE_OCCURRENCE: &str = "resolve_recurrence_occurrence";
-    pub const SET_RECURRENCE_STATE: &str = "set_recurrence_state";
-    pub const CREATE_METADATA_FIELD: &str = "create_metadata_field";
-    pub const SET_METADATA_FIELD: &str = "set_metadata_field";
-    pub const SET_TASK_METADATA: &str = "set_task_metadata";
-    pub const REMOVE_TASK_METADATA: &str = "remove_task_metadata";
-    pub const SET_RECURRENCE_METADATA: &str = "set_recurrence_metadata";
-    pub const REMOVE_RECURRENCE_METADATA: &str = "remove_recurrence_metadata";
-    pub const OPEN_RECURRENCE_PAUSE: &str = "open_recurrence_pause";
-    pub const CLOSE_RECURRENCE_PAUSE: &str = "close_recurrence_pause";
-    pub const STOP_RECURRENCE_SERIES: &str = "stop_recurrence_series";
-    pub const PUBLISH_DEVICE_LABEL: &str = "publish_device_label";
+    macro_rules! operations {
+        ($($name:ident = $value:literal;)*) => {
+            $(pub const $name: &str = $value;)*
+
+            /// Every registered operation, in released vocabulary order.
+            pub const ALL: &[&str] = &[$($name),*];
+        };
+    }
+
+    operations! {
+        CREATE_TASK = "create_task";
+        MOVE_TASKS = "move_tasks";
+        SET_FIELD = "set_field";
+        RESOLVE_FIELD = "resolve_field";
+        LABEL_ADD = "label_add";
+        LABEL_REMOVE = "label_remove";
+        NOTE_ADD = "note_add";
+        NOTE_EDIT = "note_edit";
+        NOTE_DELETE = "note_delete";
+        DEPENDENCY_ADD = "dependency_add";
+        DEPENDENCY_REMOVE = "dependency_remove";
+        RELATED_ADD = "related_add";
+        RELATED_REMOVE = "related_remove";
+        EPIC_LINK_ADD = "epic_link_add";
+        EPIC_LINK_REMOVE = "epic_link_remove";
+        ATTACHMENT_ADD = "attachment_add";
+        ATTACHMENT_DELETE = "attachment_delete";
+        CREATE_PROJECT = "create_project";
+        SET_PROJECT_METADATA = "set_project_metadata";
+        PROJECT_DELETE = "project_delete";
+        CREATE_LABEL = "create_label";
+        SET_LABEL_NAME = "set_label_name";
+        LABEL_DELETE = "label_delete";
+        LABEL_RESTORE = "label_restore";
+        CREATE_WORKSPACE = "create_workspace";
+        SET_WORKSPACE_FIELD = "set_workspace_field";
+        CREATE_RECURRENCE_SERIES = "create_recurrence_series";
+        UPDATE_RECURRENCE_TEMPLATE = "update_recurrence_template";
+        PROJECT_RECURRENCE_OCCURRENCE = "project_recurrence_occurrence";
+        RESOLVE_RECURRENCE_OCCURRENCE = "resolve_recurrence_occurrence";
+        SET_RECURRENCE_STATE = "set_recurrence_state";
+        CREATE_METADATA_FIELD = "create_metadata_field";
+        SET_METADATA_FIELD = "set_metadata_field";
+        SET_TASK_METADATA = "set_task_metadata";
+        REMOVE_TASK_METADATA = "remove_task_metadata";
+        SET_RECURRENCE_METADATA = "set_recurrence_metadata";
+        REMOVE_RECURRENCE_METADATA = "remove_recurrence_metadata";
+        OPEN_RECURRENCE_PAUSE = "open_recurrence_pause";
+        CLOSE_RECURRENCE_PAUSE = "close_recurrence_pause";
+        STOP_RECURRENCE_SERIES = "stop_recurrence_series";
+        PUBLISH_DEVICE_LABEL = "publish_device_label";
+    }
 }
 
 pub enum ChangeEntity {

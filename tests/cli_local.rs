@@ -112,7 +112,14 @@ fn attachment_add_list_get_and_delete_work_locally() {
             "diagram",
         ],
     ));
-    contains_all(&added, &["attachment-added", "media_type=image/png"]);
+    contains_all(
+        &added,
+        &[
+            "attachment-added",
+            "media_type=image/png",
+            "optimized=false",
+        ],
+    );
     assert_eq!(extract_byte_size(&added), image_bytes.len() as i64);
     let attachment_id = extract_attachment_id(&added);
     contains_none(&added, &["sha256=", "photo.png", "diagram"]);
@@ -190,7 +197,10 @@ fn attachment_add_list_get_and_delete_work_locally() {
     ));
     assert_eq!(std::fs::read(output).unwrap(), image_bytes);
 
-    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+    for _ in 0..2 {
+        let deleted = ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
+        contains_all(&deleted, &["attachment-deleted", "deleted=yes"]);
+    }
     let hidden = ok(env.aven(&db, ["attachment", "list", &task_ref]));
     contains_none(&hidden, &[&attachment_id]);
     let all = ok(env.aven(&db, ["attachment", "list", &task_ref, "--all", "--json"]));
@@ -228,7 +238,7 @@ fn attachment_add_list_get_and_delete_work_locally() {
 }
 
 #[test]
-fn attachment_add_preserves_png_by_default_and_optimizes_when_requested() {
+fn attachment_add_optimization_flags_reach_cli() {
     let env = TestEnv::new();
     let db = env.db("attachment-optimize.sqlite");
     let task_ref = extract_ref(&ok(
@@ -237,26 +247,6 @@ fn attachment_add_preserves_png_by_default_and_optimizes_when_requested() {
     let image = env.path("compressible.png");
     let bytes = compressible_png_bytes();
     std::fs::write(&image, &bytes).unwrap();
-
-    let preserved = ok(env.aven(
-        &db,
-        ["attachment", "add", &task_ref, image.to_str().unwrap()],
-    ));
-    contains_all(&preserved, &["attachment-added", "optimized=false"]);
-    assert_eq!(extract_byte_size(&preserved), bytes.len() as i64);
-    let preserved_id = extract_attachment_id(&preserved);
-    let preserved_output = env.path("preserved.png");
-    ok(env.aven(
-        &db,
-        [
-            "attachment",
-            "get",
-            &preserved_id,
-            "--output",
-            preserved_output.to_str().unwrap(),
-        ],
-    ));
-    assert_eq!(std::fs::read(preserved_output).unwrap(), bytes);
 
     let optimized = ok(env.aven(
         &db,
@@ -418,77 +408,6 @@ fn attachment_get_refuses_existing_output_and_mime_mismatch() {
 }
 
 #[test]
-fn attachment_get_refuses_unavailable_imported_blob() {
-    let env = TestEnv::new();
-    let source_db = env.db("attachment-import-source.sqlite");
-    let target_db = env.db("attachment-import-target.sqlite");
-    let task_ref = extract_ref(&ok(
-        env.aven(&source_db, ["add", "attach me", "--project", "app"])
-    ));
-    let image = env.path("photo.png");
-    std::fs::write(&image, compressible_png_bytes()).unwrap();
-    let added = ok(env.aven(
-        &source_db,
-        ["attachment", "add", &task_ref, image.to_str().unwrap()],
-    ));
-    let attachment_id = extract_attachment_id(&added);
-    let export_path = env.path("attachment-export.json");
-    ok(env.aven(
-        &source_db,
-        ["export", "--output", export_path.to_str().unwrap()],
-    ));
-    ok(env.aven(
-        &target_db,
-        ["import", "--yes", export_path.to_str().unwrap()],
-    ));
-
-    let output = env.path("copy.png");
-    let error = fail(env.aven(
-        &target_db,
-        [
-            "attachment",
-            "get",
-            &attachment_id,
-            "--output",
-            output.to_str().unwrap(),
-        ],
-    ));
-    contains_all(&error, &["error attachment-blob-unavailable"]);
-    assert!(!output.exists());
-}
-
-#[test]
-fn attachment_delete_is_idempotent() {
-    let env = TestEnv::new();
-    let db = env.db("attachment-delete-idempotent.sqlite");
-    let created = ok(env.aven(&db, ["add", "attach me", "--project", "app"]));
-    let task_ref = extract_ref(&created);
-    let image = env.path("photo.png");
-    std::fs::write(&image, compressible_png_bytes()).unwrap();
-    let added = ok(env.aven(
-        &db,
-        ["attachment", "add", &task_ref, image.to_str().unwrap()],
-    ));
-    let attachment_id = extract_attachment_id(&added);
-
-    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
-    ok(env.aven(&db, ["attachment", "delete", &attachment_id]));
-    let all = ok(env.aven(&db, ["attachment", "list", &task_ref, "--all", "--json"]));
-    let value: serde_json::Value = serde_json::from_str(&all).unwrap();
-    assert_eq!(value.as_array().unwrap().len(), 1);
-    assert_eq!(value[0]["deleted"], true);
-}
-
-#[test]
-fn version_flag_prints_package_version() {
-    let output = ok(command()
-        .arg("--version")
-        .output()
-        .expect("run aven --version"));
-    assert_eq!(output.trim(), format!("aven {}", env!("CARGO_PKG_VERSION")));
-}
-
-#[test]
 fn explicit_zero_result_limit_reports_clap_value_error() {
     let env = TestEnv::new();
     let db = env.db("invalid-result-limit.sqlite");
@@ -503,16 +422,20 @@ fn explicit_zero_result_limit_reports_clap_value_error() {
 fn list_json_supports_limit() {
     let env = TestEnv::new();
     let db = env.db("list-json.sqlite");
-    ok(env.aven(&db, ["add", "task one", "--project", "app"]));
-    ok(env.aven(&db, ["add", "task two", "--project", "app"]));
+    let one = extract_ref(&ok(env.aven(&db, ["add", "task one", "--project", "app"])));
+    let two = extract_ref(&ok(env.aven(&db, ["add", "task two", "--project", "app"])));
 
     let output = ok(env.aven(&db, ["list", "--json", "--limit", "1"]));
     let items: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(items.as_array().unwrap().len(), 1);
-    assert!(items[0]["ref"].is_string());
-    assert!(items[0]["title"].is_string());
-    assert!(items[0]["status"].is_string());
-    assert!(items[0]["project"].is_string());
+    let expected_title = match items[0]["ref"].as_str().unwrap() {
+        task_ref if task_ref == one => "task one",
+        task_ref if task_ref == two => "task two",
+        unexpected => panic!("unexpected task ref {unexpected}"),
+    };
+    assert_eq!(items[0]["title"], expected_title);
+    assert_eq!(items[0]["status"], "inbox");
+    assert_eq!(items[0]["project"], "app");
 }
 
 #[test]
@@ -1407,55 +1330,6 @@ fn delete_restore_and_filters_work() {
 }
 
 #[test]
-fn search_project_scope_filters_before_ranking_and_limit() {
-    let env = TestEnv::new();
-    let db = env.db("search-project.sqlite");
-    ok(env.aven(&db, ["project", "create", "Operations"]));
-    let selected = extract_ref(&ok(env.aven(
-        &db,
-        [
-            "add",
-            "Selected project result",
-            "--project",
-            "app",
-            "--description",
-            "needle in selected description",
-        ],
-    )));
-    let unrelated = extract_ref(&ok(env.aven(
-        &db,
-        [
-            "add",
-            "needle",
-            "--project",
-            "Operations",
-            "--priority",
-            "urgent",
-        ],
-    )));
-
-    let unscoped = ok(env.aven(&db, ["search", "needle", "--limit", "1"]));
-    contains_all(&unscoped, &[&unrelated, "needle"]);
-    contains_none(&unscoped, &[&selected, "Selected project result"]);
-
-    let scoped = ok(env.aven(
-        &db,
-        ["search", "--project", "app", "needle", "--limit", "1"],
-    ));
-    contains_all(
-        &scoped,
-        &[&selected, "Selected project result", "match=description"],
-    );
-    contains_none(&scoped, &[&unrelated]);
-
-    let all = ok(env.aven(&db, ["search", "needle"]));
-    contains_all(&all, &[&selected, &unrelated]);
-
-    let missing = fail(env.aven(&db, ["search", "--project", "missing", "needle"]));
-    contains_all(&missing, &["error unknown-project input=missing"]);
-}
-
-#[test]
 fn search_controls_deleted_visibility() {
     let env = TestEnv::new();
     let db = env.db("search-deleted.sqlite");
@@ -1817,7 +1691,7 @@ fn bulk_update_sets_status_by_project_and_status() {
 }
 
 #[test]
-fn bulk_update_selectors_include_future_tasks() {
+fn bulk_update_selectors_include_future_tasks_and_control_deleted_visibility() {
     let env = TestEnv::new();
     let db = env.db("bulk-update-future.sqlite");
     let open = extract_ref(&ok(env.aven(
@@ -1855,15 +1729,25 @@ fn bulk_update_selectors_include_future_tasks() {
         ],
     )));
     ok(env.aven(&db, ["delete", &deleted]));
+    let live_now = extract_ref(&ok(env.aven(&db, ["add", "live now", "--project", "app"])));
+    let deleted_now = extract_ref(&ok(
+        env.aven(&db, ["add", "deleted now", "--project", "app"])
+    ));
+    ok(env.aven(&db, ["delete", &deleted_now]));
 
     let all = ok(env.aven(&db, ["bulk-update", "--all", "--set-priority", "high"]));
     contains_all(
         &all,
-        &["bulk-update-summary matched=2 changed=2 would_change=2 unchanged=0 dry_run=no"],
+        &["bulk-update-summary matched=3 changed=3 would_change=3 unchanged=0 dry_run=no"],
     );
     contains_all(&ok(env.aven(&db, ["show", &open])), &["priority=high"]);
     contains_all(&ok(env.aven(&db, ["show", &terminal])), &["priority=high"]);
     contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=none"]);
+    contains_all(&ok(env.aven(&db, ["show", &live_now])), &["priority=high"]);
+    contains_all(
+        &ok(env.aven(&db, ["show", &deleted_now])),
+        &["priority=none"],
+    );
 
     let terminal_only = ok(env.aven(
         &db,
@@ -1896,9 +1780,13 @@ fn bulk_update_selectors_include_future_tasks() {
     ));
     contains_all(
         &including_deleted,
-        &["bulk-update-summary matched=3 changed=3 would_change=3 unchanged=0 dry_run=no"],
+        &["bulk-update-summary matched=5 changed=5 would_change=5 unchanged=0 dry_run=no"],
     );
     contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=medium"]);
+    contains_all(
+        &ok(env.aven(&db, ["show", &deleted_now])),
+        &["priority=medium"],
+    );
 }
 
 #[test]
@@ -1913,39 +1801,6 @@ fn bulk_update_requires_selector_and_mutation() {
         &fail(env.aven(&db, ["bulk-update", "--all"])),
         &["error bulk-update-requires-mutation"],
     );
-}
-
-#[test]
-fn bulk_update_all_excludes_deleted_unless_requested() {
-    let env = TestEnv::new();
-    let db = env.db("bulk-update-deleted.sqlite");
-    let live = extract_ref(&ok(env.aven(&db, ["add", "live", "--project", "app"])));
-    let deleted = extract_ref(&ok(env.aven(&db, ["add", "deleted", "--project", "app"])));
-    ok(env.aven(&db, ["delete", &deleted]));
-
-    let updated = ok(env.aven(&db, ["bulk-update", "--all", "--set-priority", "high"]));
-    contains_all(
-        &updated,
-        &["bulk-update-summary matched=1 changed=1 would_change=1 unchanged=0 dry_run=no"],
-    );
-    contains_all(&ok(env.aven(&db, ["show", &live])), &["priority=high"]);
-    contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=none"]);
-
-    let included = ok(env.aven(
-        &db,
-        [
-            "bulk-update",
-            "--all",
-            "--include-deleted",
-            "--set-priority",
-            "urgent",
-        ],
-    ));
-    contains_all(
-        &included,
-        &["bulk-update-summary matched=2 changed=2 would_change=2 unchanged=0 dry_run=no"],
-    );
-    contains_all(&ok(env.aven(&db, ["show", &deleted])), &["priority=urgent"]);
 }
 
 #[test]

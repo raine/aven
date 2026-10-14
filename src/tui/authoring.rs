@@ -879,19 +879,6 @@ mod tests {
     use crate::attachments::optimization::ImageOptimizationPolicy;
 
     #[test]
-    fn add_task_project_selection_retains_flow() {
-        let mut state = AuthoringState::default();
-        state.begin_add_task(None, Some("mobile-app".to_string()));
-        assert!(state.capture_add_task_fields(
-            "Write docs".to_string(),
-            String::new(),
-            AddTaskStep::Title,
-        ));
-        assert!(state.apply_add_task_project(vec!["mobile-app".to_string()]));
-        assert!(state.add_task_context().is_some());
-    }
-
-    #[test]
     fn add_task_priority_promotes_only_inbox_action_priorities() {
         for priority in ["medium", "high", "urgent"] {
             assert_eq!(
@@ -936,7 +923,9 @@ mod tests {
         );
         assert!(matches!(
             state.submit_add_task(),
-            AddTaskTitleSubmit::ReopenTitle { .. }
+            AddTaskTitleSubmit::ReopenTitle {
+                message: "task title is required"
+            }
         ));
         assert_eq!(
             state.add_task_context().unwrap().status,
@@ -968,64 +957,32 @@ mod tests {
     }
 
     #[test]
-    fn add_task_description_is_stored_in_created_draft() {
+    fn add_task_context_and_submission_preserve_authored_fields() {
         let mut state = AuthoringState::default();
-        state.begin_add_task(None, None);
+        state.begin_add_task(None, Some("mobile-app".to_string()));
         assert!(state.capture_add_task_fields(
             "Write docs".to_string(),
             "Details\nfor handoff".to_string(),
             AddTaskStep::Description,
         ));
-        assert!(matches!(
-            state.submit_add_task(),
-            AddTaskTitleSubmit::Create(create)
-                if create.draft.description == "Details\nfor handoff"
-        ));
-    }
-
-    #[test]
-    fn add_task_labels_are_stored_in_created_draft() {
-        let mut state = AuthoringState::default();
-        state.begin_add_task(None, None);
-        assert!(state.capture_add_task_fields(
-            "Write docs".to_string(),
-            String::new(),
-            AddTaskStep::Title,
-        ));
+        assert!(state.apply_add_task_project(vec!["mobile-app".to_string()]));
         assert!(state.apply_add_task_labels(vec!["feature".to_string(), "ui".to_string()]));
-        assert!(matches!(
-            state.submit_add_task(),
-            AddTaskTitleSubmit::Create(create)
-                if create.draft.labels == vec!["feature".to_string(), "ui".to_string()]
-        ));
-    }
-
-    #[test]
-    fn add_task_description_context_marks_active_step() {
-        let mut state = AuthoringState::default();
-        state.begin_add_task(None, None);
-        assert!(state.capture_add_task_fields(
-            "Write docs".to_string(),
-            "Details".to_string(),
-            AddTaskStep::Description,
-        ));
         let context = state.add_task_context().unwrap();
         assert_eq!(context.step, AddTaskStep::Description);
         assert_eq!(context.title, "Write docs");
-        assert_eq!(context.description, "Details");
-    }
-
-    #[test]
-    fn blank_title_reopens_without_consuming_add_task() {
-        let mut state = AuthoringState::default();
-        state.begin_add_task(None, None);
+        assert_eq!(context.description, "Details\nfor handoff");
+        assert_eq!(context.project, "mobile-app");
         assert!(matches!(
-            state.submit_add_task(),
-            AddTaskTitleSubmit::ReopenTitle {
-                message: "task title is required"
-            }
+            state.submission_context().unwrap().origin,
+            AddTaskOrigin::Standalone
         ));
-        assert!(state.add_task_context().is_some());
+        let AddTaskTitleSubmit::Create(create) = state.submit_add_task() else {
+            panic!("authored task should be ready to create");
+        };
+        assert_eq!(create.draft.title, "Write docs");
+        assert_eq!(create.draft.description, "Details\nfor handoff");
+        assert_eq!(create.draft.project.as_deref(), Some("mobile-app"));
+        assert_eq!(create.draft.labels, ["feature", "ui"]);
     }
 
     #[test]
@@ -1160,17 +1117,6 @@ mod tests {
             panic!("pending attachment task should be ready to create");
         };
         assert_eq!(create.attachments.len(), 1);
-    }
-
-    #[test]
-    fn standalone_origin_is_part_of_active_flow() {
-        let mut state = AuthoringState::default();
-        state.begin_add_task(None, None);
-
-        assert!(matches!(
-            state.submission_context().map(|context| context.origin),
-            Some(AddTaskOrigin::Standalone)
-        ));
     }
 
     #[test]

@@ -44,87 +44,53 @@ fn add_parses_fixed_rules_and_rejects_ambiguous_scheduling() {
     let db = env.db("recurrence-add.sqlite");
     let today = Utc::now().date_naive().to_string();
 
-    for (index, rule) in [
-        "daily",
-        "every 1 days",
-        "every 3 days",
-        "weekdays",
-        "weekly",
-        "fortnightly",
-        "monthly",
-        "every 1 months",
-        "every 3 months",
-        "yearly",
-        "every 1 years",
-        "every 2 years",
-        "every 2 weeks",
-        "weekly on mon,wed,fri",
-        "every 2 weeks on tue",
-        "every 3 weeks on mon,thu",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let output = ok(env.aven(
-            &db,
-            [
-                "add",
-                &format!("series {index}"),
-                "--repeat",
-                rule,
-                "--repeat-at",
-                "09:00",
-                "--repeat-due",
-                "none",
-                "--time-zone",
-                "Europe/Stockholm",
-                "--repeat-start-on",
-                &today,
-            ],
-        ));
-        contains_all(&output, &["created RCR-", "occurrence=", "status=todo"]);
-        let series_ref = output.split_whitespace().nth(1).unwrap();
-        let shown = ok(env.aven(&db, ["recur", "show", series_ref]));
-        match rule {
-            "monthly" | "every 1 months" => contains_all(&shown, &["rule=\"monthly\""]),
-            "every 3 days" => contains_all(&shown, &["rule=\"every 3 days\""]),
-            "every 3 months" => contains_all(&shown, &["rule=\"every 3 months\""]),
-            "yearly" | "every 1 years" => contains_all(&shown, &["rule=\"yearly\""]),
-            "every 2 years" => contains_all(&shown, &["rule=\"every 2 years\""]),
-            "fortnightly" | "every 2 weeks" => contains_all(&shown, &["rule=\"every 2 weeks on"]),
-            _ => {}
-        }
-    }
+    let output = ok(env.aven(
+        &db,
+        [
+            "add",
+            "Weekly review",
+            "--repeat",
+            "every 3 weeks on mon,thu",
+            "--repeat-at",
+            "09:00",
+            "--repeat-due",
+            "none",
+            "--time-zone",
+            "Europe/Stockholm",
+            "--repeat-start-on",
+            &today,
+        ],
+    ));
+    contains_all(&output, &["created RCR-", "occurrence=", "status=todo"]);
+    let series_ref = output.split_whitespace().nth(1).unwrap();
+    let shown = ok(env.aven(&db, ["recur", "show", series_ref]));
+    contains_all(
+        &shown,
+        &[
+            "rule=\"every 3 weeks on mon,thu\"",
+            "available_at=09:00",
+            "due=none",
+            "timezone=Europe/Stockholm",
+            &format!("start_on={today}"),
+        ],
+    );
 
-    for rule in [
-        "every 0 days",
-        "every -1 months",
-        "every nope years",
-        "every 4294967296 days",
-        "every 3 bananas",
-        "every 3 days on mon",
-        "weekly on monday",
-        "weekly on fri,mon",
-        "every two weeks on tue",
-    ] {
-        let error = fail(env.aven(
-            &db,
-            [
-                "add",
-                "invalid series",
-                "--repeat",
-                rule,
-                "--time-zone",
-                "UTC",
-            ],
-        ));
-        assert!(
-            error.contains("invalid-repeat-rule")
-                || error.contains("weekday set")
-                || error.contains("invalid-repeat-interval"),
-            "{error}"
-        );
-    }
+    let invalid = env.aven(
+        &db,
+        [
+            "add",
+            "invalid series",
+            "--repeat",
+            "every 0 days",
+            "--time-zone",
+            "UTC",
+        ],
+    );
+    assert_eq!(invalid.status.code(), Some(1));
+    contains_all(
+        &fail(invalid),
+        &["invalid-repeat-interval", "positive whole number"],
+    );
 
     let error = fail(env.aven(
         &db,

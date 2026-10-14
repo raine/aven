@@ -4,6 +4,7 @@
 .sync-hero h1 { margin-top: 24px; font-size: clamp(44px, 4.3vw, 62px); letter-spacing: -2.8px; }
 .sync-lead { max-width: 440px; margin-top: 28px; color: var(--muted); font-size: 18px; line-height: 1.65; text-wrap: pretty; }
 .sync-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
+.sync-hero-copy > .cloud-footnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; max-width: 440px; margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font: 15px/1.7 var(--mono); }
 
 .sync-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .sync-card { padding: 30px 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
@@ -17,9 +18,23 @@
 .sync-steps span { color: var(--muted); font-size: 15px; line-height: 1.7; }
 .sync-steps code { padding: 1px 5px; border-radius: 4px; background: #ffffff0d; color: #dac4f3; font-size: .88em; }
 
+.cloud-row { display: flex; align-items: center; gap: 24px; margin-top: 16px; padding: 24px 26px; border: 1px dashed #4a4436; border-radius: 12px; transition: border-color 150ms ease-out; }
+.cloud-row:hover { border-color: #706448; }
+.cloud-row-copy { display: grid; gap: 8px; flex: 1; }
+.cloud-row .feature-label { align-items: center; gap: 10px; }
+.cloud-row b { font-size: 20px; font-weight: 600; letter-spacing: -.5px; }
+.cloud-row small { color: #bfbcb4; font-size: 15px; line-height: 1.7; }
+.cloud-row small code { padding: 1px 5px; border-radius: 4px; background: #ffffff0d; color: #dac4f3; font-size: .88em; }
+.cloud-row-go { color: #c9b87c; font: 20px var(--mono); transition: transform 150ms ease-out; }
+.cloud-row:hover .cloud-row-go { transform: translateX(3px); }
+
 .sync-closing h2 { margin-top: 0; }
 .sync-closing > p a { color: var(--violet); text-decoration: underline; text-underline-offset: 3px; }
 .sync-closing > p a:hover { color: #d8b8ff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-row:hover .cloud-row-go { transform: none; }
+}
 
 @media (max-width: 1000px) {
   .sync-hero { grid-template-columns: 1fr; gap: 44px; }

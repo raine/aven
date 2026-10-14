@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use only system tools so release assembly matches the signing environment.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 3 ]]; then
+  echo "usage: assemble-macos-app BINARY VERSION OUTPUT_DIR" >&2
+  exit 2
+fi
+binary=$1
+version=$2
+output_dir=$3
+if [[ ! -f $binary ]]; then
+  echo "binary not found: $binary" >&2
+  exit 2
+fi
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "version must be MAJOR.MINOR.PATCH: $version" >&2
+  exit 2
+fi
+if [[ ! -d $output_dir ]]; then
+  echo "output directory not found: $output_dir" >&2
+  exit 2
+fi
+app="$output_dir/Aven.app"
+if [[ -e $app || -L $app ]]; then
+  echo "refusing to replace existing bundle: $app" >&2
+  exit 2
+fi
+
+source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/macos"
+contents="$app/Contents"
+mkdir -p "$contents/MacOS" "$contents/Resources"
+cp "$binary" "$contents/MacOS/aven"
+chmod 755 "$contents/MacOS/aven"
+cp "$source_dir/Info.plist" "$contents/Info.plist"
+plutil -insert CFBundleShortVersionString -string "$version" "$contents/Info.plist"
+plutil -insert CFBundleVersion -string "$version" "$contents/Info.plist"
+plutil -lint "$contents/Info.plist" >/dev/null
+cp "$source_dir/Resources/Assets.car" "$source_dir/Resources/Aven.icns" "$contents/Resources/"
+# Codesign rejects bundles carrying Finder metadata or resource forks.
+xattr -cr "$app"
+echo "$app"

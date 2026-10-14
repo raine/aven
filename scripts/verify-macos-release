@@ -6,13 +6,40 @@ PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "usage: verify-macos-release BINARY [arm64|x86_64]" >&2
+  echo "usage: verify-macos-release BINARY_OR_APP [arm64|x86_64]" >&2
   exit 2
 fi
 binary=$1
 architecture=${2:-}
-if [[ ! -f $binary ]]; then
-  echo "binary not found: $binary" >&2
+# These are the identity used by login Keychain ACLs across upgrades.
+identifier=fi.zendit.Aven
+expected_team_identifier=YG824X87Y2
+
+executable=$binary
+if [[ -d $binary && $binary == *.app ]]; then
+  # Exactly the files assembled by assemble-macos-app plus the bundle seal.
+  expected_layout='Contents
+Contents/Info.plist
+Contents/MacOS
+Contents/MacOS/aven
+Contents/Resources
+Contents/Resources/Assets.car
+Contents/Resources/Aven.icns
+Contents/_CodeSignature
+Contents/_CodeSignature/CodeResources'
+  if [[ $(cd "$binary" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort) != "$expected_layout" ]]; then
+    echo "app bundle does not have the expected layout: $binary" >&2
+    exit 1
+  fi
+  executable="$binary/Contents/MacOS/aven"
+  if [[ -L $executable || ! -f $executable ]] ||
+     [[ $(plutil -extract CFBundleIdentifier raw "$binary/Contents/Info.plist") != "$identifier" ]] ||
+     [[ $(plutil -extract CFBundleExecutable raw "$binary/Contents/Info.plist") != aven ]]; then
+    echo "app bundle does not identify its aven executable as $identifier" >&2
+    exit 1
+  fi
+elif [[ ! -f $binary ]]; then
+  echo "binary or app bundle not found: $binary" >&2
   exit 2
 fi
 if [[ -n $architecture ]]; then
@@ -20,15 +47,12 @@ if [[ -n $architecture ]]; then
     arm64|x86_64) ;;
     *) echo "unsupported release architecture: $architecture" >&2; exit 2 ;;
   esac
-  if [[ $(lipo -archs "$binary") != "$architecture" ]]; then
+  if [[ $(lipo -archs "$executable") != "$architecture" ]]; then
     echo "release binary does not have the expected architecture: $architecture" >&2
     exit 1
   fi
 fi
 
-# These are the identity used by login Keychain ACLs across upgrades.
-identifier=fi.zendit.Aven
-expected_team_identifier=YG824X87Y2
 codesign --verify --strict --verbose=2 "$binary"
 signature=$(codesign -d -r- --verbose=4 "$binary" 2>&1)
 actual_identifier=$(sed -n 's/^Identifier=//p' <<<"$signature")
@@ -40,6 +64,13 @@ if [[ $actual_identifier != "$identifier" ||
       $designated_requirement != *"identifier \"$identifier\""* ]]; then
   echo "release signature does not have the expected stable designated requirement" >&2
   exit 1
+fi
+if [[ $executable != "$binary" ]]; then
+  if ! grep -q '^Info.plist entries=' <<<"$signature" ||
+     ! grep -q '^Sealed Resources version=2 ' <<<"$signature"; then
+    echo "app bundle signature does not seal its Info.plist and resources" >&2
+    exit 1
+  fi
 fi
 
 release_requirement="identifier \"$identifier\" and anchor apple generic"

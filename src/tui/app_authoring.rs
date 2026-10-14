@@ -27,6 +27,17 @@ impl App {
             None
         };
         self.authoring.begin_add_task(project, inferred_project);
+        if self.detail.is_inactive() && self.store.view_state.is_columns() {
+            let board = self.store.column_board();
+            if let Some(status) = self
+                .list
+                .selected_task()
+                .and_then(|selected| board.position(selected))
+                .and_then(|(column, _)| board.lane_entry_status(column))
+            {
+                self.authoring.apply_add_task_status_choice(status.as_str());
+            }
+        }
         self.apply_default_add_task_recurrence()?;
         self.begin_add_task_title();
         Ok(())

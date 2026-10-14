@@ -210,12 +210,20 @@ async fn compatible_query_transitions_follow_selected_task_identity() {
             .await
             .unwrap();
     }
-    app.list.select_task(Some(1));
-    let selected_id = app.store.tasks[1].task.id.clone();
+    let original = app
+        .store
+        .tasks
+        .iter()
+        .position(|item| item.task.title == "Alpha task")
+        .unwrap();
+    assert_ne!(original, 0);
+    app.list.select_task(Some(original));
+    let selected_id = app.store.tasks[original].task.id.clone();
 
     app.set_sort(TaskOrder::Title).await.unwrap();
 
     let selected = app.list.selected_task().unwrap();
+    assert_ne!(selected, original);
     assert_eq!(app.store.tasks[selected].task.id, selected_id);
     assert_eq!(app.store.view_state.order, TaskOrder::Title);
 }

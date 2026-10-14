@@ -231,11 +231,7 @@ mod tests {
     fn task_search_parser_builds_safe_match_for_special_characters() {
         let parsed = parse_task_search_query("\"a*b\" AND (c OR d):");
         let fts_match = parsed.fts_match.as_deref().unwrap();
-        assert!(fts_match.contains("\"ab\""));
-        assert!(fts_match.contains("\"AND\""));
-        assert!(fts_match.contains("\"(c\""));
-        assert!(fts_match.contains("\"OR\""));
-        assert!(fts_match.contains("\"d):\"*"));
+        assert_eq!(fts_match, "\"ab\" \"AND\" \"(c\" \"OR\" \"d):\"*");
         assert!(!fts_match.contains("a*b"));
     }
 
@@ -266,57 +262,23 @@ mod tests {
 
     #[test]
     fn task_search_parser_identifies_ref_shapes() {
-        let suffix = parse_task_search_query("7KQ9").ref_query.unwrap();
-        assert_eq!(suffix.normalized_prefix, None);
-        assert_eq!(suffix.normalized_suffix, "7KQ9");
-
-        let qualified = parse_task_search_query("/APP-7OKI").ref_query.unwrap();
-        assert_eq!(qualified.normalized_prefix.as_deref(), Some("APP"));
-        assert_eq!(qualified.normalized_suffix, "70K1");
-
+        for (input, prefix, suffix) in [
+            ("7KQ9", None, "7KQ9"),
+            ("/APP-7OKI", Some("APP"), "70K1"),
+            ("0M-XYMT", Some("0M"), "XYMT"),
+            ("/0L2-7OKI", Some("012"), "70K1"),
+            ("2FAST-7OKI", Some("2FAST"), "70K1"),
+            ("BRAVO-7OKI", Some("BRAV0"), "70K1"),
+            ("/APP.7OKI", Some("APP"), "70K1"),
+            ("APP 7OKI", Some("APP"), "70K1"),
+            ("7KQ-9", None, "7KQ9"),
+            ("7KQ9A1X4MV2P8D6R", None, "7KQ9A1X4MV2P8D6R"),
+        ] {
+            let parsed = parse_task_search_query(input).ref_query.unwrap();
+            assert_eq!(parsed.normalized_prefix.as_deref(), prefix, "{input}");
+            assert_eq!(parsed.normalized_suffix, suffix, "{input}");
+        }
         assert_eq!(parse_task_search_query("release cleanup").ref_query, None);
-    }
-
-    #[test]
-    fn task_search_parser_supports_numeric_project_prefixes() {
-        let numeric = parse_task_search_query("0M-XYMT").ref_query.unwrap();
-        assert_eq!(numeric.normalized_prefix.as_deref(), Some("0M"));
-        assert_eq!(numeric.normalized_suffix, "XYMT");
-
-        let counted = parse_task_search_query("/0L2-7OKI").ref_query.unwrap();
-        assert_eq!(counted.normalized_prefix.as_deref(), Some("012"));
-        assert_eq!(counted.normalized_suffix, "70K1");
-
-        let long_numeric = parse_task_search_query("2FAST-7OKI").ref_query.unwrap();
-        assert_eq!(long_numeric.normalized_prefix.as_deref(), Some("2FAST"));
-        assert_eq!(long_numeric.normalized_suffix, "70K1");
-    }
-
-    #[test]
-    fn task_search_parser_supports_long_alphabetic_project_prefixes() {
-        let parsed = parse_task_search_query("BRAVO-7OKI").ref_query.unwrap();
-        assert_eq!(parsed.normalized_prefix.as_deref(), Some("BRAV0"));
-        assert_eq!(parsed.normalized_suffix, "70K1");
-    }
-
-    #[test]
-    fn task_search_parser_identifies_punctuation_insensitive_ref_shapes() {
-        let qualified = parse_task_search_query("/APP.7OKI").ref_query.unwrap();
-        assert_eq!(qualified.normalized_prefix.as_deref(), Some("APP"));
-        assert_eq!(qualified.normalized_suffix, "70K1");
-
-        let spaced = parse_task_search_query("APP 7OKI").ref_query.unwrap();
-        assert_eq!(spaced.normalized_prefix.as_deref(), Some("APP"));
-        assert_eq!(spaced.normalized_suffix, "70K1");
-
-        let suffix = parse_task_search_query("7KQ-9").ref_query.unwrap();
-        assert_eq!(suffix.normalized_prefix, None);
-        assert_eq!(suffix.normalized_suffix, "7KQ9");
-
-        let durable = parse_task_search_query("7KQ9A1X4MV2P8D6R")
-            .ref_query
-            .unwrap();
-        assert_eq!(durable.normalized_suffix, "7KQ9A1X4MV2P8D6R");
     }
 
     #[tokio::test]

@@ -3,22 +3,6 @@ use crate::tui::theme::Theme;
 use crate::tui::ui::overlays::multiline::description_visual_row_count;
 
 #[test]
-fn overlay_render_includes_multiline_submit_hints() {
-    let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-        kind: MultilineInputKind::EditDescription,
-        title: "Description".to_string(),
-        prompt: "Body".to_string(),
-        lines: borrow_slice(vec!["line one".to_string()]),
-        row: 0,
-        column: 4,
-        mode: MultilineInputMode::Compose,
-    }));
-    assert!(rendered.contains("Description"));
-    assert!(rendered.contains("line one"));
-    assert!(rendered.contains("Ctrl-Enter / ^S submit"));
-}
-
-#[test]
 fn edit_description_empty_input_shows_placeholder() {
     let line = description_input_line(&Theme::dark(), "", 0, true);
     assert_eq!(line.spans[0].content.as_ref(), "E");
@@ -46,25 +30,6 @@ fn edit_description_blank_line_does_not_show_placeholder() {
     assert!(!lines[1].to_string().contains("Enter task description here"));
     assert_eq!(lines[1].spans[1].content.as_ref(), " ");
     assert_eq!(lines[1].spans[1].style.bg, Some(Theme::dark().fg));
-}
-
-#[test]
-fn edit_description_overlay_wraps_long_lines() {
-    let overlay = OverlayView::MultilineInput(MultilineInputView {
-        kind: MultilineInputKind::EditDescription,
-        title: "Edit description".to_string(),
-        prompt: String::new(),
-        lines: borrow_slice(vec!["a".repeat(160)]),
-        row: 0,
-        column: 150,
-        mode: MultilineInputMode::Compose,
-    });
-    let rendered = render_overlay_view(overlay);
-    assert!(rendered.contains("Edit description"));
-    assert!(rendered.contains("Ctrl-Enter / ^S submit"));
-    assert!(rendered.contains("Ctrl+X Ctrl+E editor"));
-    assert!(rendered.contains("line 1/1"));
-    assert!(!rendered.contains(&"a".repeat(160)));
 }
 
 #[test]
@@ -110,8 +75,13 @@ fn edit_description_cursor_row_tracks_wrapped_segment() {
         mode: MultilineInputMode::Compose,
     };
     let (lines, cursor_row) = description_editor_lines(&Theme::dark(), &state, 4);
-    assert_eq!(lines.len(), 3);
+    assert_eq!(
+        lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+        ["abcd", "efgh", "ij"]
+    );
     assert_eq!(cursor_row, 2);
+    assert_eq!(lines[cursor_row].spans[1].content, "i");
+    assert_eq!(lines[cursor_row].spans[1].style.bg, Some(Theme::dark().fg));
 }
 
 #[test]
@@ -246,65 +216,36 @@ fn add_note_overlay_uses_placeholder_key_styles_and_spacing() {
 }
 
 #[test]
-fn add_note_discard_confirmation_replaces_editor_with_explicit_controls() {
-    let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-        kind: MultilineInputKind::AddNote,
-        title: "Add note".to_string(),
-        prompt: "note body:".to_string(),
-        lines: borrow_slice(vec!["draft note text".to_string()]),
-        row: 0,
-        column: 5,
-        mode: MultilineInputMode::ConfirmDiscard,
-    }));
-
-    assert!(rendered.contains("Discard note draft?"));
-    assert!(rendered.contains("The note text will be lost."));
-    assert!(rendered.contains("y discard"));
-    assert!(rendered.contains("n keep editing"));
-    assert!(rendered.contains("Esc keep editing"));
-    assert!(!rendered.contains("Add note"));
-    assert!(!rendered.contains("draft note text"));
-    assert!(!rendered.contains("Ctrl-Enter / ^S submit"));
-}
-
-#[test]
-fn description_discard_confirmation_replaces_editor_with_explicit_controls() {
-    let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-        kind: MultilineInputKind::EditDescription,
-        title: "Edit description".to_string(),
-        prompt: String::new(),
-        lines: borrow_slice(vec!["changed description".to_string()]),
-        row: 0,
-        column: 10,
-        mode: MultilineInputMode::ConfirmDiscard,
-    }));
-
-    assert!(rendered.contains("Discard description changes?"));
-    assert!(rendered.contains("The description changes will be lost."));
-    assert!(rendered.contains("y discard"));
-    assert!(rendered.contains("n keep editing"));
-    assert!(!rendered.contains("Edit description"));
-    assert!(!rendered.contains("changed description"));
-}
-
-#[test]
-fn conflict_manual_discard_confirmation_replaces_editor_with_explicit_controls() {
-    let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
-        kind: MultilineInputKind::ConflictManual,
-        title: "Resolve conflict: manual".to_string(),
-        prompt: "manual value for field=description:".to_string(),
-        lines: borrow_slice(vec!["changed value".to_string()]),
-        row: 0,
-        column: 12,
-        mode: MultilineInputMode::ConfirmDiscard,
-    }));
-
-    assert!(rendered.contains("Discard manual merge?"));
-    assert!(rendered.contains("The manual value will be lost."));
-    assert!(rendered.contains("y discard"));
-    assert!(rendered.contains("n keep editing"));
-    assert!(!rendered.contains("Resolve conflict: manual"));
-    assert!(!rendered.contains("changed value"));
+fn multiline_discard_confirmation_replaces_editor_with_explicit_controls() {
+    #[rustfmt::skip]
+    let cases = [
+        (MultilineInputKind::AddNote, "Discard note draft?", "The note text will be lost."),
+        (MultilineInputKind::EditDescription, "Discard description changes?", "The description changes will be lost."),
+        (MultilineInputKind::ConflictManual, "Discard manual merge?", "The manual value will be lost."),
+    ];
+    for (kind, title, prompt) in cases {
+        let rendered = render_overlay_view(OverlayView::MultilineInput(MultilineInputView {
+            kind,
+            title: "Draft editor".to_string(),
+            prompt: String::new(),
+            lines: borrow_slice(vec!["draft text".to_string()]),
+            row: 0,
+            column: 5,
+            mode: MultilineInputMode::ConfirmDiscard,
+        }));
+        for expected in [
+            title,
+            prompt,
+            "y discard",
+            "n keep editing",
+            "Esc keep editing",
+        ] {
+            assert!(rendered.contains(expected), "{kind:?}: {expected}");
+        }
+        for hidden in ["Draft editor", "draft text", "Ctrl-Enter / ^S submit"] {
+            assert!(!rendered.contains(hidden), "{kind:?}: {hidden}");
+        }
+    }
 }
 
 #[test]

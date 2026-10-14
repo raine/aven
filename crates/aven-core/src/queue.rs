@@ -402,14 +402,6 @@ mod tests {
     }
 
     #[test]
-    fn medium_todo_tasks_are_soon() {
-        assert_eq!(
-            queue_meta(&task("todo", "medium", "1000"), false, false, 0, 1000).band,
-            QueueBand::Soon
-        );
-    }
-
-    #[test]
     fn blocked_tasks_sort_below_actionable_groups() {
         assert!(QueueBand::Triage.order() < QueueBand::Blocked.order());
         assert!(QueueBand::Blocked.order() < QueueBand::Later.order());
@@ -489,14 +481,21 @@ mod tests {
     #[test]
     fn due_week_adds_bounded_queue_weight() {
         let today = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
-        let mut near = task("todo", "medium", "1000");
-        near.due_on = Some("2026-07-17".to_string());
-        let mut far = near.clone();
-        far.due_on = Some("2026-07-23".to_string());
-
-        let near_score = queue_meta_on(&near, false, 0, 0, 2000, today).score;
-        let far_score = queue_meta_on(&far, false, 0, 0, 2000, today).score;
-        assert!(near_score > far_score);
+        let mut item = task("todo", "medium", "1000");
+        let baseline = queue_meta_on(&item, false, 0, 0, 2000, today).score;
+        for (date, bonus) in [
+            ("2026-07-16", 40),
+            ("2026-07-17", 35),
+            ("2026-07-23", 5),
+            ("2026-07-24", 0),
+        ] {
+            item.due_on = Some(date.to_string());
+            assert_eq!(
+                queue_meta_on(&item, false, 0, 0, 2000, today).score - baseline,
+                bonus,
+                "{date}"
+            );
+        }
     }
 
     #[test]

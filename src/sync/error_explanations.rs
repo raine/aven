@@ -69,6 +69,37 @@ pub(crate) fn explain(
         });
     }
 
+    if has("sync-cloud-https-required") {
+        return Some(Explanation {
+            code: "sync-cloud-https-required",
+            message: "Aven Cloud requires HTTPS, so this connection was refused. No sync credentials were sent.",
+            next_step: "New setups and joins need an invitation for https://sync.aventasks.dev. A setup already started with an http:// address can't continue; back up this database and restore it to a new path for a local-only copy. Local work continues.",
+        });
+    }
+    if has("sync-vault-deleted") {
+        return Some(Explanation {
+            code: "sync-vault-deleted",
+            message: "This sync's vault was deleted, either reset in the hosting portal or by the operator. Sync can't continue with it.",
+            next_step: "Local tasks and unsynced changes stay on this device. Run `aven sync reset`, then `aven sync setup` with a new setup code; local data carries into the new vault. A database that hasn't finished joining can't be reset; join the new sync from a new database instead, for example `aven --db PATH sync join`.",
+        });
+    }
+    if let Some(code) = first(&[
+        "sync-hosting-blocked",
+        "sync-hosting-quota",
+        "sync-hosting-unavailable",
+    ]) {
+        return Some(Explanation {
+            code,
+            message: match code {
+                "sync-hosting-blocked" => {
+                    "Sync hosting is blocked. This does not mean this device was removed."
+                }
+                "sync-hosting-quota" => "Sync hosting has reached a capacity limit.",
+                _ => "Sync hosting is temporarily unavailable.",
+            },
+            next_step: "Local tasks and images remain available. Keep the same setup, join or pending changes; retry after hosting is available again, or contact your hosting provider.",
+        });
+    }
     if all.iter().any(|code| code.ends_with("-tls")) {
         let code =
             first(&["enrollment-tls", "bootstrap-tls", "encrypted-tail-tls"]).unwrap_or("sync-tls");
@@ -138,10 +169,10 @@ pub(crate) fn explain(
             message: "This isn't a valid setup invitation.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Copy the complete setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then paste it into `aven sync setup`."
+                    "Copy the complete setup invitation from Aven Cloud, or run `aven server setup` if you self-host, then paste it into `aven sync setup`."
                 }
                 ErrorSurface::Tui => {
-                    "Copy the complete setup invitation from your hosting provider, or from `aven server setup` if you host the server yourself, then paste it into Set up sync."
+                    "Copy the complete setup invitation from Aven Cloud, or from `aven server setup` if you self-host, then paste it into Set up sync."
                 }
             },
         });
@@ -189,11 +220,11 @@ pub(crate) fn explain(
             next_step: "Unset AVEN_SYNC_DISABLED and try again.",
         });
     }
-    if has("sync-disabled") {
+    if has("daemon-no-work") {
         return Some(Explanation {
-            code: "sync-disabled",
-            message: "Automatic sync is turned off in config.yaml.",
-            next_step: "Run `aven config set sync.enabled true` and try again.",
+            code: "daemon-no-work",
+            message: "The daemon has nothing to do: automatic sync and reminders are both off.",
+            next_step: "Run `aven config set sync.enabled true` or `aven config set reminders.enabled true` and try again.",
         });
     }
     if has("sync-setup-confirmation-required") {
@@ -279,10 +310,10 @@ pub(crate) fn explain(
             message: "This setup invitation expired.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Get a new setup invitation from your hosting provider, or run `aven server setup` again if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
+                    "Get a new setup invitation from Aven Cloud, or run `aven server setup` again if you self-host, then rerun `aven sync setup` with it. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Get a new setup invitation from your hosting provider, or run `aven server setup` again if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
+                    "Get a new setup invitation from Aven Cloud, or run `aven server setup` again if you self-host, then choose Set up sync and paste it. Nothing here was changed."
                 }
             },
         });
@@ -293,10 +324,10 @@ pub(crate) fn explain(
             message: "This setup invitation expired, was replaced, or belongs to different storage.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Get the current setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then rerun `aven sync setup` with it. Nothing here was changed."
+                    "Get the current setup invitation from Aven Cloud, or run `aven server setup` if you self-host, then rerun `aven sync setup` with it. Nothing here was changed."
                 }
                 ErrorSurface::Tui => {
-                    "Get the current setup invitation from your hosting provider, or run `aven server setup` if you host the server yourself, then choose Set up sync and paste it. Nothing here was changed."
+                    "Get the current setup invitation from Aven Cloud, or run `aven server setup` if you self-host, then choose Set up sync and paste it. Nothing here was changed."
                 }
             },
         });
@@ -333,7 +364,7 @@ pub(crate) fn explain(
             message: "The server refused this setup invitation.",
             next_step: match surface {
                 ErrorSurface::Cli => {
-                    "Run `aven server setup` for empty server storage and retry `aven sync setup` with its invitation."
+                    "Get an invitation for fresh storage from Aven Cloud, or from `aven server setup` if you self-host, then retry `aven sync setup` with it."
                 }
                 ErrorSurface::Tui => {
                     "Use a setup invitation for empty server storage, then retry Set up sync."
@@ -632,7 +663,7 @@ pub(crate) fn explain(
 
 /// A different setup or server cannot resume the setup started here, and a
 /// mismatch is never a reason to discard the setup's keys.
-const SETUP_MISMATCH_NEXT_STEP: &str = "Use the invitation that started this setup, or a newer one for the same server storage. If neither is available, back up this database and restore it to a new path for a local-only copy. This setup's keys are kept.";
+const SETUP_MISMATCH_NEXT_STEP: &str = "Use the invitation that started this setup, or a newer one for the same Aven Cloud hosting or server storage. If neither is available, back up this database and restore it to a new path for a local-only copy. This setup's keys are kept.";
 
 /// A synced change uses an operation or value this version doesn't know.
 const UNSUPPORTED_CHANGE: &[&str] = &[
@@ -754,7 +785,281 @@ mod tests {
     use super::*;
 
     #[test]
+    fn error_chains_preserve_codes_and_safe_recovery_guidance() {
+        use ErrorAction::{General, Join, Setup};
+        use ErrorSurface::{Cli, Tui};
+
+        struct Case {
+            error: Error,
+            action: ErrorAction,
+            surface: ErrorSurface,
+            code: &'static str,
+            message: &'static [&'static str],
+            next: &'static [&'static str],
+            forbidden: &'static [&'static str],
+        }
+        let mut cases = Vec::new();
+        macro_rules! add {
+            ($action:expr, $surface:expr, $code:expr;
+             $error:expr; $message:expr; $next:expr; $forbidden:expr) => {
+                cases.push(Case {
+                    error: $error,
+                    action: $action,
+                    surface: $surface,
+                    code: $code,
+                    message: $message,
+                    next: $next,
+                    forbidden: $forbidden,
+                });
+            };
+        }
+
+        add!(Join, Tui, "sync-join-requires-empty-database";
+            anyhow!("error shared-state-install target database is not empty").context("error sync-join-requires-empty-database hint=\"join with a new database\"");
+            &[]; &["`aven --db /new/path sync join`"]; &[]);
+        add!(Join, Cli, "enrollment-network";
+            anyhow!("error enrollment-network outcome-unknown").context("error sync-join-incomplete");
+            &[]; &["Local work continues"]; &["nothing changed"]);
+        add!(Setup, Cli, "bootstrap-tls";
+            anyhow!("error bootstrap-tls outcome-unknown").context("error sync-setup-outcome-unknown");
+            &["secure connection"]; &["certificate", "trusted"]; &[]);
+        add!(General, Cli, "sync-request-body-limit";
+            anyhow!("error sync-request-body-limit");
+            &["request"]; &["If a reverse proxy is in use", "8 MB"]; &[]);
+        add!(General, Tui, "sync-server-refused";
+            anyhow!("error enrollment-unauthorized").context("error sync-server-refused hint=\"raw\"");
+            &[]; &["may have been removed"]; &["was removed"]);
+        add!(General, Cli, "sync-server-refused";
+            Error::from(aven_core::sync::seed_claim::membership::Unauthorized).context("error sync-server-refused hint=\"raw\"");
+            &[]; &["may have been removed", "another device"]; &["was removed"]);
+        add!(Join, Cli, "sync-device-invitation-invalid";
+            anyhow!("error sync-device-invitation-invalid");
+            &[]; &["`aven sync invite`"]; &[]);
+        add!(General, Cli, "encrypted-tail-refused";
+            anyhow!("error encrypted-tail-refused outcome-unknown");
+            &[]; &["unsynced changes stay"]; &["reset"]);
+        add!(General, Cli, "encrypted-tail-storage";
+            anyhow!("error encrypted-tail-storage");
+            &[]; &["retries"]; &["reset"]);
+        add!(Join, Cli, "enrollment-store-unsupported";
+            anyhow!("error enrollment-store-unsupported");
+            &[]; &["Update Aven", "Do not replace"]; &["reset"]);
+
+        for code in [
+            "sync-hosting-blocked",
+            "sync-hosting-quota",
+            "sync-hosting-unavailable",
+        ] {
+            for surface in [Cli, Tui] {
+                for action in [General, Setup, Join] {
+                    let error =
+                        anyhow!("error {code} outcome-unknown").context("error sync-join-command");
+                    assert!(!aven_core::sync::client::errors::is_access_refusal(&error));
+                    add!(action, surface, code;
+                        error;
+                        &[]; &["Local tasks and images", "Keep the same"]; &["Access unconfirmed"]);
+                }
+            }
+        }
+        for surface in [Cli, Tui] {
+            for action in [General, Setup, Join] {
+                add!(action, surface, "sync-vault-deleted";
+                    anyhow!("error sync-vault-deleted outcome-unknown").context("error sync-round");
+                    &["deleted"]; &["unsynced changes stay", "Run `aven sync reset`, then `aven sync setup` with a new setup code", "hasn't finished joining"]; &["Keep the same", "Access unconfirmed"]);
+            }
+            for code in [
+                "sync-setup-invitation-mismatch",
+                "sync-setup-server-mismatch",
+            ] {
+                add!(Setup, surface, code;
+                    anyhow!("error {code} hint=\"raw\"");
+                    &[]; &["same Aven Cloud hosting", "keys are kept"]; &["reset"]);
+            }
+            for code in [
+                "encrypted-tail-operation-unsupported",
+                "unsupported-remote-change",
+            ] {
+                add!(General, surface, code;
+                    anyhow!("error {code}").context("error sync-round");
+                    &["doesn't understand", "Local tasks are safe"]; &["Update Aven"]; &["reset"]);
+            }
+            for code in [
+                "encrypted-tail-invalid",
+                "encrypted-tail-payload",
+                "encrypted-tail-json",
+                "encrypted-tail-projection",
+                "encrypted-tail-workspace",
+                "encrypted-tail-seed",
+                "encrypted-tail-authentication",
+                "encrypted-tail-generation",
+                "encrypted-tail-generation-rank",
+                "encrypted-tail-label-history",
+                "encrypted-tail-note-history",
+                "encrypted-tail-history-lost",
+                "encrypted-tail-mapping",
+                "encrypted-tail-same-id-divergence",
+                "encrypted-tail-integrity-blocked",
+                "encrypted-tail-prefix-identity-collision",
+                "encrypted-image-initial-catch-up",
+                "encrypted-image-projection",
+            ] {
+                add!(General, surface, code;
+                    anyhow!("error {code}").context("error sync-round");
+                    &["to protect your data", "Local tasks are safe and editable"]; &["`aven sync reset`", "/sync/setup/#rebuilding-sync"]; &[]);
+            }
+            add!(General, surface, "attachment-quota-exceeded";
+                anyhow!("error attachment-quota-exceeded").context("error sync-round");
+                &["sync server"]; &["server_workspace_quota_bytes"]; &[]);
+        }
+        add!(General, Cli, "encrypted-tail-prefix-identity-collision";
+            Error::from(aven_core::sync::encrypted_tail::PrefixIdentityCollision);
+            &["to protect your data"]; &["`aven sync reset`"]; &[]);
+        for (code, next) in [
+            (
+                "sync-setup-confirmation-required",
+                &["`aven sync setup`", "--yes"][..],
+            ),
+            (
+                "sync-join-confirmation-required",
+                &["`aven sync join`", "--yes"][..],
+            ),
+        ] {
+            add!(General, Cli, code;
+                anyhow!("error {code} hint=\"rerun with --yes to confirm\"");
+                &[]; next; &[]);
+        }
+        for (surface, error) in [
+            (
+                Cli,
+                anyhow!("error enrollment-refused").context("error sync-join-command"),
+            ),
+            (Tui, anyhow!("error enrollment-refused")),
+        ] {
+            add!(Join, surface, "enrollment-refused";
+                error;
+                &[]; &["been cancelled", "temporarily unavailable", "same invitation later"]; &["removed"]);
+        }
+        for surface in [Cli, Tui] {
+            let next: &'static [&'static str] = match surface {
+                Cli => &[
+                    "`aven server setup`",
+                    "Aven Cloud",
+                    "`aven sync setup`",
+                    "if you self-host",
+                ],
+                Tui => &[
+                    "`aven server setup`",
+                    "Aven Cloud",
+                    "choose Set up sync",
+                    "if you self-host",
+                ],
+            };
+            add!(General, surface, "sync-setup-invitation-expired";
+                anyhow!("error bootstrap-setup-invitation-expired").context("error sync-setup-invitation-expired hint=\"expired\"");
+                &["This setup invitation expired."]; next; &[]);
+            add!(General, surface, "sync-setup-invitation-rejected";
+                anyhow!("error sync-setup-invitation-rejected");
+                &["expired, was replaced"]; &["`aven server setup`", "Aven Cloud", "if you self-host"]; &[]);
+        }
+        add!(Setup, Cli, "sync-setup-invitation-invalid";
+            anyhow!("error sync-setup-invitation-invalid");
+            &[]; &["Aven Cloud", "if you self-host", "`aven server setup`"]; &[]);
+        for (raw, code, next) in [
+            (
+                "enrollment-protected-missing",
+                "protected-key-storage-missing",
+                &["Do not replace"][..],
+            ),
+            (
+                "enrollment-protected-framing",
+                "protected-key-storage-unsafe",
+                &["Do not replace"][..],
+            ),
+            (
+                "enrollment-protected-corrupt",
+                "protected-key-storage-unsafe",
+                &["Do not replace"][..],
+            ),
+            (
+                "enrollment-protected-limit",
+                "protected-key-storage-unsafe",
+                &["Do not replace"][..],
+            ),
+            (
+                "enrollment-protected-conflict",
+                "protected-key-storage-unsafe",
+                &["Do not replace"][..],
+            ),
+            (
+                "enrollment-protected-write",
+                "protected-key-storage-write-failed",
+                &["retry the same command"][..],
+            ),
+        ] {
+            add!(General, Cli, code;
+                anyhow!("error {raw}");
+                &[]; next; &[]);
+        }
+        for code in ["encrypted-tail-apply", "encrypted-tail-domain"] {
+            add!(General, Cli, code;
+                anyhow!("error task-not-found sequence=7 op_type=set_field").context(format!("error {code}"));
+                &[]; &["Update Aven"]; &["reset"]);
+        }
+
+        for Case {
+            error,
+            action,
+            surface,
+            code,
+            message,
+            next,
+            forbidden,
+        } in cases
+        {
+            let context = format!("{action:?}/{surface:?}: {error:#}");
+            let explanation = explain(action, surface, &error)
+                .unwrap_or_else(|| panic!("missing explanation for {context}"));
+            assert_eq!(explanation.code, code, "{context}");
+            for phrase in message {
+                assert!(
+                    explanation.message.contains(phrase),
+                    "{context}: message omitted {phrase:?}: {explanation:?}"
+                );
+            }
+            for phrase in next {
+                assert!(
+                    explanation.next_step.contains(phrase),
+                    "{context}: next step omitted {phrase:?}: {explanation:?}"
+                );
+            }
+            for phrase in forbidden {
+                assert!(
+                    !explanation.combined().contains(phrase),
+                    "{context}: unsafe phrase {phrase:?}: {explanation:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unavailable_protected_storage_uses_surface_specific_recovery() {
+        for (kind, code, message) in [
+            (
+                ProtectedLocalKeyStoreErrorKind::Unavailable,
+                "protected-key-storage-unavailable",
+                "Protected sync key storage is unavailable.",
+            ),
+            (
+                ProtectedLocalKeyStoreErrorKind::Corrupt,
+                "protected-key-storage-unsafe",
+                "Protected sync key storage is corrupt or unsafe.",
+            ),
+        ] {
+            let error = Error::new(ProtectedLocalKeyStoreError::new(kind));
+            let explanation = explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
+            assert_eq!(explanation.code, code);
+            assert_eq!(explanation.message, message);
+        }
         let error = anyhow::Error::new(ProtectedLocalKeyStoreError::new(
             ProtectedLocalKeyStoreErrorKind::Unavailable,
         ));
@@ -773,61 +1078,6 @@ mod tests {
     }
 
     #[test]
-    fn network_explanation_keeps_stable_code_without_promising_an_outcome() {
-        let error = anyhow!("error enrollment-network outcome-unknown")
-            .context("error sync-join-incomplete");
-        let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, "enrollment-network");
-        assert!(explanation.combined().contains("Local work continues"));
-        assert!(!explanation.combined().contains("nothing changed"));
-    }
-
-    #[test]
-    fn tls_explanation_names_certificate_checks() {
-        let error = anyhow!("error bootstrap-tls outcome-unknown")
-            .context("error sync-setup-outcome-unknown");
-        let explanation = explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, "bootstrap-tls");
-        assert!(explanation.message.contains("secure connection"));
-        assert!(explanation.next_step.contains("certificate"));
-        assert!(explanation.next_step.contains("trusted"));
-    }
-
-    #[test]
-    fn request_limit_explanation_qualifies_proxy_guidance() {
-        let error = anyhow!("error sync-request-body-limit");
-        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, "sync-request-body-limit");
-        assert!(explanation.message.contains("request"));
-        assert!(
-            explanation
-                .next_step
-                .contains("If a reverse proxy is in use")
-        );
-        assert!(explanation.next_step.contains("8 MB"));
-    }
-
-    #[test]
-    fn access_refusal_names_removal_only_as_a_possibility() {
-        let error = anyhow!("error enrollment-unauthorized")
-            .context("error sync-server-refused hint=\"raw\"");
-        let explanation = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
-        assert_eq!(explanation.code, "sync-server-refused");
-        assert!(explanation.combined().contains("may have been removed"));
-        assert!(!explanation.combined().contains("was removed"));
-    }
-
-    #[test]
-    fn tail_access_refusal_explains_possible_removal() {
-        let error = anyhow::Error::from(aven_core::sync::seed_claim::membership::Unauthorized)
-            .context("error sync-server-refused hint=\"raw\"");
-        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, "sync-server-refused");
-        assert!(explanation.combined().contains("may have been removed"));
-        assert!(explanation.combined().contains("another device"));
-    }
-
-    #[test]
     fn disabled_sync_names_its_cause() {
         let mut config = crate::config::AppConfig::default();
         config.sync.disable_override = true;
@@ -835,194 +1085,43 @@ mod tests {
         let environment = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(environment.code, "sync-disabled");
         assert!(environment.next_step.contains("AVEN_SYNC_DISABLED"));
+    }
 
+    #[test]
+    fn idle_daemon_names_both_options() {
         let error = crate::config::AppConfig::default()
-            .ensure_automatic_sync_enabled()
+            .ensure_daemon_has_work()
             .unwrap_err();
-        let configured = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(configured.code, "sync-disabled");
-        assert!(configured.next_step.contains("sync.enabled true"));
-        assert!(!configured.combined().contains("AVEN_SYNC_DISABLED"));
+        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(explanation.code, "daemon-no-work");
+        assert!(explanation.next_step.contains("sync.enabled true"));
+        assert!(explanation.next_step.contains("reminders.enabled true"));
+
+        let mut config = crate::config::AppConfig::default();
+        config.sync.enabled = true;
+        config.sync.disable_override = true;
+        let error = config.ensure_daemon_has_work().unwrap_err();
+        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
+        assert_eq!(explanation.code, "sync-disabled");
+        assert!(explanation.next_step.contains("AVEN_SYNC_DISABLED"));
     }
 
     #[test]
-    fn confirmation_required_names_the_flag() {
-        for (code, command) in [
-            ("sync-setup-confirmation-required", "`aven sync setup`"),
-            ("sync-join-confirmation-required", "`aven sync join`"),
-        ] {
-            let error = anyhow!("error {code} hint=\"rerun with --yes to confirm\"");
-            let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-            assert_eq!(explanation.code, code);
-            assert!(explanation.next_step.contains(command));
-            assert!(explanation.next_step.contains("--yes"));
-        }
-    }
-
-    #[test]
-    fn refused_join_retries_before_a_new_invitation() {
-        for (surface, error) in [
-            (
-                ErrorSurface::Cli,
-                anyhow!("error enrollment-refused").context("error sync-join-command"),
-            ),
-            (ErrorSurface::Tui, anyhow!("error enrollment-refused")),
-        ] {
-            let explanation = explain(ErrorAction::Join, surface, &error).unwrap();
-            assert!(explanation.next_step.contains("been cancelled"));
-            assert!(explanation.next_step.contains("temporarily unavailable"));
-            assert!(explanation.next_step.contains("same invitation later"));
-            assert!(!explanation.combined().contains("removed"));
-        }
-    }
-
-    #[test]
-    fn cli_invitation_guidance_names_commands() {
-        let error = anyhow!("error sync-device-invitation-invalid");
-        let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
-        assert!(explanation.next_step.contains("`aven sync invite`"));
-    }
-
-    #[test]
-    fn expired_setup_invitation_is_named_and_points_to_hosting_or_server_setup() {
-        let error = anyhow!("error bootstrap-setup-invitation-expired")
-            .context("error sync-setup-invitation-expired hint=\"expired\"");
-        let cli = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(cli.code, "sync-setup-invitation-expired");
-        assert_eq!(cli.message, "This setup invitation expired.");
-        assert!(cli.next_step.contains("`aven sync setup`"));
-        let tui = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
-        assert!(tui.next_step.contains("choose Set up sync"));
-
-        let error = anyhow!("error sync-setup-invitation-rejected");
-        let rejected = explain(ErrorAction::General, ErrorSurface::Tui, &error).unwrap();
-        assert!(rejected.message.contains("expired, was replaced"));
-
-        let error = anyhow!("error sync-setup-invitation-invalid");
-        let invalid = explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
-        for step in [
-            cli.next_step,
-            tui.next_step,
-            rejected.next_step,
-            invalid.next_step,
-        ] {
-            assert!(step.contains("your hosting provider"), "{step}");
-            assert!(step.contains("`aven server setup`"), "{step}");
-        }
-    }
-
-    #[test]
-    fn setup_mismatches_keep_the_setup_without_suggesting_reset() {
-        for code in [
-            "sync-setup-invitation-mismatch",
-            "sync-setup-server-mismatch",
-        ] {
-            let error = anyhow!("error {code} hint=\"raw\"");
-            for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
-                let explanation = explain(ErrorAction::Setup, surface, &error).unwrap();
-                assert_eq!(explanation.code, code);
-                assert!(!explanation.combined().contains("reset"), "{explanation:?}");
-                assert!(explanation.next_step.contains("same server storage"));
-                assert!(explanation.next_step.contains("keys are kept"));
-            }
-        }
-    }
-
-    #[test]
-    fn refused_tail_keeps_local_work_without_suggesting_reset() {
-        let tail = anyhow!("error encrypted-tail-refused outcome-unknown");
-        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &tail).unwrap();
-        assert_eq!(explanation.code, "encrypted-tail-refused");
-        assert!(explanation.next_step.contains("unsynced changes stay"));
-        assert!(!explanation.combined().contains("reset"));
-    }
-
-    #[test]
-    fn enrollment_protected_storage_codes_use_actionable_storage_explanations() {
-        for (raw, code) in [
-            (
-                "enrollment-protected-missing",
-                "protected-key-storage-missing",
-            ),
-            (
-                "enrollment-protected-framing",
-                "protected-key-storage-unsafe",
-            ),
-            (
-                "enrollment-protected-corrupt",
-                "protected-key-storage-unsafe",
-            ),
-            ("enrollment-protected-limit", "protected-key-storage-unsafe"),
-            (
-                "enrollment-protected-conflict",
-                "protected-key-storage-unsafe",
-            ),
-            (
-                "enrollment-protected-write",
-                "protected-key-storage-write-failed",
-            ),
-        ] {
-            let error = anyhow!("error {raw}");
-            let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-            assert_eq!(explanation.code, code);
-        }
-    }
-
-    #[test]
-    fn unsupported_changes_ask_for_an_update() {
-        for code in UNSUPPORTED_CHANGE {
-            let error = anyhow!("error {code}").context("error sync-round");
-            for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
-                let explanation = explain(ErrorAction::General, surface, &error).unwrap();
-                assert_eq!(explanation.code, *code);
-                assert!(explanation.message.contains("doesn't understand"));
-                assert!(explanation.message.contains("Local tasks are safe"));
-                assert!(explanation.next_step.contains("Update Aven"));
-                assert!(!explanation.combined().contains("reset"));
-            }
-        }
-    }
-
-    #[test]
-    fn rejected_applies_ask_for_an_update_first() {
-        for code in ["encrypted-tail-apply", "encrypted-tail-domain"] {
-            let error = anyhow!("error task-not-found sequence=7 op_type=set_field")
-                .context(format!("error {code}"));
-            let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-            assert_eq!(explanation.code, code);
-            assert!(explanation.next_step.contains("Update Aven"));
+    fn cloud_https_refusal_wins_over_invalid_server_url() {
+        let error = aven_core::sync::client::server_origin("http://sync.aventasks.dev")
+            .unwrap_err()
+            .context("error sync-join-command");
+        for action in [ErrorAction::General, ErrorAction::Setup, ErrorAction::Join] {
+            let explanation = explain(action, ErrorSurface::Cli, &error).unwrap();
+            assert_eq!(explanation.code, "sync-cloud-https-required");
+            assert!(
+                explanation
+                    .message
+                    .contains("No sync credentials were sent")
+            );
+            assert!(explanation.next_step.starts_with("New setups and joins"));
             assert!(!explanation.combined().contains("reset"));
         }
-        let error = anyhow!("error encrypted-tail-storage");
-        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-        assert!(explanation.next_step.contains("retries"));
-        assert!(!explanation.combined().contains("reset"));
-    }
-
-    #[test]
-    fn bad_records_point_to_rebuilding_sync() {
-        for code in BAD_RECORD {
-            let error = anyhow!("error {code}").context("error sync-round");
-            for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
-                let explanation = explain(ErrorAction::General, surface, &error).unwrap();
-                assert_eq!(explanation.code, *code);
-                assert!(explanation.message.contains("to protect your data"));
-                assert!(
-                    explanation
-                        .message
-                        .contains("Local tasks are safe and editable")
-                );
-                assert!(explanation.next_step.contains("`aven sync reset`"));
-                assert!(
-                    explanation
-                        .next_step
-                        .contains("/sync/setup/#rebuilding-sync")
-                );
-            }
-        }
-        let error = anyhow::Error::from(aven_core::sync::encrypted_tail::PrefixIdentityCollision);
-        let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, "encrypted-tail-prefix-identity-collision");
     }
 
     #[test]
@@ -1042,31 +1141,6 @@ mod tests {
             .context("error encrypted-image-initial-catch-up");
         let explanation = explain(ErrorAction::General, ErrorSurface::Cli, &error).unwrap();
         assert_eq!(explanation.code, "encrypted-tail-network");
-        assert!(!explanation.combined().contains("reset"));
-    }
-
-    #[test]
-    fn image_quota_names_the_server_setting() {
-        let error = anyhow!("error attachment-quota-exceeded").context("error sync-round");
-        for surface in [ErrorSurface::Cli, ErrorSurface::Tui] {
-            let explanation = explain(ErrorAction::General, surface, &error).unwrap();
-            assert_eq!(explanation.code, "attachment-quota-exceeded");
-            assert!(explanation.message.contains("sync server"));
-            assert!(
-                explanation
-                    .next_step
-                    .contains("server_workspace_quota_bytes")
-            );
-        }
-    }
-
-    #[test]
-    fn unsupported_protected_sync_data_asks_for_an_update() {
-        let error = anyhow!("error enrollment-store-unsupported");
-        let explanation = explain(ErrorAction::Join, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, "enrollment-store-unsupported");
-        assert!(explanation.next_step.contains("Update Aven"));
-        assert!(explanation.next_step.contains("Do not replace"));
         assert!(!explanation.combined().contains("reset"));
     }
 }

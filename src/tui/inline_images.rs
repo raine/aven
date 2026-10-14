@@ -386,6 +386,12 @@ mod tests {
     fn kitty_escape_chunks_large_payloads_with_bounded_packets() {
         let escape = kitty_escape(&"a".repeat(100_000), 20, 6, false, (11, 12));
 
+        let payload = escape
+            .split("\x1b\\")
+            .filter(|packet| !packet.is_empty())
+            .map(|packet| packet.split_once(';').unwrap().1)
+            .collect::<String>();
+        assert_eq!(payload, "a".repeat(100_000));
         assert!(escape.contains("m=1;"));
         assert!(escape.contains("\x1b_Ga=T,q=2,m=0;"));
         assert!(

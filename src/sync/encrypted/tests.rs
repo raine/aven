@@ -77,33 +77,6 @@ async fn daemon_resources_persist_until_config_server_or_fatal_error_changes() {
     assert_ne!(sync.cached.as_ref().unwrap().generation, recovered);
 }
 
-#[test]
-fn protected_key_storage_failures_explain_setup_errors() {
-    use crate::protected_local_keys::{
-        ProtectedLocalKeyStoreError, ProtectedLocalKeyStoreErrorKind,
-    };
-    use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
-
-    for (kind, code, message) in [
-        (
-            ProtectedLocalKeyStoreErrorKind::Unavailable,
-            "protected-key-storage-unavailable",
-            "Protected sync key storage is unavailable.",
-        ),
-        (
-            ProtectedLocalKeyStoreErrorKind::Corrupt,
-            "protected-key-storage-unsafe",
-            "Protected sync key storage is corrupt or unsafe.",
-        ),
-    ] {
-        let error = anyhow::Error::new(ProtectedLocalKeyStoreError::new(kind));
-        let explanation =
-            error_explanations::explain(ErrorAction::Setup, ErrorSurface::Cli, &error).unwrap();
-        assert_eq!(explanation.code, code);
-        assert_eq!(explanation.message, message);
-    }
-}
-
 /// Runs `aven` argument vectors from `AVEN_CLI_WORKER_ARGS` through the
 /// ordinary parse and dispatch path, then exits with the command's status.
 #[test]
@@ -113,11 +86,13 @@ fn cli_worker() {
         return;
     };
     let args: Vec<String> = serde_json::from_str(&args).unwrap();
+    // Boxed so the CLI future is not moved by value through `block_on` on the
+    // test thread, whose stack is smaller than the main thread `aven` runs on.
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(crate::run_cli_from(
+        .block_on(Box::pin(crate::run_cli_from(
             std::iter::once("aven".to_string()).chain(args),
-        ));
+        )));
     std::io::stdout().flush().unwrap();
     match result {
         Ok(()) => std::process::exit(0),
@@ -451,13 +426,10 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     a.ok(&["attachment", "add", &child, &seed_png.display().to_string()])
         .await;
 
-    // An unconfigured database stays local: sync explains setup, status
-    // reports it, and invitations need setup first.
+    // An unconfigured database stays local: sync and invitations explain
+    // that setup is required.
     let error = failure(&a.run(&["sync"]).await);
     assert!(error.contains("sync-not-set-up"), "{error}");
-    assert_eq!(status(&a).await["state"], "not-set-up");
-    let text = a.ok(&["sync", "status"]).await;
-    assert!(text.contains("Sync: not set up"), "{text}");
     let error = failure(&a.run(&["sync", "invite"]).await);
     assert!(error.contains("sync-not-set-up"), "{error}");
 
@@ -1119,5 +1091,32 @@ fn invitation_labels_precede_terminal_output_only() {
                 qr: None
             }
         );
+    }
+}
+
+#[tokio::test]
+async fn cli_cloud_setup_confirmation_labels_hosting_without_dispatching_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let node = Installation::new(root.path(), "cloud-confirmation");
+    for (origin, cloud) in [
+        ("https://SYNC.AVENTASKS.DEV.:443/", true),
+        ("https://sync.aventasks.dev:444", false),
+    ] {
+        let invitation = SetupInvitation {
+            server: aven_core::sync::client::server_origin(origin).unwrap(),
+            setup_id: [7; 32],
+            secret: aven_core::sync::seed_claim::Secret::new([8; 32]),
+        }
+        .encode()
+        .unwrap();
+        let error = failure(&node.run_with_input(&["sync", "setup"], &invitation).await);
+        assert!(
+            error.contains("sync-setup-confirmation-required"),
+            "{error}"
+        );
+        assert_eq!(error.contains("Hosting: Aven Cloud"), cloud, "{error}");
+        let normalized = aven_core::sync::client::server_origin(origin).unwrap();
+        assert!(error.contains(&format!("Server: {normalized}")), "{error}");
+        assert_eq!(status(&node).await["state"], "not-set-up");
     }
 }

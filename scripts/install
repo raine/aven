@@ -3,6 +3,10 @@
 # aven installation script
 # Usage: curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install | bash
 #
+# On macOS, Aven.app is installed to ~/.local/share/aven and the install
+# directory gets an `aven` symlink to its executable. Elsewhere the install
+# directory gets the `aven` binary.
+#
 # Environment variables:
 #   AVEN_VERSION      - Pin a specific version, such as v0.1.0
 #   AVEN_INSTALL_DIR  - Override install directory
@@ -168,15 +172,147 @@ install_binary() {
     fi
 }
 
+# Extracts an archive that may contain only directories and regular files
+# under Aven.app/.
+extract_app() {
+    local archive=$1
+    local destination=$2
+    local entries
+    local unexpected
+
+    if ! entries=$(tar -tzf "$archive"); then
+        log_error "Could not read $archive"
+        exit 1
+    fi
+    if printf '%s\n' "$entries" | grep -v '^Aven\.app/' | grep -q . ||
+        printf '%s\n' "$entries" | grep -Eq '(^|/)\.\.(/|$)'; then
+        log_error "$archive contains entries outside Aven.app"
+        exit 1
+    fi
+
+    mkdir "$destination"
+    tar -xzf "$archive" -C "$destination"
+    unexpected=$(find "$destination" \( ! -type f ! -type d \) -o \( -type f -links +1 \))
+    if [[ -n "$unexpected" ]]; then
+        log_error "$archive contains links or special files"
+        exit 1
+    fi
+    if [[ ! -f "$destination/Aven.app/Contents/MacOS/aven" || ! -x "$destination/Aven.app/Contents/MacOS/aven" ]]; then
+        log_error "$archive does not contain an Aven.app executable"
+        exit 1
+    fi
+}
+
+# Replaces the bundle as a whole; its signature seals all of its files.
+install_app() {
+    local source_app=$1
+    local app_dir=$2
+    local target_app="$app_dir/Aven.app"
+    local new_app="$app_dir/.Aven.app.new.$$"
+    local old_app="$app_dir/.Aven.app.old.$$"
+
+    log_info "Installing to $target_app..."
+    mkdir -p "$app_dir"
+    if [[ -L "$target_app" ]] || [[ -e "$target_app" && ! -d "$target_app" ]]; then
+        log_error "$target_app exists and is not a directory"
+        exit 1
+    fi
+    mv "$source_app" "$new_app"
+
+    if [[ -d "$target_app" ]]; then
+        mv "$target_app" "$old_app"
+        if ! mv "$new_app" "$target_app"; then
+            mv "$old_app" "$target_app"
+            rm -rf "$new_app"
+            log_error "Failed to replace $target_app"
+            exit 1
+        fi
+        rm -rf "$old_app"
+    else
+        mv "$new_app" "$target_app"
+    fi
+
+    if command -v xattr >/dev/null 2>&1; then
+        xattr -dr com.apple.quarantine "$target_app" 2>/dev/null || true
+    fi
+}
+
+link_binary() {
+    local executable=$1
+    local install_dir=$2
+    local target_binary="$install_dir/aven"
+    local tmp_link="$install_dir/aven.tmp.$$"
+
+    mkdir -p "$install_dir"
+    log_info "Linking $target_binary to $executable..."
+
+    if [[ -w "$install_dir" ]]; then
+        ln -sfn "$executable" "$tmp_link"
+        mv -f "$tmp_link" "$target_binary"
+    else
+        if ! command -v sudo >/dev/null 2>&1; then
+            log_error "$install_dir is not writable and sudo is not available"
+            exit 1
+        fi
+        sudo ln -sfn "$executable" "$tmp_link"
+        sudo mv -f "$tmp_link" "$target_binary"
+    fi
+}
+
+# Prints the existing Aven.app install that a bare binary would downgrade
+# around: the standard bundle, or an install_dir/aven symlink into a bundle.
+existing_bundle_install() {
+    local install_dir=$1
+    local bundle="$HOME/.local/share/aven/Aven.app"
+    local link="$install_dir/aven"
+
+    if [[ -e $bundle || -L $bundle ]]; then
+        printf '%s\n' "$bundle"
+    elif [[ -L $link && $(readlink "$link") == *.app/Contents/MacOS/aven ]]; then
+        printf '%s\n' "$link"
+    fi
+}
+
+# A bare binary would replace the bin/aven symlink while an installed daemon
+# keeps running the newer bundle, so refuse before changing anything.
+refuse_bundle_downgrade() {
+    local version=$1
+    local install_dir=$2
+    local existing
+
+    existing=$(existing_bundle_install "$install_dir")
+    if [[ -z $existing ]]; then
+        return
+    fi
+    log_error "$version has no Aven.app archive and cannot replace the Aven.app install at $existing"
+    printf '\nInstall a release that includes Aven.app, or uninstall the current aven first.\n'
+    printf 'After installing an older release, if you use the aven daemon, run: aven daemon repair\n\n'
+    exit 1
+}
+
+download_and_verify() {
+    local base_url=$1
+    local archive_name=$2
+    local tmp_dir=$3
+    local checksum_file="${archive_name%.tar.gz}.sha256"
+
+    log_info "Verifying checksum..."
+    fetch_url "$base_url/$checksum_file" "$tmp_dir/$checksum_file"
+    if ! (cd "$tmp_dir" && verify_checksum "$checksum_file"); then
+        log_error "Checksum verification failed for $archive_name"
+        exit 1
+    fi
+    log_success "Checksum verified"
+}
+
 install_from_release() {
     local platform=$1
     local version=${AVEN_VERSION:-}
     local install_dir=${AVEN_INSTALL_DIR:-}
     local tmp_dir
     local archive_name
-    local checksum_file
-    local download_url
-    local checksum_url
+    local app_archive_name
+    local base_url
 
     tmp_dir=$(mktemp -d)
     tmp_dir_to_remove=$tmp_dir
@@ -193,25 +329,35 @@ install_from_release() {
     fi
 
     archive_name="aven-${platform}.tar.gz"
-    checksum_file="${archive_name%.tar.gz}.sha256"
-    download_url="https://github.com/raine/aven/releases/download/${version}/${archive_name}"
-    checksum_url="https://github.com/raine/aven/releases/download/${version}/${checksum_file}"
+    app_archive_name="aven-${platform}-app.tar.gz"
+    base_url="https://github.com/raine/aven/releases/download/${version}"
 
     log_info "Installing version: $version"
-    log_info "Downloading $archive_name..."
-    fetch_url "$download_url" "$tmp_dir/$archive_name"
-
-    log_info "Verifying checksum..."
-    fetch_url "$checksum_url" "$tmp_dir/$checksum_file"
-    (cd "$tmp_dir" && verify_checksum "$checksum_file")
-    log_success "Checksum verified"
-
-    log_info "Extracting archive..."
-    tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir"
-
     if [[ -z "$install_dir" ]]; then
         install_dir=$(default_install_dir)
     fi
+
+    if [[ "$platform" == darwin-* ]]; then
+        log_info "Downloading $app_archive_name..."
+        if fetch_url "$base_url/$app_archive_name" "$tmp_dir/$app_archive_name"; then
+            download_and_verify "$base_url" "$app_archive_name" "$tmp_dir"
+            log_info "Extracting archive..."
+            extract_app "$tmp_dir/$app_archive_name" "$tmp_dir/app"
+            install_app "$tmp_dir/app/Aven.app" "$HOME/.local/share/aven"
+            link_binary "$HOME/.local/share/aven/Aven.app/Contents/MacOS/aven" "$install_dir"
+            install_dir_result=$install_dir
+            return
+        fi
+        refuse_bundle_downgrade "$version" "$install_dir"
+        log_warning "$version has no Aven.app archive; installing the bare binary"
+    fi
+
+    log_info "Downloading $archive_name..."
+    fetch_url "$base_url/$archive_name" "$tmp_dir/$archive_name"
+    download_and_verify "$base_url" "$archive_name" "$tmp_dir"
+
+    log_info "Extracting archive..."
+    tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir"
 
     install_binary "$tmp_dir/aven" "$install_dir"
     install_dir_result=$install_dir
@@ -256,4 +402,7 @@ main() {
     verify_installation "$install_dir_result"
 }
 
-main "$@"
+# Tests source this script to call its functions.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi

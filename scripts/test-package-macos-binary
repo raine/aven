@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $(uname -s) != Darwin ]]; then
+  echo "macOS archive fixtures require macOS" >&2
+  exit 2
+fi
+if [[ $# -ne 0 && $# -ne 2 ]]; then
+  echo "usage: test-package-macos-binary [SIGNED_BINARY arm64|x86_64]" >&2
+  exit 2
+fi
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+package="$script_dir/package-macos-binary"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+# macOS tar hides AppleDouble ._ entries when listing; the updater does not.
+entries() {
+  python3 -I -c 'import sys, tarfile
+for m in tarfile.open(sys.argv[1]):
+    print(("file" if m.isreg() else "other"), m.name)' "$1"
+}
+
+mkdir "$tmp/in" "$tmp/out"
+binary="$tmp/in/aven"
+if [[ $# -eq 2 ]]; then
+  cp "$1" "$binary"
+else
+  cp /usr/bin/true "$binary"
+  codesign --force --sign - "$binary" 2>/dev/null
+fi
+cp "$binary" "$tmp/expected"
+/usr/bin/xattr -w com.example.aven-fixture 1 "$binary"
+/usr/bin/xattr -p com.example.aven-fixture "$binary" >/dev/null || fail "fixture xattr missing"
+
+# Control: plain bsdtar adds the AppleDouble entry the updater rejects.
+tar -C "$tmp/in" -czf "$tmp/plain.tar.gz" aven
+entries "$tmp/plain.tar.gz" | grep -q ' \._aven$' || fail "control archive has no ._aven entry"
+
+"$package" "$binary" "$tmp/aven.tar.gz"
+listing=$(entries "$tmp/aven.tar.gz")
+[[ $listing == "file aven" ]] || fail "archive entries: $(tr '\n' ' ' <<<"$listing")"
+
+tar -xzf "$tmp/aven.tar.gz" -C "$tmp/out"
+[[ $(cd "$tmp/out" && find . -mindepth 1) == ./aven ]] || fail "unexpected extracted entries"
+[[ -f $tmp/out/aven && ! -L $tmp/out/aven ]] || fail "extracted aven is not a regular file"
+cmp -s "$tmp/expected" "$tmp/out/aven" || fail "extracted bytes differ from input"
+if [[ $# -eq 2 ]]; then
+  "$script_dir/verify-macos-release" "$tmp/out/aven" "$2" >/dev/null ||
+    fail "extracted binary fails release verification"
+else
+  codesign --verify --strict "$tmp/out/aven" || fail "extracted binary fails signature verification"
+fi
+
+if "$package" "$tmp/expected" "$tmp/rejected.tar.gz" 2>/dev/null; then
+  fail "packaged a file not named aven"
+fi
+
+echo "ok"

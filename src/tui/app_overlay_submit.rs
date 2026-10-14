@@ -9,7 +9,15 @@ use crate::tui::overlay::{
 };
 
 impl App {
-    pub(super) async fn handle_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
+    // Boxed so callers hold a pointer instead of a future sized for every submission.
+    pub(super) fn handle_overlay_submit(
+        &mut self,
+        submit: OverlaySubmit,
+    ) -> impl Future<Output = Result<()>> {
+        Box::pin(self.apply_overlay_submit(submit))
+    }
+
+    async fn apply_overlay_submit(&mut self, submit: OverlaySubmit) -> Result<()> {
         match submit {
             OverlaySubmit::MetadataSave { state, remove } => {
                 self.save_metadata(state, remove).await?

@@ -14,6 +14,10 @@ use anyhow::Result;
 #[cfg(not(target_os = "linux"))]
 use anyhow::bail;
 
+#[cfg(target_os = "macos")]
+use crate::app_bundle::{
+    AVEN_BUNDLE_ID, BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle,
+};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::config;
 use crate::config::AppConfig;
@@ -60,6 +64,9 @@ pub struct ServiceStatus {
     pub program: Option<PathBuf>,
     pub current_executable: PathBuf,
     pub program_matches_current: Option<bool>,
+    /// The agent runs this executable through a path outside Aven.app, so
+    /// Login Items does not attribute it to the app.
+    pub bundle_migration_pending: Option<bool>,
     pub stdout_path: Option<PathBuf>,
     pub stderr_path: Option<PathBuf>,
 }
@@ -101,6 +108,37 @@ pub fn repair(args: ServiceRepairArgs) -> Result<()> {
 #[cfg(not(target_os = "linux"))]
 pub fn status_snapshot() -> Result<ServiceStatus> {
     status_with_runner(&SystemRunner)
+}
+
+/// Whether the running daemon moved its LaunchAgent to the Aven.app executable.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BundleMigration {
+    NotNeeded,
+    Skipped(&'static str),
+    /// The plist now names `program`; launchd still runs the old definition
+    /// until the service is reloaded.
+    Prepared {
+        program: PathBuf,
+    },
+}
+
+#[cfg(target_os = "macos")]
+pub fn prepare_bundle_migration() -> Result<BundleMigration> {
+    prepare_bundle_migration_with_runner(&SystemRunner)
+}
+
+#[cfg(target_os = "macos")]
+pub fn reload_service_definition() -> Result<()> {
+    reload_definition_with_runner(&SystemRunner, &SystemSleeper)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reload_service_definition() -> Result<()> {
+    anyhow::bail!(
+        "error unsupported-platform command=internal-reload-daemon platform={}",
+        std::env::consts::OS
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -299,6 +337,12 @@ fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
     let program_matches_current = program
         .as_ref()
         .map(|program| paths_resolve_to_same_file(program, &current_executable));
+    let bundled_target = enclosing_bundle(&stable_program_path(&current_executable)).is_some();
+    let bundle_migration_pending = program.as_ref().map(|program| {
+        bundled_target
+            && enclosing_bundle(program).is_none()
+            && paths_resolve_to_same_file(program, &current_executable)
+    });
     let runtime = service_runtime(runner, &spec)?;
     Ok(ServiceStatus {
         platform_supported: true,
@@ -309,6 +353,7 @@ fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
         program,
         current_executable,
         program_matches_current,
+        bundle_migration_pending,
         stdout_path: Some(spec.stdout_path),
         stderr_path: Some(spec.stderr_path),
     })
@@ -325,14 +370,104 @@ fn status_with_runner(_runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
         program: None,
         current_executable: std::env::current_exe().unwrap_or_default(),
         program_matches_current: None,
+        bundle_migration_pending: None,
         stdout_path: None,
         stderr_path: None,
     })
 }
 
+/// Moves an agent that runs Aven.app's executable through a symlink onto the
+/// bundle path. Only plists that match what aven renders are rewritten, so
+/// the database, environment and log settings carry over unchanged.
+#[cfg(target_os = "macos")]
+fn prepare_bundle_migration_with_runner(runner: &impl LaunchctlRunner) -> Result<BundleMigration> {
+    // launchd sets this for its jobs; anything else is a manual `aven daemon`.
+    if std::env::var_os("XPC_SERVICE_NAME").is_none_or(|name| name != LABEL) {
+        return Ok(BundleMigration::NotNeeded);
+    }
+    let base = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let existing = match std::fs::read_to_string(&base.plist_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BundleMigration::NotNeeded);
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("read {}", base.plist_path.display()));
+        }
+    };
+    let current_exe = std::env::current_exe().context("resolve current executable")?;
+    let program = stable_program_path(&current_exe);
+    let plist = match bundle_migration_plist(&base, &existing, &program) {
+        Ok(Some(plist)) => plist,
+        Ok(None) => return Ok(BundleMigration::NotNeeded),
+        Err(reason) => return Ok(BundleMigration::Skipped(reason)),
+    };
+    if service_is_disabled(runner, &base)? {
+        return Ok(BundleMigration::Skipped("disabled"));
+    }
+    write_plist(&base, &plist)?;
+    Ok(BundleMigration::Prepared { program })
+}
+
+/// Renders `existing` with `program` as the executable, or `None` when the
+/// agent already runs from a bundle or `program` is not inside one.
+#[cfg(target_os = "macos")]
+fn bundle_migration_plist(
+    base: &ServiceSpec,
+    existing: &str,
+    program: &Path,
+) -> Result<Option<String>, &'static str> {
+    if enclosing_bundle(program).is_none() {
+        return Ok(None);
+    }
+    let mut spec = base
+        .with_plist_settings(existing)
+        .ok_or("unrecognized-plist")?;
+    if enclosing_bundle(&spec.executable).is_some() {
+        return Ok(None);
+    }
+    if render_plist(&spec) != existing {
+        return Err("customized-plist");
+    }
+    if !paths_resolve_to_same_file(&spec.executable, program) {
+        return Err("different-program");
+    }
+    spec.executable = program.to_path_buf();
+    Ok(Some(render_plist(&spec)))
+}
+
+#[cfg(target_os = "macos")]
+fn service_is_disabled(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<bool> {
+    let args = ["print-disabled", spec.domain.as_str()];
+    let output = runner.run(&args)?;
+    if !output.status.success() {
+        return Err(launchctl_failure(&args, &output));
+    }
+    let entry = format!("\"{}\" =>", spec.label);
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(entry.as_str()))
+        .any(|state| matches!(state.trim(), "disabled" | "true")))
+}
+
+/// Reloads the service from its plist without rewriting it. The caller must
+/// not be part of the service's job, since bootout ends the job's processes.
+#[cfg(target_os = "macos")]
+fn reload_definition_with_runner(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+) -> Result<()> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let performed_bootout = stop_service(runner, sleeper, &spec)?;
+    bootstrap_service(runner, sleeper, &spec, performed_bootout)?;
+    println!("reloaded {}", spec.service_target);
+    Ok(())
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn validate_install_config(config: &AppConfig) -> Result<()> {
-    config.ensure_automatic_sync_enabled()?;
+    config.ensure_daemon_has_work()?;
     config.wake_addr()?;
     Ok(())
 }
@@ -396,6 +531,33 @@ impl ServiceSpec {
         })
     }
 
+    /// This spec with the executable, database and environment of a plist
+    /// rendered by `render_plist`.
+    fn with_plist_settings(&self, text: &str) -> Option<Self> {
+        let arguments = tag_values(
+            plist_section(text, "ProgramArguments", "<array>", "</array>")?,
+            "string",
+        );
+        let [program, db_flag, db_path, command] = arguments.as_slice() else {
+            return None;
+        };
+        if db_flag != "--db" || command != "daemon" {
+            return None;
+        }
+        let env_section = plist_section(text, "EnvironmentVariables", "<dict>", "</dict>")?;
+        let env: std::collections::HashMap<String, String> = tag_values(env_section, "key")
+            .into_iter()
+            .zip(tag_values(env_section, "string"))
+            .collect();
+        let mut spec = self.clone();
+        spec.executable = PathBuf::from(program);
+        spec.db_path = PathBuf::from(db_path);
+        spec.path_env = env.get("PATH")?.clone();
+        spec.config_dir = env.get("AVEN_CONFIG_DIR").map(PathBuf::from);
+        spec.state_home = env.get("XDG_STATE_HOME").map(PathBuf::from);
+        Some(spec)
+    }
+
     fn plist_path_str(&self) -> Result<&str> {
         self.plist_path
             .to_str()
@@ -411,15 +573,29 @@ fn absolute_path(path: PathBuf) -> Result<PathBuf> {
     Ok(std::env::current_dir()?.join(path))
 }
 
+/// Bundle paths come first: Login Items attributes the agent to Aven.app only
+/// when the program path itself is inside the bundle, not a symlink to it.
 #[cfg(target_os = "macos")]
 fn stable_program_path(current_exe: &Path) -> PathBuf {
+    let home = dirs::home_dir();
     let mut candidates = vec![
+        Path::new("/opt/homebrew/opt/aven")
+            .join(BUNDLE_NAME)
+            .join(BUNDLE_EXECUTABLE),
+        Path::new("/usr/local/opt/aven")
+            .join(BUNDLE_NAME)
+            .join(BUNDLE_EXECUTABLE),
+    ];
+    if let Some(home) = &home {
+        candidates.push(direct_install_bundle(home).join(BUNDLE_EXECUTABLE));
+    }
+    candidates.extend([
         PathBuf::from("/opt/homebrew/opt/aven/bin/aven"),
         PathBuf::from("/usr/local/opt/aven/bin/aven"),
         PathBuf::from("/opt/homebrew/bin/aven"),
         PathBuf::from("/usr/local/bin/aven"),
-    ];
-    if let Some(home) = dirs::home_dir() {
+    ]);
+    if let Some(home) = &home {
         candidates.push(home.join(".cargo/bin/aven"));
         candidates.push(home.join(".local/bin/aven"));
     }
@@ -465,6 +641,32 @@ fn program_from_plist_text(text: &str) -> Option<String> {
     let after_string = &after_program_args[string_start..];
     let string_end = after_string.find("</string>")?;
     Some(unescape_xml(&after_string[..string_end]))
+}
+
+/// The text between `open` and `close` following `<key>{key}</key>`.
+#[cfg(target_os = "macos")]
+fn plist_section<'a>(text: &'a str, key: &str, open: &str, close: &str) -> Option<&'a str> {
+    let after_key = &text[text.find(&format!("<key>{key}</key>"))?..];
+    let start = after_key.find(open)? + open.len();
+    let end = start + after_key[start..].find(close)?;
+    Some(&after_key[start..end])
+}
+
+#[cfg(target_os = "macos")]
+fn tag_values(text: &str, tag: &str) -> Vec<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let mut values = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(&open) {
+        let after_open = &rest[start + open.len()..];
+        let Some(end) = after_open.find(&close) else {
+            break;
+        };
+        values.push(unescape_xml(&after_open[..end]));
+        rest = &after_open[end + close.len()..];
+    }
+    values
 }
 
 #[cfg(target_os = "macos")]
@@ -536,14 +738,26 @@ fn reload_service(
     spec: &ServiceSpec,
     plist: &str,
 ) -> Result<()> {
-    let performed_bootout = service_is_loaded(runner, spec)?;
-    if performed_bootout {
-        run_launchctl(runner, &["bootout", &spec.service_target])?;
-        wait_for_service_absence(runner, sleeper, spec)?;
-    }
+    let performed_bootout = stop_service(runner, sleeper, spec)?;
     write_plist(spec, plist)?;
     run_launchctl(runner, &["enable", &spec.service_target])?;
     bootstrap_service(runner, sleeper, spec, performed_bootout)
+}
+
+/// Boots out a loaded service and waits until launchd releases it. Returns
+/// whether a bootout happened.
+#[cfg(target_os = "macos")]
+fn stop_service(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+) -> Result<bool> {
+    let loaded = service_is_loaded(runner, spec)?;
+    if loaded {
+        run_launchctl(runner, &["bootout", &spec.service_target])?;
+        wait_for_service_absence(runner, sleeper, spec)?;
+    }
+    Ok(loaded)
 }
 
 #[cfg(target_os = "macos")]
@@ -657,6 +871,14 @@ fn render_plist(spec: &ServiceSpec) -> String {
             )
         })
         .collect::<String>();
+    // Login Items lists the agent under the app's name and icon.
+    let associated_bundle = if enclosing_bundle(&spec.executable).is_some() {
+        format!(
+            "  <key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>{AVEN_BUNDLE_ID}</string>\n  </array>\n"
+        )
+    } else {
+        String::new()
+    };
 
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -686,6 +908,7 @@ fn render_plist(spec: &ServiceSpec) -> String {
   <string>{}</string>\n\
   <key>StandardErrorPath</key>\n\
   <string>{}</string>\n\
+{}\
 </dict>\n\
 </plist>\n",
         escape_xml(&spec.label),
@@ -693,7 +916,8 @@ fn render_plist(spec: &ServiceSpec) -> String {
         escape_xml(path_str(&spec.db_path)),
         env_xml,
         escape_xml(path_str(&spec.stdout_path)),
-        escape_xml(path_str(&spec.stderr_path))
+        escape_xml(path_str(&spec.stderr_path)),
+        associated_bundle
     )
 }
 
@@ -771,6 +995,57 @@ mod tests {
         assert!(plist.contains("<true/>"));
         assert!(!plist.contains("<key>SuccessfulExit</key>"));
         assert!(plist.contains("<key>ThrottleInterval</key>"));
+        assert!(!plist.contains("AssociatedBundleIdentifiers"));
+    }
+
+    #[test]
+    fn bundled_program_associates_the_agent_with_aven_app() {
+        let mut spec = test_spec();
+        spec.executable = PathBuf::from("/opt/homebrew/opt/aven/Aven.app/Contents/MacOS/aven");
+        let plist = render_plist(&spec);
+        assert!(plist.contains(
+            "  <key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>fi.zendit.Aven</string>\n  </array>\n</dict>"
+        ));
+        assert_eq!(
+            program_from_plist_text(&plist).as_deref(),
+            Some("/opt/homebrew/opt/aven/Aven.app/Contents/MacOS/aven")
+        );
+
+        for bare in [
+            "/opt/homebrew/bin/aven",
+            "/x/Aven.app/Contents/Resources/aven",
+        ] {
+            spec.executable = PathBuf::from(bare);
+            assert!(
+                !render_plist(&spec).contains("AssociatedBundleIdentifiers"),
+                "{bare}"
+            );
+        }
+    }
+
+    #[test]
+    fn plist_with_bundle_association_is_valid_xml_plist() {
+        let mut spec = test_spec();
+        spec.executable = PathBuf::from("/Users/me/.local/share/aven/Aven.app/Contents/MacOS/aven");
+        let path = spec.plist_path.clone();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, render_plist(&spec)).unwrap();
+        let output = Command::new("/usr/bin/plutil")
+            .args([
+                "-extract",
+                "AssociatedBundleIdentifiers.0",
+                "raw",
+                "-o",
+                "-",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "fi.zendit.Aven"
+        );
     }
 
     #[test]
@@ -979,12 +1254,135 @@ mod tests {
     }
 
     #[test]
+    fn stable_program_path_prefers_the_bundle_over_bin_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let cellar_bundle = dir.path().join("Cellar/aven/1.0.0/Aven.app");
+        let executable = cellar_bundle.join(BUNDLE_EXECUTABLE);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "aven").unwrap();
+        let opt = dir.path().join("opt/aven");
+        std::fs::create_dir_all(opt.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(cellar_bundle.parent().unwrap(), &opt).unwrap();
+        let bin = dir.path().join("bin/aven");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&executable, &bin).unwrap();
+        let opt_bundle = opt.join(BUNDLE_NAME).join(BUNDLE_EXECUTABLE);
+
+        // Launched through the PATH symlink, the program still points inside the bundle.
+        assert_eq!(
+            stable_program_path_from_candidates(&bin, vec![opt_bundle.clone(), bin.clone()]),
+            opt_bundle
+        );
+        // A bare executable never matches a bundle left beside it.
+        let bare = dir.path().join("bare/aven");
+        std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+        std::fs::write(&bare, "aven").unwrap();
+        assert_eq!(
+            stable_program_path_from_candidates(&bare, vec![opt_bundle, bin]),
+            bare
+        );
+    }
+
+    #[test]
     fn program_from_plist_text_unescapes_xml() {
         let plist = "<key>ProgramArguments</key><array><string>/bin/aven&amp;test</string></array>";
         assert_eq!(
             program_from_plist_text(plist).as_deref(),
             Some("/bin/aven&test")
         );
+    }
+
+    /// A Homebrew-style layout: `bin/aven` links to the bundle executable.
+    fn linked_bundle() -> (PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let program = dir.join("opt/aven/Aven.app/Contents/MacOS/aven");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, "aven").unwrap();
+        let link = dir.join("opt/aven/bin/aven");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&program, &link).unwrap();
+        (link, program)
+    }
+
+    #[test]
+    fn bundle_migration_moves_the_program_and_keeps_settings() {
+        let (link, program) = linked_bundle();
+        let base = test_spec();
+        let mut installed = base.clone();
+        installed.executable = link;
+        installed.db_path = PathBuf::from("/data/a&b.sqlite");
+        installed.path_env = "/custom/bin:/usr/bin".to_string();
+        installed.config_dir = Some(PathBuf::from("/config/aven"));
+        installed.state_home = Some(PathBuf::from("/state"));
+        let existing = render_plist(&installed);
+
+        // The running process may see different settings; the plist wins.
+        let migrated = bundle_migration_plist(&base, &existing, &program)
+            .unwrap()
+            .unwrap();
+
+        let mut expected = installed.clone();
+        expected.executable = program.clone();
+        assert_eq!(migrated, render_plist(&expected));
+        assert!(migrated.contains("AssociatedBundleIdentifiers"));
+        assert_eq!(bundle_migration_plist(&base, &migrated, &program), Ok(None));
+    }
+
+    #[test]
+    fn bundle_migration_skips_bare_targets_and_foreign_plists() {
+        let (link, program) = linked_bundle();
+        let base = test_spec();
+        let mut installed = base.clone();
+        installed.executable = link;
+        let existing = render_plist(&installed);
+
+        assert_eq!(
+            bundle_migration_plist(&base, &existing, Path::new("/opt/homebrew/bin/aven")),
+            Ok(None)
+        );
+        let customized = existing.replacen(
+            "<key>RunAtLoad</key>",
+            "<key>Nice</key>\n<integer>5</integer>\n<key>RunAtLoad</key>",
+            1,
+        );
+        assert_ne!(customized, existing);
+        assert_eq!(
+            bundle_migration_plist(&base, &customized, &program),
+            Err("customized-plist")
+        );
+        let extra_argument = existing.replace(
+            "<string>daemon</string>",
+            "<string>daemon</string>\n    <string>--verbose</string>",
+        );
+        assert_eq!(
+            bundle_migration_plist(&base, &extra_argument, &program),
+            Err("unrecognized-plist")
+        );
+        let (_, other_program) = linked_bundle();
+        assert_eq!(
+            bundle_migration_plist(&base, &existing, &other_program),
+            Err("different-program")
+        );
+    }
+
+    #[test]
+    fn disabled_services_are_detected_in_both_launchctl_formats() {
+        let spec = test_spec();
+        for (listing, disabled) in [
+            ("\t\"com.raine.aven.daemon\" => disabled\n", true),
+            ("\t\"com.raine.aven.daemon\" => true\n", true),
+            ("\t\"com.raine.aven.daemon\" => enabled\n", false),
+            ("\t\"com.raine.aven.daemon.other\" => disabled\n", false),
+            ("", false),
+        ] {
+            let runner = FakeRunner::new(vec![success_with_stdout(listing)]);
+            assert_eq!(
+                service_is_disabled(&runner, &spec).unwrap(),
+                disabled,
+                "{listing}"
+            );
+            assert_eq!(runner.commands(), [["print-disabled", "gui/501"]]);
+        }
     }
 
     fn test_spec() -> ServiceSpec {

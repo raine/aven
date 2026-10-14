@@ -7,7 +7,7 @@ pub(crate) fn install_plan(release: Release) -> InstallPlan {
     let launch = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aven"));
     let canonical = std::fs::canonicalize(&launch).unwrap_or_else(|_| launch.clone());
     let supported = platform_archive_name().is_ok();
-    let writable = can_stage_beside(&canonical);
+    let writable = can_stage_beside(&replaced_path(&canonical));
     InstallPlan {
         release,
         method: classify_install(&launch, &canonical, supported, writable),
@@ -69,6 +69,15 @@ fn classify_install(
     }
 }
 
+/// The path a direct update replaces: the whole `Aven.app` for a bundled executable.
+fn replaced_path(canonical: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = crate::app_bundle::enclosing_bundle(canonical) {
+        return bundle;
+    }
+    canonical.to_path_buf()
+}
+
 pub(super) fn can_stage_beside(target: &Path) -> bool {
     let Some(parent) = target.parent() else {
         return false;
@@ -82,6 +91,30 @@ pub(super) fn can_stage_beside(target: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bundled_executables_replace_the_whole_bundle() {
+        assert_eq!(
+            replaced_path(Path::new(
+                "/Users/me/.local/share/aven/Aven.app/Contents/MacOS/aven"
+            )),
+            PathBuf::from("/Users/me/.local/share/aven/Aven.app")
+        );
+        assert_eq!(
+            replaced_path(Path::new("/Users/me/.local/bin/aven")),
+            PathBuf::from("/Users/me/.local/bin/aven")
+        );
+        assert_eq!(
+            classify_install(
+                Path::new("/opt/homebrew/bin/aven"),
+                Path::new("/opt/homebrew/Cellar/aven/1.0.0/Aven.app/Contents/MacOS/aven"),
+                true,
+                true,
+            ),
+            InstallMethod::Homebrew
+        );
+    }
 
     #[test]
     fn classifies_managed_and_development_paths_before_writability() {

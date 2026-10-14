@@ -67,7 +67,7 @@ fn task_activity_is_collapsed_by_default_and_expands_with_idle_context() {
     assert!(collapsed.contains("ACTIVITY"));
     assert!(collapsed.contains("Show 3 events"));
     assert!(!collapsed.contains("added note"));
-    assert!(collapsed.find("ACTIVITY") > collapsed.find("BLOCKS"));
+    assert!(collapsed.find("ACTIVITY").unwrap() > collapsed.find("WHAT THIS UNLOCKS").unwrap());
 
     let expanded_sections = [DetailSection::Activity].into_iter().collect();
     let rendered =

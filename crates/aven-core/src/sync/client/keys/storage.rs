@@ -275,29 +275,73 @@ fn remove_restricted_file(path: &Path) -> StoreResult<()> {
     }
 }
 
+fn write_failure(
+    phase: &'static str,
+    source: std::io::Error,
+) -> super::ProtectedLocalKeyStoreError {
+    tracing::warn!(
+        phase,
+        errno = source.raw_os_error(),
+        "protected storage write failed"
+    );
+    error(ProtectedLocalKeyStoreErrorKind::WriteFailed)
+}
+
 fn write_restricted_new(path: &Path, bytes: &[u8]) -> StoreResult<()> {
     let parent = path
         .parent()
         .ok_or_else(|| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
     let mut staged = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+        .map_err(|source| write_failure("stage_create", source))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         staged
             .as_file()
             .set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+            .map_err(|source| write_failure("stage_permissions", source))?;
     }
     staged
         .as_file_mut()
         .write_all(bytes)
-        .and_then(|()| staged.as_file().sync_all())
-        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+        .map_err(|source| write_failure("stage_write", source))?;
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(|source| write_failure("stage_sync", source))?;
     staged
         .persist_noclobber(path)
-        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))?;
+        .map_err(|source| write_failure("stage_persist", source.error))?;
     File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| error(ProtectedLocalKeyStoreErrorKind::WriteFailed))
+        .map_err(|source| write_failure("parent_open", source))?
+        .sync_all()
+        .map_err(|source| write_failure("parent_sync", source))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_create_preserves_existing_bytes_and_error_contract() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("record");
+        write_restricted_new(&path, b"first").unwrap();
+        assert_eq!(
+            write_restricted_new(&path, b"other").unwrap_err().kind(),
+            ProtectedLocalKeyStoreErrorKind::WriteFailed
+        );
+        assert_eq!(read_restricted_file(&path, 5).unwrap().unwrap(), b"first");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_staging_keeps_stable_private_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing/record");
+        let failure = write_restricted_new(&path, b"private").unwrap_err();
+        assert_eq!(failure.kind(), ProtectedLocalKeyStoreErrorKind::WriteFailed);
+        assert!(!failure.to_string().contains("missing"));
+        assert!(!failure.to_string().contains("private"));
+    }
 }

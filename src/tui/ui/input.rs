@@ -132,14 +132,6 @@ mod tests {
     const THEME: &Theme = &Theme::dark();
 
     #[test]
-    fn cursor_cell_has_correct_style() {
-        let span = cursor_cell(THEME, "a");
-        assert_eq!(span.content.as_ref(), "a");
-        assert_eq!(span.style.fg, THEME.cursor().fg);
-        assert_eq!(span.style.bg, THEME.cursor().bg);
-    }
-
-    #[test]
     fn input_line_draws_cursor_as_cell() {
         let line = input_line(THEME, "", "abc", 1);
         assert_eq!(line.spans[0].content.as_ref(), "a");

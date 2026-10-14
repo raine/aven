@@ -9,8 +9,8 @@ use ratatui::widgets::{Block, Paragraph};
 use crate::tui::app_onboarding::OnboardingIntroVisual;
 use crate::tui::theme::Theme;
 
-const LOGO_WIDTH: usize = 60;
-const LOGO_HEIGHT: usize = 28;
+const LOGO_WIDTH: usize = 70;
+const LOGO_HEIGHT: usize = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pixel {
@@ -394,8 +394,8 @@ mod tests {
 
     #[test]
     fn splash_scales_within_terminal() {
-        assert_eq!(splash_size(Rect::new(0, 0, 80, 40)), Some((60, 28)));
-        assert_eq!(splash_size(Rect::new(0, 0, 70, 18)), Some((34, 16)));
+        assert_eq!(splash_size(Rect::new(0, 0, 80, 40)), Some((70, 25)));
+        assert_eq!(splash_size(Rect::new(0, 0, 70, 18)), Some((44, 16)));
         assert_eq!(splash_size(Rect::new(0, 0, 1, 1)), None);
     }
 

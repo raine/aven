@@ -2,15 +2,6 @@ use super::*;
 use ratatui::style::{Color, Modifier};
 
 #[tokio::test]
-async fn tui_background_uses_terminal_background_for_main_surface() {
-    let mut app = test_app().await;
-
-    let buf = render_app_buffer(&mut app, 120, 30);
-
-    assert_eq!(buf[(119, 10)].bg, Color::Reset);
-}
-
-#[tokio::test]
 async fn modal_overlay_dims_main_surface_underlay() {
     let mut app = test_app().await;
     app.overlay = Some(OverlayState::Confirm(ConfirmState {
@@ -39,6 +30,7 @@ async fn modal_overlay_dims_main_surface_underlay() {
 #[tokio::test]
 async fn popover_menu_keeps_main_surface_underlay_bright() {
     let mut app = test_app().await;
+    let before = render_app_buffer(&mut app, 120, 30);
     app.overlay = Some(OverlayState::OrderMenu(
         crate::tui::overlay::OrderMenuState {
             column: 0,
@@ -52,11 +44,29 @@ async fn popover_menu_keeps_main_surface_underlay_bright() {
 
     assert_eq!(underlay.bg, Color::Reset);
     assert!(!underlay.modifier.contains(Modifier::DIM));
+    let glyphs = before
+        .content
+        .iter()
+        .zip(&buf.content)
+        .filter(|(before, after)| {
+            before.symbol() == after.symbol() && before.symbol().chars().any(|c| !c.is_whitespace())
+        })
+        .collect::<Vec<_>>();
+    assert!(!glyphs.is_empty());
+    assert!(
+        glyphs
+            .iter()
+            .all(|(_, cell)| !cell.modifier.contains(Modifier::DIM))
+    );
 }
 
 #[tokio::test]
 async fn theme_commands_select_explicitly_and_keep_terminal_background() {
     let mut app = test_app().await;
+    assert_eq!(
+        render_app_buffer(&mut app, 120, 30)[(119, 10)].bg,
+        Color::Reset
+    );
     for (value, appearance) in [
         ("light", crate::tui::theme::Appearance::Light),
         ("terminal", crate::tui::theme::Appearance::Terminal),

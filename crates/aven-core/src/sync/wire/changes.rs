@@ -494,42 +494,309 @@ mod tests {
     use super::super::validate_pushed_change;
     use crate::change_log::{ChangePayload, op_type};
 
-    #[test]
-    fn constructed_create_task_payload_passes_wire_validation() {
-        let ws = test_workspace();
-        let payload = ChangePayload::workspace(&ws)
-            .set("title", "test task")
-            .set("description", "a description")
-            .set("project_id", "1111111111111111")
-            .set("project_key", "app")
-            .set("project_name", "App")
-            .set("project_prefix", "APP")
-            .set("status", "inbox")
-            .set("priority", "none")
-            .set("created_at", "2026-06-01T00:00:00Z")
-            .into_value();
-        let change = make_change_wire(op_type::CREATE_TASK, "task", "BBBBBBBBBBBBBBBB", payload);
-        validate_pushed_change(&change)
-            .expect("create_task payload built with ChangePayload should be wire-valid");
+    fn task_draft(title: &str, is_epic: bool) -> crate::operations::TaskDraft {
+        crate::operations::TaskDraft {
+            title: title.into(),
+            description: "task body".into(),
+            project: Some("app".into()),
+            status: "todo".into(),
+            priority: "high".into(),
+            source: crate::choices::TaskSource::Cli,
+            labels: Vec::new(),
+            metadata: Vec::new(),
+            available_at: None,
+            due_on: None,
+            is_epic,
+        }
     }
 
-    #[test]
-    fn constructed_create_project_payload_passes_wire_validation() {
-        let ws = test_workspace();
-        let payload = ChangePayload::workspace(&ws)
-            .set("key", "app")
-            .set("name", "App")
-            .set("prefix", "APP")
-            .set("created_at", "2026-06-01T00:00:00Z")
-            .into_value();
-        let change = make_change_wire(
-            op_type::CREATE_PROJECT,
-            "project",
-            "1111111111111111",
-            payload,
+    fn metadata(value: &str) -> crate::metadata::TaskMetadataInput {
+        crate::metadata::TaskMetadataInput {
+            expected_field_id: None,
+            key: "owner".into(),
+            value: value.into(),
+        }
+    }
+
+    async fn exercise_task_operations(
+        db: &crate::db::Database,
+        ws: &crate::workspaces::Workspace,
+        blob_dir: &std::path::Path,
+    ) {
+        use crate::operations::{AttachmentAddInput, TaskUpdate};
+
+        db.create_project(ws, "app").await.unwrap();
+        db.create_label(ws, "bug").await.unwrap();
+        let a = db
+            .create_task(ws, task_draft("first", false))
+            .await
+            .unwrap()
+            .task
+            .id;
+        let b = db
+            .create_task(ws, task_draft("second", false))
+            .await
+            .unwrap()
+            .task
+            .id;
+        let epic = db
+            .create_task(ws, task_draft("epic", true))
+            .await
+            .unwrap()
+            .task
+            .id;
+        db.update_task(
+            ws,
+            &a,
+            TaskUpdate {
+                title: Some("renamed task".into()),
+                add_labels: vec!["bug".into()],
+                set_metadata: vec![metadata("Alice")],
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+        db.update_task(
+            ws,
+            &a,
+            TaskUpdate {
+                remove_labels: vec!["bug".into()],
+                remove_metadata: vec!["owner".into()],
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+        db.update_task(
+            ws,
+            &b,
+            TaskUpdate {
+                add_labels: vec!["bug".into()],
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+        db.add_task_dependency(ws, &a, &b).await.unwrap();
+        db.remove_task_dependency(ws, &a, &b).await.unwrap();
+        db.add_task_related_link(ws, &a, &b).await.unwrap();
+        db.remove_task_related_link(ws, &a, &b).await.unwrap();
+        db.add_task_to_epic(ws, &a, &epic).await.unwrap();
+        db.remove_task_from_epic(ws, &a, &epic).await.unwrap();
+        let note = db.add_note(ws, &a, "note body".into()).await.unwrap();
+        db.edit_note(ws, &a, &note.note_id, "edited body".into())
+            .await
+            .unwrap();
+        db.delete_note(ws, &a, &note.note_id).await.unwrap();
+
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(2, 1))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let attachment = db
+            .add_task_attachment(
+                ws,
+                blob_dir,
+                crate::attachments::lifecycle::LifecyclePolicy::default(),
+                &a,
+                AttachmentAddInput {
+                    filename: Some("example.png".into()),
+                    alt_text: Some("two pixels".into()),
+                    declared_media_type: Some("image/png".into()),
+                    bytes: png.into_inner(),
+                    optimization_policy:
+                        crate::attachments::optimization::ImageOptimizationPolicy::Preserve,
+                    dedupe_existing: false,
+                },
+            )
+            .await
+            .unwrap();
+        db.delete_task_attachment(ws, &attachment.outcome.attachment.attachment_id)
+            .await
+            .unwrap();
+
+        // A persisted conflict is a precondition for the real resolution operation.
+        let mut conn = db.acquire_writer().await.unwrap();
+        sqlx::query(
+            "INSERT INTO conflicts(workspace_id, entity_type, entity_id, task_id, field,
+             base_version, local_value, remote_value, local_change_id, remote_change_id,
+             variant_a, variant_b, created_at, resolved)
+             SELECT ?, 'task', ?, ?, 'title', NULL, 'renamed task', 'remote',
+             version, ?, 'local', 'remote', ?, 0 FROM field_versions
+             WHERE workspace_id = ? AND entity_type = 'task' AND entity_id = ? AND field = 'title'",
+        )
+        .bind(&ws.id)
+        .bind(&a)
+        .bind(&a)
+        .bind(crate::ids::new_id())
+        .bind(crate::ids::now())
+        .bind(&ws.id)
+        .bind(&a)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+        db.resolve_conflict(ws, &a, "title", "resolved")
+            .await
+            .unwrap();
+
+        let destination = db.create_workspace("destination").await.unwrap();
+        db.create_project(&destination, "target").await.unwrap();
+        db.move_tasks(
+            ws,
+            crate::operations::MoveTasksInput {
+                task_ids: vec![a],
+                target_workspace: destination,
+                target_project: "target".into(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn exercise_administration_operations(
+        db: &crate::db::Database,
+        ws: &crate::workspaces::Workspace,
+    ) {
+        db.rename_project(ws, "app", "renamed app", Some("APP"))
+            .await
+            .unwrap();
+        db.create_project(ws, "disposable").await.unwrap();
+        db.delete_project(ws, "disposable").await.unwrap();
+        db.rename_label_with_tui_undo(ws, "bug", "defect")
+            .await
+            .unwrap();
+        db.delete_label_with_tui_undo(ws, "defect").await.unwrap();
+        assert!(db.apply_latest_tui_undo(&ws.id).await.unwrap().is_some());
+        db.rename_metadata_field(ws, "owner", "assignee")
+            .await
+            .unwrap();
+        db.rename_workspace(&ws.key, "renamed workspace")
+            .await
+            .unwrap();
+        db.publish_device_label([7; 32], "Office Mac")
+            .await
+            .unwrap();
+    }
+
+    async fn exercise_recurrence_operations(
+        db: &crate::db::Database,
+        ws: &crate::workspaces::Workspace,
+    ) {
+        use crate::operations::{
+            CreateRecurrenceSeriesParams, RecurrenceSeriesDraft, RecurrenceTemplateUpdate,
+            UpdateRecurrenceTemplateParams,
+        };
+        use crate::recurrence::{
+            RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceRule, RecurrenceSchedule,
+        };
+
+        let at = chrono::Utc::now();
+        let created = db
+            .create_recurrence_series(
+                ws,
+                CreateRecurrenceSeriesParams::new(RecurrenceSeriesDraft {
+                    title: "daily review".into(),
+                    description: "review tasks".into(),
+                    project: "app".into(),
+                    priority: "high".into(),
+                    initial_status: "todo".into(),
+                    labels: vec!["bug".into()],
+                    metadata: Vec::new(),
+                    schedule: RecurrenceSchedule::new(
+                        RecurrenceRule::daily(),
+                        "UTC".parse().unwrap(),
+                        at.date_naive(),
+                        None,
+                        RecurrenceDuePolicy::SameDay,
+                    ),
+                })
+                .at(at),
+            )
+            .await
+            .unwrap();
+        db.update_recurrence_template(
+            ws,
+            &created.series.id,
+            UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
+                title: Some("updated review".into()),
+                set_metadata: vec![metadata("Bob")],
+                ..RecurrenceTemplateUpdate::default()
+            }),
+        )
+        .await
+        .unwrap();
+        db.update_recurrence_template(
+            ws,
+            &created.series.id,
+            UpdateRecurrenceTemplateParams::new(RecurrenceTemplateUpdate {
+                remove_metadata: vec!["owner".into()],
+                ..RecurrenceTemplateUpdate::default()
+            }),
+        )
+        .await
+        .unwrap();
+        db.resolve_recurrence_occurrence(ws, &created.task.id, RecurrenceOutcome::Completed)
+            .await
+            .unwrap();
+        db.pause_recurrence_series(ws, &created.series.id)
+            .await
+            .unwrap();
+        db.resume_recurrence_series(ws, &created.series.id, chrono::Utc::now())
+            .await
+            .unwrap();
+        db.stop_recurrence_series(ws, &created.series.id, true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn real_operations_emit_wire_valid_changes_for_every_registered_operation() {
+        let directory = tempfile::tempdir().unwrap();
+        let db =
+            crate::test_support::open_blank_database(&directory.path().join("operations.sqlite"))
+                .await
+                .unwrap();
+        let ws = db.resolve_workspace("default").await.unwrap();
+        Box::pin(exercise_task_operations(
+            &db,
+            &ws,
+            &directory.path().join("blobs"),
+        ))
+        .await;
+        Box::pin(exercise_recurrence_operations(&db, &ws)).await;
+        Box::pin(exercise_administration_operations(&db, &ws)).await;
+
+        let exported = db.export_data(crate::ids::now()).await.unwrap();
+        let mut covered = std::collections::BTreeSet::new();
+        for row in exported
+            .tables
+            .changes
+            .into_iter()
+            .filter(|row| row.server_seq.is_none())
+        {
+            let mut value = serde_json::to_value(&row).unwrap();
+            value["payload"] = serde_json::from_str(&row.payload).unwrap();
+            let change: super::super::ChangeWire = serde_json::from_value(value).unwrap();
+            validate_pushed_change(&change).unwrap_or_else(|error| {
+                panic!(
+                    "{} emitted invalid change: {error}; {change:?}",
+                    change.op_type
+                )
+            });
+            if change.op_type == op_type::LABEL_RESTORE {
+                // Exercise restoration of both task and series memberships.
+                for key in ["task_ids", "series_ids"] {
+                    assert!(!change.payload[key].as_array().unwrap().is_empty(), "{key}");
+                }
+            }
+            covered.insert(change.op_type);
+        }
+        assert_eq!(
+            covered,
+            op_type::ALL.iter().map(|op| (*op).to_owned()).collect()
         );
-        validate_pushed_change(&change)
-            .expect("create_project payload built with ChangePayload should be wire-valid");
     }
 
     #[test]
@@ -596,61 +863,6 @@ mod tests {
     }
 
     #[test]
-    fn constructed_label_add_payload_passes_wire_validation() {
-        let ws = test_workspace();
-        let payload = ChangePayload::workspace(&ws)
-            .set("label", "bug")
-            .into_value();
-        let mut change = make_change_wire(op_type::LABEL_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
-        change.field = Some("labels".to_string());
-        validate_pushed_change(&change)
-            .expect("label_add payload built with ChangePayload should be wire-valid");
-    }
-
-    #[test]
-    fn constructed_label_administration_payloads_pass_wire_validation() {
-        let ws = test_workspace();
-        let rename = make_change_wire(
-            op_type::SET_LABEL_NAME,
-            "label",
-            "old",
-            ChangePayload::workspace(&ws)
-                .set("name", "old")
-                .set("new_name", "new")
-                .set("renamed_at", "2026-06-01T00:00:00Z")
-                .into_value(),
-        );
-        validate_pushed_change(&rename).unwrap();
-
-        let restore = make_change_wire(
-            op_type::LABEL_RESTORE,
-            "label",
-            "new",
-            ChangePayload::workspace(&ws)
-                .set("name", "new")
-                .set("created_at", "2026-06-01T00:00:00Z")
-                .set("task_ids", ["BBBBBBBBBBBBBBBB"])
-                .set("series_ids", ["CCCCCCCCCCCCCCCC"])
-                .set("restored_at", "2026-06-01T00:00:01Z")
-                .into_value(),
-        );
-        validate_pushed_change(&restore).unwrap();
-    }
-
-    #[test]
-    fn constructed_dependency_add_payload_passes_wire_validation() {
-        let ws = test_workspace();
-        let payload = ChangePayload::workspace(&ws)
-            .set("depends_on_task_id", "CCCCCCCCCCCCCCCC")
-            .into_value();
-        let mut change =
-            make_change_wire(op_type::DEPENDENCY_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
-        change.field = Some("dependencies".to_string());
-        validate_pushed_change(&change)
-            .expect("dependency_add payload built with ChangePayload should be wire-valid");
-    }
-
-    #[test]
     fn related_payload_validation_requires_distinct_task_endpoints() {
         let ws = test_workspace();
         let payload = ChangePayload::workspace(&ws)
@@ -667,33 +879,5 @@ mod tests {
             validate_pushed_change(&change).unwrap_err().to_string(),
             "error invalid-sync-change related-self"
         );
-    }
-
-    #[test]
-    fn constructed_note_edit_payload_passes_wire_validation() {
-        let ws = test_workspace();
-        let payload = ChangePayload::workspace(&ws)
-            .set("note_id", "DDDDDDDDDDDDDDDD")
-            .set("body", "corrected note body")
-            .set("edited_at", "2026-06-01T01:00:00Z")
-            .into_value();
-        let mut change = make_change_wire(op_type::NOTE_EDIT, "task", "BBBBBBBBBBBBBBBB", payload);
-        change.field = Some("notes".to_string());
-        validate_pushed_change(&change)
-            .expect("note_edit payload built with ChangePayload should be wire-valid");
-    }
-
-    #[test]
-    fn constructed_note_add_payload_passes_wire_validation() {
-        let ws = test_workspace();
-        let payload = ChangePayload::workspace(&ws)
-            .set("note_id", "DDDDDDDDDDDDDDDD")
-            .set("body", "note body")
-            .set("created_at", "2026-06-01T00:00:00Z")
-            .into_value();
-        let mut change = make_change_wire(op_type::NOTE_ADD, "task", "BBBBBBBBBBBBBBBB", payload);
-        change.field = Some("notes".to_string());
-        validate_pushed_change(&change)
-            .expect("note_add payload built with ChangePayload should be wire-valid");
     }
 }

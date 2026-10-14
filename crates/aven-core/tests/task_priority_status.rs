@@ -107,6 +107,20 @@ async fn batch_priority_edit_promotes_only_current_inbox_tasks() {
         .await
         .unwrap();
 
+    let low = database
+        .update_task(
+            &workspace,
+            &inbox.task.id,
+            TaskUpdate {
+                priority: Some(TaskPriority::Low.to_string()),
+                ..TaskUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(low.task.status, TaskStatus::Inbox);
+    assert_eq!(low.task.priority, TaskPriority::Low);
+
     let priority_update = TaskUpdate {
         priority: Some(TaskPriority::High.to_string()),
         ..TaskUpdate::default()

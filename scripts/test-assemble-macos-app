@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $(uname -s) != Darwin ]]; then
+  echo "macOS bundle fixtures require macOS" >&2
+  exit 2
+fi
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+assemble="$script_dir/assemble-macos-app"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+reject() {
+  if "$assemble" "$@" >"$tmp/rejection.log" 2>&1; then
+    fail "accepted invalid assembly: $*"
+  fi
+}
+plist_value() {
+  /usr/bin/plutil -extract "$1" raw "$app/Contents/Info.plist"
+}
+
+printf '#!/bin/sh\necho "aven $*"\n' >"$tmp/aven"
+mkdir "$tmp/out"
+app="$tmp/out/Aven.app"
+[[ $("$assemble" "$tmp/aven" 1.2.3 "$tmp/out") == "$app" ]] || fail "unexpected bundle path"
+
+[[ -x $app/Contents/MacOS/aven ]] || fail "executable is not executable"
+cmp -s "$tmp/aven" "$app/Contents/MacOS/aven" || fail "executable differs from input"
+cmp -s "$script_dir/../macos/Resources/Assets.car" "$app/Contents/Resources/Assets.car" ||
+  fail "Assets.car differs from committed resource"
+cmp -s "$script_dir/../macos/Resources/Aven.icns" "$app/Contents/Resources/Aven.icns" ||
+  fail "Aven.icns differs from committed resource"
+expected_layout='Contents
+Contents/Info.plist
+Contents/MacOS
+Contents/MacOS/aven
+Contents/Resources
+Contents/Resources/Assets.car
+Contents/Resources/Aven.icns'
+[[ $(cd "$app" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort) == "$expected_layout" ]] ||
+  fail "unexpected bundle layout"
+# The system attaches com.apple.provenance, which cannot be cleared and codesign accepts.
+if /usr/bin/xattr -r "$app" | grep -qv ': com\.apple\.provenance$'; then
+  fail "bundle carries extended attributes"
+fi
+
+[[ $(plist_value CFBundleIdentifier) == fi.zendit.Aven ]] || fail "CFBundleIdentifier"
+[[ $(plist_value CFBundleExecutable) == aven ]] || fail "CFBundleExecutable"
+[[ $(plist_value CFBundleName) == Aven ]] || fail "CFBundleName"
+[[ $(plist_value CFBundleDisplayName) == Aven ]] || fail "CFBundleDisplayName"
+[[ $(plist_value CFBundlePackageType) == APPL ]] || fail "CFBundlePackageType"
+[[ $(plist_value CFBundleIconFile) == Aven ]] || fail "CFBundleIconFile"
+[[ $(plist_value CFBundleIconName) == Aven ]] || fail "CFBundleIconName"
+[[ $(plist_value LSUIElement) == true ]] || fail "LSUIElement"
+[[ $(plist_value CFBundleShortVersionString) == 1.2.3 ]] || fail "CFBundleShortVersionString"
+[[ $(plist_value CFBundleVersion) == 1.2.3 ]] || fail "CFBundleVersion"
+
+# The assembled layout must be signable as a bundle and runnable through a PATH symlink.
+/usr/bin/codesign --force --sign - --identifier fi.zendit.Aven "$app" 2>/dev/null
+/usr/bin/codesign --verify --strict "$app" || fail "ad-hoc signed bundle does not verify"
+ln -s "$app/Contents/MacOS/aven" "$tmp/aven-link"
+[[ $("$tmp/aven-link" --help) == "aven --help" ]] || fail "symlinked executable did not run"
+
+reject "$tmp/aven" 1.2.3 "$tmp/out"
+reject "$tmp/missing" 1.2.3 "$tmp/out"
+reject "$tmp/aven" 1.2.3 "$tmp/missing"
+reject "$tmp/aven" v1.2.3 "$tmp/out2"
+mkdir "$tmp/out2"
+reject "$tmp/aven" 1.2.3-signtest.1 "$tmp/out2"
+reject "$tmp/aven" 1.2 "$tmp/out2"
+reject "$tmp/aven" 1.2.3
+[[ ! -e $tmp/out2/Aven.app ]] || fail "rejected assembly left a bundle"
+echo "ok: bundle assembled with committed resources and release Info.plist; existing bundle, missing input, missing output and invalid versions rejected"

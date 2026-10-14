@@ -143,12 +143,16 @@
 }
 
 .telegram-voice-demo-light,
-.telegram-voice-demo-dark {
+.telegram-voice-demo-dark,
+.notification-example-light,
+.notification-example-dark {
   display: none;
 }
 
 :root[data-theme='light'] .telegram-voice-demo-light,
-:root[data-theme='dark'] .telegram-voice-demo-dark {
+:root[data-theme='dark'] .telegram-voice-demo-dark,
+:root[data-theme='light'] .notification-example-light,
+:root[data-theme='dark'] .notification-example-dark {
   display: block;
 }
 

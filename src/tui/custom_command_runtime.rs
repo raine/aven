@@ -923,7 +923,8 @@ mod tests {
 
     #[tokio::test]
     async fn bounded_reader_retains_only_the_tail() {
-        let bytes = vec![b'h'; OUTPUT_LIMIT + 1024];
+        let mut bytes = vec![b'h'; 1024];
+        bytes.extend(vec![b't'; OUTPUT_LIMIT]);
         let captured = read_bounded(bytes.as_slice()).await.unwrap();
 
         assert_eq!(captured.bytes.len(), OUTPUT_LIMIT);

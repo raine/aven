@@ -319,7 +319,7 @@ fn detail_description_lines_keep_quote_rail() {
             text.contains("Context") || text.contains("second")
         })
         .collect();
-    assert!(!description_lines.is_empty());
+    assert_eq!(description_lines.len(), 2);
     for line in description_lines {
         assert!(
             line.spans

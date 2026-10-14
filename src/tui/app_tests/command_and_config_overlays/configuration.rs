@@ -1,18 +1,12 @@
 use super::*;
 
 #[tokio::test]
-async fn toggle_help_closes_active_help_overlay() {
-    let mut app = test_app().await;
-    app.overlay = Some(OverlayState::Help { scroll: 0 });
-    app.toggle_help_at_height(24);
-    assert!(app.overlay.is_none());
-}
-
-#[tokio::test]
 async fn help_key_opens_help_overlay() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('?')).await.unwrap();
     assert!(matches!(app.overlay, Some(OverlayState::Help { .. })));
+    app.toggle_help_at_height(24);
+    assert!(app.overlay.is_none());
 }
 
 #[tokio::test]
@@ -167,26 +161,17 @@ async fn command_panel_runs_database_stats() {
 }
 
 #[tokio::test]
-async fn config_init_requires_confirmation() {
-    let mut app = test_app().await;
-    app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
-    app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
-
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::Confirm(ConfirmState {
-            intent: ConfirmIntent::InitializeConfig { ref path },
-            ref title,
-            ..
-        })) if title == CONFIG_INIT_TITLE && path == &crate::config::config_file_path().unwrap()
-    ));
-}
-
-#[tokio::test]
 async fn config_init_cancel_does_not_set_success_message() {
     let mut app = test_app().await;
     app.handle_normal_key(KeyCode::Char('C')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('i')).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Confirm(state))
+            if state.title == CONFIG_INIT_TITLE
+                && matches!(&state.intent, ConfirmIntent::InitializeConfig { path }
+                    if path == &crate::config::config_file_path().unwrap())
+    ));
     app.handle_overlay_key(key(KeyCode::Char('n')))
         .await
         .unwrap();

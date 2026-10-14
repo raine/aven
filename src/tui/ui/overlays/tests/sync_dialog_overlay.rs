@@ -119,23 +119,6 @@ fn wake_failures_are_visible_without_expanding_details() {
 }
 
 #[test]
-fn unset_up_and_runtime_disabled_states_have_distinct_copy() {
-    let local = render_overlay_view(sync_overlay(TuiSyncStatus::default(), false));
-    let disabled = render_overlay_view(sync_overlay(
-        TuiSyncStatus {
-            runtime_allowed: false,
-            ..sync_status()
-        },
-        false,
-    ));
-
-    assert!(!local.contains("Local only"));
-    assert!(!local.contains("Sync now"));
-    assert!(local.contains("Set up sync"));
-    assert!(disabled.contains("Sync disabled"));
-}
-
-#[test]
 fn conflicts_use_attention_color() {
     let mut status = sync_status();
     status.conflicts = 2;
@@ -397,9 +380,18 @@ fn local_databases_offer_setup_and_joining() {
     let rendered = render_page(SyncPage::Home, local_status(), SyncActivity::default());
 
     assert!(!rendered.contains("Local only"));
+    assert!(!rendered.contains("Sync now"));
     assert!(rendered.contains("Keep your tasks in sync across devices"));
     assert!(rendered.contains("› Set up sync"));
     assert!(rendered.contains("Join existing sync"));
+    let disabled = render_overlay_view(sync_overlay(
+        TuiSyncStatus {
+            runtime_allowed: false,
+            ..sync_status()
+        },
+        false,
+    ));
+    assert!(disabled.contains("Sync disabled"));
 }
 
 #[test]
@@ -1213,7 +1205,8 @@ fn a_new_invitation_for_an_unfinished_join_explains_what_is_kept() {
 #[test]
 fn commands_render_in_code_style_without_backticks() {
     let rendered = render_invitation(InvitationKind::Setup, "");
-    assert!(rendered.contains("your hosting provider or aven server setup"));
+    assert!(rendered.contains("Aven Cloud, or from aven server setup"));
+    assert!(rendered.contains("if you self-host"));
     assert!(!rendered.contains('`'));
 
     let failure = OperationFailure {

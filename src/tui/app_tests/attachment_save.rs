@@ -51,62 +51,48 @@ async fn attachment_save_can_be_cancelled() {
 }
 
 #[tokio::test]
-async fn colon_dispatch_opens_captured_attachment_panel() {
-    let (_dir, _pool, mut app, _selected, attachment_id) = setup_attachment().await;
-    app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
-        attachment_id: attachment_id.clone(),
-    });
-
-    app.dispatch_key(shift_key(KeyCode::Char(':')), (100, 30).into())
-        .await
-        .unwrap();
-
-    let Some(OverlayState::Command { state }) = &app.overlay else {
-        panic!("command overlay");
-    };
-    let names = state
-        .candidates
-        .iter()
-        .filter_map(|candidate| state.catalog.command(candidate.index))
-        .map(crate::tui::event::CatalogCommand::name)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        &names[..3],
-        &["attachment-open", "attachment-save", "attachment-delete"]
-    );
-    assert!(matches!(
-        state.session.detail_focus(),
-        Some(crate::tui::event::DetailCommandFocus::Attachment {
-            attachment_id: captured,
-            bytes_present: true,
-        }) if captured == &attachment_id
-    ));
-}
-
-#[tokio::test]
 async fn command_palette_exposes_and_runs_attachment_save() {
-    let (_dir, _pool, mut app, _selected, attachment_id) = setup_attachment().await;
-    app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
-        attachment_id: attachment_id.clone(),
-    });
+    for event in [key(KeyCode::Char(':')), shift_key(KeyCode::Char(':'))] {
+        let (_dir, _pool, mut app, _selected, attachment_id) = setup_attachment().await;
+        app.detail.state_mut().unwrap().focused_target = Some(DetailTargetId::Attachment {
+            attachment_id: attachment_id.clone(),
+        });
 
-    app.dispatch_key(key(KeyCode::Char(':')), (100, 30).into())
-        .await
-        .unwrap();
-    assert!(matches!(app.overlay, Some(OverlayState::Command { .. })));
-    app.detail.state_mut().unwrap().focused_target = None;
-    type_chars(&mut app, "attachment-save").await;
-    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+        app.dispatch_key(event, (100, 30).into()).await.unwrap();
+        let Some(OverlayState::Command { state }) = &app.overlay else {
+            panic!("command overlay");
+        };
+        let names = state
+            .candidates
+            .iter()
+            .filter_map(|candidate| state.catalog.command(candidate.index))
+            .map(crate::tui::event::CatalogCommand::name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &names[..3],
+            &["attachment-open", "attachment-save", "attachment-delete"]
+        );
+        assert!(matches!(
+            state.session.detail_focus(),
+            Some(crate::tui::event::DetailCommandFocus::Attachment {
+                attachment_id: captured,
+                bytes_present: true,
+            }) if captured == &attachment_id
+        ));
+        app.detail.state_mut().unwrap().focused_target = None;
+        type_chars(&mut app, "attachment-save").await;
+        app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::TextInput(ref state))
-            if matches!(
-                state.intent,
-                TextIntent::SaveAttachment { attachment_id: ref captured, .. }
-                    if captured == &attachment_id
-            )
-    ));
+        assert!(matches!(
+            app.overlay,
+            Some(OverlayState::TextInput(ref state))
+                if matches!(
+                    state.intent,
+                    TextIntent::SaveAttachment { attachment_id: ref captured, .. }
+                        if captured == &attachment_id
+                )
+        ));
+    }
 }
 
 #[tokio::test]

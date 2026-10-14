@@ -38,7 +38,8 @@ Aven keeps tasks in a local SQLite database instead of tracked files inside each
 and your agents can capture and update tasks offline, independent of git state, branches, worktrees,
 or checkouts. If you need the same tasks on more than one device, you can
 [sync them through a server you control](https://aventasks.dev/sync/setup/). Sync is end-to-end
-encrypted, so the server cannot read your tasks.
+encrypted, so the server cannot read your tasks. No server to run?
+[Aven Cloud](https://cloud.aventasks.dev/) is in free preview.
 
 Repositories map to projects by default. Aven creates a project when you add its first task, and
 gives each task a short Jira/Linear-style ID such as `APP-7KQ9`. Aven can generate them without a

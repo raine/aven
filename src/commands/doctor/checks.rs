@@ -505,11 +505,51 @@ pub(super) async fn add_runtime_database_sections(
     }
 }
 
-pub(super) fn add_daemon_section(report: &mut DoctorReport, config: &AppConfig) {
+pub(super) async fn add_daemon_section(
+    report: &mut DoctorReport,
+    config: &AppConfig,
+    database: Option<&aven_core::db::Database>,
+) {
     let daemon_section = report.section("daemon", "Daemon");
+    let mut sync_health = Default::default();
+    if let Some(database) = database {
+        match database.daemon_sync_state().await {
+            Ok(sync) => {
+                sync_health = sync.clone();
+                daemon_section.info(
+                    "daemon.last_sync",
+                    "last daemon sync",
+                    sync.last_success_at
+                        .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
+                        .map_or_else(|| "never recorded".to_string(), |at| at.to_rfc3339()),
+                );
+                if let Some(error) = sync.error {
+                    daemon_section.check(
+                        "daemon.sync_error",
+                        "daemon error",
+                        false,
+                        format!(
+                            "{} since {}: {}",
+                            error.code,
+                            chrono::DateTime::from_timestamp(error.since, 0)
+                                .map_or_else(|| error.since.to_string(), |at| at.to_rfc3339()),
+                            error.message
+                        ),
+                    );
+                }
+            }
+            Err(error) => daemon_section.check(
+                "daemon.sync_health",
+                "sync health",
+                false,
+                format!("{error:#}"),
+            ),
+        }
+    }
     match crate::daemon::status_snapshot() {
         Ok(snapshot) => {
-            let status = crate::status::build_daemon_status(config, snapshot);
+            let status =
+                crate::status::build_daemon_status(config, snapshot).with_sync(sync_health);
             daemon_section.info("daemon.state", "state", status.state.as_str());
             daemon_section.info(
                 "daemon.installed",
