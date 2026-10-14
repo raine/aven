@@ -152,21 +152,21 @@ pub(crate) fn next_selectable_sidebar(
     if entries.is_empty() || entries.iter().all(|entry| entry.target.is_none()) {
         return None;
     }
-    let mut index = selected.unwrap_or(0);
+    let mut index = next_index(selected, entries.len(), delta, wrap)?;
     for _ in 0..entries.len() {
-        let next = index as isize + delta;
-        index = if (0..entries.len() as isize).contains(&next) {
-            next as usize
-        } else if wrap && delta > 0 {
-            0
-        } else if wrap && delta < 0 {
-            entries.len() - 1
-        } else {
-            index
-        };
         if entries[index].target.is_some() {
             return Some(index);
         }
+        // Apply the page distance once, then skip separators one row at a time.
+        let next = next_index(Some(index), entries.len(), delta.signum(), wrap)?;
+        if next == index {
+            return if delta < 0 {
+                entries.iter().position(|entry| entry.target.is_some())
+            } else {
+                entries.iter().rposition(|entry| entry.target.is_some())
+            };
+        }
+        index = next;
     }
     None
 }
@@ -220,6 +220,58 @@ mod tests {
         let selected = next_selectable_sidebar(Some(3), &entries, 1, true);
 
         assert_eq!(selected, Some(1));
+    }
+
+    #[test]
+    fn bounded_sidebar_pages_clamp_to_selectable_edges() {
+        let entries = [
+            section("Views"),
+            item("All"),
+            item("Alpha"),
+            section(""),
+            item("Beta"),
+            section(""),
+        ];
+        assert_eq!(
+            next_selectable_sidebar(Some(2), &entries, 20, false),
+            Some(4)
+        );
+        assert_eq!(
+            next_selectable_sidebar(Some(4), &entries, -20, false),
+            Some(1)
+        );
+        assert_eq!(
+            next_selectable_sidebar(Some(4), &entries, 1, false),
+            Some(4)
+        );
+        assert_eq!(
+            next_selectable_sidebar(Some(1), &entries, -1, false),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn sidebar_page_skips_separator_without_repeating_page_distance() {
+        let entries = [
+            item("All"),
+            item("Alpha"),
+            section(""),
+            item("Beta"),
+            item("Gamma"),
+        ];
+        assert_eq!(
+            next_selectable_sidebar(Some(0), &entries, 2, false),
+            Some(3)
+        );
+        assert_eq!(
+            next_selectable_sidebar(Some(4), &entries, -2, false),
+            Some(1)
+        );
+        assert_eq!(next_selectable_sidebar(None, &[], 20, false), None);
+        assert_eq!(
+            next_selectable_sidebar(Some(0), &[section("Views")], 1, false),
+            None
+        );
     }
 
     #[test]

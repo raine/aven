@@ -72,6 +72,14 @@ are not synced. Refreshes and view or scope changes preserve these preferences. 
 the selected project scope. Focus a heading with sidebar navigation and press
 `Enter` to toggle it with the keyboard.
 
+Use `Tab` (or `Left` from the task list) to focus the sidebar. Browse with
+`Up`/`Down` or `k`/`j`, page with `PageUp`/`PageDown` or `Ctrl-u`/`Ctrl-d`, and
+use `Home`/`End` to reach the edges. Long lists keep the highlighted row visible;
+page navigation and mouse wheel movement stop at the first and last selectable
+rows. The wheel over the visible sidebar focuses and browses it without changing
+the active scope or task selection. Press `Enter` to activate the highlighted
+view or project, or `Esc`/`Tab` to return to tasks without activating it.
+
 Configure the ordered sidebar view list in
 [`tui.sidebar.views`](/configuration/#tui-sidebar-views). Hidden views remain
 available through the header view menu, command palette, and shortcuts.
