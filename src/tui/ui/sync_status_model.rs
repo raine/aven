@@ -28,6 +28,7 @@ pub(super) struct SyncIssue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SyncStatusSummary {
     pub(super) health: SyncHealth,
+    pub(super) guidance: Option<String>,
     pub(super) issues: Vec<SyncIssue>,
     pub(super) can_manual_sync: bool,
 }
@@ -99,40 +100,9 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
             value: status.daemon_wake.value.clone(),
         });
     }
-    if status.set_up && !status.protected_storage.ok {
-        issues.push(SyncIssue {
-            label: "Protected keys",
-            value: status.protected_storage.value.clone(),
-        });
-    }
     let background_blocked = status.enabled
         && status.runtime_allowed
         && crate::status::daemon_sync_blocked(&status.daemon_sync, chrono::Utc::now().timestamp());
-    if background_blocked && let Some(error) = &status.daemon_sync.error {
-        let message = if error.code == "protected-key-storage-unavailable" {
-            #[cfg(target_os = "macos")]
-            let (storage, guidance) = ("Keychain access", "Choose Sync now, then Always Allow.");
-            #[cfg(not(target_os = "macos"))]
-            let (storage, guidance) = (
-                "Key store access",
-                "Unlock the system key store, then choose Sync now.",
-            );
-            format!(
-                "{storage} needed since {}. {guidance}",
-                crate::status::daemon_time(error.since)
-            )
-        } else {
-            format!(
-                "Since {}: {}",
-                crate::status::daemon_time(error.since),
-                error.message
-            )
-        };
-        issues.push(SyncIssue {
-            label: "Background sync",
-            value: message,
-        });
-    }
     let health = if !status.set_up {
         SyncHealth::NotSetUp
     } else if !status.protected_storage.ok {
@@ -154,8 +124,30 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
     } else {
         SyncHealth::Idle
     };
+    let guidance = match health {
+        SyncHealth::ProtectedStorageUnavailable => Some(status.protected_storage.value.clone()),
+        SyncHealth::BackgroundBlocked => status
+            .daemon_sync
+            .error
+            .as_ref()
+            .map(|error| error.message.clone()),
+        _ => None,
+    };
+    if background_blocked && let Some(error) = &status.daemon_sync.error {
+        let since = crate::status::daemon_time(error.since);
+        let value = if guidance.as_deref() == Some(error.message.as_str()) {
+            format!("Blocked since {since}")
+        } else {
+            format!("Since {since}: {}", error.message)
+        };
+        issues.push(SyncIssue {
+            label: "Background sync",
+            value,
+        });
+    }
     SyncStatusSummary {
         health,
+        guidance,
         issues,
         can_manual_sync: status.phase == LocalPhase::SetUp && status.runtime_allowed,
     }
@@ -200,24 +192,8 @@ mod tests {
         );
         assert!(summary.can_manual_sync);
         assert_eq!(summary.issues[0].label, "Background sync");
-        #[cfg(target_os = "macos")]
-        assert!(
-            summary.issues[0]
-                .value
-                .contains("Keychain access needed since")
-                && summary.issues[0]
-                    .value
-                    .contains("Choose Sync now, then Always Allow.")
-        );
-        #[cfg(not(target_os = "macos"))]
-        assert!(
-            summary.issues[0]
-                .value
-                .contains("Key store access needed since")
-                && summary.issues[0]
-                    .value
-                    .contains("Unlock the system key store, then choose Sync now.")
-        );
+        assert_eq!(summary.guidance.as_deref(), Some("unlock"));
+        assert!(summary.issues[0].value.starts_with("Blocked since "));
         status.access_refused_at = Some("refused".to_string());
         assert_eq!(
             sync_status_summary(&status).health,
@@ -260,7 +236,8 @@ mod tests {
         status.daemon_sync.error.as_mut().unwrap().since -= 121;
         let summary = sync_status_summary(&status);
         assert_eq!(summary.health, SyncHealth::BackgroundBlocked);
-        assert!(summary.issues[0].value.contains("Check connection"));
+        assert_eq!(summary.guidance.as_deref(), Some("Check connection"));
+        assert!(summary.issues[0].value.starts_with("Blocked since "));
         status.daemon_sync = Default::default();
         assert_eq!(sync_status_summary(&status).health, SyncHealth::Pending(16));
     }
@@ -345,7 +322,8 @@ mod tests {
             summary.badge(&THEME, &status),
             (THEME.danger, "sync error".to_string())
         );
-        assert_eq!(summary.issues[0].label, "Protected keys");
+        assert_eq!(summary.guidance.as_deref(), Some("choose Always Allow"));
+        assert!(summary.issues.is_empty());
         assert!(summary.can_manual_sync);
     }
 

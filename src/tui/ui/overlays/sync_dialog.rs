@@ -297,7 +297,10 @@ fn body(theme: &Theme, view: &SyncDialogView<'_>, width: usize) -> Body {
         body.lines
             .push(super::shared::section_line(theme, "details"));
         body.lines.extend(detail_lines(theme, view.status, width));
-        if let Some(OperationResult::Failed(failure)) = &view.activity.last {
+        if let Some(OperationResult::Failed(failure)) = &view.activity.last
+            && sync_status_summary(view.status).guidance.as_deref()
+                != Some(failure.message.as_str())
+        {
             body.lines.extend(wrapped_row(
                 theme,
                 "Last error",
@@ -376,7 +379,7 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
             theme.muted(),
             width,
         ));
-        push_last_result(theme, lines, view.activity, width);
+        push_last_result(theme, lines, view.activity, None, width);
         return;
     }
     if let Some(running) = &view.activity.running
@@ -404,6 +407,9 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
     if let Some(state) = state_line(status, summary.health) {
         lines.push(Line::from(Span::styled(state, theme.muted())));
     }
+    if let Some(guidance) = &summary.guidance {
+        lines.extend(paragraph(theme, guidance, Style::new().fg(theme.fg), width));
+    }
     if summary.health == SyncHealth::VaultDeleted {
         lines.extend(paragraph(
             theme,
@@ -429,7 +435,13 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
         progress_lines(theme, lines, running, width);
         return;
     }
-    push_last_result(theme, lines, view.activity, width);
+    push_last_result(
+        theme,
+        lines,
+        view.activity,
+        summary.guidance.as_deref(),
+        width,
+    );
     if status.phase == LocalPhase::JoinIncomplete {
         push_expired_join_guidance(theme, lines, view.activity, width);
     }
@@ -657,6 +669,7 @@ fn push_last_result(
     theme: &Theme,
     lines: &mut Vec<Line<'static>>,
     activity: &SyncActivity,
+    guidance: Option<&str>,
     width: usize,
 ) {
     let Some(result) = activity
@@ -689,7 +702,17 @@ fn push_last_result(
         OperationResult::Removed(_) | OperationResult::RemovalFinished { .. } => {}
         OperationResult::Failed(failure) => {
             lines.push(Line::from(""));
-            failure_lines(theme, lines, failure, width);
+            if guidance == Some(failure.message.as_str()) {
+                lines.extend(wrapped_row(
+                    theme,
+                    "Last attempt",
+                    "Failed",
+                    theme.muted(),
+                    width,
+                ));
+            } else {
+                failure_lines(theme, lines, failure, width);
+            }
         }
     }
 }
@@ -1810,17 +1833,7 @@ mod tests {
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
-        #[cfg(target_os = "macos")]
-        let recovery = [
-            "Keychain access needed",
-            "Choose",
-            "Sync now, then Always Allow",
-        ];
-        #[cfg(not(target_os = "macos"))]
-        let recovery = ["Key store access needed", "Unlock", "then choose Sync now."];
-        for expected in recovery {
-            assert!(text.contains(expected), "missing {expected}: {text}");
-        }
+        assert!(text.contains("unlock"));
         let headline = body(&theme, &view, 96)
             .lines
             .into_iter()
@@ -1859,6 +1872,115 @@ mod tests {
             .find(|line| line.to_string().contains("Last daemon sync"))
             .unwrap();
         assert_eq!(last.spans.last().unwrap().style.fg, Some(theme.fg_muted));
+    }
+
+    #[test]
+    fn matching_failures_share_guidance_but_distinct_failures_remain_visible() {
+        let theme = Theme::dark();
+        let failure = crate::tui::sync_errors::failure(
+            OperationKind::Sync,
+            &crate::protected_local_keys::ProtectedLocalKeyStoreError::new(
+                crate::protected_local_keys::ProtectedLocalKeyStoreErrorKind::Unavailable,
+            )
+            .into(),
+        );
+        let message = failure.message.clone();
+        let mut status = TuiSyncStatus {
+            enabled: true,
+            set_up: true,
+            phase: LocalPhase::SetUp,
+            pending_changes: 4,
+            protected_storage: crate::tui::store::SyncStatusCheck::new(false, message.clone()),
+            daemon_sync: aven_core::local_state::DaemonSyncState {
+                error: Some(aven_core::local_state::DaemonSyncError {
+                    code: "protected-key-storage-unavailable".to_string(),
+                    message: message.clone(),
+                    since: chrono::Utc::now().timestamp(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut activity = SyncActivity {
+            last: Some(OperationResult::Failed(failure)),
+            ..Default::default()
+        };
+        for details in [false, true] {
+            let state = crate::tui::overlay::SyncDialogState {
+                details,
+                ..Default::default()
+            };
+            let view = SyncDialogView {
+                state: &state,
+                status: &status,
+                activity: &activity,
+                syncing: None,
+            };
+            for width in [36, 59] {
+                let rendered = body(&theme, &view, width);
+                let text = rendered
+                    .lines
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                // Wrapping inserts spaces only at word boundaries.
+                let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert_eq!(text.matches(&message).count(), 1, "{text}");
+                assert!(text.contains("Last attempt Failed"));
+                assert!(text.contains("Background sync Blocked since"));
+                assert!(!text.contains("Protected keys"));
+                assert!(!text.contains("Sync didn't finish"));
+                assert!(!text.contains("Last error"));
+                assert!(rendered.lines.iter().all(|line| line.width() <= width));
+                assert_eq!(rendered.actions.len(), 3);
+            }
+        }
+        if let Some(OperationResult::Failed(failure)) = &mut activity.last {
+            failure.kind = OperationKind::ListDevices;
+        }
+        let state = crate::tui::overlay::SyncDialogState::default();
+        let view = SyncDialogView {
+            state: &state,
+            status: &status,
+            activity: &activity,
+            syncing: None,
+        };
+        assert!(
+            !body(&theme, &view, 59)
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("Last attempt"))
+        );
+        if let Some(OperationResult::Failed(failure)) = &mut activity.last {
+            failure.kind = OperationKind::Sync;
+        }
+        status.daemon_sync.error.as_mut().unwrap().message =
+            "Check the background connection.".to_string();
+        if let Some(OperationResult::Failed(failure)) = &mut activity.last {
+            failure.message = "The manual request failed.".to_string();
+        }
+        let state = crate::tui::overlay::SyncDialogState {
+            details: true,
+            ..Default::default()
+        };
+        let view = SyncDialogView {
+            state: &state,
+            status: &status,
+            activity: &activity,
+            syncing: None,
+        };
+        let text = body(&theme, &view, 59)
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(text.contains("Check the background connection."));
+        assert!(text.contains("The manual request failed."));
+        assert!(text.contains("Sync didn't finish"));
+        assert!(text.contains("Last error"));
     }
 
     #[test]
