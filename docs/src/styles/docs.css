@@ -195,3 +195,35 @@ button[data-open-modal] {
 .starlight-aside {
   border-radius: 0 10px 10px 0;
 }
+
+/* Changelog pages open with a segmented switcher between platforms, set in the
+   mono label voice. */
+.changelog-platforms {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 9px;
+  font: 500 0.8rem/1.6 var(--sl-font-mono), monospace;
+}
+
+.changelog-platforms a {
+  padding: 0.3rem 0.8rem;
+  border-radius: 6px;
+  color: var(--sl-color-gray-3);
+  text-decoration: none;
+}
+
+.changelog-platforms a:hover {
+  color: var(--sl-color-white);
+}
+
+.changelog-platforms a[aria-current='page'] {
+  background: var(--sl-color-accent-low);
+  box-shadow: inset 0 0 0 1px var(--aven-violet-line);
+  color: var(--sl-color-accent-high);
+}
+
+:root[data-theme='light'] .changelog-platforms a[aria-current='page'] {
+  box-shadow: inset 0 0 0 1px #cbbde9;
+}

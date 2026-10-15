@@ -3,12 +3,13 @@ import { defineConfig } from 'astro/config';
 import { unified } from '@astrojs/markdown-remark';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
+import changelogPlatforms from './plugins/changelog-platforms.mjs';
 import omitUnreleasedChangelog from './plugins/omit-unreleased-changelog.mjs';
 
 export default defineConfig({
   site: 'https://aventasks.dev',
   markdown: {
-    processor: unified({ remarkPlugins: [omitUnreleasedChangelog] }),
+    processor: unified({ remarkPlugins: [omitUnreleasedChangelog, changelogPlatforms] }),
   },
   redirects: {
     '/workflows': '/getting-started/#next-steps',
@@ -132,7 +133,15 @@ export default defineConfig({
           items: [
             { label: 'Command reference', slug: 'command-reference' },
             { label: 'Configuration', slug: 'configuration' },
-            { label: 'Changelog', slug: 'changelog' },
+            {
+              label: 'Changelog',
+              collapsed: true,
+              items: [
+                { label: 'CLI & TUI', slug: 'changelog' },
+                { label: 'iPhone', slug: 'changelog/ios' },
+                { label: 'Android', slug: 'changelog/android' },
+              ],
+            },
           ],
         },
         {

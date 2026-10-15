@@ -1,22 +1,37 @@
 import path from 'node:path';
 
+const releaseHeading = /\(\d{4}-\d{2}-\d{2}\)\s*$/;
+
+// Keeps only released versions on changelog pages: a version section is shown
+// once its heading carries a release date, such as "v0.1.49 (2026-10-13)".
 export default function omitUnreleasedChangelog() {
   return (tree, file) => {
-    if (path.basename(file.path).toLowerCase() !== 'changelog.md') return;
+    if (!isChangelog(file.path)) return;
 
-    const start = tree.children.findIndex(
-      (node) =>
-        node.type === 'heading' &&
-        node.depth === 2 &&
-        headingText(node).trim().toLowerCase() === 'unreleased',
-    );
-    if (start === -1) return;
+    const children = [];
+    let omitting = false;
+    for (const node of tree.children) {
+      if (node.type === 'heading' && node.depth <= 2) {
+        omitting = node.depth === 2 && !releaseHeading.test(headingText(node));
+      }
+      if (!omitting) children.push(node);
+    }
 
-    const nextSection = tree.children.findIndex(
-      (node, index) => index > start && node.type === 'heading' && node.depth <= 2,
-    );
-    tree.children.splice(start, (nextSection === -1 ? tree.children.length : nextSection) - start);
+    if (!children.some((node) => node.type === 'heading' && node.depth === 2)) {
+      children.push({
+        type: 'paragraph',
+        children: [{ type: 'text', value: 'No public release yet.' }],
+      });
+    }
+    tree.children = children;
   };
+}
+
+function isChangelog(filePath) {
+  return (
+    path.basename(filePath).toLowerCase() === 'changelog.md' ||
+    path.basename(path.dirname(filePath)).toLowerCase() === 'changelog'
+  );
 }
 
 function headingText(node) {
