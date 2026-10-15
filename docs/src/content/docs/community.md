@@ -16,6 +16,17 @@ their document markers.
 
 Read the [author's introduction](https://github.com/raine/aven/discussions/23).
 
+## Aven for Raycast
+
+[Aven for Raycast](https://www.raycast.com/Infonautica/aven) by
+[Leonid Danilov](https://github.com/leodnlv) lets you create Aven
+tasks from Raycast on macOS. Pick a workspace, project, and status,
+then enter a title and an optional Markdown description. The
+extension requires the `aven` CLI on your `PATH`.
+
+The source is in the
+[Raycast extensions repository](https://github.com/raycast/extensions/tree/main/extensions/aven).
+
 ## Share your project
 
 Built an integration, script, or workflow around Aven?
