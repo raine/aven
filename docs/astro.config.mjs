@@ -4,12 +4,13 @@ import { unified } from '@astrojs/markdown-remark';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import changelogPlatforms from './plugins/changelog-platforms.mjs';
+import changelogReleases from './plugins/changelog-releases.mjs';
 import omitUnreleasedChangelog from './plugins/omit-unreleased-changelog.mjs';
 
 export default defineConfig({
   site: 'https://aventasks.dev',
   markdown: {
-    processor: unified({ remarkPlugins: [omitUnreleasedChangelog, changelogPlatforms] }),
+    processor: unified({ remarkPlugins: [omitUnreleasedChangelog, changelogReleases, changelogPlatforms] }),
   },
   redirects: {
     '/workflows': '/getting-started/#next-steps',

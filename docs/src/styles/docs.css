@@ -227,3 +227,56 @@ button[data-open-modal] {
 :root[data-theme='light'] .changelog-platforms a[aria-current='page'] {
   box-shadow: inset 0 0 0 1px #cbbde9;
 }
+
+.changelog-date {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 2rem;
+  font: 500 0.75rem/1.4 var(--sl-font-mono), monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-3);
+}
+
+.sl-markdown-content .changelog-date ~ .changelog-date {
+  margin-top: 3rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid var(--sl-color-hairline);
+}
+
+.sl-markdown-content .changelog-date + .sl-heading-wrapper {
+  margin-top: 0.35rem;
+}
+
+.sl-markdown-content .changelog-date + .sl-heading-wrapper + ul {
+  margin-top: 0.9rem;
+}
+
+.changelog-latest {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-accent-high);
+  letter-spacing: 0.04em;
+}
+
+.sl-markdown-content .changelog-group {
+  margin-top: 1.4rem;
+  font: 500 0.75rem/1.4 var(--sl-font-mono), monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-2);
+}
+
+.sl-markdown-content .changelog-group + ul {
+  margin-top: 0.5rem;
+}
+
+.sl-markdown-content .changelog-group-breaking {
+  color: #f2a08a;
+}
+
+:root[data-theme='light'] .sl-markdown-content .changelog-group-breaking {
+  color: #b4401f;
+}
