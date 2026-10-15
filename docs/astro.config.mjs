@@ -20,6 +20,7 @@ export default defineConfig({
       title: 'aven',
       description: 'A local-first task manager for power users and agents.',
       plugins: [starlightLlmsTxt()],
+      routeMiddleware: './src/route-data.ts',
       logo: {
         dark: './src/assets/aven-landing-wordmark.svg',
         light: './src/assets/aven-wordmark-grape-violet-light.svg',
@@ -134,15 +135,7 @@ export default defineConfig({
           items: [
             { label: 'Command reference', slug: 'command-reference' },
             { label: 'Configuration', slug: 'configuration' },
-            {
-              label: 'Changelog',
-              collapsed: true,
-              items: [
-                { label: 'CLI & TUI', slug: 'changelog' },
-                { label: 'iPhone', slug: 'changelog/ios' },
-                { label: 'Android', slug: 'changelog/android' },
-              ],
-            },
+            { label: 'Changelog', slug: 'changelog' },
           ],
         },
         {
