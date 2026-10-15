@@ -498,17 +498,14 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
             width,
         ));
     }
-    if !summary.issues.is_empty() {
-        lines.push(Line::from(""));
-        for issue in &summary.issues {
-            lines.extend(wrapped_row(
-                theme,
-                issue.label,
-                &issue.value,
-                Style::new().fg(theme.warning),
-                width,
-            ));
-        }
+    for issue in &summary.issues {
+        lines.extend(wrapped_row(
+            theme,
+            issue.label,
+            &issue.value,
+            Style::new().fg(theme.warning),
+            width,
+        ));
     }
 }
 
@@ -1929,6 +1926,15 @@ mod tests {
                 assert_eq!(text.matches(&message).count(), 1, "{text}");
                 assert!(text.contains("Last attempt Failed"));
                 assert!(text.contains("Background sync Blocked since"));
+                let background = rendered
+                    .lines
+                    .iter()
+                    .position(|line| line.to_string().starts_with("Background sync"))
+                    .unwrap();
+                assert_eq!(
+                    rendered.lines[background - 1].to_string().trim(),
+                    "Pending         4"
+                );
                 assert!(!text.contains("Protected keys"));
                 assert!(!text.contains("Sync didn't finish"));
                 assert!(!text.contains("Last error"));
