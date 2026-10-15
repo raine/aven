@@ -204,11 +204,14 @@ async fn task_list_page_navigation_clamps_at_boundaries() {
 #[tokio::test]
 async fn compatible_query_transitions_follow_selected_task_identity() {
     let mut app = test_app().await;
-    for title in ["Zulu task", "Alpha task", "Middle task"] {
-        app.store
-            .create_task(test_task_draft(title), None)
-            .await
-            .unwrap();
+    for (title, priority) in [
+        ("Zulu task", "high"),
+        ("Alpha task", "low"),
+        ("Middle task", "medium"),
+    ] {
+        let mut draft = test_task_draft(title);
+        draft.priority = priority.to_string();
+        app.store.create_task(draft, None).await.unwrap();
     }
     let original = app
         .store
@@ -216,14 +219,14 @@ async fn compatible_query_transitions_follow_selected_task_identity() {
         .iter()
         .position(|item| item.task.title == "Alpha task")
         .unwrap();
-    assert_ne!(original, 0);
+    assert_eq!(original, 2);
     app.list.select_task(Some(original));
     let selected_id = app.store.tasks[original].task.id.clone();
 
     app.set_sort(TaskOrder::Title).await.unwrap();
 
     let selected = app.list.selected_task().unwrap();
-    assert_ne!(selected, original);
+    assert_eq!(selected, 0);
     assert_eq!(app.store.tasks[selected].task.id, selected_id);
     assert_eq!(app.store.view_state.order, TaskOrder::Title);
 }
