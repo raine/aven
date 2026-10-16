@@ -21,6 +21,7 @@ description: Release notes for Aven for Android.
 - Leaving a pairing that can still be retried asks before discarding it.
 - Clearer sync errors: connection problems give advice that fits Aven Cloud or a self-hosted server, an app too old for its server says to update, hosting refusals (paused, storage limit, unavailable) explain what to do, and a reverse proxy that rejects large requests suggests raising its body limit to at least 8 MB.
 - Fix: An invitation with an unusable server address asks for a new invitation instead of suggesting a network check.
+- The capture dialog has more room while typing: the note under the Capture button is gone.
 
 ## 0.1.0 — in review
 

@@ -5,6 +5,12 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
+- Capture suggests labels as one-tap chips beside the Capture button. Labels matching words in the title come first, a chip reapplies the labels of the project's latest labelled task, and **…** opens the full label picker.
+- The capture sheet has more room while typing: the title field replaces the "New task" heading, and the note under the Capture button is gone.
+- **All tasks** shows open tasks by default. The status filter adds **Open tasks** and **All statuses** shortcuts, and priority and label filters move into submenus.
+- Fix: Closing a capture you haven't changed no longer asks to discard it.
+- Fix: The **All tasks** search field stays in place and visible while the keyboard is open, and scrolling back to the top shows search and filters again.
+
 ## 1.0.1 (2026-10-15)
 
 - Sort, filter and search **All tasks** in a project: sort by date added, last updated, priority, due date or title; filter by status, priority and label; and pull down to search. The Tasks tab gets the same **All tasks** view for the whole workspace, next to Queue and Epics.
