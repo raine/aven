@@ -5,6 +5,14 @@ description: Release notes for Aven for Android.
 
 ## Unreleased
 
+- Capture suggests one-tap label chips while typing, prioritizing labels named in the title and frequently used in the project. Reuse the labels from the project's latest labelled task, or open the full picker with **…**.
+- The label picker keeps selected labels visible as removable chips and offers frequently used labels. Capture and edit show selected labels as chips instead of a count.
+- The capture title stays beside Close while the details scroll, replacing the separate **New task** heading.
+- **All tasks** shows open tasks by default. **Open tasks** and **All statuses** shortcuts preserve other filters; priority and label choices have their own menu pages, and the filter button stays in place while selecting.
+- Search focuses automatically the first time its tab opens, without reopening the keyboard when returning from a task.
+- Settings has a **Suggest an improvement** link for bugs, ideas, and clunky workflows.
+- Fix: Capture ignores whitespace-only changes when asking to discard a draft, and changing only its project now asks for confirmation.
+
 - Sort, filter and search **All tasks** in a project: sort by date added, last updated, priority, due date or title; filter by status, priority and label; and pull down to search. The Tasks tab gets the same **All tasks** view for the whole workspace, next to Queue and Epics.
 - Swipe tasks in **All tasks** like in the Queue: right to mark done, left to snooze until tomorrow, with Undo.
 - Fix: Done and canceled tasks are no longer shown as overdue. With the due date sort, they appear under **Earlier** with their due date.
