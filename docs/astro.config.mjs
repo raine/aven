@@ -93,6 +93,7 @@ export default defineConfig({
       ],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/raine/aven' },
+        { icon: 'x.com', label: 'X', href: 'https://x.com/aventasksdev' },
       ],
       components: {
         SocialIcons: './src/components/HeaderLinks.astro',

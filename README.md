@@ -16,6 +16,8 @@ If you've tried aven, feedback is welcome! Please
 
 If you find aven useful, consider sharing it with others who might benefit from it.
 
+Follow [@aventasksdev](https://x.com/aventasksdev) on X for updates.
+
 Docs: <https://aventasks.dev/getting-started/>
 
 <p>
