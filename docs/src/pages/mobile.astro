@@ -1,0 +1,183 @@
+---
+import Brand from '../components/Brand.astro';
+import GitHubIcon from '../components/GitHubIcon.astro';
+import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
+import StoreBadges from '../components/StoreBadges.astro';
+import '../styles/landing.css';
+import '../styles/sync.css';
+import '../styles/mobile.css';
+
+const usecases = [
+  {
+    when: 'When it occurs to you',
+    title: 'Write it down before you forget.',
+    text: 'Tap +, type it, pick the project. It saves on the phone, signal or not, and is in your terminal queue by the time you sit down.',
+    src: 'ios-capture',
+    alt: 'The capture sheet on iPhone with “Review the release checklist” in the mobile-app project',
+  },
+  {
+    when: 'On the way in',
+    title: "See what's waiting.",
+    text: 'The queue groups tasks the same way the TUI does: Needs action, Available, Focus, Soon. You know what is first before you open the laptop.',
+    src: 'ios-queue',
+    alt: 'The queue on iPhone, grouped into Needs action, Available and Focus',
+  },
+  {
+    when: 'When someone asks about it',
+    title: 'Look it up.',
+    text: 'The whole task is on the phone: the Markdown description, checklists, what it blocks and the epic it belongs to.',
+    src: 'ios-detail',
+    alt: 'Task detail on iPhone with its description and acceptance criteria',
+  },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#121110" />
+    <title>Aven for iPhone and Android | aven</title>
+    <meta name="description" content="Add tasks from your phone and work them at your desk. Aven for iPhone and Android syncs your queue end-to-end encrypted with Aven on your computer." />
+    <link rel="canonical" href="https://aventasks.dev/mobile/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Aven for iPhone and Android | aven" />
+    <meta property="og:description" content="Add tasks anywhere. Work them at your desk." />
+    <meta property="og:url" content="https://aventasks.dev/mobile/" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="container">
+      <header class="site-header">
+        <Brand />
+        <nav aria-label="Main navigation">
+          <a class="features-link" href="/#features">Features</a>
+          <a href="/sync/">Sync</a>
+          <a href="/mobile/" aria-current="page">Mobile</a>
+          <a href="/getting-started/">Docs</a>
+          <a href="https://github.com/raine/aven"><GitHubIcon /> GitHub</a>
+        </nav>
+      </header>
+
+      <main id="main">
+        <section class="hero mobile-hero" aria-labelledby="mobile-heading">
+          <div>
+            <p class="hero-eyebrow mobile-reveal">Aven for iPhone and Android</p>
+            <h1 id="mobile-heading" class="mobile-reveal"><span>Add tasks anywhere.</span> <span>Work them at your desk.</span></h1>
+            <p class="mobile-lead mobile-reveal">The phone apps carry the same queue you run in the terminal, synced end-to-end encrypted through your server or Aven Cloud.</p>
+            <StoreBadges class="mobile-stores mobile-reveal" />
+            <p class="mobile-footnote mobile-reveal">A companion to Aven on your computer. Pair it with your existing sync.</p>
+          </div>
+          <div class="mobile-hero-stage mobile-reveal">
+            <div class="screenshot-frame"><img src="/mobile/tui-queue.webp" width="1440" height="810" alt="The Aven TUI queue" /></div>
+            <figure class="mobile-phone mobile-hero-phone"><img src="/mobile/ios-queue.webp" width="603" height="1311" alt="The same queue on iPhone, in the same groups" /></figure>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="usecases-heading">
+          <div class="detail-copy">
+            <p class="eyebrow">Use cases</p>
+            <h2 id="usecases-heading">When you'll reach for it.</h2>
+          </div>
+          <div class="mobile-cases" data-cases>
+            <ol class="mobile-steps">
+              {usecases.map((usecase, i) => (
+                <li class="mobile-step" data-step={i}>
+                  <p class="mobile-when">{usecase.when}</p>
+                  <h3>{usecase.title}</h3>
+                  <p>{usecase.text}</p>
+                  <figure class="mobile-phone mobile-step-phone"><img src={`/mobile/${usecase.src}.webp`} width="603" height="1311" alt={usecase.alt} loading="lazy" decoding="async" /></figure>
+                </li>
+              ))}
+            </ol>
+            <div class="mobile-stage" aria-hidden="true">
+              <div class="mobile-glow" data-state="0"></div>
+              <div class="mobile-phone mobile-stage-phone" data-state="0">
+                {usecases.map((usecase, i) => <img data-show={i} src={`/mobile/${usecase.src}.webp`} width="603" height="1311" alt="" />)}
+              </div>
+              <div class="mobile-dots">{usecases.map((_, i) => <i data-dot={i}></i>)}</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section mobile-pair" aria-labelledby="pair-heading">
+          <div>
+            <p class="eyebrow">Set up once</p>
+            <h2 id="pair-heading">One scan joins the phone to your sync.</h2>
+            <ol class="mobile-pair-steps">
+              <li><b>Add device</b><span>Open it from the TUI, or run <code>aven sync invite</code>.</span></li>
+              <li><b>Scan or paste</b><span>Scan the QR code, or paste the invitation. It expires after ten minutes.</span></li>
+              <li><b>Done</b><span>Tasks download, then images. The phone gets its own keys.</span></li>
+            </ol>
+          </div>
+          <video class="mobile-pair-video" data-autoplay src="/iphone-pairing.mp4" width="1600" height="900" muted loop playsinline preload="metadata" aria-label="Pairing an iPhone by scanning the QR code from the Aven TUI"></video>
+        </section>
+
+        <section class="section" aria-label="Privacy and offline use">
+          <div class="sync-cards mobile-trust">
+            <article class="sync-card"><p class="feature-label violet">E2EE · DEVICE KEYS</p><h3>Your server can't read it.</h3><p>The phone encrypts tasks, notes and images before they leave it, like every other device.</p></article>
+            <article class="sync-card"><p class="feature-label green">LOCAL · OFFLINE</p><h3>Works without signal.</h3><p>Every task is stored on the phone. Changes wait and sync when your server is reachable.</p></article>
+            <article class="sync-card"><p class="feature-label orange">NO ANALYTICS</p><h3>Nothing phones home.</h3><p>No ads, no usage analytics, no third-party crash reporting. <a href="/privacy/">Privacy policy</a></p></article>
+          </div>
+        </section>
+
+        <section class="closing-section mobile-closing" aria-labelledby="closing-heading">
+          <h2 id="closing-heading">Get Aven on your phone.</h2>
+          <p>Already running sync? You're one scan away. <a href="/sync/setup/">Not yet? Set up sync.</a></p>
+          <StoreBadges class="mobile-stores" />
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div><Brand /></div>
+        <nav aria-label="Footer navigation"><a href="/getting-started/">Docs</a><a href="/changelog/">Changelog</a><a href="/about/">About</a><a href="/support/">Support</a><a href="/privacy/">Privacy</a><a href="https://github.com/raine/aven">Source <ExternalLinkIcon /></a></nav>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<script>
+  const reveal = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('is-in');
+      reveal.unobserve(entry.target);
+    }
+  }, { rootMargin: '0px 0px -8% 0px' });
+  document.querySelectorAll<HTMLElement>('.mobile-reveal').forEach((el, i) => {
+    el.style.transitionDelay = `${Math.min(i, 4) * 50}ms`;
+    reveal.observe(el);
+  });
+
+  const videoObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const video = entry.target as HTMLVideoElement;
+      if (entry.isIntersecting) video.play().catch(() => {});
+      else video.pause();
+    }
+  }, { threshold: 0.4 });
+  document.querySelectorAll<HTMLVideoElement>('video[data-autoplay]').forEach((video) => videoObserver.observe(video));
+
+  // The step crossing the middle of the viewport drives the pinned phone, glow and dots.
+  const cases = document.querySelector<HTMLElement>('[data-cases]');
+  if (cases) {
+    const steps = [...cases.querySelectorAll<HTMLElement>('.mobile-step')];
+    const stateEls = [...cases.querySelectorAll<HTMLElement>('.mobile-stage [data-state]')];
+    const dots = [...cases.querySelectorAll<HTMLElement>('[data-dot]')];
+    const show = (index: number) => {
+      steps.forEach((step, i) => step.classList.toggle('is-on', i === index));
+      stateEls.forEach((el) => (el.dataset.state = String(index)));
+      dots.forEach((dot, i) => dot.classList.toggle('is-on', i === index));
+    };
+    const stepObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) show(Number((entry.target as HTMLElement).dataset.step));
+      }
+    }, { rootMargin: '-45% 0px -45% 0px' });
+    steps.forEach((step) => stepObserver.observe(step));
+    show(0);
+  }
+</script>
