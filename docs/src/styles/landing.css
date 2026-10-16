@@ -134,10 +134,8 @@ h2 { font-size: 43px; font-weight: 500; line-height: 1.14; letter-spacing: -2px;
 .store-badge { display: inline-block; border-radius: 7px; }
 .store-badge img { display: block; width: 135px; height: auto; }
 .store-badge:hover img { filter: brightness(1.15); }
-/* Google Play badge at the App Store badge's height, greyed out until the listing is live. */
-.play-badge { position: relative; display: inline-block; cursor: default; }
-.play-badge img { display: block; width: auto; height: calc(135px * 40 / 119.664); filter: grayscale(1); opacity: .45; }
-.play-tag { position: absolute; top: -12px; right: -14px; padding: 4px 8px; border: 1px solid #4a3d63; border-radius: 999px; background: #1b1724; color: #c9a8f7; font: 600 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; box-shadow: 0 4px 14px #0009; }
+/* The Play badge has a wider aspect ratio; match the App Store badge's height. */
+.play-badge img { width: auto; height: calc(135px * 40 / 119.664); }
 .section-copy p code { font-size: 12px; color: #c9bdcf; }
 .install-widget { min-width: 0; }
 .install-options { display: flex; align-items: center; gap: 5px; margin-bottom: 13px; font: 11px var(--mono); }

@@ -20,6 +20,7 @@ const heroViews = [
 ];
 
 const appStoreUrl = 'https://apps.apple.com/app/aven-tasks/id6811171767';
+const playStoreUrl = 'https://play.google.com/store/apps/details?id=fi.zendit.aven';
 const pairingVideoLabel = 'Pairing an iPhone: open Add device in the Aven TUI, scan the QR code with the iPhone app, and the queue appears on the phone. A task opens and its Markdown description scrolls.';
 
 const features = [
@@ -151,7 +152,7 @@ const testimonials = [
           <video class="band-video" data-autoplay src="/iphone-pairing.mp4" width="1600" height="900" muted loop playsinline preload="metadata" aria-label={pairingVideoLabel}></video>
           <div class="store-row">
             <a class="store-badge" href={appStoreUrl}><img src="/app-store-badge.svg" width="120" height="40" alt="Download on the App Store" /></a>
-            <span class="play-badge" role="img" aria-label="Google Play: Android app in review"><img src="/google-play-badge.svg" width="152" height="45" alt="" /><span class="play-tag" aria-hidden="true">In review</span></span>
+            <a class="store-badge play-badge" href={playStoreUrl}><img src="/google-play-badge.svg" width="152" height="45" alt="Get it on Google Play" /></a>
           </div>
         </section>
 

@@ -11,7 +11,6 @@
 .sync-links span { justify-self: center; width: 1px; background: repeating-linear-gradient(to bottom, #8f6bc4 0 4px, transparent 4px 8px); }
 .sync-links p { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 2px 10px; border: 1px solid #4b3a66; border-radius: 99px; background: #171620; color: var(--violet); font: 11px/1.6 var(--mono); white-space: nowrap; }
 .sync-devices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; }
-.sync-soon { border-style: dashed; opacity: .7; }
 
 @media (max-width: 760px) {
   .sync-topology { padding: 26px 16px 22px; }
