@@ -19,6 +19,9 @@ const heroViews = [
   { id: 'commands', caption: 'Find commands without memorizing every shortcut.', label: 'Commands', src: '/hero-commands.webp', alt: 'Aven command palette filtering view commands over the queue, showing command names, keyboard shortcuts, and descriptions.' },
 ];
 
+const appStoreUrl = 'https://apps.apple.com/app/aven-tasks/id6811171767';
+const pairingVideoLabel = 'Pairing an iPhone: open Add device in the Aven TUI, scan the QR code with the iPhone app, and the queue appears on the phone. A task opens and its Markdown description scrolls.';
+
 const features = [
   { label: '▸ NEEDS ACTION · FOCUS · SOON', title: 'Separate projects. One queue.', description: 'See what needs attention across your projects, or narrow your scope. Use separate workspaces to keep independent task collections apart.', color: 'violet', href: '/organize-tasks/' },
   { label: 'DUE DATES · RECURRING', title: 'Give work its own time.', description: 'Due dates, deferred tasks, and recurring schedules. Keep later work out of the way until it belongs in front of you.', color: 'orange', href: '/schedule-tasks/' },
@@ -139,6 +142,19 @@ const testimonials = [
           <SyncTopology />
         </section>
 
+        <section class="section pair-band" aria-labelledby="iphone-heading">
+          <div class="band-copy">
+            <p class="eyebrow">Aven for mobile</p>
+            <h2 id="iphone-heading">Your queue, in your pocket.</h2>
+            <p>Jot a task down on your phone and it's in your terminal queue, not a separate notes app you forget to check. Priorities, projects, and full task details stay in sync, end-to-end encrypted through your server or Aven Cloud. Setup is one QR scan.</p>
+          </div>
+          <video class="band-video" data-autoplay src="/iphone-pairing.mp4" width="1600" height="900" muted loop playsinline preload="metadata" aria-label={pairingVideoLabel}></video>
+          <div class="store-row">
+            <a class="store-badge" href={appStoreUrl}><img src="/app-store-badge.svg" width="120" height="40" alt="Download on the App Store" /></a>
+            <span class="play-badge" role="img" aria-label="Google Play: Android app in review"><img src="/google-play-badge.svg" width="152" height="45" alt="" /><span class="play-tag" aria-hidden="true">In review</span></span>
+          </div>
+        </section>
+
         <section class="section" id="features" aria-label="Features">
           <div class="feature-grid">
             {features.map((feature) => (
@@ -156,17 +172,6 @@ const testimonials = [
         </section>
 
         <QuickCapture />
-
-        <section class="section" aria-labelledby="mobile-heading">
-          <div class="mobile-preview">
-            <div class="mobile-copy">
-              <p class="eyebrow">Coming soon · iOS and Android</p>
-              <h2 id="mobile-heading">Your tasks, away from the terminal.</h2>
-              <p>Aven for iPhone and Android shows the same queue, priorities, and project labels, synced through the server you already run.</p>
-            </div>
-            <img src="/ios-dark.webp" width="1326" height="2742" alt="Aven for iOS showing the synced task queue with priorities and project labels in dark mode." loading="lazy" />
-          </div>
-        </section>
 
         <section class="section testimonials-section" aria-labelledby="testimonials-heading">
           <div class="detail-copy">
@@ -248,6 +253,15 @@ const testimonials = [
     panels.forEach((panel) => { panel.hidden = false; });
     tablist.removeAttribute('data-pending');
   });
+
+  const videoObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const video = entry.target as HTMLVideoElement;
+      if (entry.isIntersecting) video.play().catch(() => {});
+      else video.pause();
+    }
+  }, { threshold: 0.4 });
+  document.querySelectorAll<HTMLVideoElement>('video[data-autoplay]').forEach((video) => videoObserver.observe(video));
 
   const commands = {
     brew: 'brew install raine/aven/aven',
