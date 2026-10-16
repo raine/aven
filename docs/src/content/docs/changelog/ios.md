@@ -5,8 +5,12 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
+## 1.0.2 — in review
+
 - Capture suggests labels as one-tap chips beside the Capture button. Labels matching words in the title come first, a chip reapplies the labels of the project's latest labelled task, and **…** opens the full label picker.
-- The capture sheet has more room while typing: the title field replaces the "New task" heading, and the note under the Capture button is gone.
+- The capture sheet has more room while typing: the title field replaces the "New task" heading, and the note under the Capture button is gone. Next to the label chips, the Capture button is a larger capsule that is easier to spot and tap.
+- The label picker keeps selected labels visible as removable chips below the search field, and a **Frequent** section offers the project's most used labels. The edit form shows a task's labels as chips instead of a count.
+- A **Feedback** section in Settings links to Aven's GitHub issues for suggestions and problem reports.
 - **All tasks** shows open tasks by default. The status filter adds **Open tasks** and **All statuses** shortcuts, and priority and label filters move into submenus.
 - Fix: Closing a capture you haven't changed no longer asks to discard it.
 - Fix: The **All tasks** search field stays in place and visible while the keyboard is open, and scrolling back to the top shows search and filters again.
