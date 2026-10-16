@@ -61,9 +61,7 @@ impl App {
                             }
                         ))
                 ),
-                task_list_navigation: self.overlay.is_none()
-                    && self.detail.is_inactive()
-                    && self.list.focus() == Focus::Tasks,
+                list_navigation: self.overlay.is_none() && self.detail.is_inactive(),
             },
             terminal_size.height,
         );
@@ -90,8 +88,19 @@ impl App {
                 Ok(())
             }
             KeyInput::ListPage { direction, half } => {
-                let task_area = self.task_area_for_mouse(terminal_size);
-                let page = crate::tui::ui::main_list_page_rows(&self.store, task_area);
+                let page = if self.list.focus() == Focus::Sidebar {
+                    let terminal =
+                        ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height);
+                    crate::tui::ui::sidebar_layout_for(
+                        terminal,
+                        self.list.focus(),
+                        self.list.sidebar_visible(),
+                    )
+                    .map_or(1, |layout| usize::from(layout.content.height).max(1))
+                } else {
+                    let task_area = self.task_area_for_mouse(terminal_size);
+                    crate::tui::ui::main_list_page_rows(&self.store, task_area)
+                };
                 let distance = if half { page.div_ceil(2) } else { page };
                 self.move_selection_bounded(direction * distance as isize)
                     .await

@@ -31,7 +31,7 @@ pub(crate) struct KeyRouteState {
     pub(crate) overlay_captures: bool,
     pub(crate) detail_overlay: bool,
     pub(crate) add_task_image_target: bool,
-    pub(crate) task_list_navigation: bool,
+    pub(crate) list_navigation: bool,
 }
 
 pub(crate) fn route_key(key: KeyEvent, state: KeyRouteState, terminal_height: u16) -> KeyInput {
@@ -72,7 +72,7 @@ pub(crate) fn route_key(key: KeyEvent, state: KeyRouteState, terminal_height: u1
     if let Some(delta) = prefix_scroll_delta(key, terminal_height, state.prefix_hints) {
         return KeyInput::ScrollPrefix(delta);
     }
-    if state.task_list_navigation {
+    if state.list_navigation {
         let page = match (key.code, key.modifiers) {
             (KeyCode::PageDown, KeyModifiers::NONE) => Some((1, false)),
             (KeyCode::PageUp, KeyModifiers::NONE) => Some((-1, false)),
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn task_list_routes_page_and_control_navigation() {
         let state = KeyRouteState {
-            task_list_navigation: true,
+            list_navigation: true,
             ..KeyRouteState::default()
         };
         assert_eq!(
@@ -267,7 +267,7 @@ mod tests {
             control_u,
             KeyRouteState {
                 overlay_captures: true,
-                task_list_navigation: true,
+                list_navigation: true,
                 ..KeyRouteState::default()
             },
             24,

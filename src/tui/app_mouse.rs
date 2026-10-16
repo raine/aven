@@ -19,12 +19,24 @@ impl App {
         terminal_size: Size,
     ) -> Result<bool> {
         let shortcut_scroll = self.shortcut_overlay_scroll(mouse.kind);
-        let task_list_wheel = self.routes_wheel_to_task_list(mouse.kind, terminal_size);
+        let sidebar_wheel = matches!(
+            mouse.kind,
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+        ) && !self.prefix_hints_active()
+            && self.overlay.is_none()
+            && self.detail.is_inactive()
+            && self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row);
+        let previous_sidebar = (self.list.focus(), self.list.selected_sidebar());
+        let task_list_wheel =
+            !sidebar_wheel && self.routes_wheel_to_task_list(mouse.kind, terminal_size);
         let previous_selection = self.list.selected_task();
         if mouse.kind != MouseEventKind::Moved {
             self.handle_mouse(mouse, terminal_size).await?;
             if let Some(previous_scroll) = shortcut_scroll {
                 return Ok(self.shortcut_overlay_scroll(mouse.kind) != Some(previous_scroll));
+            }
+            if sidebar_wheel {
+                return Ok((self.list.focus(), self.list.selected_sidebar()) != previous_sidebar);
             }
             return Ok(!task_list_wheel || self.list.selected_task() != previous_selection);
         }
@@ -65,14 +77,22 @@ impl App {
         match input {
             MouseInput::PrefixScroll(_) => unreachable!("prefix scroll was handled"),
             MouseInput::OverlayScroll(kind) => {
-                if self.dispatch_mouse_scroll(kind, terminal_size) {
-                    return Ok(());
-                }
                 let delta = if kind == MouseEventKind::ScrollDown {
                     1
                 } else {
                     -1
                 };
+                if self.detail.is_inactive()
+                    && self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
+                {
+                    // Browse without activating a scope or changing the task selection.
+                    self.list.focus_sidebar();
+                    self.preserve_or_restore_sidebar_selection();
+                    return self.move_selection_bounded(delta).await;
+                }
+                if self.dispatch_mouse_scroll(kind, terminal_size) {
+                    return Ok(());
+                }
                 return self.handle_task_list_wheel(delta, terminal_size).await;
             }
             MouseInput::DetailPress => {
