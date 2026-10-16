@@ -24,7 +24,9 @@ Docs: <https://aventasks.dev/getting-started/>
   <a href="meta/ios-dark.webp#gh-dark-mode-only"><img src="meta/ios-dark.webp" width="24%" alt="Aven iOS queue in dark mode with the TUI demo tasks, priorities, and project labels in an iPhone frame"></a>
 </p>
 
-*Your tasks, away from the terminal. Aven for iOS and Android is coming soon.*
+*Your tasks, away from the terminal. Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767)
+and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) pairs with your sync.
+See [the mobile apps](https://aventasks.dev/mobile/).*
 
 ## Why aven?
 
