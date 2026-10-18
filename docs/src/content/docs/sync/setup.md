@@ -3,7 +3,7 @@ title: Sync across devices
 description: Synchronize Aven data with end-to-end encryption, resolve conflicts, and diagnose sync state.
 ---
 
-Sync keeps the same aven tasks available across laptops, agents, and other devices. Each client writes to its own local SQLite database first, so task capture and updates stay fast and work offline.
+Sync keeps the same aven tasks available across laptops, phones, agents, and other devices. Each client writes to its own local SQLite database first, so task capture and updates stay fast and work offline.
 
 Sync is end-to-end encrypted. Devices encrypt tasks, history, and images before
 upload, so the server cannot read your tasks or images. One
@@ -287,7 +287,7 @@ be up; if the server fails at boot, systemd retries it every five seconds.
 
 ## Set up sync from one device
 
-On the device whose data should start the sync, copy the setup invitation and
+On the computer whose data should start the sync, copy the setup invitation and
 run:
 
 ```sh
@@ -297,7 +297,8 @@ aven sync setup
 On macOS, interactive setup automatically uses a valid `aven-setup:` invitation
 from the clipboard. Otherwise, paste the invitation at the prompt. Setup shows
 the server and what this database will publish, then asks for confirmation.
-Every other device starts from this data.
+Every other device starts from this data. Phones can't start a sync; they join
+one through [Add a device](#add-a-device).
 
 In the TUI, open the Sync dialog with `:sync`, `C s`, or a click on the sync
 indicator in the header, and choose **Set up sync**.
@@ -330,7 +331,12 @@ expires after ten minutes. To cancel it early, press Ctrl-C or run
 `aven sync invite --cancel`.
 :::
 
-On the new device, join from an empty database and paste the invitation:
+To add a phone, create the invitation on a computer that already syncs, then
+open Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) or
+[Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) and scan
+the QR code. See [the mobile apps](https://aventasks.dev/mobile/).
+
+On a new computer, join from an empty database and paste the invitation:
 
 ```sh
 aven sync join

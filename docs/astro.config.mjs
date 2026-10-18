@@ -113,6 +113,7 @@ export default defineConfig({
             { label: 'Getting started', slug: 'getting-started' },
             { label: 'Concepts', slug: 'concepts' },
             { label: 'Coming from Taskwarrior', slug: 'taskwarrior' },
+            { label: 'Mobile apps', link: '/mobile/' },
           ],
         },
         {

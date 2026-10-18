@@ -71,6 +71,14 @@ For repositories where agents should start with live task context, configure aut
 See [Work with agents](/agents/) for automatic priming, Claude Code hook setup,
 chat integrations, example prompts, and handoff notes.
 
+## Phone apps
+
+Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and
+[Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) carries
+the same queue to your phone. The apps pair with sync, so
+[set up sync](/sync/setup/) first, then [add the phone](/sync/setup/#add-a-device)
+as a device. See [the mobile apps](https://aventasks.dev/mobile/).
+
 ## Next steps
 
 - Read [Concepts](/concepts/) to learn the task model.
