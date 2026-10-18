@@ -12,10 +12,11 @@ pub(crate) async fn cmd_ai(config: &AppConfig, args: AiCommand) -> Result<()> {
         AiSubcommand::Providers => {
             for provider in ai::providers() {
                 println!(
-                    "{} auth={} schema={}",
+                    "{} auth={} schema={} tools={}",
                     provider.id,
                     provider.auth.description(),
-                    provider.schema.description()
+                    provider.schema.description(),
+                    provider.tools
                 );
             }
             for (provider, reason) in ai::exclusions() {

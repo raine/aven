@@ -75,6 +75,8 @@ pub(crate) struct ProviderInfo {
     pub(crate) id: &'static str,
     pub(crate) auth: AuthKind,
     pub(crate) schema: SchemaStrategy,
+    /// Whether the Rig integration can carry tools, independent of model support.
+    pub(crate) tools: bool,
 }
 
 pub(crate) const PROVIDERS: &[ProviderInfo] = &[
@@ -82,126 +84,151 @@ pub(crate) const PROVIDERS: &[ProviderInfo] = &[
         id: "anthropic",
         auth: AuthKind::ApiKey("ANTHROPIC_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "azure",
         auth: AuthKind::ApiKey("AZURE_API_KEY or AZURE_TOKEN"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "chatgpt",
         auth: AuthKind::OAuth,
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "cohere",
         auth: AuthKind::ApiKey("COHERE_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "copilot",
         auth: AuthKind::OAuth,
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "deepseek",
         auth: AuthKind::ApiKey("DEEPSEEK_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "doubleword",
         auth: AuthKind::ApiKey("DOUBLEWORD_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "gemini",
         auth: AuthKind::ApiKey("GEMINI_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "groq",
         auth: AuthKind::ApiKey("GROQ_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "huggingface",
         auth: AuthKind::ApiKey("HUGGINGFACE_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "hyperbolic",
         auth: AuthKind::ApiKey("HYPERBOLIC_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: false,
     },
     ProviderInfo {
         id: "llamafile",
         auth: AuthKind::None,
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "minimax",
         auth: AuthKind::ApiKey("MINIMAX_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "mira",
         auth: AuthKind::ApiKey("MIRA_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: false,
     },
     ProviderInfo {
         id: "mistral",
         auth: AuthKind::ApiKey("MISTRAL_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "moonshot",
         auth: AuthKind::ApiKey("MOONSHOT_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "ollama",
         auth: AuthKind::None,
         schema: SchemaStrategy::NativeVerbatim,
+        tools: true,
     },
     ProviderInfo {
         id: "openai",
         auth: AuthKind::ApiKey("OPENAI_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "openrouter",
         auth: AuthKind::ApiKey("OPENROUTER_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "perplexity",
         auth: AuthKind::ApiKey("PERPLEXITY_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: false,
     },
     ProviderInfo {
         id: "together",
         auth: AuthKind::ApiKey("TOGETHER_API_KEY"),
         schema: SchemaStrategy::Prompted,
+        tools: true,
     },
     ProviderInfo {
         id: "venice",
         auth: AuthKind::ApiKey("VENICE_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "xai",
         auth: AuthKind::ApiKey("XAI_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "xiaomi_mimo",
         auth: AuthKind::ApiKey("XIAOMI_MIMO_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
     ProviderInfo {
         id: "zai",
         auth: AuthKind::ApiKey("ZAI_API_KEY"),
         schema: SchemaStrategy::NativeStrict,
+        tools: true,
     },
 ];
 
@@ -466,6 +493,18 @@ mod tests {
             "\nAuthenticate with ChatGPT\n\n  Open  https://example.com/device\n  Code  ABCD-EFGH\n\nWaiting for authorization...\n"
         );
         assert!(format_device_prompt("ChatGPT", "url", "code", true).contains("\u{1b}["));
+    }
+
+    #[test]
+    fn tool_capabilities_match_integrations_that_drop_tools() {
+        use rig_core::providers::openai::completion::OpenAICompatibleProvider;
+        for (id, supported) in [
+            ("hyperbolic", hyperbolic::HyperbolicExt::SUPPORTS_TOOLS),
+            ("mira", mira::MiraExt::SUPPORTS_TOOLS),
+            ("perplexity", perplexity::PerplexityExt::SUPPORTS_TOOLS),
+        ] {
+            assert_eq!(provider_info(id).unwrap().tools, supported, "{id}");
+        }
     }
 
     #[test]

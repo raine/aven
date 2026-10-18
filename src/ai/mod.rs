@@ -12,8 +12,12 @@ use axum::Json;
 use axum::extract::{State, rejection::JsonRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rig_core::completion::{CompletionRequest as RigRequest, FinishReason as RigFinishReason};
-use rig_core::message::{AssistantContent, Message as RigMessage, UserContent};
+use rig_core::message::{
+    AssistantContent, Message as RigMessage, ProviderCallId, Reasoning, ToolCall, ToolCallId,
+    ToolFunction, ToolResult, ToolResultContent, UserContent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Semaphore;
@@ -22,10 +26,11 @@ use tracing::{info, warn};
 use crate::config::{self, AiConfig};
 use registry::{CompletionBackend, SchemaStrategy};
 
-pub(crate) const MAX_REQUEST_BYTES: usize = 65_536;
-const MAX_MESSAGES: usize = 8;
-const MAX_BLOCKS_PER_MESSAGE: usize = 8;
-const MAX_TEXT_BYTES: usize = 48 * 1024;
+pub(crate) const MAX_REQUEST_BYTES: usize = 512 * 1024;
+const MAX_MESSAGES: usize = 64;
+const MAX_TEXT_BYTES: usize = 256 * 1024;
+const MAX_TOOLS: usize = 16;
+const MAX_TOOL_SCHEMA_BYTES: usize = 32 * 1024;
 const MAX_SCHEMA_BYTES: usize = 24 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 32;
 const MAX_REQUEST_ID_BYTES: usize = 128;
@@ -69,13 +74,15 @@ pub(crate) struct CompletionRequest {
     request_id: String,
     messages: Vec<Message>,
     output: OutputRequest,
+    #[serde(default)]
+    tools: Vec<ToolDefinition>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Message {
     role: Role,
-    content: Vec<TextBlock>,
+    content: Vec<ContentBlock>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -83,17 +90,69 @@ struct Message {
 enum Role {
     System,
     User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ContentBlock {
+    Text {
+        text: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: Value,
+    },
+    Reasoning {
+        opaque: String,
+    },
+    ToolResult {
+        call_id: String,
+        name: String,
+        output: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum TextBlock {
-    Text { text: String },
+#[serde(deny_unknown_fields)]
+struct ToolDefinition {
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+// Provider replay metadata is part of the correlation token, not client controls.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CallToken {
+    id: ToolCallId,
+    provider: Option<ProviderCallId>,
+    signature: Option<String>,
+    additional_params: Option<Value>,
+}
+
+fn encode_opaque(value: &impl Serialize) -> std::result::Result<String, ErrorCategory> {
+    serde_json::to_vec(value)
+        .map(|bytes| format!("v1.{}", URL_SAFE_NO_PAD.encode(bytes)))
+        .map_err(|_| ErrorCategory::MalformedProviderResponse)
+}
+
+fn decode_opaque<T: serde::de::DeserializeOwned>(
+    token: &str,
+) -> std::result::Result<T, ErrorCategory> {
+    let bytes = token
+        .strip_prefix("v1.")
+        .and_then(|value| URL_SAFE_NO_PAD.decode(value).ok())
+        .ok_or(ErrorCategory::InvalidRequest)?;
+    serde_json::from_slice(&bytes).map_err(|_| ErrorCategory::InvalidRequest)
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum OutputRequest {
+    Text,
     JsonSchema { schema: Value },
 }
 
@@ -108,24 +167,16 @@ pub(crate) struct CompletionResponse {
 #[derive(Debug, Clone, Serialize)]
 struct AssistantMessage {
     role: &'static str,
-    content: Vec<AssistantTextBlock>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct AssistantTextBlock {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    text: String,
+    content: Vec<ContentBlock>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
 enum FinishReason {
     Stop,
     Length,
     Error,
-    Aborted,
+    ToolCalls,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,6 +251,7 @@ enum BackendState {
     Ready {
         backend: Box<dyn CompletionBackend>,
         schema: SchemaStrategy,
+        tools: bool,
         provider: String,
     },
     Unavailable {
@@ -277,6 +329,7 @@ impl AiService {
             Ok(backend) => BackendState::Ready {
                 backend,
                 schema: info.schema,
+                tools: info.tools,
                 provider: provider.to_string(),
             },
             Err(_) => BackendState::Unavailable {
@@ -297,7 +350,7 @@ impl AiService {
             features: Features {
                 text: true,
                 json_schema: true,
-                tools: false,
+                tools: matches!(self.state, BackendState::Ready { tools: true, .. }),
                 streaming: false,
                 images: false,
             },
@@ -317,18 +370,22 @@ impl AiService {
         let BackendState::Ready {
             backend,
             schema,
+            tools,
             provider,
         } = &self.state
         else {
             return Err(self.unavailable_error());
         };
+        if !tools && validated.requires_tools() {
+            return Err(ErrorCategory::UnsupportedCapability);
+        }
+        let request_id = validated.0.request_id.clone();
+        let rig_request = validated.into_rig(*schema, self.max_output_tokens)?;
         self.admit()?;
         let permit = self
             .semaphore
             .try_acquire()
             .map_err(|_| ErrorCategory::RateLimit)?;
-        let request_id = validated.request_id.clone();
-        let rig_request = validated.into_rig(*schema, self.max_output_tokens)?;
         let started = Instant::now();
         let result = tokio::time::timeout(self.timeout, backend.complete(rig_request)).await;
         drop(permit);
@@ -412,99 +469,204 @@ impl CompletionRequest {
         }
         let mut text_bytes = 0usize;
         for message in &self.messages {
-            if message.content.is_empty() || message.content.len() > MAX_BLOCKS_PER_MESSAGE {
+            if message.content.is_empty() && !matches!(message.role, Role::Assistant) {
                 return Err(ErrorCategory::InvalidRequest);
             }
             for block in &message.content {
-                match block {
-                    TextBlock::Text { text } => {
+                match (&message.role, block) {
+                    (Role::System | Role::User | Role::Assistant, ContentBlock::Text { text }) => {
                         if text.is_empty() {
                             return Err(ErrorCategory::InvalidRequest);
                         }
-                        text_bytes = text_bytes.saturating_add(text.len());
+                        text_bytes += text.len();
                     }
+                    (
+                        Role::Assistant,
+                        ContentBlock::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        },
+                    ) => {
+                        let _: CallToken = decode_opaque(id)?;
+                        if name.is_empty() {
+                            return Err(ErrorCategory::InvalidRequest);
+                        }
+                        text_bytes += json_size(arguments)?;
+                    }
+                    (Role::Assistant, ContentBlock::Reasoning { opaque }) => {
+                        let _: Reasoning = decode_opaque(opaque)?;
+                    }
+                    (
+                        Role::Tool,
+                        ContentBlock::ToolResult {
+                            call_id,
+                            name,
+                            output,
+                        },
+                    ) => {
+                        let _: CallToken = decode_opaque(call_id)?;
+                        if name.is_empty() {
+                            return Err(ErrorCategory::InvalidRequest);
+                        }
+                        text_bytes += output.len();
+                    }
+                    _ => return Err(ErrorCategory::InvalidRequest),
                 }
             }
         }
-        if text_bytes > MAX_TEXT_BYTES {
+        if text_bytes > MAX_TEXT_BYTES || self.tools.len() > MAX_TOOLS {
             return Err(ErrorCategory::InvalidRequest);
         }
-        let OutputRequest::JsonSchema { schema } = &self.output;
-        let schema_bytes = serde_json::to_vec(schema).map_err(|_| ErrorCategory::InvalidRequest)?;
-        if schema_bytes.len() > MAX_SCHEMA_BYTES || json_depth(schema) > MAX_SCHEMA_DEPTH {
+        let mut schema_bytes = 0;
+        let mut names = std::collections::HashSet::new();
+        for tool in &self.tools {
+            if tool.name.is_empty() || !names.insert(&tool.name) {
+                return Err(ErrorCategory::InvalidRequest);
+            }
+            schema_bytes += validate_schema(&tool.parameters, MAX_TOOL_SCHEMA_BYTES)?;
+        }
+        if schema_bytes > MAX_TOOL_SCHEMA_BYTES {
             return Err(ErrorCategory::InvalidRequest);
         }
-        if !schema.is_object() {
-            return Err(ErrorCategory::InvalidRequest);
+        if let OutputRequest::JsonSchema { schema } = &self.output {
+            validate_schema(schema, MAX_SCHEMA_BYTES)?;
         }
-        Ok(ValidatedRequest {
-            request_id: self.request_id,
-            messages: self.messages,
-            schema: schema.clone(),
-        })
+        Ok(ValidatedRequest(self))
     }
 }
 
-struct ValidatedRequest {
-    request_id: String,
-    messages: Vec<Message>,
-    schema: Value,
+fn json_size(value: &Value) -> std::result::Result<usize, ErrorCategory> {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .map_err(|_| ErrorCategory::InvalidRequest)
 }
 
+fn validate_schema(schema: &Value, max_bytes: usize) -> std::result::Result<usize, ErrorCategory> {
+    if !schema.is_object() || json_depth(schema) > MAX_SCHEMA_DEPTH {
+        return Err(ErrorCategory::InvalidRequest);
+    }
+    let bytes = json_size(schema)?;
+    if bytes > max_bytes {
+        return Err(ErrorCategory::InvalidRequest);
+    }
+    Ok(bytes)
+}
+
+struct ValidatedRequest(CompletionRequest);
+
 impl ValidatedRequest {
+    fn requires_tools(&self) -> bool {
+        !self.0.tools.is_empty()
+            || self.0.messages.iter().any(|message| {
+                message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::ToolCall { .. } | ContentBlock::ToolResult { .. }
+                    )
+                })
+            })
+    }
+
     fn into_rig(
-        mut self,
+        self,
         strategy: SchemaStrategy,
         max_output_tokens: u64,
     ) -> std::result::Result<RigRequest, ErrorCategory> {
-        if strategy == SchemaStrategy::Prompted {
-            let schema =
-                serde_json::to_string(&self.schema).map_err(|_| ErrorCategory::InvalidRequest)?;
-            self.messages.insert(
-                0,
-                Message {
+        let mut request = self.0;
+        let output_schema = match request.output {
+            OutputRequest::Text => None,
+            OutputRequest::JsonSchema { schema } if strategy == SchemaStrategy::Prompted => {
+                request.messages.insert(0, Message {
                     role: Role::System,
-                    content: vec![TextBlock::Text {
-                        text: format!(
-                            "Return only JSON matching this caller-supplied schema. Do not add prose: {schema}"
-                        ),
-                    }],
-                },
-            );
-        }
-        let chat_history = self
+                    content: vec![ContentBlock::Text { text: format!(
+                        "Return only JSON matching this caller-supplied schema. Do not add prose: {schema}"
+                    ) }],
+                });
+                None
+            }
+            OutputRequest::JsonSchema { schema } => {
+                Some(serde_json::from_value(schema).map_err(|_| ErrorCategory::InvalidRequest)?)
+            }
+        };
+        let chat_history = request
             .messages
             .into_iter()
+            // A truncated or filtered completion can have no replayable content.
+            .filter(|message| !message.content.is_empty())
             .map(|message| {
-                let text = message
-                    .content
-                    .into_iter()
-                    .map(|block| match block {
-                        TextBlock::Text { text } => text,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                match message.role {
-                    Role::System => RigMessage::System { content: text },
-                    Role::User => RigMessage::User {
-                        content: vec![UserContent::text(text)],
-                    },
+                let mut user = Vec::new();
+                let mut assistant = Vec::new();
+                let mut system = Vec::new();
+                for block in message.content {
+                    match block {
+                        ContentBlock::Text { text } => match message.role {
+                            Role::System => system.push(text),
+                            Role::User => user.push(UserContent::text(text)),
+                            Role::Assistant => assistant.push(AssistantContent::Text(text.into())),
+                            Role::Tool => return Err(ErrorCategory::InvalidRequest),
+                        },
+                        ContentBlock::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => {
+                            let token: CallToken = decode_opaque(&id)?;
+                            assistant.push(AssistantContent::ToolCall(ToolCall {
+                                id: token.id,
+                                provider: token.provider,
+                                function: ToolFunction { name, arguments },
+                                signature: token.signature,
+                                additional_params: token.additional_params,
+                            }));
+                        }
+                        ContentBlock::Reasoning { opaque } => {
+                            assistant.push(AssistantContent::Reasoning(decode_opaque(&opaque)?))
+                        }
+                        ContentBlock::ToolResult {
+                            call_id,
+                            name,
+                            output,
+                        } => {
+                            let token: CallToken = decode_opaque(&call_id)?;
+                            user.push(UserContent::ToolResult(ToolResult {
+                                call: token.id,
+                                provider: token.provider,
+                                name,
+                                content: vec![ToolResultContent::Text(output.into())],
+                            }));
+                        }
+                    }
                 }
+                Ok(match message.role {
+                    Role::System => RigMessage::System {
+                        content: system.join("\n"),
+                    },
+                    Role::User | Role::Tool => RigMessage::User { content: user },
+                    Role::Assistant => RigMessage::Assistant {
+                        id: None,
+                        content: assistant,
+                    },
+                })
             })
-            .collect();
-        let output_schema = if strategy == SchemaStrategy::Prompted {
-            None
-        } else {
-            Some(serde_json::from_value(self.schema).map_err(|_| ErrorCategory::InvalidRequest)?)
-        };
+            .collect::<std::result::Result<Vec<_>, ErrorCategory>>()?;
         Ok(RigRequest {
             model: None,
             preamble: None,
             chat_history,
             documents: Vec::new(),
-            tools: Vec::new(),
+            tools: request
+                .tools
+                .into_iter()
+                .map(|tool| rig_core::completion::ToolDefinition {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                })
+                .collect(),
             temperature: None,
             max_tokens: Some(max_output_tokens),
+            // None leaves choice automatic, including integrations that reject explicit Auto.
             tool_choice: None,
             additional_params: None,
             output_schema,
@@ -518,42 +680,75 @@ fn project_response(
     response: rig_core::completion::CompletionResponse,
     max_output_tokens: u64,
 ) -> std::result::Result<CompletionResponse, ErrorCategory> {
+    let finish_reason = response.finish_reason();
+    let terminal_empty = matches!(
+        finish_reason,
+        Some(RigFinishReason::Length | RigFinishReason::ContentFilter | RigFinishReason::Other(_))
+    );
     if !response.usage.has_values()
-        || response.usage.output_tokens == 0
+        || (response.usage.output_tokens == 0 && !terminal_empty)
         || response.usage.output_tokens > max_output_tokens
     {
         return Err(ErrorCategory::MalformedProviderResponse);
     }
-    let finish_reason = response.finish_reason();
-    let mut text = String::new();
+    let mut content = Vec::new();
+    let mut text_bytes = 0usize;
+    let mut has_tools = false;
     for item in response.choice {
         match item {
-            AssistantContent::Text(part) => text.push_str(&part.text),
-            AssistantContent::Reasoning(_) => {}
-            AssistantContent::ToolCall(_) | AssistantContent::Image(_) => {
-                return Err(ErrorCategory::UnsupportedCapability);
+            AssistantContent::Text(part) => {
+                text_bytes += part.text.len();
+                if !part.text.is_empty() {
+                    content.push(ContentBlock::Text { text: part.text });
+                }
             }
+            AssistantContent::Reasoning(reasoning) => content.push(ContentBlock::Reasoning {
+                opaque: encode_opaque(&reasoning)?,
+            }),
+            AssistantContent::ToolCall(call) => {
+                has_tools = true;
+                text_bytes += json_size(&call.function.arguments)
+                    .map_err(|_| ErrorCategory::MalformedProviderResponse)?;
+                let id = encode_opaque(&CallToken {
+                    id: call.id,
+                    provider: call.provider,
+                    signature: call.signature,
+                    additional_params: call.additional_params,
+                })?;
+                content.push(ContentBlock::ToolCall {
+                    id,
+                    name: call.function.name,
+                    arguments: call.function.arguments,
+                });
+            }
+            AssistantContent::Image(_) => return Err(ErrorCategory::UnsupportedCapability),
         }
     }
     let max_output_bytes = usize::try_from(max_output_tokens)
         .unwrap_or(usize::MAX)
         .saturating_mul(8)
-        .min(256 * 1024);
-    if text.is_empty() || text.len() > max_output_bytes {
+        .min(MAX_TEXT_BYTES);
+    if (content.is_empty() && !terminal_empty)
+        || text_bytes > max_output_bytes
+        || serde_json::to_vec(&content)
+            .map_err(|_| ErrorCategory::MalformedProviderResponse)?
+            .len()
+            > MAX_REQUEST_BYTES / 2
+    {
         return Err(ErrorCategory::MalformedProviderResponse);
     }
     let finish_reason = match finish_reason {
+        Some(RigFinishReason::Stop) | None if has_tools => FinishReason::ToolCalls,
         Some(RigFinishReason::Stop) | None => FinishReason::Stop,
         Some(RigFinishReason::Length) => FinishReason::Length,
-        Some(
-            RigFinishReason::ToolCalls | RigFinishReason::ContentFilter | RigFinishReason::Other(_),
-        ) => FinishReason::Error,
+        Some(RigFinishReason::ToolCalls) => FinishReason::ToolCalls,
+        Some(RigFinishReason::ContentFilter | RigFinishReason::Other(_)) => FinishReason::Error,
     };
     Ok(CompletionResponse {
         request_id,
         message: AssistantMessage {
             role: "assistant",
-            content: vec![AssistantTextBlock { kind: "text", text }],
+            content,
         },
         finish_reason,
         usage: Usage {
@@ -658,139 +853,4 @@ pub(crate) async fn check(config: &config::AppConfig) -> Result<CompletionRespon
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct PendingBackend;
-
-    impl CompletionBackend for PendingBackend {
-        fn complete(&self, _request: RigRequest) -> registry::CompletionFuture<'_> {
-            Box::pin(std::future::pending())
-        }
-    }
-
-    fn ready_service() -> AiService {
-        AiService {
-            state: BackendState::Ready {
-                backend: Box::new(PendingBackend),
-                schema: SchemaStrategy::NativeVerbatim,
-                provider: "test".to_string(),
-            },
-            max_output_tokens: 128,
-            timeout: Duration::from_millis(5),
-            semaphore: Semaphore::new(1),
-            requests_per_minute: 2,
-            recent_requests: Mutex::new(VecDeque::new()),
-        }
-    }
-
-    fn request() -> CompletionRequest {
-        serde_json::from_value(serde_json::json!({
-            "request_id": "test-1",
-            "messages": [{"role": "user", "content": [{"type": "text", "text": "Return a color"}]}],
-            "output": {"type": "json_schema", "schema": {"type": "object", "properties": {"color": {"type": "string"}}}}
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn validates_and_converts_neutral_request() {
-        let validated = request().validate().unwrap();
-        let converted = validated
-            .into_rig(SchemaStrategy::NativeVerbatim, 128)
-            .unwrap();
-        assert_eq!(converted.max_tokens, Some(128));
-        assert!(converted.output_schema.is_some());
-        assert!(converted.tools.is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn private_credential_directory_is_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("ai");
-        fs::create_dir(&path).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        secure_private_dir(&path).unwrap();
-        assert_eq!(
-            fs::metadata(path).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-    }
-
-    #[test]
-    fn rejects_unknown_request_fields() {
-        let result = serde_json::from_value::<CompletionRequest>(serde_json::json!({
-            "request_id": "test-1",
-            "messages": [],
-            "output": {"type": "json_schema", "schema": {}},
-            "model": "caller-choice"
-        }));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn rejects_deep_schema() {
-        let mut schema = serde_json::json!({"type": "string"});
-        for _ in 0..MAX_SCHEMA_DEPTH {
-            schema = serde_json::json!({"items": schema});
-        }
-        let mut request = request();
-        request.output = OutputRequest::JsonSchema { schema };
-        assert!(request.validate().is_err());
-    }
-
-    #[tokio::test]
-    async fn service_enforces_timeout_concurrency_and_rate_limits() {
-        let service = ready_service();
-        let error = service.complete(request()).await.unwrap_err();
-        assert_eq!(error, ErrorCategory::Timeout);
-
-        let permit = service.semaphore.try_acquire().unwrap();
-        let error = service.complete(request()).await.unwrap_err();
-        assert_eq!(error, ErrorCategory::RateLimit);
-        drop(permit);
-
-        let error = service.complete(request()).await.unwrap_err();
-        assert_eq!(error, ErrorCategory::RateLimit);
-    }
-
-    #[test]
-    fn response_projection_enforces_reported_output_limit() {
-        let usage = rig_core::completion::Usage {
-            input_tokens: 3,
-            output_tokens: 5,
-            total_tokens: 8,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-            tool_use_prompt_tokens: 0,
-            reasoning_tokens: 0,
-        };
-        let response = rig_core::completion::CompletionResponse::new(
-            vec![AssistantContent::Text(rig_core::message::Text::from(
-                "{\"ok\":true}",
-            ))],
-            usage,
-            "test",
-        )
-        .with_raw(serde_json::json!({"secret_provider_field": "must-not-leak"}));
-
-        let projected = project_response("request-1".to_string(), response, 5).unwrap();
-        let json = serde_json::to_string(&projected).unwrap();
-        assert!(json.contains("{\\\"ok\\\":true}"));
-        assert!(!json.contains("secret_provider_field"));
-
-        let usage = rig_core::completion::Usage {
-            output_tokens: 6,
-            ..usage
-        };
-        let response = rig_core::completion::CompletionResponse::new(
-            vec![AssistantContent::Text(rig_core::message::Text::from("{}"))],
-            usage,
-            "test",
-        );
-        assert!(project_response("request-2".to_string(), response, 5).is_err());
-    }
-}
+mod tests;
