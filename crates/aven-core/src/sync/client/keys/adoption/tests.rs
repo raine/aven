@@ -234,8 +234,15 @@ async fn seed_adopts_real_publication_preserving_later_edits_and_retry_progress(
         let mut conn = crate::test_support::acquire(&client).await.unwrap();
         sqlx::query("INSERT INTO conflicts(workspace_id, entity_type, entity_id, task_id, field, local_value, remote_value, local_change_id, remote_change_id, variant_a, variant_b, created_at) VALUES (?, 'task', ?, ?, 'description', 'local', 'remote', NULL, 'fixture-conflict', 'vlocal', 'vremote', '2100-09-21T12:00:00Z')")
             .bind(&workspace.id).bind(&task.id).bind(&task.id).execute(&mut *conn).await.unwrap();
-        let baseline =
-            serde_json::json!({"epic_task_id": task.id, "created_at": related.created_at});
+        let link_created_at: String = sqlx::query_scalar(
+            "SELECT created_at FROM task_epic_links WHERE workspace_id = ? AND child_task_id = ?",
+        )
+        .bind(&workspace.id)
+        .bind(&related.id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let baseline = serde_json::json!({"epic_task_id": task.id, "created_at": link_created_at});
         sqlx::query("INSERT INTO meta(key, value) VALUES (?, ?)")
             .bind(format!(
                 "epic_membership_baseline:{}:{}",
