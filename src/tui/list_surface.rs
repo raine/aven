@@ -462,10 +462,6 @@ impl ListSurface {
         self.last_task_click.is_some()
     }
 
-    pub(crate) fn has_last_change_return(&self) -> bool {
-        self.last_change_return.is_some()
-    }
-
     pub(crate) fn has_recent_action_return(&self) -> bool {
         self.recent_action_return.is_some()
     }

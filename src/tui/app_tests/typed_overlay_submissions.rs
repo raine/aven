@@ -222,7 +222,50 @@ async fn navigate_search_result_outside_view_opens_exact_task_and_returns() {
     assert_eq!(app.store.tasks.len(), 1);
     assert_eq!(app.store.tasks[0].task.id, other_id);
 
-    app.close_detail_session().await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(!app.detail.is_active());
+    assert_eq!(app.store.view_state, view_before);
+    let selected = app.list.selected_task().unwrap();
+    assert_eq!(app.store.tasks[selected].task.id, alpha_id);
+}
+
+#[tokio::test]
+async fn back_from_linked_task_returns_to_search_result_before_original_view() {
+    let mut app = test_app().await;
+    let alpha = create_and_select_task(&mut app, test_task_draft("Alpha target")).await;
+    let alpha_item = app.store.tasks[alpha].clone();
+    let alpha_id = alpha_item.task.id.clone();
+    let other = create_and_select_task(&mut app, test_task_draft("Beta other")).await;
+    let other_id = app.store.tasks[other].task.id.clone();
+    let linked = create_and_select_task(&mut app, test_task_draft("Gamma linked")).await;
+    let linked_id = app.store.tasks[linked].task.id.clone();
+    app.store.show_exact_task(alpha_item);
+    app.list.select_task(Some(0));
+    let view_before = app.store.view_state.clone();
+
+    app.begin_search();
+    type_chars(&mut app, "beta").await;
+    settle_search_preview(&mut app).await;
+    let Some(OverlayState::Search(state)) = &mut app.overlay else {
+        panic!("expected search overlay");
+    };
+    state.selected = state
+        .results
+        .iter()
+        .position(|result| result.task_id == other_id)
+        .expect("picked task in preview results");
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.open_detail_task(&linked_id, 0).await;
+    assert_eq!(app.store.tasks[0].task.id, linked_id);
+
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+    assert!(app.detail.is_active());
+    let selected = app.list.selected_task().unwrap();
+    assert_eq!(app.store.tasks[selected].task.id, other_id);
+
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
 
     assert!(!app.detail.is_active());
     assert_eq!(app.store.view_state, view_before);

@@ -375,10 +375,7 @@ impl App {
     }
 
     pub(super) async fn navigate_back_from_detail(&mut self) -> Result<()> {
-        if self.list.has_recent_action_return()
-            || self.list.has_last_change_return()
-            || !self.go_back_in_detail().await?
-        {
+        if !self.go_back_in_detail().await? {
             self.close_detail_session().await?;
         }
         Ok(())
