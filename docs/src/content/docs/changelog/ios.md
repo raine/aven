@@ -5,7 +5,7 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
-## 1.0.2 — in review
+## 1.0.2 (2026-10-17)
 
 - Capture suggests labels as one-tap chips beside the Capture button. Labels matching words in the title come first, a chip reapplies the labels of the project's latest labelled task, and **…** opens the full label picker.
 - The capture sheet has more room while typing: the title field replaces the "New task" heading, and the note under the Capture button is gone. Next to the label chips, the Capture button is a larger capsule that is easier to spot and tap.

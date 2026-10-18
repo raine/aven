@@ -5,7 +5,7 @@ description: Release notes for Aven for Android.
 
 ## Unreleased
 
-## 0.2.0 — in review
+## 0.2.0 (2026-10-16)
 
 - Capture suggests one-tap label chips while typing, prioritizing labels named in the title and frequently used in the project. Reuse the labels from the project's latest labelled task, or open the full picker with **…**.
 - The label picker keeps selected labels visible as removable chips and offers frequently used labels. Capture and edit show selected labels as chips instead of a count.
