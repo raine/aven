@@ -17,9 +17,9 @@ for what the server can still see.
 
 ## Start a server
 
-:::tip[No server to run?]
-[Aven Cloud](https://cloud.aventasks.dev/) is in free preview. Get a setup
-invitation there, skip this section, and continue with
+:::tip[Prefer not to run a server?]
+Consider [Aven Cloud](https://cloud.aventasks.dev/), currently in free preview.
+Request a setup invitation there, then skip ahead to
 [Set up sync from one device](#set-up-sync-from-one-device).
 :::
 
