@@ -205,8 +205,7 @@
 }
 
 .image-zoom-dialog::backdrop {
-  background: color-mix(in srgb, var(--sl-color-black) 78%, transparent);
-  backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--sl-color-black) 86%, transparent);
 }
 
 .image-zoom-full {
@@ -219,6 +218,36 @@
   border-radius: 0.9rem;
   object-fit: contain;
   box-shadow: 0 2rem 5rem color-mix(in srgb, var(--sl-color-black) 48%, transparent);
+  transform-origin: top left;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .image-zoom-dialog[open]::backdrop {
+    animation: image-zoom-fade 260ms ease-out;
+  }
+
+  .image-zoom-dialog[open] .image-zoom-caption,
+  .image-zoom-dialog[open] .image-zoom-close {
+    animation: image-zoom-fade 200ms ease-out 120ms backwards;
+  }
+
+  .image-zoom-dialog.is-closing::backdrop,
+  .image-zoom-dialog.is-closing .image-zoom-caption,
+  .image-zoom-dialog.is-closing .image-zoom-close {
+    animation: image-zoom-fade-out 180ms ease-in forwards;
+  }
+}
+
+@keyframes image-zoom-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes image-zoom-fade-out {
+  to {
+    opacity: 0;
+  }
 }
 
 .image-zoom-caption {
