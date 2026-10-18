@@ -223,23 +223,39 @@ fn png(path: &Path, marker: u8) -> Vec<u8> {
 }
 
 async fn start_server(operator: &Installation, data: &Path, bind: &str) -> Child {
+    start_server_with_url(operator, data, bind).await.0
+}
+
+async fn start_server_with_url(
+    operator: &Installation,
+    data: &Path,
+    bind: &str,
+) -> (Child, String) {
     let data = data.display().to_string();
     let mut child = operator
         .command(&["server", "--data", &data, "--bind", bind])
         .spawn()
         .unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let ready = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(line) = lines.next_line().await.unwrap() {
-            if line.starts_with("listening url=") {
-                return;
+            if let Some(url) = line.strip_prefix("listening url=") {
+                return Some(url.to_string());
             }
         }
-        panic!("encrypted server exited before listening");
+        None
     })
-    .await
-    .unwrap();
-    child
+    .await;
+    if let Ok(Some(url)) = ready {
+        return (child, url);
+    }
+    let _ = child.start_kill();
+    let output = child.wait_with_output().await.unwrap();
+    panic!(
+        "encrypted server failed before listening ({ready:?})\nstatus: {}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Starts `sync invite` and returns its invitation line and remaining output.
@@ -784,12 +800,19 @@ async fn set_up(root: &Path) -> (Child, Installation) {
     let operator = Installation::new(root, "operator");
     let a = Installation::new(root, "a");
     let data = root.join("server.sqlite");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let url = format!("http://127.0.0.1:{port}");
+    // Prepare storage before serving, then issue the invitation for the actual
+    // bound address. Binding port zero avoids releasing a port before use.
+    operator
+        .ok(&[
+            "server",
+            "setup",
+            "--data",
+            &data.display().to_string(),
+            "--url",
+            "http://127.0.0.1:1",
+        ])
+        .await;
+    let (server, url) = start_server_with_url(&operator, &data, "127.0.0.1:0").await;
     let setup = line_with(
         &operator
             .ok(&[
@@ -803,7 +826,6 @@ async fn set_up(root: &Path) -> (Child, Installation) {
             .await,
         "aven-setup:",
     );
-    let server = start_server(&operator, &data, &format!("127.0.0.1:{port}")).await;
     success(
         &a.run_with_input(&["sync", "setup", "--yes"], &setup).await,
         &["sync", "setup"],
