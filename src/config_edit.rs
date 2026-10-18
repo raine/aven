@@ -361,12 +361,13 @@ fn render_managed_entries(entries: &[ManagedProjectOverride]) -> Vec<String> {
     lines
 }
 
-fn yaml_scalar(value: &str) -> String {
-    serde_saphyr::to_string(&value)
-        .unwrap_or_else(|_| format!("\"{}\"", value.replace('"', "\\\"")))
-        .trim()
-        .trim_end_matches("...")
-        .trim()
+pub(crate) fn yaml_scalar(value: &str) -> String {
+    // Scalars are spliced into fixed-indent lines, so block styles are not valid here.
+    let mut options = serde_saphyr::SerializerOptions::default();
+    options.prefer_block_scalars = false;
+    serde_saphyr::to_string_with_options(&value, options)
+        .expect("strings serialize to YAML")
+        .trim_end_matches('\n')
         .to_string()
 }
 
@@ -426,6 +427,45 @@ fn has_trailing_newline(_text: &str, last_line: Option<&String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_scalars_round_trip_on_single_lines() {
+        let values = [
+            format!("/projects/{}", "a".repeat(512)),
+            "long path with spaces/".repeat(32),
+            "colon: value".into(),
+            "quotes'\" and \\backslash".into(),
+            "#leading".into(),
+            "*alias".into(),
+            "!tag".into(),
+            "[sequence]".into(),
+            "true".into(),
+            "null".into(),
+            "0000000000000000".into(),
+            "日本語/äö".repeat(32),
+            "line\nbreak\r\ntab\tend".into(),
+            " trailing spaces ...  ".into(),
+            "/path/ending...".into(),
+            String::new(),
+        ];
+        for value in values {
+            let scalar = yaml_scalar(&value);
+            assert!(!scalar.contains(['\n', '\r']), "{scalar:?}");
+            assert_eq!(serde_saphyr::from_str::<String>(&scalar).unwrap(), value);
+            let entry = ManagedProjectOverride {
+                workspace_id: "0000000000000000".parse().unwrap(),
+                workspace: Some(value.clone()),
+                project: value.clone(),
+                paths: vec![PathBuf::from(&value)],
+            };
+            let lines = render_managed_entries(&[entry]);
+            assert!(lines.iter().all(|line| !line.contains(['\n', '\r'])));
+            let parsed = parse_managed_entry(&lines).unwrap();
+            assert_eq!(parsed.workspace.as_deref(), Some(value.as_str()));
+            assert_eq!(parsed.project, value);
+            assert_eq!(parsed.paths, [PathBuf::from(&value)]);
+        }
+    }
 
     #[test]
     fn unsupported_managed_entries_fail_closed_for_all_path_edits() {

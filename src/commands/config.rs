@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::cli::{ConfigCommand, ConfigKey, ConfigSubcommand};
 use crate::config::{AppConfig, ImageOptimizationConfig, QrGlyphsConfig, config_file_path};
-use crate::config_edit::set_scalar;
+use crate::config_edit::{set_scalar, yaml_scalar};
 use crate::operations::{init_config, show_config};
 use crate::render::quote;
 
@@ -109,7 +109,7 @@ impl ConfigKey {
                 if value.trim().is_empty() {
                     bail!("invalid value for {}: path must not be empty", self.name());
                 }
-                yaml_string(value)
+                Ok(yaml_scalar(value))
             }
             Self::SyncQrGlyphs => match value {
                 "auto" | "sextant" | "half-block" => Ok(value.to_string()),
@@ -135,10 +135,20 @@ fn render_optional_string(value: Option<&str>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-fn yaml_string(value: &str) -> Result<String> {
-    Ok(serde_saphyr::to_string(&value)?
-        .trim()
-        .trim_end_matches("...")
-        .trim()
-        .to_string())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_db_path_serializes_long_strings_on_one_line() {
+        let path = format!("/data/{}/db.sqlite", "long path ".repeat(32));
+        let value = ConfigKey::LocalDbPath.parse_value(&path).unwrap();
+        assert!(!value.contains('\n'));
+        let config: AppConfig =
+            serde_saphyr::from_str(&format!("local:\n  db_path: {value}\n")).unwrap();
+        assert_eq!(
+            config.local.db_path.unwrap(),
+            std::path::PathBuf::from(path)
+        );
+    }
 }

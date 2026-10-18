@@ -1139,7 +1139,7 @@ fn singular_list_commands_list_workspace_values() {
 fn project_rename_updates_managed_path_mapping() {
     let env = TestEnv::new();
     let db = env.db("rename-project-path.sqlite");
-    let project_dir = env.path("mapped-project");
+    let project_dir = env.path(&format!("mapped-project-{}", "a".repeat(100)));
     std::fs::create_dir_all(&project_dir).unwrap();
 
     ok(env.aven(&db, ["project", "create", "agent-offload"]));
