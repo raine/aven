@@ -92,7 +92,7 @@ ai:
   timeout_seconds: 45
   max_output_tokens: 2048
   max_concurrent_requests: 2
-  requests_per_minute: 10
+  requests_per_minute: 60
 
 daemon:
   wake_addr: "127.0.0.1:47631"
@@ -162,7 +162,7 @@ agent:
 
 The optional `ai` section configures the generic completion service hosted by
 `aven server`. `provider` and `model` must be set together. The defaults are a
-45-second timeout, 2,048 output tokens, two concurrent requests, and ten
+45-second timeout, 2,048 output tokens, two concurrent requests, and 60
 requests per minute. `endpoint` is supported for llamafile, Ollama, and OpenAI.
 Set `sync.auth_token` to the shared bearer token accepted by the AI routes.
 End-to-end encrypted sync uses separate device credentials.

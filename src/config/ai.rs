@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const DEFAULT_AI_TIMEOUT_SECONDS: u64 = 45;
 pub(crate) const DEFAULT_AI_MAX_OUTPUT_TOKENS: u64 = 2048;
 pub(crate) const DEFAULT_AI_MAX_CONCURRENT_REQUESTS: usize = 2;
-pub(crate) const DEFAULT_AI_REQUESTS_PER_MINUTE: u32 = 10;
+pub(crate) const DEFAULT_AI_REQUESTS_PER_MINUTE: u32 = 60;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
