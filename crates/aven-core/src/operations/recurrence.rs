@@ -45,6 +45,7 @@ pub(crate) use resolution::resolve_recurrence_occurrence_in_transaction;
 pub(crate) use resolution::{
     RecurrenceMutationOutcome, RecurrenceStructuralMutation, RecurrenceTaskMutation,
     route_recurrence_task_mutation, undo_recurrence_resolution,
+    validate_consumer_recurrence_mutation,
 };
 pub use template::{create_recurrence_series, update_recurrence_template};
 

@@ -214,13 +214,7 @@ pub(super) fn validate_task_draft(draft: &TaskDraft) -> Result<()> {
     Ok(())
 }
 
-pub(super) async fn insert_task(
-    conn: &mut SqliteConnection,
-    workspace: &Workspace,
-    draft: TaskDraft,
-    create_missing_labels: bool,
-    require_existing_project: bool,
-) -> Result<InsertedTask> {
+pub(super) fn initial_status(draft: &TaskDraft) -> Result<(TaskStatus, TaskPriority)> {
     let status = TaskStatus::parse(&draft.status)?;
     let priority = TaskPriority::parse(&draft.priority)?;
     let status = if status == TaskStatus::Inbox && priority.promotes_inbox_to_todo() {
@@ -228,6 +222,17 @@ pub(super) async fn insert_task(
     } else {
         status
     };
+    Ok((status, priority))
+}
+
+pub(super) async fn insert_task(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    draft: TaskDraft,
+    create_missing_labels: bool,
+    require_existing_project: bool,
+) -> Result<InsertedTask> {
+    let (status, priority) = initial_status(&draft)?;
     let available_at = draft.available_at.as_deref().unwrap_or("");
     let due_on = draft.due_on.as_deref().unwrap_or("");
     let id = TaskId::new();

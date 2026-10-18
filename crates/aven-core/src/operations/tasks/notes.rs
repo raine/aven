@@ -80,11 +80,38 @@ pub(in crate::operations) async fn add_note_operation(
     body: String,
     tui_undo: bool,
 ) -> Result<NoteOutcome> {
+    let mut tx = begin_immediate(conn).await?;
+    let outcome = add_note_in_transaction(&mut tx, workspace, task_id, body).await?;
+    if tui_undo {
+        record_tui_undo(
+            &mut tx,
+            &workspace.id,
+            UndoPayload {
+                commands: vec![UndoCommand::DeleteCreatedNote {
+                    task_id: task_id.clone(),
+                    note_id: outcome.note_id.clone(),
+                    note_add_change_id: outcome.change_id.clone(),
+                    restoration_change_ids: Vec::new(),
+                }],
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    info!(task_id = %task_id, note_id = %outcome.note_id, "note added");
+    Ok(outcome)
+}
+
+pub(super) async fn add_note_in_transaction(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    body: String,
+) -> Result<NoteOutcome> {
     let ts = now();
     let note_id = new_id();
-    let mut tx = begin_immediate(conn).await?;
     crate::operations::route_recurrence_task_mutation(
-        &mut tx,
+        conn,
         workspace,
         task_id,
         RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Notes),
@@ -92,7 +119,7 @@ pub(in crate::operations) async fn add_note_operation(
     )
     .await?;
     let change_id = append_change(
-        &mut tx,
+        conn,
         ChangeEntity::Task,
         task_id,
         Some("notes"),
@@ -112,31 +139,14 @@ pub(in crate::operations) async fn add_note_operation(
     .bind(&body)
     .bind(&ts)
     .bind(&change_id)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE workspace_id = ? AND id = ?")
         .bind(&ts)
         .bind(&workspace.id)
         .bind(task_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-    if tui_undo {
-        record_tui_undo(
-            &mut tx,
-            &workspace.id,
-            UndoPayload {
-                commands: vec![UndoCommand::DeleteCreatedNote {
-                    task_id: task_id.clone(),
-                    note_id: note_id.clone(),
-                    note_add_change_id: change_id.clone(),
-                    restoration_change_ids: Vec::new(),
-                }],
-            },
-        )
-        .await?;
-    }
-    tx.commit().await?;
-    info!(task_id = %task_id, note_id = %note_id, "note added");
     Ok(NoteOutcome {
         task_id: task_id.clone(),
         note_id,

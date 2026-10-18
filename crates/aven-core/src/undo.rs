@@ -736,6 +736,21 @@ struct CommandOutcome {
     label_rename: Option<LabelRenameUndoOutcome>,
 }
 
+/// Executes consumer inverse commands without touching the TUI undo stack.
+pub(crate) async fn apply_consumer_undo_commands(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    commands: &[UndoCommand],
+) -> Result<()> {
+    APPLYING_UNDO
+        .scope(
+            (),
+            apply_undo_commands(conn, workspace_id, commands, &now()),
+        )
+        .await?;
+    Ok(())
+}
+
 async fn apply_undo_commands(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,

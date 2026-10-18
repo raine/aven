@@ -238,16 +238,7 @@ pub(crate) async fn route_recurrence_task_mutation(
             return Ok(RecurrenceMutationOutcome::NoChange);
         }
         if task.status.is_terminal() {
-            if target.is_open() {
-                return Err(CoreError::validation(format!(
-                    "error recurrence-terminal-reopen task_id={task_id} hint=\"use immediate undo\""
-                ))
-                .into());
-            }
-            return Err(CoreError::validation(format!(
-                "error recurrence-outcome-final task_id={task_id} hint=\"use immediate undo\""
-            ))
-            .into());
+            return Err(terminal_transition_error(task_id, target));
         }
         if target.is_terminal() {
             ensure!(
@@ -287,6 +278,81 @@ pub(crate) async fn route_recurrence_task_mutation(
         .into());
     }
     Ok(RecurrenceMutationOutcome::Proceed)
+}
+
+fn terminal_transition_error(task_id: &TaskId, target: TaskStatus) -> anyhow::Error {
+    let reason = if target.is_open() {
+        "terminal-reopen"
+    } else {
+        "outcome-final"
+    };
+    CoreError::validation(format!(
+        "error recurrence-{reason} task_id={task_id} hint=\"use immediate undo\""
+    ))
+    .into()
+}
+
+/// Read-only counterpart of the recurrence gate for ordered consumer writes.
+/// `status` includes earlier operations in the same transaction's prepared set.
+pub(crate) async fn validate_consumer_recurrence_mutation(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    task_id: &TaskId,
+    status: TaskStatus,
+    target: Option<TaskStatus>,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    let Some(mut occurrence) = load_occurrence_for_task(conn, &workspace.id, task_id).await? else {
+        return Ok(());
+    };
+    let series = load_series(conn, &workspace.id, &occurrence.series_id).await?;
+    // A preceding terminal update resolves the occurrence before subsequent writes.
+    if status.is_terminal() && occurrence.projection_state == RecurrenceProjectionState::Projected {
+        occurrence.projection_state = RecurrenceProjectionState::Resolved;
+    }
+    if occurrence.projection_state == RecurrenceProjectionState::Projected
+        && series.state == RecurrenceSeriesState::Active
+        && !super::lifecycle_conflict_exists(conn, &workspace.id, &series.id).await?
+        && occurrence.slot_on < crate::recurrence::projection_slot_at(&series.schedule(), at)?
+    {
+        occurrence.projection_state = RecurrenceProjectionState::Archived;
+    }
+    ensure!(
+        occurrence.projection_state != RecurrenceProjectionState::Archived,
+        CoreError::validation(format!(
+            "error recurrence-occurrence-archived task_id={task_id}"
+        ))
+    );
+    let Some(target) = target.filter(|target| *target != status) else {
+        return Ok(());
+    };
+    if status.is_terminal() {
+        return Err(terminal_transition_error(task_id, target));
+    }
+    if target.is_terminal() {
+        ensure!(
+            occurrence.projection_state == RecurrenceProjectionState::Projected,
+            CoreError::validation(format!(
+                "error recurrence-occurrence-not-current task_id={task_id}"
+            ))
+        );
+        if series.state == RecurrenceSeriesState::Active {
+            let slot = next_slot_after(&series.rule, series.start_on, occurrence.slot_on)
+                .context("recurrence schedule has no representable successor")?;
+            let values = slot_values(&series.schedule(), slot)?;
+            let identity =
+                derive_occurrence_identity(&workspace.id, &series.id, &series.schedule(), slot)?;
+            if let Some(existing) = load_occurrence(conn, &workspace.id, &series.id, slot).await? {
+                let labels = load_series_labels(conn, &workspace.id, &series.id).await?;
+                let metadata = load_series_metadata(conn, &workspace.id, &series.id).await?;
+                verify_materialized_occurrence(
+                    conn, workspace, &series, &labels, &metadata, &values, &identity, &existing,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn undo_recurrence_resolution(

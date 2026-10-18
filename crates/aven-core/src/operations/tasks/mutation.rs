@@ -241,7 +241,7 @@ pub(crate) async fn update_task(
     })
 }
 
-fn append_task_undo_commands(
+pub(super) fn append_task_undo_commands(
     task_id: &TaskId,
     before_snapshot: &TaskUndoSnapshot,
     after_snapshot: &TaskUndoSnapshot,
@@ -410,6 +410,16 @@ pub(super) fn validate_task_update(update: &TaskUpdate) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn update_requests_inbox_promotion(update: &TaskUpdate) -> bool {
+    update
+        .status
+        .as_deref()
+        .is_none_or(|status| status == TaskStatus::Inbox.as_str())
+        && update.priority.as_deref().is_some_and(|priority| {
+            TaskPriority::parse(priority).is_ok_and(TaskPriority::promotes_inbox_to_todo)
+        })
+}
+
 pub(super) async fn apply_task_update(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
@@ -424,13 +434,7 @@ pub(super) async fn apply_task_update(
     } else {
         Vec::new()
     };
-    let promote_inbox = if update
-        .status
-        .as_deref()
-        .is_none_or(|status| status == TaskStatus::Inbox.as_str())
-        && update.priority.as_deref().is_some_and(|priority| {
-            TaskPriority::parse(priority).is_ok_and(TaskPriority::promotes_inbox_to_todo)
-        }) {
+    let promote_inbox = if update_requests_inbox_promotion(update) {
         get_task_in_workspace(conn, workspace, task_id)
             .await?
             .status

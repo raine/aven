@@ -59,3 +59,6 @@ pub use tasks::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use tasks::{create_task, update_task};
+
+pub(crate) use tasks::{ChangeSetOperation, IndexedChangeSetError};
+pub use tasks::{ChangeSetOutcome, ChangeTarget, CreatedTaskRef};

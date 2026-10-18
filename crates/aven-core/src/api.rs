@@ -1,3 +1,7 @@
+mod change_sets;
+pub use change_sets::{
+    ChangeOp, ChangeSetError, ChangeSetOutcome, ChangeTarget, CreatedTaskRef, NoteReceipt,
+};
 mod epics;
 pub use epics::{EpicProgress, EpicSummary};
 mod task_list;
@@ -322,35 +326,13 @@ impl Store {
         workspace_id: &WorkspaceId,
         input: TaskCapture,
     ) -> Result<TaskCaptureResult, Error> {
-        let title = input.title.trim();
-        if title.is_empty() {
-            return Err(Error::new(
-                ErrorCode::Validation,
-                "task title is required".to_string(),
-            ));
-        }
-        validate_optional_date("due_on", input.due_on.as_deref())?;
+        let draft = input.into_draft()?;
         let workspace = self.workspace(workspace_id).await?;
-        let project = input
-            .project
-            .ok_or_else(|| Error::new(ErrorCode::Validation, "project is required".to_string()))?;
         let outcome = self
             .database
             .create_task_with_options(
                 &workspace,
-                TaskDraft {
-                    title: title.to_string(),
-                    description: input.description,
-                    project: Some(project),
-                    status: input.status.as_str().to_string(),
-                    priority: input.priority.as_str().to_string(),
-                    source: input.source,
-                    labels: input.labels,
-                    metadata: Vec::new(),
-                    available_at: None,
-                    due_on: input.due_on,
-                    is_epic: false,
-                },
+                draft,
                 TaskCreationOptions::for_consumer_capture(),
             )
             .await
@@ -702,46 +684,10 @@ impl Store {
         task_id: &TaskId,
         input: TaskEdit,
     ) -> Result<bool, Error> {
-        let title = input.title.map(|title| title.trim().to_string());
-        if let Some(title) = title.as_deref() {
-            if title.is_empty() {
-                return Err(Error::new(
-                    ErrorCode::Validation,
-                    "title must not be empty".into(),
-                ));
-            }
-            if title.chars().any(|character| {
-                matches!(
-                    character,
-                    '\n' | '\r' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
-                )
-            }) {
-                return Err(Error::new(
-                    ErrorCode::Validation,
-                    "title must be a single line".into(),
-                ));
-            }
-        }
-        validate_date_update("available_at", &input.available_at)?;
-        validate_date_update("due_on", &input.due_on)?;
+        let (project_id, update) = input.into_update()?;
         let workspace = self.workspace(workspace_id).await?;
         self.database
-            .edit_consumer_task(
-                &workspace,
-                task_id,
-                input.project_id.as_ref(),
-                InternalTaskUpdate {
-                    title,
-                    description: input.description,
-                    status: input.status.map(|value| value.as_str().to_string()),
-                    priority: input.priority.map(|value| value.as_str().to_string()),
-                    available_at: input.available_at.into_internal(),
-                    due_on: input.due_on.into_internal(),
-                    add_labels: input.add_labels,
-                    remove_labels: input.remove_labels,
-                    ..InternalTaskUpdate::default()
-                },
-            )
+            .edit_consumer_task(&workspace, task_id, project_id.as_ref(), update)
             .await
             .map_err(Error::from_internal)
     }
@@ -2755,6 +2701,76 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+impl TaskCapture {
+    fn into_draft(self) -> Result<TaskDraft, Error> {
+        let title = self.title.trim();
+        if title.is_empty() {
+            return Err(Error::new(
+                ErrorCode::Validation,
+                "task title is required".into(),
+            ));
+        }
+        validate_optional_date("due_on", self.due_on.as_deref())?;
+        let project = self
+            .project
+            .ok_or_else(|| Error::new(ErrorCode::Validation, "project is required".into()))?;
+        Ok(TaskDraft {
+            title: title.to_string(),
+            description: self.description,
+            project: Some(project),
+            status: self.status.as_str().to_string(),
+            priority: self.priority.as_str().to_string(),
+            source: self.source,
+            labels: self.labels,
+            metadata: Vec::new(),
+            available_at: None,
+            due_on: self.due_on,
+            is_epic: false,
+        })
+    }
+}
+
+impl TaskEdit {
+    fn into_update(self) -> Result<(Option<ProjectId>, InternalTaskUpdate), Error> {
+        let title = self.title.map(|title| title.trim().to_string());
+        if let Some(title) = title.as_deref() {
+            if title.is_empty() {
+                return Err(Error::new(
+                    ErrorCode::Validation,
+                    "title must not be empty".into(),
+                ));
+            }
+            if title.chars().any(|character| {
+                matches!(
+                    character,
+                    '\n' | '\r' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+                )
+            }) {
+                return Err(Error::new(
+                    ErrorCode::Validation,
+                    "title must be a single line".into(),
+                ));
+            }
+        }
+        validate_date_update("available_at", &self.available_at)?;
+        validate_date_update("due_on", &self.due_on)?;
+        Ok((
+            self.project_id,
+            InternalTaskUpdate {
+                title,
+                description: self.description,
+                status: self.status.map(|v| v.as_str().to_string()),
+                priority: self.priority.map(|v| v.as_str().to_string()),
+                available_at: self.available_at.into_internal(),
+                due_on: self.due_on.into_internal(),
+                add_labels: self.add_labels,
+                remove_labels: self.remove_labels,
+                ..InternalTaskUpdate::default()
+            },
+        ))
+    }
+}
 
 #[cfg(test)]
 mod tests {
