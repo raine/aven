@@ -8,7 +8,13 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # notify-rust requires zbus 5; these crates are folded into zbus 6.
+    # https://github.com/z-galaxy/zbus/issues/2043
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is required by notify-rust's zbus 5 backend" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is required by notify-rust's zbus 5 backend" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is required by notify-rust's zbus 5 backend" },
+]
 
 [licenses]
 version = 2
