@@ -96,7 +96,7 @@ security-framework-sys = { version = "2.15", default-features = false }
 notify-rust = "4"
 
 [dev-dependencies]
-aven-conformance = { path = "crates/aven-conformance", version = "=0.1.0" }
+aven-conformance = { path = "crates/aven-conformance" }
 tokio = { workspace = true, features = ["test-util"] }
 aven-core = { path = "crates/aven-core", version = "=0.1.35", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
