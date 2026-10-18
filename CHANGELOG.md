@@ -5,13 +5,12 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) is now available. Add tasks from your phone and work your queue with end-to-end encrypted sync. See [the mobile apps](https://aventasks.dev/mobile/).
+- Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) is now available. Jot a task down on your phone and it lands in your terminal queue. See [the mobile apps](https://aventasks.dev/mobile/).
 - [Aven Cloud](https://cloud.aventasks.dev/), hosted sync for people who don't want to run their own server. It's end-to-end encrypted, same as self-hosted. It's free during the preview. Paid plans may come later, and they'll be a way to support the project.
 - Aven is now on X at [@aventasksdev](https://x.com/aventasksdev). I'll be posting updates there now and then.
 - macOS installations from Homebrew or the install script show [notifications](https://aventasks.dev/notifications/) with Aven's name and icon, and identify the background daemon as Aven in Login Items.
 - Get [reminders](https://aventasks.dev/notifications/#reminders) from the background daemon: a daily digest of tasks due today or overdue, and a notification when a deferred task becomes available. Turn them on with `aven config set reminders.enabled true`.
 - New [triage mode](https://aventasks.dev/tui/#triage-mode) in the TUI: run `:triage` to go through inbox tasks and stale active or todo work one card at a time and decide what happens to each.
-- Fix: Opening a [search](https://aventasks.dev/tui/#search-filter-and-order) result with `Enter` keeps your current view instead of switching to a search results view, so closing the task detail returns to where you were. Press `Tab` in search to open the results as a view.
 
 ## v0.1.49 (2026-10-13)
 
