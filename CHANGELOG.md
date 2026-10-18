@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) is now available. Add tasks from your phone and work your queue with end-to-end encrypted sync. See [the mobile apps](https://aventasks.dev/mobile/).
 - Aven is now on X at [@aventasksdev](https://x.com/aventasksdev). I'll be posting updates there now and then.
 - macOS installations from Homebrew or the install script show [notifications](https://aventasks.dev/notifications/) with Aven's name and icon, and identify the background daemon as Aven in Login Items.
 - Get [reminders](https://aventasks.dev/notifications/#reminders) from the background daemon: a daily digest of tasks due today or overdue, and a notification when a deferred task becomes available. Turn them on with `aven config set reminders.enabled true`.
