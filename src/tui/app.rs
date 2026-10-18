@@ -385,6 +385,22 @@ impl App {
         true
     }
 
+    /// Selects `task_id` when the current view shows it on a visible row.
+    pub(super) fn select_visible_task(&mut self, task_id: &crate::ids::TaskId) -> bool {
+        let Some(index) = self
+            .store
+            .tasks
+            .iter()
+            .position(|item| &item.task.id == task_id)
+            .filter(|index| crate::tui::ui::task_visual_row(&self.store, *index).is_some())
+        else {
+            return false;
+        };
+        self.list.focus_tasks();
+        self.list.select_task(Some(index));
+        true
+    }
+
     pub(crate) fn set_config(&mut self, config: AppConfig) {
         self.command_catalog = std::sync::Arc::new(crate::tui::event::CommandCatalog::new(
             config.tui.commands.clone(),

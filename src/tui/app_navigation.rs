@@ -489,6 +489,20 @@ impl App {
             return Ok(());
         }
 
+        if !self.open_exact_task_detail_with_return(task_id).await? {
+            self.list.forget_last_changed_task();
+            self.set_warning("recently changed task is unavailable");
+        }
+        Ok(())
+    }
+
+    /// Shows `task_id` alone in an exact-task view with its detail open, and
+    /// remembers the current view so closing the detail returns to it. Returns
+    /// false, with the current view restored, when the task can't be shown.
+    pub(super) async fn open_exact_task_detail_with_return(
+        &mut self,
+        task_id: crate::ids::TaskId,
+    ) -> Result<bool> {
         let selected_index = self.list.selected_task();
         let selected_task_id = self
             .store
@@ -534,16 +548,14 @@ impl App {
                 .restored_task_selection_at_index(return_state.selected_index);
             self.list.select_task(selected);
             self.list.set_task_offset(return_state.table_offset);
-            self.list.forget_last_changed_task();
-            self.set_warning("recently changed task is unavailable");
-            return Ok(());
+            return Ok(false);
         };
         self.list.set_last_change_return(return_state);
         self.list.focus_tasks();
         self.list.select_task(Some(selected));
         self.detail = crate::tui::detail_session::DetailSession::open(0);
         self.show_detail(0);
-        Ok(())
+        Ok(true)
     }
 
     pub(super) async fn restore_last_change_return(&mut self) -> Result<bool> {
