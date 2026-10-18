@@ -39,6 +39,9 @@ license-files = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Path-only dev-dependencies on unpublished workspace crates are stripped on
+# publish, so they carry no version.
+allow-wildcard-paths = true
 highlight = "all"
 skip = [
     # SQLx 0.9 requires sha2 0.10; the application's crypto uses sha2 0.11.
