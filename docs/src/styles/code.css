@@ -221,6 +221,18 @@
   box-shadow: 0 2rem 5rem color-mix(in srgb, var(--sl-color-black) 48%, transparent);
 }
 
+.image-zoom-caption {
+  max-width: min(calc(100dvw - 2rem), 60rem);
+  margin: 0.75rem 0 0;
+  color: var(--sl-color-gray-2);
+  font-size: 0.9375rem;
+  text-align: center;
+}
+
+.image-zoom-frame:has(.image-zoom-caption:not([hidden])) .image-zoom-full {
+  max-height: calc(100dvh - 6rem);
+}
+
 .image-zoom-close {
   position: fixed;
   inset-block-start: 1rem;

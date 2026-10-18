@@ -6,6 +6,12 @@
     return alt ? `Zoom image: ${alt}` : 'Zoom image';
   }
 
+  function imageCaption(img) {
+    const block = img.closest('p') ?? img;
+    const next = block.nextElementSibling;
+    return next?.classList.contains('media-caption') ? next.textContent.trim() : '';
+  }
+
   function closeOnBackdrop(event) {
     if (event.target === event.currentTarget) {
       event.currentTarget.close();
@@ -31,12 +37,15 @@
     image.className = 'image-zoom-full';
     image.alt = '';
 
-    frame.append(closeButton, image);
+    const caption = document.createElement('p');
+    caption.className = 'image-zoom-caption';
+
+    frame.append(closeButton, image, caption);
     dialog.append(frame);
     dialog.addEventListener('click', closeOnBackdrop);
     document.body.append(dialog);
 
-    return { dialog, image };
+    return { dialog, image, caption };
   }
 
   function initImageZoom() {
@@ -59,6 +68,8 @@
       trigger.addEventListener('click', () => {
         preview.image.src = img.currentSrc || img.src;
         preview.image.alt = img.alt;
+        preview.caption.textContent = imageCaption(img);
+        preview.caption.hidden = preview.caption.textContent === '';
         preview.dialog.showModal();
       });
     }
