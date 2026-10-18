@@ -7,6 +7,7 @@ description: Release notes for aven.
 
 - macOS installations from Homebrew or the install script show [notifications](https://aventasks.dev/notifications/) with Aven's name and icon, and identify the background daemon as Aven in Login Items.
 - Get [reminders](https://aventasks.dev/notifications/#reminders) from the background daemon: a daily digest of tasks due today or overdue, and a notification when a deferred task becomes available. Turn them on with `aven config set reminders.enabled true`.
+- New [triage mode](https://aventasks.dev/tui/#triage-mode) in the TUI: run `:triage` to go through inbox tasks and stale active or todo work one card at a time and decide what happens to each.
 
 ## v0.1.49 (2026-10-13)
 
