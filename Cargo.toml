@@ -33,7 +33,7 @@ zstd = "0.13"
 
 [package]
 name = "aven"
-version = "0.1.49"
+version = "0.1.50"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
@@ -43,7 +43,7 @@ license = "MIT"
 
 [dependencies]
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
-aven-core = { path = "crates/aven-core", version = "=0.1.34" }
+aven-core = { path = "crates/aven-core", version = "=0.1.35" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
@@ -98,7 +98,7 @@ notify-rust = "4"
 [dev-dependencies]
 aven-conformance = { path = "crates/aven-conformance", version = "=0.1.0" }
 tokio = { workspace = true, features = ["test-util"] }
-aven-core = { path = "crates/aven-core", version = "=0.1.34", features = ["test-support"] }
+aven-core = { path = "crates/aven-core", version = "=0.1.35", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 zstd.workspace = true
 

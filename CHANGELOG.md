@@ -3,7 +3,7 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.50 (2026-10-18)
 
 - Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) is now available. Jot a task down on your phone and it lands in your terminal queue. See [the mobile apps](https://aventasks.dev/mobile/).
 - [Aven Cloud](https://cloud.aventasks.dev/), hosted sync for people who don't want to run their own server. It's end-to-end encrypted, same as self-hosted. It's free during the preview. Paid plans may come later, and they'll be a way to support the project.
