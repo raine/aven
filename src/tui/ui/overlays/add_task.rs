@@ -633,7 +633,7 @@ const COMPOSER_HELP_TOPICS: &[(&str, &str)] = &[
         "Schedule editor",
         "↑/↓ move · ←/→ choose · Enter apply · Esc cancel",
     ),
-    ("Docs", "https://aven.raine.dev/tui/#capture-tasks"),
+    ("Docs", "https://aventasks.dev/tui/#capture-tasks"),
     (
         "One-off Available",
         "when the task becomes actionable; empty = now",

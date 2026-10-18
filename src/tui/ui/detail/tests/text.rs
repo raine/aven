@@ -249,8 +249,8 @@ fn detail_content_renders_markdown_description_and_notes() {
 fn detail_markdown_links_hide_destinations_and_have_mouse_targets() {
     let mut item = detail_test_item();
     item.task.description =
-        "See the [Aven guide](https://aven.raine.dev/guide/) for details.".to_string();
-    item.notes[0].body = "Review the [task docs](https://aven.raine.dev/tasks/).".to_string();
+        "See the [Aven guide](https://aventasks.dev/guide/) for details.".to_string();
+    item.notes[0].body = "Review the [task docs](https://aventasks.dev/tasks/).".to_string();
     let expanded_sections = BTreeSet::new();
     let theme = Theme::dark();
     let context = detail_query_context(&theme, 100, 30, 0, &expanded_sections, None);
@@ -292,13 +292,13 @@ fn detail_markdown_links_hide_destinations_and_have_mouse_targets() {
             .map(|link| link.url.as_str())
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            "https://aven.raine.dev/guide/",
-            "https://aven.raine.dev/tasks/",
+            "https://aventasks.dev/guide/",
+            "https://aventasks.dev/tasks/",
         ])
     );
     assert_eq!(
         document.link_at_position(column, row).as_deref(),
-        Some("https://aven.raine.dev/guide/")
+        Some("https://aventasks.dev/guide/")
     );
     assert!(
         document

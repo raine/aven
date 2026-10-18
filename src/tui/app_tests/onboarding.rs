@@ -228,7 +228,7 @@ async fn changelog_link_click_opens_documentation_in_browser() {
 
     assert_eq!(
         crate::tui::platform::browser_url_for_test().as_deref(),
-        Some("https://aven.raine.dev/guide/")
+        Some("https://aventasks.dev/guide/")
     );
     assert!(matches!(app.overlay, Some(OverlayState::Changelog(_))));
 }

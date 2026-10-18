@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn selects_platform_default_browser_commands() {
-        let url = "https://aven.raine.dev/recurring-tasks/";
+        let url = "https://aventasks.dev/recurring-tasks/";
         assert_eq!(
             default_browser_command(OperatingSystem::Macos, url),
             ViewerCommand {

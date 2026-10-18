@@ -16,9 +16,9 @@ fn welcome_card_renders_at_minimum_tui_size() {
     assert!(rendered.contains("Add a task and capture what's on your mind"));
     assert!(rendered.contains("Learn more"));
     assert!(rendered.contains("Agents guide"));
-    assert!(rendered.contains("https://aven.raine.dev/agents/"));
+    assert!(rendered.contains("https://aventasks.dev/agents/"));
     assert!(rendered.contains("Open commands; use :sync to join existing sync"));
-    assert!(rendered.contains("https://aven.raine.dev/tui/"));
+    assert!(rendered.contains("https://aventasks.dev/tui/"));
     assert!(rendered.contains("a create first task"));
     assert!(rendered.contains("? shortcuts"));
     assert!(rendered.contains("Enter explore"));

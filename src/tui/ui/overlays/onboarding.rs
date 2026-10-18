@@ -55,8 +55,8 @@ fn onboarding_lines(theme: &Theme) -> Vec<Line<'static>> {
         shortcut_line(theme, ":", "Open commands; use :sync to join existing sync"),
         Line::default(),
         section_heading(theme, "Learn more"),
-        resource_line(theme, "TUI guide", "https://aven.raine.dev/tui/"),
-        resource_line(theme, "Agents guide", "https://aven.raine.dev/agents/"),
+        resource_line(theme, "TUI guide", "https://aventasks.dev/tui/"),
+        resource_line(theme, "Agents guide", "https://aventasks.dev/agents/"),
         Line::default(),
         dialog_hint_line(
             theme,

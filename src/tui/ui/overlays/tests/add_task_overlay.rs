@@ -509,7 +509,7 @@ fn add_task_validation_and_help_are_visible() {
     assert!(help.contains("One-off Due"));
     assert!(help.contains("Schedule editor"));
     assert!(help.contains("↑/↓ move"));
-    assert!(help.contains("aven.raine.dev/tui/#capture-tasks"));
+    assert!(help.contains("aventasks.dev/tui/#capture-tasks"));
 }
 
 #[test]
@@ -620,7 +620,7 @@ fn composer_help_uses_muted_keys_and_dim_descriptions() {
     let docs = composer_help_line(
         &Theme::dark(),
         "Docs",
-        "https://aven.raine.dev/tui/#capture-tasks",
+        "https://aventasks.dev/tui/#capture-tasks",
     );
 
     assert_eq!(line.spans[0].style.fg, Some(Theme::dark().fg_muted));

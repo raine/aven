@@ -48,7 +48,7 @@ async fn gist_creation_failure_replaces_loading_notification() {
 async fn clicking_detail_markdown_link_opens_browser() {
     let mut app = test_app().await;
     let mut draft = test_task_draft("Linked detail");
-    draft.description = "Read the [Aven guide](https://aven.raine.dev/guide/).".to_string();
+    draft.description = "Read the [Aven guide](https://aventasks.dev/guide/).".to_string();
     create_and_select_task(&mut app, draft).await;
     app.show_detail(0);
     let terminal_size: ratatui::layout::Size = (100, 30).into();
@@ -64,7 +64,7 @@ async fn clicking_detail_markdown_link_opens_browser() {
 
     assert_eq!(
         crate::tui::platform::browser_url_for_test().as_deref(),
-        Some("https://aven.raine.dev/guide/")
+        Some("https://aventasks.dev/guide/")
     );
     assert_eq!(
         toast_message(&app).as_deref(),

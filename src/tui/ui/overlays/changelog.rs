@@ -271,7 +271,7 @@ fn resolve_changelog_url(url: &str) -> Option<String> {
     if url.starts_with("https://") || url.starts_with("http://") {
         Some(url.to_string())
     } else if url.starts_with('/') {
-        Some(format!("https://aven.raine.dev{url}"))
+        Some(format!("https://aventasks.dev{url}"))
     } else {
         None
     }
@@ -338,7 +338,7 @@ mod tests {
 
         assert_eq!(
             changelog_link_at(markdown, 0, size, 10, 6),
-            Some("https://aven.raine.dev/guide/".to_string())
+            Some("https://aventasks.dev/guide/".to_string())
         );
         assert_eq!(changelog_link_at(markdown, 0, size, 8, 4), None);
     }
@@ -359,7 +359,7 @@ mod tests {
         let text_area = changelog_text_area(body);
         assert_eq!(
             changelog_link_at_in_area(markdown, 0, 80, body, text_area, link_x, 1),
-            Some("https://aven.raine.dev/notes/".to_string())
+            Some("https://aventasks.dev/notes/".to_string())
         );
         assert_eq!(
             changelog_link_at_in_area(markdown, 0, 80, body, text_area, link_x - 1, 1),
@@ -371,7 +371,7 @@ mod tests {
     fn relative_documentation_links_resolve_to_the_canonical_site() {
         assert_eq!(
             resolve_changelog_url("/recurring-tasks/"),
-            Some("https://aven.raine.dev/recurring-tasks/".to_string())
+            Some("https://aventasks.dev/recurring-tasks/".to_string())
         );
         assert_eq!(resolve_changelog_url("mailto:test@example.com"), None);
     }
