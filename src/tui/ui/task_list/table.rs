@@ -144,7 +144,7 @@ pub(super) fn build_task_list_render_model(
             layout: TableLayout::resolve(
                 &task_list_columns(source, area.width < 90),
                 &source.table.columns,
-                area.width,
+                table_content_width(area.width),
             ),
             row_areas: row_areas.to_vec(),
             rows: Vec::new(),
@@ -178,7 +178,11 @@ pub(super) fn build_task_list_render_model(
     let configured_columns = &source.table.columns;
     let show_due_in_time = !configured_columns.contains(&TableColumn::Due);
     let compact_status = source.table.compact_status;
-    let layout = TableLayout::resolve(&columns, configured_columns, area.width);
+    let layout = TableLayout::resolve(
+        &columns,
+        configured_columns,
+        table_content_width(area.width),
+    );
     let state_column = layout.state_column();
     let column_widths = layout.widths();
     let mut rows = Vec::new();
@@ -364,6 +368,11 @@ pub(super) fn render_task_scrollbar(
         ))
         .viewport_content_length(viewport_rows);
     frame.render_stateful_widget(scrollbar, list_scrollbar_area(area), &mut scrollbar_state);
+}
+
+/// Width available to table columns; the rightmost column is kept free for the scrollbar.
+pub(super) fn table_content_width(width: u16) -> u16 {
+    width.saturating_sub(1)
 }
 
 pub(super) fn list_scrollbar_area(area: Rect) -> Rect {

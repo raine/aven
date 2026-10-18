@@ -175,8 +175,8 @@ fn epic_columns_keep_a_blank_gutter_at_normal_and_narrow_widths() {
             EpicSelectionContext::default(),
         );
         let columns = TableColumn::DEFAULT.map(|column| columns[column as usize]);
-        let header_cells = Layout::horizontal(columns).areas::<8>(Rect::new(0, 0, width, 1));
-        let row_cells = Layout::horizontal(columns).areas::<8>(Rect::new(0, 1, width, 1));
+        let header_cells = Layout::horizontal(columns).areas::<8>(Rect::new(0, 0, width - 1, 1));
+        let row_cells = Layout::horizontal(columns).areas::<8>(Rect::new(0, 1, width - 1, 1));
 
         for cells in [&header_cells, &row_cells] {
             for cell in cells.iter().take(7) {

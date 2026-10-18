@@ -204,8 +204,12 @@ pub(super) fn task_list_status_area(
         table_area.width,
         1,
     );
-    TableLayout::resolve(&columns, &source.table.columns, table_area.width)
-        .cell(crate::config::TableColumn::Status, row_area)
+    TableLayout::resolve(
+        &columns,
+        &source.table.columns,
+        super::table::table_content_width(table_area.width),
+    )
+    .cell(crate::config::TableColumn::Status, row_area)
 }
 
 #[cfg(test)]
