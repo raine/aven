@@ -40,6 +40,8 @@ authors = ["Raine"]
 description = "Local-first task manager CLI and sync server"
 repository = "https://github.com/raine/aven"
 license = "MIT"
+# Website, app bundle, and README media are not needed to build the crate.
+exclude = ["docs/", "macos/", "meta/"]
 
 [dependencies]
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
