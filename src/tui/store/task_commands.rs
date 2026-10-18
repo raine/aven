@@ -194,6 +194,8 @@ impl TuiStore {
         let changed = report.changed_count();
         let message = if changed == 0 {
             format!("column unchanged on {} tasks", selection.len())
+        } else if changed == 1 {
+            "moved task between columns".to_string()
         } else {
             format!("moved {changed} tasks between columns")
         };

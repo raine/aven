@@ -582,6 +582,10 @@ async fn column_move_shortcut_updates_status_and_undo_restores_it() {
         .unwrap();
     assert_eq!(moved.task.status, TaskStatus::Backlog);
     assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("moved task between columns · u undo")
+    );
+    assert_eq!(
         app.store
             .selected_task(app.list.selected_task())
             .unwrap()
@@ -633,6 +637,10 @@ async fn column_move_shortcut_advances_marked_tasks_from_their_own_lanes() {
     };
     assert_eq!(status_for(&inbox_id), TaskStatus::Backlog);
     assert_eq!(status_for(&todo_id), TaskStatus::Active);
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("moved 2 tasks between columns · u undo")
+    );
 
     app.handle_normal_key(KeyCode::Char('u')).await.unwrap();
     let status_for = |task_id: &str| {
