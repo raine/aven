@@ -15,6 +15,8 @@ pub mod encrypted_sync;
 pub mod worker;
 pub mod writer_timing;
 
+pub use crate::sync::seed_claim::membership::test_support::Fixture as PublishedVault;
+
 pub use blank_database::{blank_database_template, open_blank_database};
 
 pub fn task_id(value: &str) -> TaskId {

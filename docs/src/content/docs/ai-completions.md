@@ -14,9 +14,6 @@ AI is optional. An unconfigured AI service does not prevent the sync server from
 Add an `ai` section to the server's `config.yaml`:
 
 ```yaml
-sync:
-  auth_token: "shared-ai-secret"
-
 ai:
   provider: ollama
   model: llama3.2
@@ -27,7 +24,7 @@ ai:
   requests_per_minute: 60
 ```
 
-`sync.auth_token` is required for AI, including on loopback. It authorizes only the AI routes; end-to-end encrypted sync uses separate device credentials. Every client given this shared AI token can use configured model capacity, and Aven cannot grant AI permission to only some clients that share it.
+AI routes require the same per-device credential used by encrypted sync, including on loopback. A device must be enrolled in the server’s published vault and not revoked. Pair the device through the normal sync enrollment flow; no separate AI token is needed. Every enrolled device can use configured model capacity. Revoking a device also removes its AI access without restarting the server.
 
 The server chooses the provider, model, endpoint, timeout, and limits. Completion requests cannot override them. `ai.endpoint` is available for llamafile, Ollama, and custom OpenAI-compatible endpoints. Other providers use their standard endpoints.
 
@@ -90,12 +87,14 @@ aven ai check
 
 ## HTTP contract
 
-Both routes require `Authorization: Bearer <sync.auth_token>`:
+Both routes require `Authorization: Bearer <device-secret>`, where `device-secret` is the enrolled device’s 32-byte sync secret encoded as 64 lowercase hexadecimal characters:
 
 ```text
 GET  /ai/capabilities
 POST /ai/completions
 ```
+
+Missing, malformed, unknown, and revoked credentials all receive HTTP 401 without distinguishing the reason. Setup invitations and shared tokens do not authorize AI access. Send credentials only over a protected connection and never log them.
 
 Capabilities are local and nonbillable. `completion_contract` is currently `1`. Stable availability states are `ready`, `unconfigured`, `authentication_required`, and `temporarily_unavailable`. An older server without AI routes returns 404.
 

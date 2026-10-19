@@ -20,6 +20,18 @@ async fn pair(f: &Fixture) -> (Membership, Declaration, Joiner, Vec<u8>) {
 async fn removed_seed_is_denied_before_stale_and_historical_survivor_receipt_remains_valid() {
     let f = Fixture::new().await;
     let (m, d, peer, receipt) = pair(&f).await;
+    f.db.verify_enrolled_device_bearer(f.seed.bearer())
+        .await
+        .unwrap();
+    f.db.verify_enrolled_device_bearer(peer.bearer())
+        .await
+        .unwrap();
+    assert!(
+        f.db.verify_enrolled_device_bearer(&Secret::new([0; 32]))
+            .await
+            .unwrap_err()
+            .is::<Unauthorized>()
+    );
     let seed = f.seed.genesis().device_id();
     let sa = auth(&f, m.head(), seed, f.seed.bearer());
     let (unused, candidate, _) = prepare(Device::seed(&f.seed), &m, &f, 3700);
@@ -27,6 +39,15 @@ async fn removed_seed_is_denied_before_stale_and_historical_survivor_receipt_rem
     let pa = auth(&f, m.head(), peer.device(), peer.bearer());
     let revoke = peer.authority().prepare_revoke(&m, &[seed]).unwrap();
     f.db.apply_membership_management(&pa, &revoke)
+        .await
+        .unwrap();
+    assert!(
+        f.db.verify_enrolled_device_bearer(f.seed.bearer())
+            .await
+            .unwrap_err()
+            .is::<Unauthorized>()
+    );
+    f.db.verify_enrolled_device_bearer(peer.bearer())
         .await
         .unwrap();
     for head in [m.head(), [0; 32]] {

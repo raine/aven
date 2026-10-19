@@ -83,7 +83,6 @@ project:
 sync:
   enabled: true
   interval_seconds: 30
-  auth_token: "shared-ai-secret"
 
 ai:
   provider: ollama
@@ -164,8 +163,8 @@ The optional `ai` section configures the generic completion service hosted by
 `aven server`. `provider` and `model` must be set together. The defaults are a
 45-second timeout, 2,048 output tokens, two concurrent requests, and 60
 requests per minute. `endpoint` is supported for llamafile, Ollama, and OpenAI.
-Set `sync.auth_token` to the shared bearer token accepted by the AI routes.
-End-to-end encrypted sync uses separate device credentials.
+AI routes use the enrolled device’s encrypted-sync credential. There is no
+separate server-wide AI token; revoked devices lose access to both services.
 
 Do not put provider credentials in `config.yaml`. API-key providers read their
 keys from the server process environment. OAuth providers store credentials in

@@ -187,3 +187,13 @@ fn local_image_optimization_defaults_to_off() {
         assert_eq!(parsed.local.image_optimization, expected);
     }
 }
+
+#[test]
+fn removed_shared_auth_token_is_ignored_and_not_serialized() {
+    let config: AppConfig =
+        serde_saphyr::from_str("sync:\n  enabled: true\n  auth_token: obsolete-secret\n").unwrap();
+    assert!(config.sync.enabled);
+    let serialized = serde_saphyr::to_string(&config).unwrap();
+    assert!(!serialized.contains("auth_token"));
+    assert!(!serialized.contains("obsolete-secret"));
+}
