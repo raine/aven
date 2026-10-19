@@ -26,16 +26,6 @@ pub struct AiConfig {
 }
 
 impl AiConfig {
-    pub fn is_empty(&self) -> bool {
-        self.provider.is_none()
-            && self.model.is_none()
-            && self.endpoint.is_none()
-            && self.timeout_seconds.is_none()
-            && self.max_output_tokens.is_none()
-            && self.max_concurrent_requests.is_none()
-            && self.requests_per_minute.is_none()
-    }
-
     pub fn timeout_seconds(&self) -> u64 {
         self.timeout_seconds.unwrap_or(DEFAULT_AI_TIMEOUT_SECONDS)
     }

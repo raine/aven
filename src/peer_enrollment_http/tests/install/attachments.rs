@@ -50,7 +50,7 @@ async fn fresh_install_after_legitimate_bootstrap_image_prune_keeps_metadata_and
             .await
             .unwrap();
         assert!(count(&f.server, "server_e2ee_image_chunks").await > 0);
-        let mut policy = crate::config::AttachmentLifecycleConfig::default().server_policy();
+        let mut policy = crate::server_config::AttachmentsConfig::default().policy();
         policy.grace = std::time::Duration::ZERO;
         let pruned = f
             .server

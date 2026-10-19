@@ -6,6 +6,7 @@ description: Release notes for aven.
 ## Unreleased
 
 - Self-host a [generic AI completion service](https://aventasks.dev/ai-completions/) with configurable Rig providers, guided OAuth login, private credentials, authenticated routes, and bounded usage.
+- Breaking: `aven server` reads its settings from an optional [`server.yaml`](https://aventasks.dev/configuration/#server-settings) beside its storage and no longer reads `config.yaml`. Server image retention and quota move from `local.attachment_lifecycle.server_grace_days` and `server_workspace_quota_bytes` to `attachments.grace_days` and `attachments.workspace_quota_bytes` in `server.yaml`; the old keys are ignored.
 
 ## v0.1.51 (2026-10-21)
 

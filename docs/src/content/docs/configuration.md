@@ -63,9 +63,7 @@ local:
   image_optimization: off
   attachment_lifecycle:
     grace_days: 7
-    server_grace_days: 30
     quota_bytes: 10737418240
-    server_workspace_quota_bytes: 10737418240
     preview_quota_bytes: 536870912
     maintenance_limit: 128
 
@@ -157,21 +155,32 @@ agent:
     timeout_seconds: 45
 ```
 
-## AI completion service
+## Server settings
 
-The optional `ai` section configures the generic completion service hosted by
-`aven server`. `provider` and `model` must be set together. The defaults are a
-45-second timeout, 2,048 output tokens, two concurrent requests, and 60
-requests per minute. `endpoint` is supported for llamafile, Ollama, and OpenAI.
-AI routes use the enrolled device’s encrypted-sync credential. There is no
-separate server-wide AI token; revoked devices lose access to both services.
+`aven server` does not read `config.yaml`. It reads an optional `server.yaml`
+in the directory that holds its storage, for example `/data/server.yaml` in the
+Docker image. Pass `--config PATH` or set `AVEN_SERVER_CONFIG` to use another
+file, and pass the same `--data` or `--config` to `aven server setup` and
+`aven server ai`. `aven server setup` writes a commented template when the file
+does not exist. Changes apply after the server restarts. An unknown key or
+invalid value stops the server from starting.
 
-Do not put provider credentials in `config.yaml`. API-key providers read their
-keys from the server process environment. OAuth providers store credentials in
-the owner-only `private/ai` directory below Aven's config directory. `aven
-config get` and `aven config set` do not read or write these credentials. See
-[AI completion server](/ai-completions/) for provider setup, local credential
-removal, privacy, limits, and the HTTP contract.
+```yaml
+ai:
+  provider: ollama
+  model: llama3.2
+attachments:
+  grace_days: 30
+  workspace_quota_bytes: 10737418240
+```
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `attachments.grace_days` | 30 days | Minimum age before an unused server image becomes eligible for cleanup. |
+| `attachments.workspace_quota_bytes` | 10 GiB | Maximum unique attachment image storage for one server workspace. |
+
+See [AI completion server](/ai-completions/) for the `ai` settings, provider
+credentials, and environment overrides.
 
 ## Database path
 
@@ -223,9 +232,7 @@ Optimization applies only to PNG files. Aven preserves the original when optimiz
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `grace_days` | 7 days | Minimum age before an unused local image becomes eligible for cleanup. |
-| `server_grace_days` | 30 days | Minimum age before an unused server image becomes eligible for cleanup. |
 | `quota_bytes` | 10 GiB | Maximum unique attachment image storage on one device. |
-| `server_workspace_quota_bytes` | 10 GiB | Maximum unique attachment image storage for one server workspace. |
 | `preview_quota_bytes` | 512 MiB | Maximum disposable preview-cache size. |
 | `maintenance_limit` | 128 | Maximum files processed in one cleanup run. |
 

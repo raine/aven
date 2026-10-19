@@ -23,7 +23,7 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
-use crate::config::{self, AiConfig};
+use crate::server_config::{AiConfig, ServerConfig};
 use registry::{CompletionBackend, SchemaStrategy};
 
 pub(crate) const MAX_REQUEST_BYTES: usize = 512 * 1024;
@@ -318,12 +318,12 @@ pub(crate) struct AiService {
 }
 
 impl AiService {
-    pub(crate) fn from_config(config: &config::AppConfig) -> Self {
+    pub(crate) fn from_config(config: &ServerConfig) -> Self {
         let max_output_tokens = config.ai.max_output_tokens();
         let timeout = Duration::from_secs(config.ai.timeout_seconds());
         let semaphore = Semaphore::new(config.ai.max_concurrent_requests());
         let requests_per_minute = config.ai.requests_per_minute();
-        let state = Self::build_state(&config.ai);
+        let state = Self::build_state(&config.ai, &config.paths.ai_credentials_dir());
         Self {
             state,
             max_output_tokens,
@@ -334,11 +334,11 @@ impl AiService {
         }
     }
 
-    fn build_state(ai: &AiConfig) -> BackendState {
+    fn build_state(ai: &AiConfig, credentials_dir: &Path) -> BackendState {
         let (Some(provider), Some(model)) = (ai.provider.as_deref(), ai.model.as_deref()) else {
             return BackendState::Unavailable {
                 status: AvailabilityStatus::Unconfigured,
-                hint: "configure ai.provider and ai.model".to_string(),
+                hint: "configure ai.provider and ai.model in server.yaml".to_string(),
             };
         };
         let Some(info) = registry::provider_info(provider) else {
@@ -348,7 +348,7 @@ impl AiService {
             };
         };
         let private_dir = if info.auth == registry::AuthKind::OAuth {
-            match ensure_private_dir() {
+            match ensure_private_dir(credentials_dir) {
                 Ok(path) => Some(path),
                 Err(_) => {
                     return BackendState::Unavailable {
@@ -805,12 +805,11 @@ fn json_depth(value: &Value) -> usize {
     }
 }
 
-pub(crate) fn ensure_private_dir() -> Result<PathBuf> {
-    let path = config::ai_private_dir_path()?;
-    fs::create_dir_all(&path)
+pub(crate) fn ensure_private_dir(path: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(path)
         .with_context(|| format!("create AI credential directory {}", path.display()))?;
-    secure_private_dir(&path)?;
-    Ok(path)
+    secure_private_dir(path)?;
+    Ok(path.to_path_buf())
 }
 
 #[cfg(unix)]
@@ -855,7 +854,7 @@ pub(crate) fn exclusions() -> &'static [(&'static str, &'static str)] {
     registry::EXCLUSIONS
 }
 
-pub(crate) async fn login(provider: &str) -> Result<()> {
+pub(crate) async fn login(provider: &str, credentials_dir: &Path) -> Result<()> {
     let info = registry::provider_info(provider)
         .with_context(|| format!("unsupported AI provider {provider}"))?;
     if info.auth != registry::AuthKind::OAuth {
@@ -864,11 +863,11 @@ pub(crate) async fn login(provider: &str) -> Result<()> {
             info.auth.description()
         );
     }
-    let dir = ensure_private_dir()?;
+    let dir = ensure_private_dir(credentials_dir)?;
     registry::login(provider, &dir).await
 }
 
-pub(crate) async fn check(config: &config::AppConfig) -> Result<CompletionResponse> {
+pub(crate) async fn check(config: &ServerConfig) -> Result<CompletionResponse> {
     let request: CompletionRequest = serde_json::from_value(serde_json::json!({
         "request_id": "aven-ai-check",
         "messages": [

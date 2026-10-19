@@ -1,8 +1,10 @@
 use clap::{Args, Subcommand};
 
-const AI_HELP: &str = r#"Run these commands on the server host as the user the server runs as. They
-read that user's config.yaml and store login credentials in $AVEN_CONFIG_DIR
-(default ~/.config/aven), the same directory the server uses."#;
+const AI_HELP: &str = r#"Run these commands on the server host as the user the server runs as, with the
+same --data or --config as the server. They read the ai settings in server.yaml
+and store login credentials in private/ai beside it. AVEN_AI_PROVIDER,
+AVEN_AI_MODEL and AVEN_AI_ENDPOINT override the file. Changes apply after the
+server restarts."#;
 
 #[derive(Args)]
 #[command(after_long_help = AI_HELP)]

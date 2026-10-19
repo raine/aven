@@ -106,56 +106,7 @@ fn generated_client_config_preserves_sync_opt_in_and_omits_server_settings() {
     assert!(!text.contains("disabled:"));
     assert!(!text.contains("server_grace_days"));
     assert!(!text.contains("server_workspace_quota_bytes"));
-    let loaded = AppConfig::load_from_path(&path).unwrap();
-    assert_eq!(
-        loaded.local.attachment_lifecycle.server_grace_days,
-        default_server_attachment_grace_days()
-    );
-    assert_eq!(
-        loaded
-            .local
-            .attachment_lifecycle
-            .server_workspace_quota_bytes,
-        default_attachment_quota_bytes()
-    );
-}
-
-#[test]
-fn server_attachment_settings_remain_loadable_and_configurable() {
-    let config = load_config(
-            "local:\n  attachment_lifecycle:\n    server_grace_days: 12\n    server_workspace_quota_bytes: 345\n",
-        )
-        .unwrap();
-
-    assert_eq!(config.local.attachment_lifecycle.server_grace_days, 12);
-    assert_eq!(
-        config
-            .local
-            .attachment_lifecycle
-            .server_workspace_quota_bytes,
-        345
-    );
-    let policy = config.local.attachment_lifecycle.server_policy();
-    assert_eq!(
-        policy.grace,
-        std::time::Duration::from_secs(12 * 24 * 60 * 60)
-    );
-    assert_eq!(policy.quota_bytes, 345);
-}
-
-#[test]
-fn ai_config_is_optional_and_bounded() {
-    let config = load_config("ai:\n  provider: ollama\n  model: llama3.2\n").unwrap();
-    assert_eq!(config.ai.provider.as_deref(), Some("ollama"));
-    assert_eq!(config.ai.timeout_seconds(), 45);
-    assert_eq!(config.ai.max_output_tokens(), 2048);
-
-    assert!(load_config("ai:\n  provider: ollama\n").is_err());
-    assert!(load_config("ai:\n  provider: ollama\n  model: m\n  max_output_tokens: 0\n").is_err());
-    assert!(
-        load_config("ai:\n  provider: ollama\n  model: m\n  endpoint: file:///tmp/model\n")
-            .is_err()
-    );
+    AppConfig::load_from_path(&path).unwrap();
 }
 
 #[test]

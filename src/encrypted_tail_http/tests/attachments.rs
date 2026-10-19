@@ -81,7 +81,7 @@ async fn add_image_batch(f: &Fixture, count: usize) {
     }
 }
 fn policy() -> aven_core::attachments::LifecyclePolicy {
-    crate::config::AttachmentLifecycleConfig::default().server_policy()
+    crate::server_config::AttachmentsConfig::default().policy()
 }
 
 async fn configured_quota_case() -> (Fixture, Client, String, String, String, i64) {

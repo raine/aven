@@ -1050,7 +1050,7 @@ async fn metadata_download_refresh_preserves_pruned_mapping_and_finite_tail_wate
     f.seed.delete_task_attachment(&w, &reference).await.unwrap();
     drain(&tail, &f.seed_store, &f.seed).await;
     let inputs = f.seed_store.tail_inputs(&f.seed, &f.origin).await.unwrap();
-    let mut policy = crate::config::AttachmentLifecycleConfig::default().server_policy();
+    let mut policy = crate::server_config::AttachmentsConfig::default().policy();
     policy.grace = std::time::Duration::ZERO;
     assert_eq!(
         f.server
