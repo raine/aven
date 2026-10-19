@@ -9,14 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::WorkspaceId;
 
-mod ai;
 mod custom_commands;
 mod paths;
 #[cfg(test)]
 mod test_support;
 mod tui;
 
-pub use ai::AiConfig;
 pub(crate) use custom_commands::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS;
 pub use custom_commands::{
     CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
@@ -24,8 +22,8 @@ pub use custom_commands::{
 };
 pub(crate) use paths::expand_tilde_from;
 pub use paths::{
-    ai_private_dir_path, config_dir_path, config_file_path, debug_db_path_from_env,
-    default_db_path, default_server_data_path, expand_tilde, resolve_blob_dir, resolve_db_path,
+    config_dir_path, config_file_path, debug_db_path_from_env, default_db_path,
+    default_server_data_path, expand_tilde, resolve_blob_dir, resolve_db_path,
 };
 pub use tui::{
     SidebarView, TableColumn, TaskColumnConfig, TaskTableConfig, TuiAppearance, TuiConfig,
@@ -50,8 +48,6 @@ pub struct AppConfig {
     pub scope: DefaultScope,
     #[serde(default)]
     pub sync: SyncConfig,
-    #[serde(default, skip_serializing_if = "AiConfig::is_empty")]
-    pub ai: AiConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
     #[serde(default)]
@@ -103,12 +99,8 @@ pub struct LocalConfig {
 pub struct AttachmentLifecycleConfig {
     #[serde(default = "default_attachment_grace_days")]
     pub grace_days: u64,
-    #[serde(default = "default_server_attachment_grace_days", skip_serializing)]
-    pub server_grace_days: u64,
     #[serde(default = "default_attachment_quota_bytes")]
     pub quota_bytes: i64,
-    #[serde(default = "default_attachment_quota_bytes", skip_serializing)]
-    pub server_workspace_quota_bytes: i64,
     #[serde(default = "default_preview_quota_bytes")]
     pub preview_quota_bytes: u64,
     #[serde(default = "default_attachment_maintenance_limit")]
@@ -117,10 +109,6 @@ pub struct AttachmentLifecycleConfig {
 
 fn default_attachment_grace_days() -> u64 {
     7
-}
-
-fn default_server_attachment_grace_days() -> u64 {
-    30
 }
 
 fn default_attachment_quota_bytes() -> i64 {
@@ -139,9 +127,7 @@ impl Default for AttachmentLifecycleConfig {
     fn default() -> Self {
         Self {
             grace_days: default_attachment_grace_days(),
-            server_grace_days: default_server_attachment_grace_days(),
             quota_bytes: default_attachment_quota_bytes(),
-            server_workspace_quota_bytes: default_attachment_quota_bytes(),
             preview_quota_bytes: default_preview_quota_bytes(),
             maintenance_limit: default_attachment_maintenance_limit(),
         }
@@ -153,17 +139,6 @@ impl AttachmentLifecycleConfig {
         crate::attachments::lifecycle::LifecyclePolicy {
             grace: std::time::Duration::from_secs(self.grace_days.saturating_mul(24 * 60 * 60)),
             quota_bytes: self.quota_bytes,
-            preview_quota_bytes: self.preview_quota_bytes,
-            maintenance_limit: self.maintenance_limit,
-        }
-    }
-
-    pub(crate) fn server_policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
-        crate::attachments::lifecycle::LifecyclePolicy {
-            grace: std::time::Duration::from_secs(
-                self.server_grace_days.saturating_mul(24 * 60 * 60),
-            ),
-            quota_bytes: self.server_workspace_quota_bytes,
             preview_quota_bytes: self.preview_quota_bytes,
             maintenance_limit: self.maintenance_limit,
         }
@@ -404,8 +379,7 @@ impl AppConfig {
     pub fn validate(&self) -> Result<()> {
         tui::validate(&self.tui)?;
         self.reminders.digest_time()?;
-        custom_commands::validate(&self.tui.commands)?;
-        ai::validate(&self.ai)
+        custom_commands::validate(&self.tui.commands)
     }
 
     pub fn has_project_override(

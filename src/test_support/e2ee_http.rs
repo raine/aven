@@ -234,7 +234,7 @@ pub(crate) async fn router(db: Database) -> Router {
 pub(crate) fn tail_router(db: Database) -> Router {
     crate::encrypted_tail_http::router(
         db,
-        crate::config::AttachmentLifecycleConfig::default().server_policy(),
+        crate::server_config::AttachmentsConfig::default().policy(),
     )
 }
 

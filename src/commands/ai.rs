@@ -5,9 +5,9 @@ use crossterm::style::{Color, Stylize};
 
 use crate::ai;
 use crate::cli::{AiCommand, AiSubcommand};
-use crate::config::AppConfig;
+use crate::server_config::{ServerConfig, ServerPaths};
 
-pub(crate) async fn cmd_ai(config: &AppConfig, args: AiCommand) -> Result<()> {
+pub(crate) async fn cmd_ai(paths: ServerPaths, args: AiCommand) -> Result<()> {
     match args.command {
         AiSubcommand::Providers => {
             for provider in ai::providers() {
@@ -25,17 +25,19 @@ pub(crate) async fn cmd_ai(config: &AppConfig, args: AiCommand) -> Result<()> {
             Ok(())
         }
         AiSubcommand::Login { provider } => {
+            let config = ServerConfig::load(paths)?;
             let provider = provider
                 .as_deref()
                 .or(config.ai.provider.as_deref())
-                .ok_or_else(|| anyhow::anyhow!("error ai-provider-required hint=\"configure ai.provider or pass a provider\""))?;
-            ai::login(provider).await?;
+                .ok_or_else(|| anyhow::anyhow!("error ai-provider-required hint=\"configure ai.provider in server.yaml or pass a provider\""))?;
+            ai::login(provider, &config.paths.ai_credentials_dir()).await?;
             let styled = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
             println!("{}", format_login_success(provider, styled));
             Ok(())
         }
         AiSubcommand::Status { json } => {
-            let capabilities = ai::AiService::from_config(config).capabilities();
+            let config = ServerConfig::load(paths)?;
+            let capabilities = ai::AiService::from_config(&config).capabilities();
             if json {
                 println!("{}", serde_json::to_string_pretty(&capabilities)?);
             } else {
@@ -44,19 +46,37 @@ pub(crate) async fn cmd_ai(config: &AppConfig, args: AiCommand) -> Result<()> {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("temporarily_unavailable")
                     .to_string();
+                let sources = config.ai_sources;
+                let endpoint = config
+                    .ai
+                    .endpoint
+                    .as_deref()
+                    .map(|endpoint| {
+                        format!(
+                            " endpoint={endpoint} endpoint_source={}",
+                            sources.endpoint.as_str()
+                        )
+                    })
+                    .unwrap_or_default();
                 println!(
-                    "status={status} provider={} model={}",
+                    "status={status} provider={} provider_source={} model={} model_source={}{endpoint} config={}",
                     config.ai.provider.as_deref().unwrap_or("none"),
-                    config.ai.model.as_deref().unwrap_or("none")
+                    sources.provider.as_str(),
+                    config.ai.model.as_deref().unwrap_or("none"),
+                    sources.model.as_str(),
+                    config.paths.config_file.display()
                 );
             }
             Ok(())
         }
         AiSubcommand::Check => {
+            let config = ServerConfig::load(paths)?;
             if config.ai.provider.is_none() {
-                bail!("error ai-unconfigured hint=\"configure ai.provider and ai.model\"");
+                bail!(
+                    "error ai-unconfigured hint=\"configure ai.provider and ai.model in server.yaml\""
+                );
             }
-            let response = ai::check(config).await?;
+            let response = ai::check(&config).await?;
             println!("{}", serde_json::to_string_pretty(&response)?);
             Ok(())
         }

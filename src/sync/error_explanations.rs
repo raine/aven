@@ -587,7 +587,7 @@ pub(crate) fn explain(
         return Some(Explanation {
             code: "attachment-quota-exceeded",
             message: "The sync server's image storage limit for this workspace is full.",
-            next_step: "Remove images you no longer need, or ask the server operator to raise `local.attachment_lifecycle.server_workspace_quota_bytes`, then try again.",
+            next_step: "Remove images you no longer need, or ask the server operator to raise `attachments.workspace_quota_bytes` in server.yaml, then try again.",
         });
     }
     if has("enrollment-store-unsupported") {
@@ -909,7 +909,7 @@ mod tests {
             }
             add!(General, surface, "attachment-quota-exceeded";
                 anyhow!("error attachment-quota-exceeded").context("error sync-round");
-                &["sync server"]; &["server_workspace_quota_bytes"]; &[]);
+                &["sync server"]; &["attachments.workspace_quota_bytes"]; &[]);
         }
         add!(General, Cli, "encrypted-tail-prefix-identity-collision";
             Error::from(aven_core::sync::encrypted_tail::PrefixIdentityCollision);

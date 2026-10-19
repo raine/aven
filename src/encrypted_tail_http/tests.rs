@@ -41,7 +41,7 @@ async fn serve_with(
         .with_state(Arc::new(Server {
             db: server.clone(),
             gate: crate::http_admission::Admission::new(1),
-            image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
+            image_policy: crate::server_config::AttachmentsConfig::default().policy(),
         }));
     let mut app = e2ee_http::router_with_tail(server, tail).await;
     if count_http {
@@ -1707,7 +1707,7 @@ async fn successful_tail_response_is_not_cacheable() {
         .unwrap();
     let response = handle(
         State(Arc::new(Server {
-            image_policy: crate::config::AttachmentLifecycleConfig::default().server_policy(),
+            image_policy: crate::server_config::AttachmentsConfig::default().policy(),
             db: f.server.clone(),
             gate: crate::http_admission::Admission::new(2),
         })),

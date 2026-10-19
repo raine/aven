@@ -7,10 +7,18 @@ use std::thread;
 
 use common::{TestEnv, TestServer};
 
+fn write_server_config(env: &TestEnv, text: &str) -> std::path::PathBuf {
+    let path = env.path("server/server.yaml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, text).unwrap();
+    path
+}
+
 #[test]
 fn ai_administrator_inspection_does_not_require_a_database() {
     let env = TestEnv::new();
-    env.write_config("");
+    // The server ignores the client config entirely, even when it is invalid.
+    env.write_config("tui: {unclosed\n");
 
     let providers = env.aven_config(["server", "ai", "providers"]);
     assert!(providers.status.success());
@@ -19,6 +27,94 @@ fn ai_administrator_inspection_does_not_require_a_database() {
     let status = env.aven_config(["server", "ai", "status", "--json"]);
     assert!(status.status.success());
     assert!(String::from_utf8_lossy(&status.stdout).contains("\"status\": \"unconfigured\""));
+}
+
+#[test]
+fn server_config_beside_the_data_is_overridden_by_environment() {
+    let env = TestEnv::new();
+    let config = write_server_config(&env, "ai:\n  provider: ollama\n  model: file-model\n");
+    let data = config.with_file_name("sync-server.sqlite");
+
+    let status = env.aven_config_env(
+        [
+            "server".as_ref(),
+            "ai".as_ref(),
+            "status".as_ref(),
+            "--data".as_ref(),
+            data.as_os_str(),
+        ],
+        [("AVEN_AI_MODEL", "env-model")],
+    );
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("provider=ollama provider_source=file"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("model=env-model model_source=env"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("config={}", config.display())),
+        "{stdout}"
+    );
+
+    let other = env.path("elsewhere.yaml");
+    let status = env.aven_config_env(
+        [
+            "server".as_ref(),
+            "ai".as_ref(),
+            "status".as_ref(),
+            "--data".as_ref(),
+            data.as_os_str(),
+        ],
+        [("AVEN_SERVER_CONFIG", other.as_os_str())],
+    );
+    assert!(String::from_utf8_lossy(&status.stdout).contains("provider=none"));
+}
+
+#[test]
+fn invalid_server_config_fails_startup_naming_the_key() {
+    let env = TestEnv::new();
+    let config = write_server_config(&env, "attachments:\n  grace_dayz: 3\n");
+    let output = env.aven_config([
+        "server".as_ref(),
+        "--data".as_ref(),
+        env.path("missing.sqlite").as_os_str(),
+        "--config".as_ref(),
+        config.as_os_str(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("grace_dayz"), "{stderr}");
+    assert!(stderr.contains("server.yaml"), "{stderr}");
+}
+
+#[test]
+fn server_setup_writes_a_commented_template_once() {
+    let env = TestEnv::new();
+    let data = env.path("server/sync-server.sqlite");
+    let setup = || {
+        env.aven_config([
+            "server".as_ref(),
+            "setup".as_ref(),
+            "--url".as_ref(),
+            "http://127.0.0.1:3746".as_ref(),
+            "--data".as_ref(),
+            data.as_os_str(),
+        ])
+    };
+    let first = setup();
+    assert!(first.status.success());
+    let template = env.path("server/server.yaml");
+    let text = fs::read_to_string(&template).unwrap();
+    assert!(text.contains("# ai:"));
+    assert!(String::from_utf8_lossy(&first.stdout).contains("(commented template)"));
+
+    fs::write(&template, "ai:\n  provider: ollama\n  model: kept\n").unwrap();
+    assert!(setup().status.success());
+    assert!(fs::read_to_string(&template).unwrap().contains("kept"));
 }
 
 #[tokio::test]
@@ -127,16 +223,19 @@ async fn synthetic_json_schema_completion_uses_the_generic_service() {
         .unwrap();
     });
 
-    env.write_config(&format!(
-        "ai:\n  provider: ollama\n  model: stub-model\n  endpoint: http://{upstream_addr}\n"
-    ));
-    fs::write(env.config_dir().join("aven/private"), "not a directory").unwrap();
+    let config = write_server_config(
+        &env,
+        &format!(
+            "ai:\n  provider: ollama\n  model: stub-model\n  endpoint: http://{upstream_addr}\n"
+        ),
+    );
+    fs::write(env.path("server/private"), "not a directory").unwrap();
     let vault = aven_core::test_support::PublishedVault::new().await;
     let credential = hex::encode(vault.seed.bearer().expose());
     let server = TestServer::start_prepared_with_env(
         &env,
         vault.db.path(),
-        std::iter::empty::<(&str, &str)>(),
+        [("AVEN_SERVER_CONFIG", &config)],
     );
     let response = reqwest::Client::new()
         .post(format!("{}/ai/completions", server.url))
@@ -260,13 +359,22 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
             write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
         }
     });
-    env.write_config(&format!(
-        "ai:\n  provider: ollama\n  model: fixture-model\n  endpoint: http://{upstream_addr}\n"
-    ));
+    let config = write_server_config(
+        &env,
+        &format!(
+            "ai:\n  provider: ollama\n  model: fixture-model\n  endpoint: http://{upstream_addr}\n"
+        ),
+    );
     let vault = aven_core::test_support::PublishedVault::new().await;
     let credential = hex::encode(vault.seed.bearer().expose());
-    let server =
-        TestServer::start_prepared_with_env(&env, vault.db.path(), [("RUST_LOG", "debug")]);
+    let server = TestServer::start_prepared_with_env(
+        &env,
+        vault.db.path(),
+        [
+            ("RUST_LOG", std::ffi::OsStr::new("debug")),
+            ("AVEN_SERVER_CONFIG", config.as_os_str()),
+        ],
+    );
     let client = reqwest::Client::new();
     let capabilities: serde_json::Value = client
         .get(format!("{}/ai/capabilities", server.url))

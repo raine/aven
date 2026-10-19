@@ -11,9 +11,9 @@ AI is optional. An unconfigured AI service does not prevent the sync server from
 
 ## Configure the service
 
-Configure AI on the server host, not on client devices. The server reads `config.yaml` from `$AVEN_CONFIG_DIR` (default `~/.config/aven`) of the user it runs as, and the `aven server ai` commands use the same directory. Run them on the server host as that user, with the same `AVEN_CONFIG_DIR` when the service sets one.
+Configure AI on the server host, not on client devices. The server reads the `ai` section of `server.yaml` in the directory that holds its storage, such as `/data/server.yaml` in the Docker image, or the file given by `--config` or `AVEN_SERVER_CONFIG`. It does not read the client `config.yaml`. Run the `aven server ai` commands on the server host as the user the server runs as, with the same `--data` or `--config` as the server. See [Server settings](/configuration/#server-settings) for the file location and template.
 
-Add an `ai` section to the server's `config.yaml`:
+Add an `ai` section to `server.yaml`:
 
 ```yaml
 ai:
@@ -28,6 +28,8 @@ ai:
 
 AI routes require the same per-device credential used by encrypted sync, including on loopback. A device must be enrolled in the server’s published vault and not revoked. Pair the device through the normal sync enrollment flow; no separate AI token is needed. Every enrolled device can use configured model capacity. Revoking a device also removes its AI access without restarting the server.
 
+`AVEN_AI_PROVIDER`, `AVEN_AI_MODEL`, and `AVEN_AI_ENDPOINT` override the matching file values; `aven server ai status` reports where each value came from. `provider` and `model` must still be set together. An invalid value stops the server from starting. Changes apply after the server restarts.
+
 The server chooses the provider, model, endpoint, timeout, and limits. Completion requests cannot override them. `ai.endpoint` is available for llamafile, Ollama, and custom OpenAI-compatible endpoints. Other providers use their standard endpoints.
 
 ## Providers and credentials
@@ -40,15 +42,9 @@ aven server ai providers
 
 The provider registry includes Anthropic, Azure OpenAI, ChatGPT subscription OAuth, Cohere, GitHub Copilot, DeepSeek, Doubleword, Gemini, Groq, Hugging Face, Hyperbolic, llamafile, MiniMax, Mira, Mistral, Moonshot, Ollama, OpenAI, OpenRouter, Perplexity, Together, Venice, xAI, Xiaomi MiMo, and Z.AI. Voyage AI is excluded because it does not provide text completions.
 
-API-key providers read the environment variable shown by `aven server ai providers` from the server process. Azure also uses `AZURE_ENDPOINT` and `AZURE_API_VERSION`. Keep these values in the service manager's protected secret environment, not in `config.yaml`.
+API-key providers read the environment variable shown by `aven server ai providers` from the server process. Azure also uses `AZURE_ENDPOINT` and `AZURE_API_VERSION`. Keep these values in the service manager's protected secret environment, not in `server.yaml`.
 
-OAuth providers store material below:
-
-```text
-$AVEN_CONFIG_DIR/private/ai/
-```
-
-When `AVEN_CONFIG_DIR` is unset, the base directory is `~/.config/aven`. Aven sets the private AI directory to owner-only permissions on Unix. It does not include this directory in sync, backups, or exports.
+OAuth providers store material in `private/ai/` beside `server.yaml`, for example `/data/private/ai/` in the Docker image, so a container keeps its login on the data volume. Aven sets the private AI directory to owner-only permissions on Unix. It does not include this directory in sync, backups, or exports.
 
 Start an interactive OAuth flow only from an administrator terminal:
 
@@ -66,7 +62,7 @@ The long-running server does not start an interactive login. Missing OAuth mater
 Remove locally stored OAuth credentials with:
 
 ```sh
-config_dir="${AVEN_CONFIG_DIR:-$HOME/.config/aven}"
+config_dir=/path/to/server-config-dir  # the directory that holds server.yaml
 rm -f "$config_dir/private/ai/chatgpt/auth.json"
 rm -f "$config_dir/private/ai/copilot/access-token" \
   "$config_dir/private/ai/copilot/api-key.json"
