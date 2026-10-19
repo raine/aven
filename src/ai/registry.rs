@@ -70,7 +70,7 @@ impl SchemaStrategy {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProviderInfo {
     pub(crate) id: &'static str,
     pub(crate) auth: AuthKind,
@@ -231,6 +231,11 @@ pub(crate) const PROVIDERS: &[ProviderInfo] = &[
         tools: true,
     },
 ];
+
+/// Providers whose two-round tool exchange has been verified live, with the
+/// model used. The AI docs page lists the same pairs.
+pub(crate) const TESTED: &[(&str, &str)] =
+    &[("chatgpt", "gpt-6-astra"), ("openai", "gpt-4.1-mini")];
 
 pub(crate) const EXCLUSIONS: &[(&str, &str)] = &[(
     "voyageai",

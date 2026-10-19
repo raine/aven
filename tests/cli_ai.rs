@@ -251,6 +251,100 @@ fn check_fails_when_the_model_or_integration_cannot_call_tools() {
     assert!(!stdout.contains("secret-key-marker"), "{stdout}");
 }
 
+#[test]
+fn setup_writes_the_ai_block_checks_and_explains_the_restart() {
+    let env = TestEnv::new();
+    let config = write_server_config(
+        &env,
+        "# my server\nai:\n  provider: chatgpt\n  model: old\n  timeout_seconds: 90\n\n# images\nattachments:\n  grace_days: 3\n",
+    );
+
+    let refused = server_ai(&env, &config, ["setup"], &[]);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("pass --provider and --model"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let refused = server_ai(
+        &env,
+        &config,
+        ["setup", "--provider", "perplexity", "--model", "m"],
+        &[],
+    );
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("cannot carry tool calls"));
+
+    let (endpoint, stub) = ollama_stub(vec![
+        serde_json::json!({"role":"assistant", "content":"", "tool_calls":[{"function":{"name":"aven_check_lookup", "arguments":{"key":"status"}}}]}),
+        serde_json::json!({"role":"assistant", "content":"done"}),
+    ]);
+    let output = server_ai(
+        &env,
+        &config,
+        [
+            "setup",
+            "--provider",
+            "ollama",
+            "--model",
+            "fixture-model",
+            "--endpoint",
+            &endpoint,
+        ],
+        &[("INVOCATION_ID", "")],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    stub.join().unwrap();
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        format!(
+            "# my server\nai:\n  provider: ollama\n  model: fixture-model\n  timeout_seconds: 90\n  endpoint: {endpoint}\n\n# images\nattachments:\n  grace_days: 3\n"
+        )
+    );
+    assert!(stdout.contains("✓ tool_result"), "{stdout}");
+    assert!(stdout.contains("Restart the"), "{stdout}");
+}
+
+#[test]
+fn setup_for_an_api_key_provider_explains_the_key_and_warns_about_overrides() {
+    let env = TestEnv::new();
+    let config = env.path("fresh/server.yaml");
+
+    let output = server_ai(
+        &env,
+        &config,
+        [
+            "setup",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4.1-mini",
+            "--yes",
+        ],
+        &[("OPENAI_API_KEY", ""), ("AVEN_AI_MODEL", "other")],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Warning: AVEN_AI_MODEL is set in this shell"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("openai reads OPENAI_API_KEY from the server's own environment"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Skipped the check because OPENAI_API_KEY is not set"),
+        "{stdout}"
+    );
+    let text = fs::read_to_string(&config).unwrap();
+    assert!(text.starts_with("# Aven server configuration."), "{text}");
+    assert!(
+        text.ends_with("\nai:\n  provider: openai\n  model: gpt-4.1-mini\n"),
+        "{text}"
+    );
+}
+
 #[tokio::test]
 async fn server_without_credentials_logs_why_ai_is_unavailable() {
     let env = TestEnv::new();

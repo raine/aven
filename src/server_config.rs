@@ -26,6 +26,8 @@ const DEFAULT_ATTACHMENT_GRACE_DAYS: u64 = 30;
 const AI_PROVIDER_ENV: &str = "AVEN_AI_PROVIDER";
 const AI_MODEL_ENV: &str = "AVEN_AI_MODEL";
 const AI_ENDPOINT_ENV: &str = "AVEN_AI_ENDPOINT";
+/// Environment variables that override the `ai` values in `server.yaml`.
+pub(crate) const AI_OVERRIDE_ENVS: [&str; 3] = [AI_PROVIDER_ENV, AI_MODEL_ENV, AI_ENDPOINT_ENV];
 
 /// Where the server keeps its storage, configuration and credentials.
 #[derive(Debug, Clone)]
@@ -162,6 +164,11 @@ impl ServerConfig {
         Self::load_with_env(paths, |name| env::var(name).ok())
     }
 
+    /// Loads `server.yaml` alone, ignoring `AVEN_AI_*` overrides.
+    pub(crate) fn load_file(paths: ServerPaths) -> Result<Self> {
+        Self::load_with_env(paths, |_| None)
+    }
+
     fn load_with_env(paths: ServerPaths, var: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let path = &paths.config_file;
         let file = match fs::read_to_string(path) {
@@ -275,6 +282,55 @@ pub(crate) fn write_template_if_missing(path: &Path) -> Result<bool> {
     file.write_all(template().as_bytes())
         .with_context(|| format!("could not write {}", path.display()))?;
     Ok(true)
+}
+
+/// Validates a provider, model and endpoint choice on its own.
+pub(crate) fn validate_ai_selection(
+    provider: &str,
+    model: &str,
+    endpoint: Option<&str>,
+) -> Result<()> {
+    ai::validate(&AiConfig {
+        provider: Some(provider.to_string()),
+        model: Some(model.to_string()),
+        endpoint: endpoint.map(str::to_string),
+        ..AiConfig::default()
+    })
+}
+
+/// Sets `ai.provider`, `ai.model` and `ai.endpoint` in the server config and
+/// replaces the file atomically. Other settings, comments and the remaining
+/// `ai` keys stay as they are. A missing file starts from the template.
+pub(crate) fn write_ai_selection(
+    path: &Path,
+    provider: &str,
+    model: &str,
+    endpoint: Option<&str>,
+) -> Result<()> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => {
+            parse(&text)
+                .map_err(|error| anyhow!("could not parse {}: {error:#}", path.display()))?;
+            text
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => template(),
+        Err(error) => bail!("could not read {}: {error}", path.display()),
+    };
+    let text = crate::config_edit::edit_section_scalars(
+        &text,
+        "ai",
+        &[
+            ("provider", Some(provider)),
+            ("model", Some(model)),
+            ("endpoint", endpoint),
+        ],
+    )
+    .with_context(|| format!("could not edit {}", path.display()))?;
+    let file = parse(&text)
+        .map_err(|error| anyhow!("edited {} did not parse: {error:#}", path.display()))?;
+    ai::validate(&file.ai)
+        .map_err(|error| anyhow!("invalid server config {}: {error:#}", path.display()))?;
+    crate::config::write_config_text(path, text)
 }
 
 #[cfg(test)]

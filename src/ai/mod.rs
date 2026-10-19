@@ -25,7 +25,9 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::server_config::{AiConfig, ServerConfig};
-pub(crate) use registry::{AuthKind, provider_display_name, provider_info};
+pub(crate) use registry::{
+    AuthKind, ProviderInfo, TESTED, credentials_present, provider_display_name, provider_info,
+};
 use registry::{CompletionBackend, SchemaStrategy};
 
 pub(crate) const MAX_REQUEST_BYTES: usize = 512 * 1024;

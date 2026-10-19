@@ -13,6 +13,28 @@ AI is optional. An unconfigured AI service does not prevent the sync server from
 
 Configure AI on the server host, not on client devices. The server reads the `ai` section of `server.yaml` in the directory that holds its storage, such as `/data/server.yaml` in the Docker image, or the file given by `--config` or `AVEN_SERVER_CONFIG`. It does not read the client `config.yaml`. Run the `aven server ai` commands on the server host as the user the server runs as, with the same `--data` or `--config` as the server. See [Server settings](/configuration/#server-settings) for the file location and template.
 
+### Guided setup
+
+Run the setup wizard on the server host:
+
+```sh
+aven server ai setup
+```
+
+It offers the providers that can carry tool calls, the tested ones first, then asks for a model and, for Ollama, llamafile, or another OpenAI-compatible server, the endpoint URL as the server reaches it. ChatGPT and GitHub Copilot log in inline. For an API-key provider it explains that the server reads the key from its own environment, and runs the check only when the key is also set in the current shell. Setup then writes `ai.provider`, `ai.model`, and `ai.endpoint` to `server.yaml`, replacing the file atomically and keeping other settings and comments; it creates the file from the commented template when it is missing. It warns when `AVEN_AI_*` variables in the shell override the file, runs the billable [check](#check-the-setup), and prints how to restart the server: a `systemctl` command under systemd, a `docker compose restart` command in a container, or a generic instruction otherwise. The server picks up the change only after that restart.
+
+Scripts and containers without a terminal pass the choices as flags; setup refuses to run without a terminal when `--provider` or `--model` is missing:
+
+```sh
+aven server ai setup --provider ollama --model qwen3 --endpoint http://127.0.0.1:11434
+aven server ai setup --provider chatgpt --model gpt-6-astra --yes
+aven server ai setup --provider openai --model gpt-4.1-mini --no-check
+```
+
+`--yes` skips the confirmation prompt and keeps an existing OAuth login. `--no-check` skips the billable check.
+
+### Manual configuration
+
 Add an `ai` section to `server.yaml`:
 
 ```yaml

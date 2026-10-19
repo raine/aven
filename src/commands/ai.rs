@@ -6,12 +6,15 @@ use serde::Serialize;
 
 use crate::ai::{self, AuthKind, check};
 use crate::cli::{AiCommand, AiSubcommand};
+
+mod setup;
 use crate::server_config::{ServerConfig, ServerPaths, SettingSource};
 
 const SCOPE_NOTE: &str = "This reads server.yaml and the environment of this process, not the running server. Changes apply after the server restarts.";
 
 pub(crate) async fn cmd_ai(paths: ServerPaths, args: AiCommand) -> Result<()> {
     match args.command {
+        AiSubcommand::Setup(args) => setup::setup(paths, args).await,
         AiSubcommand::Providers => {
             for provider in ai::providers() {
                 println!(
@@ -281,7 +284,22 @@ impl StepReport {
 
 async fn run_check(paths: ServerPaths, json: bool) -> Result<()> {
     let config = ServerConfig::load(paths)?;
-    let service = ai::AiService::from_config(&config);
+    let report = check_config(&config, !json).await;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", format_check(&report, styled()));
+        println!("\n{SCOPE_NOTE}");
+    }
+    if !report.ok {
+        bail!("AI check failed");
+    }
+    Ok(())
+}
+
+/// Runs the tool-call check with `config` from this process.
+async fn check_config(config: &ServerConfig, announce: bool) -> CheckReport {
+    let service = ai::AiService::from_config(config);
     let capabilities = service.capabilities();
     let mut report = CheckReport {
         ok: false,
@@ -299,7 +317,7 @@ async fn run_check(paths: ServerPaths, json: bool) -> Result<()> {
         ));
     } else {
         report.steps.push(StepReport::passed("configuration"));
-        if !json {
+        if announce {
             println!(
                 "Checking {} model {} from this process (two billable requests)...",
                 report.provider.as_deref().unwrap_or("none"),
@@ -327,15 +345,7 @@ async fn run_check(paths: ServerPaths, json: bool) -> Result<()> {
         }
     }
     report.ok = report.steps.iter().all(|step| step.ok);
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        print!("{}", format_check(&report, styled()));
-    }
-    if !report.ok {
-        bail!("AI check failed");
-    }
-    Ok(())
+    report
 }
 
 fn step_description(step: &str) -> &'static str {
@@ -375,7 +385,6 @@ fn format_check(report: &CheckReport, styled: bool) -> String {
             report.usage.input_tokens, report.usage.output_tokens
         ));
     }
-    text.push_str(&format!("\n{SCOPE_NOTE}\n"));
     text
 }
 
@@ -443,6 +452,5 @@ mod tests {
             text.contains("  Hint: the model answered without"),
             "{text}"
         );
-        assert!(text.contains("not the running server"), "{text}");
     }
 }

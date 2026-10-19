@@ -42,8 +42,16 @@ fn set_scalar_text(text: &str, section: &str, key: &str, value: &str) -> Result<
                 None => format!("{indentation}{key}: {value}"),
             };
         } else {
+            // Comments and blank lines before the next section belong to it.
+            let mut insert_at = section_end;
+            while insert_at > section_line + 1
+                && indent_len(&lines[insert_at - 1]) == 0
+                && (lines[insert_at - 1].trim().is_empty() || lines[insert_at - 1].starts_with('#'))
+            {
+                insert_at -= 1;
+            }
             lines.insert(
-                section_end,
+                insert_at,
                 format!("{}{key}: {value}", " ".repeat(child_indent)),
             );
         }
@@ -53,6 +61,42 @@ fn set_scalar_text(text: &str, section: &str, key: &str, value: &str) -> Result<
         }
         lines.push(format!("{section}:"));
         lines.push(format!("  {key}: {value}"));
+    }
+    let mut output = lines.join("\n");
+    output.push('\n');
+    Ok(output)
+}
+
+/// Sets each `section.key` to a YAML scalar, or removes the key when its value
+/// is `None`, keeping comments and every other line.
+pub(crate) fn edit_section_scalars(
+    text: &str,
+    section: &str,
+    edits: &[(&str, Option<&str>)],
+) -> Result<String> {
+    let mut text = text.to_string();
+    for (key, value) in edits {
+        text = match value {
+            Some(value) => set_scalar_text(&text, section, key, &yaml_scalar(value))?,
+            None => remove_scalar_text(&text, section, key)?,
+        };
+    }
+    Ok(text)
+}
+
+fn remove_scalar_text(text: &str, section: &str, key: &str) -> Result<String> {
+    let mut lines = split_lines(text);
+    let Some(section_line) = find_top_level_key(&lines, section) else {
+        return Ok(text.to_string());
+    };
+    if !is_block_mapping_key(&lines[section_line], section) {
+        bail!("cannot edit {section}.{key}: {section} must use a YAML block mapping");
+    }
+    let section_end = find_section_end(&lines, section_line, 0);
+    let child_indent = mapping_child_indent(&lines, section_line + 1, section_end).unwrap_or(2);
+    if let Some(key_line) = find_child_key(&lines, section_line + 1, section_end, child_indent, key)
+    {
+        lines.remove(key_line);
     }
     let mut output = lines.join("\n");
     output.push('\n');
@@ -517,6 +561,27 @@ mod tests {
             set_scalar_text("sync:\n  enabled: false\n", "local", "db_path", "null").unwrap();
 
         assert!(edited.contains("\nlocal:\n  db_path: null\n"));
+    }
+
+    #[test]
+    fn section_edits_set_and_remove_keys_before_the_next_section_comment() {
+        let text = "ai:\n  provider: ollama # local\n  endpoint: http://h:1\n  timeout_seconds: 30\n\n# images\nattachments:\n  grace_days: 3\n";
+
+        let edited = edit_section_scalars(
+            text,
+            "ai",
+            &[
+                ("provider", Some("openai")),
+                ("model", Some("gpt: mini")),
+                ("endpoint", None),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            edited,
+            "ai:\n  provider: openai # local\n  timeout_seconds: 30\n  model: \"gpt: mini\"\n\n# images\nattachments:\n  grace_days: 3\n"
+        );
     }
 
     #[test]
