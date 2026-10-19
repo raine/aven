@@ -47,8 +47,10 @@ const INVALID_MEMBERSHIP: &str = "error server-membership-invalid hint=\"stored 
 const UNSUPPORTED_STORAGE: &str = "error server-storage-unsupported hint=\"this storage holds unencrypted sync history, which is no longer supported; prepare a new path with `aven server setup`\"";
 
 pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
-    if let Some(ServerSubcommand::Setup(setup)) = args.command {
-        return setup_server(setup).await;
+    match args.command {
+        Some(ServerSubcommand::Setup(setup)) => return setup_server(setup).await,
+        Some(ServerSubcommand::Ai(ai)) => return crate::commands::cmd_ai(&config, ai).await,
+        None => {}
     }
     let data = server_data_path(args.data)?;
     serve(args.bind, args.unsafe_public_bind, &data, &config).await

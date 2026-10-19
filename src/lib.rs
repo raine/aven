@@ -54,12 +54,12 @@ use cli::{
     SkillSubcommand, SyncSubcommand,
 };
 use commands::{
-    cmd_add, cmd_ai, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict,
-    cmd_context, cmd_daemon_status, cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit,
-    cmd_epic, cmd_export, cmd_import, cmd_internal_demo_snapshot, cmd_internal_natural_add,
-    cmd_label, cmd_list, cmd_metadata, cmd_move, cmd_note, cmd_note_delete, cmd_note_show,
-    cmd_prime, cmd_project, cmd_recur, cmd_related, cmd_search, cmd_self_update, cmd_show,
-    cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
+    cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
+    cmd_daemon_status, cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic,
+    cmd_export, cmd_import, cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label,
+    cmd_list, cmd_metadata, cmd_move, cmd_note, cmd_note_delete, cmd_note_show, cmd_prime,
+    cmd_project, cmd_recur, cmd_related, cmd_search, cmd_self_update, cmd_show, cmd_skill,
+    cmd_skill_install, cmd_text, cmd_workspace,
 };
 use sync::run_server;
 use workspaces::resolve_active_workspace_with_routing;
@@ -161,7 +161,6 @@ enum CliDispatch {
 }
 
 enum StandaloneCommand {
-    Ai(cli::AiCommand),
     Completions(clap_complete::Shell),
     BackupRestore(cli::BackupRestoreArgs),
     Config(cli::ConfigCommand),
@@ -219,7 +218,6 @@ impl From<Commands> for CliDispatch {
                 Self::Standalone(StandaloneCommand::Completions(shell))
             }
             Commands::Add(args) => Self::database(DatabaseCommand::Add(args)),
-            Commands::Ai(args) => Self::Standalone(StandaloneCommand::Ai(args)),
             Commands::Attachment(args) => Self::database(DatabaseCommand::Attachment(args)),
             Commands::Dep(args) => Self::database(DatabaseCommand::Dep(args)),
             Commands::Related(args) => Self::database(DatabaseCommand::Related(args)),
@@ -274,10 +272,6 @@ async fn dispatch_standalone(
     command: StandaloneCommand,
 ) -> Result<()> {
     match command {
-        StandaloneCommand::Ai(args) => {
-            let config = config::AppConfig::load()?;
-            cmd_ai(&config, args).await
-        }
         StandaloneCommand::Completions(shell) => {
             use clap::CommandFactory;
             clap_complete::generate(shell, &mut Cli::command(), "aven", &mut std::io::stdout());

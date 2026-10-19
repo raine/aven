@@ -1060,28 +1060,6 @@ Command failures print a plain explanation, a next step, and a stable code in
 square brackets. The full internal error chain is written to the log rather
 than repeated on standard error.
 
-### `aven ai`
-
-Manage the optional generic AI completion service without opening the task
-database.
-
-```sh
-aven ai providers
-aven ai login [provider]
-aven ai status [--json]
-aven ai check
-```
-
-`providers` lists supported providers, credential sources, JSON-schema
-strategies, and exclusions. `login` starts an interactive OAuth device flow for
-ChatGPT or GitHub Copilot. `status` inspects local configuration and credential
-presence without contacting a provider. `check` makes one synthetic, billable
-JSON-schema completion through the configured provider. A `ready` status does
-not verify that the selected model is available to the account.
-
-See [AI completion server](/ai-completions/) for configuration, limits,
-credential storage, and the HTTP contract.
-
 ### `aven server`
 
 Serve end-to-end encrypted sync from storage prepared by `aven server setup`.
@@ -1122,6 +1100,30 @@ device enrollment.
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746
 aven server --data /srv/aven/server.sqlite --bind 100.100.20.30:3746
 ```
+
+### `aven server ai`
+
+Configure and check the sync server's optional AI provider without opening the
+task database. Run these commands on the server host with the configuration
+directory the server process uses, because they read that directory's
+`config.yaml` and store login credentials there.
+
+```sh
+aven server ai providers
+aven server ai login [provider]
+aven server ai status [--json]
+aven server ai check
+```
+
+`providers` lists supported providers, credential sources, JSON-schema
+strategies, and exclusions. `login` starts an interactive OAuth device flow for
+ChatGPT or GitHub Copilot. `status` inspects local configuration and credential
+presence without contacting a provider. `check` makes one synthetic, billable
+JSON-schema completion through the configured provider. A `ready` status does
+not verify that the selected model is available to the account.
+
+See [AI completion server](/ai-completions/) for configuration, limits,
+credential storage, and the HTTP contract.
 
 ### `aven conflict`
 

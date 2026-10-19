@@ -11,6 +11,8 @@ AI is optional. An unconfigured AI service does not prevent the sync server from
 
 ## Configure the service
 
+Configure AI on the server host, not on client devices. The server reads `config.yaml` from `$AVEN_CONFIG_DIR` (default `~/.config/aven`) of the user it runs as, and the `aven server ai` commands use the same directory. Run them on the server host as that user, with the same `AVEN_CONFIG_DIR` when the service sets one.
+
 Add an `ai` section to the server's `config.yaml`:
 
 ```yaml
@@ -33,12 +35,12 @@ The server chooses the provider, model, endpoint, timeout, and limits. Completio
 List the available providers, credential environment variables, tool support, and JSON-schema strategies:
 
 ```sh
-aven ai providers
+aven server ai providers
 ```
 
 The provider registry includes Anthropic, Azure OpenAI, ChatGPT subscription OAuth, Cohere, GitHub Copilot, DeepSeek, Doubleword, Gemini, Groq, Hugging Face, Hyperbolic, llamafile, MiniMax, Mira, Mistral, Moonshot, Ollama, OpenAI, OpenRouter, Perplexity, Together, Venice, xAI, Xiaomi MiMo, and Z.AI. Voyage AI is excluded because it does not provide text completions.
 
-API-key providers read the environment variable shown by `aven ai providers` from the server process. Azure also uses `AZURE_ENDPOINT` and `AZURE_API_VERSION`. Keep these values in the service manager's protected secret environment, not in `config.yaml`.
+API-key providers read the environment variable shown by `aven server ai providers` from the server process. Azure also uses `AZURE_ENDPOINT` and `AZURE_API_VERSION`. Keep these values in the service manager's protected secret environment, not in `config.yaml`.
 
 OAuth providers store material below:
 
@@ -51,8 +53,8 @@ When `AVEN_CONFIG_DIR` is unset, the base directory is `~/.config/aven`. Aven se
 Start an interactive OAuth flow only from an administrator terminal:
 
 ```sh
-aven ai login chatgpt
-aven ai login copilot
+aven server ai login chatgpt
+aven server ai login copilot
 ```
 
 Login stores credentials but does not select the server provider or model. Set `ai.provider` to `chatgpt` or `copilot`, and set `ai.model` to a model available to the authenticated account.
@@ -75,14 +77,14 @@ This removes Aven's local credentials. It does not revoke access at the provider
 Inspect local configuration and credential presence without contacting or billing a provider:
 
 ```sh
-aven ai status
-aven ai status --json
+aven server ai status
+aven server ai status --json
 ```
 
 A `ready` status does not verify that the configured model is available to the account. Make one synthetic, billable request to verify the complete setup:
 
 ```sh
-aven ai check
+aven server ai check
 ```
 
 ## HTTP contract
@@ -169,7 +171,7 @@ Two-round native tool calls and result replay were manually tested through the s
 
 Other tool-capable integrations are allowed but untested. These live checks use synthetic tasks, not the iOS app. Offline conversion tests additionally cover encrypted reasoning and signed tool-call replay; CI makes no live provider calls.
 
-Rig providers handle JSON schemas differently. `aven ai providers` reports these strategies:
+Rig providers handle JSON schemas differently. `aven server ai providers` reports these strategies:
 
 - `native-strict` uses the provider's strict structured-output form. Object properties may need nullable types when omission is allowed.
 - `native-verbatim` sends the schema without strict rewriting.

@@ -344,7 +344,7 @@ impl AiService {
         let Some(info) = registry::provider_info(provider) else {
             return BackendState::Unavailable {
                 status: AvailabilityStatus::Unconfigured,
-                hint: "select a provider listed by aven ai providers".to_string(),
+                hint: "select a provider listed by aven server ai providers".to_string(),
             };
         };
         let private_dir = if info.auth == registry::AuthKind::OAuth {
@@ -364,7 +364,7 @@ impl AiService {
             return BackendState::Unavailable {
                 status: AvailabilityStatus::AuthenticationRequired,
                 hint: match info.auth {
-                    registry::AuthKind::OAuth => format!("run aven ai login {provider}"),
+                    registry::AuthKind::OAuth => format!("run aven server ai login {provider}"),
                     registry::AuthKind::ApiKey(name) => {
                         format!("set {name} for the server process")
                     }

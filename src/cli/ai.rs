@@ -1,6 +1,11 @@
 use clap::{Args, Subcommand};
 
+const AI_HELP: &str = r#"Run these commands on the server host as the user the server runs as. They
+read that user's config.yaml and store login credentials in $AVEN_CONFIG_DIR
+(default ~/.config/aven), the same directory the server uses."#;
+
 #[derive(Args)]
+#[command(after_long_help = AI_HELP)]
 pub(crate) struct AiCommand {
     #[command(subcommand)]
     pub(crate) command: AiSubcommand,
@@ -15,7 +20,7 @@ pub(crate) enum AiSubcommand {
         /// Provider to authenticate; defaults to ai.provider
         provider: Option<String>,
     },
-    /// Show local AI configuration and credential readiness
+    /// Show the server AI configuration and credential readiness
     Status {
         /// Emit JSON
         #[arg(long)]
