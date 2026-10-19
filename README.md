@@ -32,32 +32,38 @@ See [the mobile apps](https://aventasks.dev/mobile/).*
 
 ## Why aven?
 
-The CLI is agent-first, while the [power-user TUI](https://aventasks.dev/tui/) gives humans a
-keyboard-driven path to every action.
+I built this to solve these problems for myself:
 
-The [queue view](https://aventasks.dev/concepts/#queue) brings together tasks from every project
-and shows what needs action, what is blocked, and what to focus on next.
+1. I need one place to see tasks across all of my projects, so I can tell what
+   needs doing right now. That's the [queue view](https://aventasks.dev/concepts/#queue).
+2. I live in the terminal and want an excellent, keyboard-driven
+   [TUI](https://aventasks.dev/tui/) that I can launch in a tmux popup, showing
+   tasks for the project I'm currently in.
+3. Adding tasks should just work, based on the current
+   directory. Projects shouldn't need to be created separately.
+4. I need to add tasks from my phone whenever an idea comes up away from the
+   keyboard, and see them in the same task list. This is where the
+   [mobile apps](https://aventasks.dev/mobile/) and sync come in.
+5. I want to run the [sync server](https://aventasks.dev/sync/setup/) myself, on
+   a home server like a Raspberry Pi, instead of depending on someone else's
+   service.
+6. It has to be local-first. Everything works offline and stays fast because
+   nothing waits on the network, and sync is optional.
+7. Tasks should live separately from the repo, so that they are not tied to git state.
+8. Agents should be connected to the same task system, with a
+   [CLI](https://aventasks.dev/agents/) optimized just for them.
 
-Aven keeps tasks in a local SQLite database instead of tracked files inside each project repo. You
-and your agents can capture and update tasks offline, independent of git state, branches, worktrees,
-or checkouts. If you need the same tasks on more than one device, you can
-[sync them through a server you control](https://aventasks.dev/sync/setup/). Sync is end-to-end
-encrypted, so the server cannot read your tasks.
-
-Repositories map to projects by default. Aven creates a project when you add its first task, and
-gives each task a short Jira/Linear-style ID such as `APP-7KQ9`. Aven can generate them without a
-server connection, and the project prefix shows where each task belongs.
-
+Beyond that, each task gets a short Jira/Linear-style ID such as `APP-7KQ9`. Aven generates IDs
+offline, and the project prefix shows where each task belongs.
 [Workspaces](https://aventasks.dev/organize-tasks/#separate-work-with-workspaces) keep personal and
-work tasks in separate views while sharing one database. You can map a directory such as `~/work` to
-a workspace. When you run aven from that directory, it selects the workspace automatically.
+work tasks in separate views while sharing one database. Map a directory such as `~/work` to a
+workspace, and aven selects it automatically when you run it there.
 
 Markdown descriptions, append-style notes, and
 [image attachments](https://aventasks.dev/tui/#image-attachments) keep task context available to
 you and your agents. Copy a complete task report as Markdown or
 [publish it as an unlisted GitHub gist](https://aventasks.dev/tui/#publish-a-task-report-as-a-github-gist)
-when you want to share that context. You can capture work through natural-language input, a tmux
-popup, or agent-friendly commands, then schedule it to appear when it needs your attention.
+to share it. Priorities, labels, dependencies, due dates, deferred tasks, and recurring tasks control what shows up in the queue and when.
 
 Inspired by Taskwarrior. See [aven and Taskwarrior](https://aventasks.dev/taskwarrior/).
 
