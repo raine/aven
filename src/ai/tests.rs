@@ -16,6 +16,8 @@ fn ready_service() -> AiService {
             tools: true,
             provider: "test".to_string(),
         },
+        provider: Some("test".to_string()),
+        model: Some("test-model".to_string()),
         max_output_tokens: 128,
         timeout: Duration::from_millis(5),
         semaphore: Semaphore::new(1),
@@ -528,6 +530,9 @@ fn finish_reasons_cover_tool_only_and_empty_terminal_outputs() {
 #[tokio::test]
 async fn unsupported_tools_fail_before_rate_admission_and_are_advertised() {
     let mut service = ready_service();
+    let capabilities = serde_json::to_value(service.capabilities()).unwrap();
+    assert_eq!(capabilities["provider"], "test");
+    assert_eq!(capabilities["model"], "test-model");
     assert!(service.capabilities().features.tools);
     if let BackendState::Ready { tools, .. } = &mut service.state {
         *tools = false;

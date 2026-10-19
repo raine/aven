@@ -144,6 +144,11 @@ impl Installation {
             .env_remove("AVEN_DB")
             .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_SYNC_DISABLED")
+            .env_remove("AVEN_SERVER_CONFIG")
+            .env_remove("AVEN_AI_PROVIDER")
+            .env_remove("AVEN_AI_MODEL")
+            .env_remove("AVEN_AI_ENDPOINT")
+            .env_remove("ANTHROPIC_API_KEY")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -880,6 +885,70 @@ async fn cli_single_device_status_hint_uses_local_membership() {
                 .contains(super::SINGLE_DEVICE_HINT)
         );
     }
+}
+
+/// `aven ai status` and doctor ask the running server with this device's
+/// credential, and report AI as not applicable without sync.
+#[tokio::test]
+async fn cli_ai_status_asks_the_running_server_as_this_device() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let ai_status = |node: &Installation| {
+        let node = Installation::new(&node.root, node.name);
+        async move {
+            serde_json::from_str::<serde_json::Value>(&node.ok(&["ai", "status", "--json"]).await)
+                .unwrap()
+        }
+    };
+    let doctor_ai = |node: &Installation| {
+        let node = Installation::new(&node.root, node.name);
+        async move {
+            let report: serde_json::Value =
+                serde_json::from_str(&node.ok(&["doctor", "--json"]).await).unwrap();
+            report["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|section| section["code"] == "ai")
+                .unwrap()["rows"][0]
+                .clone()
+        }
+    };
+
+    let local = Installation::new(root, "local");
+    local.ok(&["add", "seed"]).await;
+    assert_eq!(ai_status(&local).await["state"], "sync_not_set_up");
+    let row = doctor_ai(&local).await;
+    assert_eq!(row["status"], "skipped");
+    assert_eq!(row["skipped_reason"], "sync is not set up");
+
+    std::fs::write(
+        root.join("server.yaml"),
+        "ai:\n  provider: anthropic\n  model: claude-test\n",
+    )
+    .unwrap();
+    let (mut server, a) = set_up(root).await;
+    let report = ai_status(&a).await;
+    assert_eq!(report["state"], "authentication_required");
+    assert_eq!(report["provider"], "anthropic");
+    assert_eq!(report["model"], "claude-test");
+    assert!(
+        report["setup_hint"]
+            .as_str()
+            .unwrap()
+            .contains("ANTHROPIC_API_KEY")
+    );
+    let server_url = report["server"].as_str().unwrap().to_string();
+    let text = a.ok(&["ai", "status"]).await;
+    assert!(text.contains(&format!("Server: {server_url}")), "{text}");
+    assert!(text.contains("Model: claude-test"), "{text}");
+    let row = doctor_ai(&a).await;
+    assert_eq!(row["status"], "warning");
+    assert!(row["value"].as_str().unwrap().contains(&server_url));
+
+    server.kill().await.unwrap();
+    server.wait().await.unwrap();
+    assert_eq!(ai_status(&a).await["state"], "unreachable");
 }
 
 /// A waiting `sync invite` stops as soon as another command cancels its

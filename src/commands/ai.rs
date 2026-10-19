@@ -146,9 +146,7 @@ fn logout(paths: &ServerPaths, provider: &str) -> Result<()> {
 struct StatusReport {
     #[serde(flatten)]
     capabilities: ai::CapabilitiesResponse,
-    provider: Option<String>,
     provider_source: SettingSource,
-    model: Option<String>,
     model_source: SettingSource,
     endpoint: Option<String>,
     endpoint_source: SettingSource,
@@ -162,9 +160,7 @@ fn status(paths: ServerPaths, json: bool) -> Result<()> {
     let capabilities = ai::AiService::from_config(&config).capabilities();
     let sources = config.ai_sources;
     let report = StatusReport {
-        provider: config.ai.provider.clone(),
         provider_source: sources.provider,
-        model: config.ai.model.clone(),
         model_source: sources.model,
         endpoint: config.ai.endpoint.clone(),
         endpoint_source: sources.endpoint,
@@ -209,12 +205,12 @@ fn format_status(report: &StatusReport) -> String {
          Model:        {}\n",
         report.credentials_dir,
         setting(
-            report.provider.as_deref(),
+            report.capabilities.provider.as_deref(),
             report.provider_source,
             "AVEN_AI_PROVIDER"
         ),
         setting(
-            report.model.as_deref(),
+            report.capabilities.model.as_deref(),
             report.model_source,
             "AVEN_AI_MODEL"
         ),

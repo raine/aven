@@ -612,3 +612,49 @@ pub(super) async fn add_daemon_section(
         ),
     }
 }
+
+/// Asks the running sync server for its AI capabilities. Makes no billable
+/// completion, and reports AI as not applicable while sync isn't set up.
+pub(super) async fn add_ai_section(
+    report: &mut DoctorReport,
+    config: &AppConfig,
+    config_valid: bool,
+    database: Option<&aven_core::db::Database>,
+) {
+    use super::super::client_ai::{AiState, DOCTOR_TIMEOUT, probe};
+
+    let section = report.section("ai", "AI");
+    let (true, Some(database)) = (config_valid, database) else {
+        section.skipped(
+            "ai.server_skipped",
+            "server AI",
+            "configuration or database is unavailable",
+        );
+        return;
+    };
+    let ai = match probe(database, config, false, DOCTOR_TIMEOUT).await {
+        Ok(ai) => ai,
+        Err(error) => {
+            section.warning(
+                "ai.credential",
+                "server AI",
+                format!("could not read this device's sync credential: {error:#}"),
+            );
+            return;
+        }
+    };
+    let server = ai.server.as_deref().unwrap_or("none");
+    let model = match (&ai.provider, &ai.model) {
+        (Some(provider), Some(model)) => format!(" ({provider} {model})"),
+        _ => String::new(),
+    };
+    let value = format!("{}{model} at {server}", ai.state.as_str());
+    match ai.state {
+        AiState::SyncNotSetUp => {
+            section.skipped("ai.server_skipped", "server AI", "sync is not set up")
+        }
+        AiState::Ready => section.check("ai.server", "server AI", true, value),
+        AiState::Unconfigured => section.info("ai.server", "server AI", value),
+        _ => section.warning("ai.server", "server AI", format!("{value}; {}", ai.message)),
+    }
+}

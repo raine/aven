@@ -591,6 +591,33 @@ async fn read_association(
     })
 }
 
+/// This device's sync server and the bearer credential it presents there.
+pub struct DeviceCredential {
+    pub server: String,
+    pub bearer: crate::sync::seed_claim::Secret,
+}
+
+/// The enrolled credential, or `None` when this database doesn't take part
+/// in sync. Local only; contacts no server.
+pub async fn device_credential(
+    database: &Database,
+    host: &dyn ClientHost,
+) -> Result<Option<DeviceCredential>> {
+    if !is_set_up(database).await? {
+        return Ok(None);
+    }
+    let store = key_store(host, database).await?;
+    let _guard = coordination::acquire(database).await?;
+    let Some((_, server)) = store.association(database).await? else {
+        return Ok(None);
+    };
+    let inputs = store.active_inputs(database, &server).await?;
+    Ok(Some(DeviceCredential {
+        bearer: crate::sync::seed_claim::Secret::new(*inputs.bearer().expose()),
+        server,
+    }))
+}
+
 pub async fn cancel_invitation(
     link: Link,
     database: &Database,
