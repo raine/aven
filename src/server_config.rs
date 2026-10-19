@@ -141,16 +141,6 @@ pub(crate) enum SettingSource {
     Env,
 }
 
-impl SettingSource {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Unset => "unset",
-            Self::File => "file",
-            Self::Env => "env",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AiSources {
     pub(crate) provider: SettingSource,

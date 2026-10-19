@@ -277,7 +277,7 @@ macro_rules! api_key_model {
     }};
 }
 
-fn provider_display_name(provider: &str) -> &str {
+pub(crate) fn provider_display_name(provider: &str) -> &str {
     match provider {
         "chatgpt" => "ChatGPT",
         "copilot" => "GitHub Copilot",

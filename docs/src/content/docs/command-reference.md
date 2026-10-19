@@ -1104,23 +1104,30 @@ aven server --data /srv/aven/server.sqlite --bind 100.100.20.30:3746
 ### `aven server ai`
 
 Configure and check the sync server's optional AI provider without opening the
-task database. Run these commands on the server host with the configuration
-directory the server process uses, because they read that directory's
-`config.yaml` and store login credentials there.
+task database. Run these commands on the server host as the user the server
+runs as, with the same `--data` or `--config` as the server, because they read
+its `server.yaml` and store login credentials in `private/ai` beside it. AI
+changes apply after the server restarts.
 
 ```sh
 aven server ai providers
 aven server ai login [provider]
+aven server ai logout <provider>
 aven server ai status [--json]
-aven server ai check
+aven server ai check [--json]
 ```
 
 `providers` lists supported providers, credential sources, JSON-schema
-strategies, and exclusions. `login` starts an interactive OAuth device flow for
-ChatGPT or GitHub Copilot. `status` inspects local configuration and credential
-presence without contacting a provider. `check` makes one synthetic, billable
-JSON-schema completion through the configured provider. A `ready` status does
-not verify that the selected model is available to the account.
+strategies, tool support, and exclusions. `login` starts an interactive OAuth
+device flow for ChatGPT or GitHub Copilot; without a provider it lists them, and
+for API-key providers it explains which environment variable the server reads.
+`logout` removes stored OAuth credentials without revoking them at the provider.
+`status` shows the config path, credential directory, provider and model with
+their sources, availability, and a next-step hint, without contacting a
+provider. `check` makes two synthetic, billable completions that verify a
+native tool call and a tool-result replay, and prints each step with a hint on
+failure. `status` and `check` read the configuration from the current process,
+not the running server.
 
 See [AI completion server](/ai-completions/) for configuration, limits,
 credential storage, and the HTTP contract.
