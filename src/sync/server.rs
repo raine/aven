@@ -147,28 +147,32 @@ fn is_private_address(address: IpAddr) -> bool {
     }
 }
 
-#[derive(Clone)]
-struct AiAuthState {
-    auth_token: Option<String>,
-}
-
 async fn verify_ai_auth(
-    State(state): State<AiAuthState>,
+    State(database): State<Database>,
     headers: HeaderMap,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let authorized = state.auth_token.as_deref().is_some_and(|expected| {
-        headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .is_some_and(|token| token == expected)
-    });
-    if authorized {
-        next.run(request).await
-    } else {
-        StatusCode::UNAUTHORIZED.into_response()
+    if headers
+        .get_all(axum::http::header::AUTHORIZATION)
+        .iter()
+        .count()
+        != 1
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(bearer) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(crate::http_admission::bearer)
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match database.verify_enrolled_device_bearer(&bearer).await {
+        Ok(()) => next.run(request).await,
+        Err(error) if error.is::<aven_core::sync::seed_claim::membership::Unauthorized>() => {
+            StatusCode::UNAUTHORIZED.into_response()
+        }
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
 
@@ -213,9 +217,6 @@ async fn serve(
     };
     tokio::spawn(prune_images(database.clone(), image_policy.grace));
     let ai_service = Arc::new(AiService::from_config(config));
-    let ai_auth = AiAuthState {
-        auth_token: config.sync_auth_token().map(str::to_string),
-    };
     let ai_app = Router::new()
         .route("/ai/capabilities", get(ai::capabilities_handler))
         .route(
@@ -224,7 +225,10 @@ async fn serve(
                 .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
         )
         .layer(RequestDecompressionLayer::new())
-        .layer(middleware::from_fn_with_state(ai_auth, verify_ai_auth))
+        .layer(middleware::from_fn_with_state(
+            database.clone(),
+            verify_ai_auth,
+        ))
         .layer(CompressionLayer::new())
         .with_state(ai_service);
     let app = crate::seed_bootstrap_http::router(database.clone(), publication_policy)

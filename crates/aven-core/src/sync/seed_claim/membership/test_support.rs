@@ -4,16 +4,17 @@ use crate::{
     sync::{bootstrap_format, bootstrap_staging as staging},
 };
 
-pub(crate) struct Fixture {
+/// A published vault with its seed authority and bootstrap package.
+pub struct Fixture {
     pub(crate) dir: tempfile::TempDir,
-    pub(crate) db: Database,
-    pub(crate) seed: SeedAuthority,
-    pub(crate) key: LocalSharedStatePackageKey,
-    pub(crate) package: bootstrap_format::Package,
-    pub(crate) publication: Publication,
+    pub db: Database,
+    pub seed: SeedAuthority,
+    pub key: LocalSharedStatePackageKey,
+    pub package: bootstrap_format::Package,
+    pub publication: Publication,
 }
 impl Fixture {
-    pub(crate) async fn new() -> Self {
+    pub async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let source = Database::open(&dir.path().join("source.db")).await.unwrap();
         let blob_dir = dir.path().to_path_buf();

@@ -1113,9 +1113,10 @@ that holds
 change history, including storage from the unencrypted sync of earlier
 releases. The server shuts down gracefully on an operating-system termination
 signal. The server also exposes authenticated `GET /ai/capabilities` and
-`POST /ai/completions` when AI is configured. AI always requires the bearer token
-from `sync.auth_token`, including on loopback; encrypted sync uses its separate
-device credentials.
+`POST /ai/completions`. Both routes require a currently enrolled device’s
+encrypted-sync bearer credential, including on loopback. Unknown and revoked
+credentials are refused. AI configuration controls provider availability, not
+device enrollment.
 
 ```sh
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746

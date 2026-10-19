@@ -273,9 +273,6 @@ pub struct SyncConfig {
     #[serde(skip)]
     pub(crate) disable_override: bool,
     pub interval_seconds: Option<u64>,
-    /// Bearer token required by the optional AI completion routes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_token: Option<String>,
     /// Terminal glyphs for device invitation QR codes.
     #[serde(default)]
     pub qr_glyphs: QrGlyphsConfig,
@@ -297,7 +294,6 @@ impl Default for SyncConfig {
             enabled: false,
             disable_override: false,
             interval_seconds: Some(DEFAULT_SYNC_INTERVAL_SECONDS),
-            auth_token: None,
             qr_glyphs: QrGlyphsConfig::Auto,
         }
     }
@@ -429,14 +425,6 @@ impl AppConfig {
             .interval_seconds
             .unwrap_or(DEFAULT_SYNC_INTERVAL_SECONDS)
             .max(1)
-    }
-
-    pub fn sync_auth_token(&self) -> Option<&str> {
-        self.sync
-            .auth_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
     }
 
     pub(crate) fn sync_is_allowed(&self) -> bool {

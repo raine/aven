@@ -24,10 +24,12 @@ fn ai_administrator_inspection_does_not_require_a_database() {
 #[tokio::test]
 async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server() {
     let env = TestEnv::new();
-    env.write_config("sync:\n  auth_token: test-secret\n");
-    let server = TestServer::start_configured_with_env(
+    env.write_config("");
+    let vault = aven_core::test_support::PublishedVault::new().await;
+    let credential = hex::encode(vault.seed.bearer().expose());
+    let server = TestServer::start_prepared_with_env(
         &env,
-        "server.sqlite",
+        vault.db.path(),
         std::iter::empty::<(&str, &str)>(),
     );
     let url = server.url.clone();
@@ -42,7 +44,7 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
 
     let capabilities = client
         .get(format!("{url}/ai/capabilities"))
-        .bearer_auth("test-secret")
+        .bearer_auth(&credential)
         .send()
         .await
         .unwrap();
@@ -54,7 +56,7 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
 
     let completion = client
         .post(format!("{url}/ai/completions"))
-        .bearer_auth("test-secret")
+        .bearer_auth(&credential)
         .json(&serde_json::json!({
             "request_id": "test-1",
             "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
@@ -79,7 +81,7 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
         let padded = format!("{}{}", valid, " ".repeat(size - valid.len()));
         let response = client
             .post(format!("{url}/ai/completions"))
-            .bearer_auth("test-secret")
+            .bearer_auth(&credential)
             .header("content-type", "application/json")
             .body(padded)
             .send()
@@ -126,17 +128,19 @@ async fn synthetic_json_schema_completion_uses_the_generic_service() {
     });
 
     env.write_config(&format!(
-        "sync:\n  auth_token: test-secret\nai:\n  provider: ollama\n  model: stub-model\n  endpoint: http://{upstream_addr}\n"
+        "ai:\n  provider: ollama\n  model: stub-model\n  endpoint: http://{upstream_addr}\n"
     ));
     fs::write(env.config_dir().join("aven/private"), "not a directory").unwrap();
-    let server = TestServer::start_configured_with_env(
+    let vault = aven_core::test_support::PublishedVault::new().await;
+    let credential = hex::encode(vault.seed.bearer().expose());
+    let server = TestServer::start_prepared_with_env(
         &env,
-        "server.sqlite",
+        vault.db.path(),
         std::iter::empty::<(&str, &str)>(),
     );
     let response = reqwest::Client::new()
         .post(format!("{}/ai/completions", server.url))
-        .bearer_auth("test-secret")
+        .bearer_auth(&credential)
         .json(&serde_json::json!({
             "request_id": "synthetic-1",
             "messages": [
@@ -162,12 +166,14 @@ async fn synthetic_json_schema_completion_uses_the_generic_service() {
 }
 
 #[tokio::test]
-async fn ai_requires_a_configured_token_even_on_loopback() {
+async fn ai_requires_a_device_credential_even_on_loopback() {
     let env = TestEnv::new();
     env.write_config("");
-    let server = TestServer::start_configured_with_env(
+    let vault = aven_core::test_support::PublishedVault::new().await;
+    let credential = hex::encode(vault.seed.bearer().expose());
+    let server = TestServer::start_prepared_with_env(
         &env,
-        "server.sqlite",
+        vault.db.path(),
         std::iter::empty::<(&str, &str)>(),
     );
 
@@ -175,6 +181,13 @@ async fn ai_requires_a_configured_token_even_on_loopback() {
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let authorized = reqwest::Client::new()
+        .get(format!("{}/ai/capabilities", server.url))
+        .bearer_auth(&credential)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), reqwest::StatusCode::OK);
 
     drop(server);
 }
@@ -247,13 +260,17 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
             write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
         }
     });
-    env.write_config(&format!("sync:\n  auth_token: test-secret\nai:\n  provider: ollama\n  model: fixture-model\n  endpoint: http://{upstream_addr}\n"));
+    env.write_config(&format!(
+        "ai:\n  provider: ollama\n  model: fixture-model\n  endpoint: http://{upstream_addr}\n"
+    ));
+    let vault = aven_core::test_support::PublishedVault::new().await;
+    let credential = hex::encode(vault.seed.bearer().expose());
     let server =
-        TestServer::start_configured_with_env(&env, "server.sqlite", [("RUST_LOG", "debug")]);
+        TestServer::start_prepared_with_env(&env, vault.db.path(), [("RUST_LOG", "debug")]);
     let client = reqwest::Client::new();
     let capabilities: serde_json::Value = client
         .get(format!("{}/ai/capabilities", server.url))
-        .bearer_auth("test-secret")
+        .bearer_auth(&credential)
         .send()
         .await
         .unwrap()
@@ -268,7 +285,7 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
     });
     let first = client
         .post(format!("{}/ai/completions", server.url))
-        .bearer_auth("test-secret")
+        .bearer_auth(&credential)
         .json(&request)
         .send()
         .await
@@ -284,7 +301,7 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
     request["request_id"] = serde_json::json!("turn-2");
     let second = client
         .post(format!("{}/ai/completions", server.url))
-        .bearer_auth("test-secret")
+        .bearer_auth(&credential)
         .json(&request)
         .send()
         .await
@@ -301,6 +318,147 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
         "tool-result-marker",
         "generated-marker",
     ] {
+        assert!(!server.output().contains(secret));
+    }
+}
+
+#[tokio::test]
+async fn ai_accepts_only_current_device_credentials_and_hides_revocation() {
+    use aven_core::sync::seed_claim::{
+        membership::{Device, Invitation, Joiner, Membership},
+        peer::Authentication,
+    };
+    let env = TestEnv::new();
+    let old_token = "99".repeat(32);
+    env.write_config(&format!("sync:\n  auth_token: {old_token:?}\n"));
+    let vault = aven_core::test_support::PublishedVault::new().await;
+    let initial = Membership::from_publication(
+        vault.seed.genesis(),
+        &vault.package.descriptor,
+        vault.publication.record(),
+    )
+    .unwrap();
+    let seed_device = vault.seed.genesis().device_id();
+    let seed_auth = Authentication {
+        vault: initial.genesis().context().vault_id,
+        genesis: initial.genesis().commitment(),
+        device: seed_device,
+        head: initial.head(),
+        bearer: vault.seed.bearer(),
+    };
+    let (invitation, declaration) = Device::seed(&vault.seed)
+        .prepare_invitation(&initial, 3700)
+        .unwrap();
+    let peer = Joiner::generate(
+        Invitation::from_protected_storage(&invitation.protected_storage_bytes()).unwrap(),
+    )
+    .unwrap();
+    let record = Device::seed(&vault.seed)
+        .prepare_admission(
+            &initial,
+            &declaration,
+            &invitation,
+            peer.request(),
+            &initial.verify_initial_key(&vault.key).unwrap(),
+        )
+        .unwrap();
+    vault
+        .db
+        .register_membership_invitation_at(&seed_auth, declaration.record(), 100)
+        .await
+        .unwrap();
+    vault
+        .db
+        .post_membership_request_at(seed_auth.vault, declaration.handle(), peer.request(), 100)
+        .await
+        .unwrap();
+    vault
+        .db
+        .admit_membership_device_at(&seed_auth, declaration.handle(), &record, 101)
+        .await
+        .unwrap();
+    let membership = initial
+        .append(declaration.record(), peer.request(), &record)
+        .unwrap();
+    let credential = hex::encode(vault.seed.bearer().expose());
+    let peer_credential = hex::encode(peer.bearer().expose());
+    let server =
+        TestServer::start_prepared_with_env(&env, vault.db.path(), [("RUST_LOG", "debug")]);
+    let client = reqwest::Client::new();
+    let request = |path: &str| {
+        if path == "/ai/capabilities" {
+            client.get(format!("{}{path}", server.url))
+        } else {
+            client.post(format!("{}{path}", server.url)).json(&serde_json::json!({
+                "request_id":"auth-test", "messages":[{"role":"user", "content":[{"type":"text", "text":"hello"}]}], "output":{"type":"text"}
+            }))
+        }
+    };
+    for path in ["/ai/capabilities", "/ai/completions"] {
+        for bearer in [&credential, &peer_credential] {
+            let response = request(path).bearer_auth(bearer).send().await.unwrap();
+            if path == "/ai/capabilities" {
+                assert_eq!(response.status(), reqwest::StatusCode::OK);
+            } else {
+                assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+                assert_eq!(
+                    response.json::<serde_json::Value>().await.unwrap()["error"]["category"],
+                    "unconfigured"
+                );
+            }
+        }
+        for header in [
+            None,
+            Some(format!("Bearer {old_token}")),
+            Some(format!("Bearer {}", "55".repeat(32))),
+            Some("Bearer bad".into()),
+            Some(format!("Basic {credential}")),
+            Some(format!("Bearer {}", "AB".repeat(32))),
+            Some(format!("Bearer {credential}extra")),
+        ] {
+            let mut request = request(path);
+            if let Some(header) = header {
+                request = request.header("authorization", header);
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+            assert!(response.bytes().await.unwrap().is_empty());
+        }
+        let duplicate = request(path)
+            .header("authorization", format!("Bearer {credential}"))
+            .header("authorization", format!("Bearer {peer_credential}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), reqwest::StatusCode::UNAUTHORIZED);
+    }
+    let peer_auth = Authentication {
+        device: peer.device(),
+        head: membership.head(),
+        bearer: peer.bearer(),
+        ..seed_auth
+    };
+    let revoke = peer
+        .authority()
+        .prepare_revoke(&membership, &[seed_device])
+        .unwrap();
+    vault
+        .db
+        .apply_membership_management(&peer_auth, &revoke)
+        .await
+        .unwrap();
+    for path in ["/ai/capabilities", "/ai/completions"] {
+        let revoked = request(path).bearer_auth(&credential).send().await.unwrap();
+        assert_eq!(revoked.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert!(revoked.bytes().await.unwrap().is_empty());
+        let surviving = request(path)
+            .bearer_auth(&peer_credential)
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(surviving.status(), reqwest::StatusCode::UNAUTHORIZED);
+    }
+    for secret in [&credential, &peer_credential, &old_token] {
         assert!(!server.output().contains(secret));
     }
 }
