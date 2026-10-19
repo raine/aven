@@ -185,9 +185,32 @@ static-analysis:
     @checkle run static-analysis
 
 # Install release binary globally from local source and restart the local daemon when sync is enabled
+# On macOS, installs Aven.app so notifications and Login Items show Aven
 install:
-    env SQLX_OFFLINE=true cargo install --offline --path . --locked
-    if [[ "$("$HOME/.cargo/bin/aven" config get sync.enabled)" == "true" ]]; then "$HOME/.cargo/bin/aven" daemon install; fi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin="$HOME/.cargo/bin/aven"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        env SQLX_OFFLINE=true cargo build --release --offline --locked
+        pkgid=$(cargo pkgid --offline)
+        version=${pkgid##*[#@]}
+        app_dir="$HOME/.local/share/aven"
+        staging=$(mktemp -d "${TMPDIR:-/tmp}/aven-app.XXXXXX")
+        trap 'rm -rf "$staging"' EXIT
+        scripts/assemble-macos-app target/release/aven "$version" "$staging" >/dev/null
+        mkdir -p "$app_dir" "$(dirname "$bin")"
+        # Swap the whole bundle so a running daemon keeps its old executable.
+        rm -rf "$app_dir/.Aven.app.old"
+        if [[ -d "$app_dir/Aven.app" ]]; then mv "$app_dir/Aven.app" "$app_dir/.Aven.app.old"; fi
+        mv "$staging/Aven.app" "$app_dir/Aven.app"
+        rm -rf "$app_dir/.Aven.app.old"
+        ln -sfn "$app_dir/Aven.app/Contents/MacOS/aven" "$bin.tmp.$$"
+        mv -f "$bin.tmp.$$" "$bin"
+        echo "Installed $app_dir/Aven.app ($version) and linked $bin"
+    else
+        env SQLX_OFFLINE=true cargo install --offline --path . --locked
+    fi
+    if [[ "$("$bin" config get sync.enabled)" == "true" ]]; then "$bin" daemon install; fi
 
 # Install release binary globally from GitHub Actions
 install-ci:
