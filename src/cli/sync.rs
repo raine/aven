@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
+use super::ai::AiCommand;
+
 pub(super) const CONFLICT_EXAMPLES: &str = r#"Examples:
   aven conflict show APP-7KQ9
   aven conflict diff APP-7KQ9 description
@@ -168,6 +170,8 @@ pub(crate) enum ServerSubcommand {
     /// Prepare server storage and print its setup invitation
     #[command(after_long_help = SERVER_SETUP_HELP)]
     Setup(ServerSetupArgs),
+    /// Configure and check the server's AI provider
+    Ai(AiCommand),
 }
 
 #[derive(Args)]
@@ -200,6 +204,7 @@ Usage: aven server [OPTIONS]
 
 Commands:
   setup  Prepare server storage and print its setup invitation
+  ai     Configure and check the server's AI provider
   help   Print this message or the help of the given subcommand(s)
 
 Options:

@@ -56,7 +56,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         heading: "SYNC",
-        commands: &["sync", "server", "ai", "conflict", "daemon"],
+        commands: &["sync", "server", "conflict", "daemon"],
     },
     HelpSection {
         heading: "INTERACTIVE",

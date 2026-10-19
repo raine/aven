@@ -12,11 +12,11 @@ fn ai_administrator_inspection_does_not_require_a_database() {
     let env = TestEnv::new();
     env.write_config("");
 
-    let providers = env.aven_config(["ai", "providers"]);
+    let providers = env.aven_config(["server", "ai", "providers"]);
     assert!(providers.status.success());
     assert!(String::from_utf8_lossy(&providers.stdout).contains("chatgpt auth=oauth"));
 
-    let status = env.aven_config(["ai", "status", "--json"]);
+    let status = env.aven_config(["server", "ai", "status", "--json"]);
     assert!(status.status.success());
     assert!(String::from_utf8_lossy(&status.stdout).contains("\"status\": \"unconfigured\""));
 }
