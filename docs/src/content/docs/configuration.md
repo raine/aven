@@ -82,15 +82,6 @@ sync:
   enabled: true
   interval_seconds: 30
 
-ai:
-  provider: ollama
-  model: llama3.2
-  endpoint: "http://127.0.0.1:11434"
-  timeout_seconds: 45
-  max_output_tokens: 2048
-  max_concurrent_requests: 2
-  requests_per_minute: 60
-
 daemon:
   wake_addr: "127.0.0.1:47631"
 
@@ -157,30 +148,9 @@ agent:
 
 ## Server settings
 
-`aven server` does not read `config.yaml`. It reads an optional `server.yaml`
-in the directory that holds its storage, for example `/data/server.yaml` in the
-Docker image. Pass `--config PATH` or set `AVEN_SERVER_CONFIG` to use another
-file, and pass the same `--data` or `--config` to `aven server setup` and
-`aven server ai`. `aven server setup` writes a commented template when the file
-does not exist. Changes apply after the server restarts. An unknown key or
-invalid value stops the server from starting.
-
-```yaml
-ai:
-  provider: ollama
-  model: llama3.2
-attachments:
-  grace_days: 30
-  workspace_quota_bytes: 10737418240
-```
-
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `attachments.grace_days` | 30 days | Minimum age before an unused server image becomes eligible for cleanup. |
-| `attachments.workspace_quota_bytes` | 10 GiB | Maximum unique attachment image storage for one server workspace. |
-
-See [AI completion server](/ai-completions/) for the `ai` settings, provider
-credentials, and environment overrides.
+`aven server` does not read `config.yaml`. See
+[Server configuration](/server-configuration/) for its `server.yaml`, including
+AI providers and server image limits.
 
 ## Database path
 

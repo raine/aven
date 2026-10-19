@@ -14,6 +14,7 @@ export default defineConfig({
   },
   redirects: {
     '/workflows': '/getting-started/#next-steps',
+    '/ai-completions': '/server-configuration/#ai-for-ask-aven',
   },
   integrations: [
     starlight({
@@ -125,7 +126,7 @@ export default defineConfig({
             { label: 'Recurring tasks', slug: 'recurring-tasks' },
             { label: 'Work with agents', slug: 'agents' },
             { label: 'Sync across devices', slug: 'sync/setup' },
-            { label: 'AI completion server', slug: 'ai-completions' },
+            { label: 'Mobile app', slug: 'mobile-app' },
             { label: 'Back up and restore', slug: 'backups' },
             { label: 'Task metadata', slug: 'task-metadata' },
             { label: 'Custom TUI commands', slug: 'custom-commands' },
@@ -138,6 +139,7 @@ export default defineConfig({
           items: [
             { label: 'Command reference', slug: 'command-reference' },
             { label: 'Configuration', slug: 'configuration' },
+            { label: 'Server configuration', slug: 'server-configuration' },
             { label: 'Changelog', slug: 'changelog' },
           ],
         },
