@@ -598,3 +598,170 @@ fn responses_wire_replay_preserves_encrypted_reasoning_and_both_provider_ids() {
     assert_eq!(result["call_id"], "call_123");
     assert_eq!(result["output"], "[]");
 }
+
+#[test]
+fn structured_provider_errors_use_codes_and_types_not_message_text() {
+    use rig_core::completion::CompletionError;
+    for (detail, expected) in [
+        (
+            serde_json::json!({"type":"invalid_request_error", "code":"invalid_function_parameters"}),
+            ErrorCategory::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"type":"invalid_request_error"}),
+            ErrorCategory::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"code":"context_length_exceeded"}),
+            ErrorCategory::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"code":"request_too_large"}),
+            ErrorCategory::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"code":"input_too_long"}),
+            ErrorCategory::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"code":"max_tokens_exceeded"}),
+            ErrorCategory::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"type":"invalid_request_error", "code":"rate_limit_exceeded"}),
+            ErrorCategory::RateLimit,
+        ),
+        (
+            serde_json::json!({"type":"rate_limit_error"}),
+            ErrorCategory::RateLimit,
+        ),
+        (
+            serde_json::json!({"type":"overloaded_error"}),
+            ErrorCategory::TemporaryProviderFailure,
+        ),
+        (
+            serde_json::json!({"code":"server_error"}),
+            ErrorCategory::TemporaryProviderFailure,
+        ),
+        (
+            serde_json::json!({"type":"authentication_error"}),
+            ErrorCategory::AuthenticationFailure,
+        ),
+        (
+            serde_json::json!({"type":"unknown", "message":"invalid_request_error context_length_exceeded"}),
+            ErrorCategory::TemporaryProviderFailure,
+        ),
+    ] {
+        for body in [
+            serde_json::json!({"type":"error", "error":detail}),
+            serde_json::json!({"type":"response.failed", "response":{"error":detail}}),
+            detail,
+        ] {
+            let error = CompletionError::from_provider_body(body.to_string());
+            assert_eq!(classify_provider_error(&error), expected);
+        }
+    }
+    for body in ["not JSON", "null", "{}"] {
+        let error = CompletionError::from_provider_body(body);
+        assert_eq!(
+            classify_provider_error(&error),
+            ErrorCategory::TemporaryProviderFailure
+        );
+    }
+    for (status, expected) in [
+        (401, ErrorCategory::AuthenticationFailure),
+        (429, ErrorCategory::RateLimit),
+        (400, ErrorCategory::InvalidRequest),
+        (503, ErrorCategory::TemporaryProviderFailure),
+    ] {
+        let error = CompletionError::from_http_response(
+            StatusCode::from_u16(status).unwrap(),
+            r#"{"error":{"type":"invalid_request_error"}}"#,
+        );
+        assert_eq!(classify_provider_error(&error), expected);
+    }
+    let error = CompletionError::ProviderError("invalid_request_error".into());
+    assert_eq!(
+        classify_provider_error(&error),
+        ErrorCategory::TemporaryProviderFailure
+    );
+}
+
+#[tokio::test]
+async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
+    use rig_core::{client::CompletionClient, providers::chatgpt};
+    for (event, category, status, retryable) in [
+        (
+            serde_json::json!({"type":"error", "error":{"message":"Invalid schema for function 'list_tasks': null is not of type array; private-schema-marker", "type":"invalid_request_error", "param":"tools", "code":"invalid_function_parameters"}}),
+            "invalid_request",
+            StatusCode::BAD_REQUEST,
+            false,
+        ),
+        (
+            serde_json::json!({"type":"response.failed", "response":{"error":{"code":"context_length_exceeded", "message":"private-schema-marker"}}}),
+            "invalid_request",
+            StatusCode::BAD_REQUEST,
+            false,
+        ),
+        (
+            serde_json::json!({"type":"error", "error":{"type":"rate_limit_error", "message":"private-schema-marker"}}),
+            "rate_limit",
+            StatusCode::TOO_MANY_REQUESTS,
+            true,
+        ),
+        (
+            serde_json::json!({"type":"error", "error":{"type":"overloaded_error", "message":"private-schema-marker"}}),
+            "temporary_provider_failure",
+            StatusCode::SERVICE_UNAVAILABLE,
+            true,
+        ),
+        (
+            serde_json::json!({"type":"response.failed", "response":{"error":{"code":"server_error", "message":"private-schema-marker"}}}),
+            "temporary_provider_failure",
+            StatusCode::SERVICE_UNAVAILABLE,
+            true,
+        ),
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let body = format!("data: {event}\n\n");
+        let app = axum::Router::new().route(
+            "/responses",
+            axum::routing::post(
+                move || async move { ([("content-type", "text/event-stream")], body) },
+            ),
+        );
+        let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = chatgpt::Client::builder()
+            .api_key(chatgpt::ChatGPTAuth::AccessToken {
+                access_token: "offline-fixture-token".into(),
+                account_id: None,
+            })
+            .base_url(endpoint)
+            .http_client(transport::BoundedHttpClient::default())
+            .build()
+            .unwrap();
+        let mut service = ready_service();
+        service.timeout = Duration::from_secs(5);
+        service.state = BackendState::Ready {
+            backend: Box::new(client.completion_model("fixture-model")),
+            schema: SchemaStrategy::Prompted,
+            tools: true,
+            provider: "chatgpt".into(),
+        };
+        let mut request = tool_request();
+        request.tools[0].parameters = serde_json::json!({"type":"object", "properties":{"status":{"type":"string", "enum":null}}});
+        let response = service.complete(request).await.unwrap_err().into_response();
+        assert_eq!(response.status(), status);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let actual: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            actual,
+            serde_json::json!({"error":{"category":category, "retryable":retryable}})
+        );
+        upstream.abort();
+        let _ = upstream.await;
+    }
+}

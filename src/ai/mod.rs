@@ -247,6 +247,54 @@ impl IntoResponse for ErrorCategory {
     }
 }
 
+fn classify_provider_error(error: &rig_core::completion::CompletionError) -> ErrorCategory {
+    // HTTP status remains authoritative; successful SSE transports can instead
+    // carry structured errors without any failure status.
+    match error
+        .provider_response_status()
+        .map(|status| status.as_u16())
+    {
+        Some(401 | 403) => return ErrorCategory::AuthenticationFailure,
+        Some(429) => return ErrorCategory::RateLimit,
+        Some(400) => return ErrorCategory::InvalidRequest,
+        Some(_) => return ErrorCategory::TemporaryProviderFailure,
+        None => {}
+    }
+    if let Ok(Some(body)) = error.provider_response_json() {
+        let detail = body
+            .pointer("/response/error")
+            .or_else(|| body.get("error"))
+            .unwrap_or(&body);
+        // Codes are more specific than types (e.g. a rate-limit code can
+        // accompany a generic invalid_request_error type). Never match prose.
+        for field in ["code", "type"] {
+            let category = match detail.get(field).and_then(Value::as_str) {
+                Some(
+                    "invalid_request_error"
+                    | "invalid_request"
+                    | "invalid_function_parameters"
+                    | "invalid_json_schema"
+                    | "context_length_exceeded"
+                    | "request_too_large"
+                    | "input_too_long"
+                    | "string_above_max_length"
+                    | "max_tokens_exceeded",
+                ) => ErrorCategory::InvalidRequest,
+                Some("rate_limit_error" | "rate_limit_exceeded") => ErrorCategory::RateLimit,
+                Some("overloaded_error" | "overloaded" | "server_error" | "api_error") => {
+                    ErrorCategory::TemporaryProviderFailure
+                }
+                Some("authentication_error" | "invalid_api_key" | "permission_error") => {
+                    ErrorCategory::AuthenticationFailure
+                }
+                _ => continue,
+            };
+            return category;
+        }
+    }
+    ErrorCategory::TemporaryProviderFailure
+}
+
 enum BackendState {
     Ready {
         backend: Box<dyn CompletionBackend>,
@@ -392,16 +440,7 @@ impl AiService {
         let response = match result {
             Err(_) => return Err(ErrorCategory::Timeout),
             Ok(Err(error)) => {
-                let category = match error
-                    .provider_response_status()
-                    .map(|status| status.as_u16())
-                {
-                    Some(401 | 403) => ErrorCategory::AuthenticationFailure,
-                    Some(429) => ErrorCategory::RateLimit,
-                    Some(400) => ErrorCategory::InvalidRequest,
-                    Some(500..=599) | None => ErrorCategory::TemporaryProviderFailure,
-                    Some(_) => ErrorCategory::TemporaryProviderFailure,
-                };
+                let category = classify_provider_error(&error);
                 warn!(provider, outcome = ?category, duration_ms = started.elapsed().as_millis(), "AI completion failed");
                 return Err(category);
             }
