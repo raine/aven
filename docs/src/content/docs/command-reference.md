@@ -1135,10 +1135,33 @@ their sources, availability, and a next-step hint, without contacting a
 provider. `check` makes two synthetic, billable completions that verify a
 native tool call and a tool-result replay, and prints each step with a hint on
 failure. `status` and `check` read the configuration from the current process,
-not the running server.
+not the running server; use [`aven ai`](#aven-ai) to test the running server
+from a paired device.
 
 See [AI completion server](/ai-completions/) for configuration, limits,
 credential storage, and the HTTP contract.
+
+### `aven ai`
+
+Test the running sync server's AI from this device, over the configured sync
+server URL and with this device's sync credential, as paired devices such as
+the iPhone app do. Sync must be set up on the database.
+
+```sh
+aven ai status [--json]
+aven ai check [--json]
+```
+
+`status` reads the server's AI capabilities and shows the server URL, status,
+provider, model, and the server's setup hint. It reports a refused device
+credential (HTTP 401), a server or reverse proxy without AI routes (HTTP 404), a
+provider that cannot make tool calls, and network failures separately, and
+makes no billable request. `check` makes the same two synthetic, billable
+completions as `aven server ai check`, but through the running server, and
+prints each step with a hint on failure. It exits nonzero when a step fails.
+Neither command prints credentials or provider responses. A server that still
+reports an old state usually needs a restart, because server AI changes apply
+only after the server restarts.
 
 ### `aven conflict`
 
@@ -1342,9 +1365,9 @@ aven doctor [--integrity] [--json] [--fail-on-error]
 
 Doctor has a standalone bootstrap path. It can report malformed or invalid configuration, an unreadable or missing database path, invalid SQLite files, pending or failed migrations, and unsupported future schemas even when ordinary commands cannot start. Database path precedence remains `--db`, `AVEN_DEV_DB` in debug builds, `AVEN_DB`, `local.db_path`, and the platform default. When strict config loading fails, doctor can still use a syntactically readable `local.db_path` while marking config-dependent checks as skipped.
 
-Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, network request, or repair. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
+Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, or repair. Its only network request asks the sync server for its AI capabilities with this device's credential when sync is set up; that request is not billable and never fails doctor. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
 
-The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
+The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, the running sync server's AI status, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
 
 Normal doctor checks attachment records and local image availability. `--integrity` also runs read-only SQLite and relationship checks, verifies recurring schedules, generated tasks, history, pauses, and lifecycle state, verifies stored image hashes and sizes, decodes images, and confirms formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup.
 

@@ -608,9 +608,17 @@ pub async fn device_credential(
     }
     let store = key_store(host, database).await?;
     let _guard = coordination::acquire(database).await?;
-    let Some((_, server)) = store.association(database).await? else {
+    let Some((peer, server)) = store.association(database).await? else {
         return Ok(None);
     };
+    ensure!(
+        !peer
+            || matches!(
+                store.enrollment_readiness(database).await?,
+                EnrollmentReadiness::Enrolled { .. }
+            ),
+        "error sync-join-incomplete hint=\"rerun `aven sync join` to finish adding this device\""
+    );
     let inputs = store.active_inputs(database, &server).await?;
     Ok(Some(DeviceCredential {
         bearer: crate::sync::seed_claim::Secret::new(*inputs.bearer().expose()),

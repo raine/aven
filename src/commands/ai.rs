@@ -37,7 +37,7 @@ pub(crate) async fn cmd_ai(paths: ServerPaths, args: AiCommand) -> Result<()> {
     }
 }
 
-fn styled() -> bool {
+pub(super) fn styled() -> bool {
     io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
 }
 
@@ -253,9 +253,9 @@ struct CheckReport {
 }
 
 #[derive(Serialize)]
-struct StepReport {
-    step: &'static str,
-    ok: bool,
+pub(super) struct StepReport {
+    pub(super) step: &'static str,
+    pub(super) ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,7 +263,7 @@ struct StepReport {
 }
 
 impl StepReport {
-    fn passed(step: &'static str) -> Self {
+    pub(super) fn passed(step: &'static str) -> Self {
         Self {
             step,
             ok: true,
@@ -272,7 +272,7 @@ impl StepReport {
         }
     }
 
-    fn failed(step: &'static str, error: &'static str, hint: String) -> Self {
+    pub(super) fn failed(step: &'static str, error: &'static str, hint: String) -> Self {
         Self {
             step,
             ok: false,
@@ -351,6 +351,7 @@ async fn check_config(config: &ServerConfig, announce: bool) -> CheckReport {
 fn step_description(step: &str) -> &'static str {
     match step {
         "configuration" => "provider, model and credentials",
+        "server" => "running server reports AI ready",
         "tool_call" => check::Step::ToolCall.description(),
         "tool_result" => check::Step::ToolResult.description(),
         _ => "",
@@ -358,8 +359,15 @@ fn step_description(step: &str) -> &'static str {
 }
 
 fn format_check(report: &CheckReport, styled: bool) -> String {
+    let mut text = format_steps(&report.steps, &report.usage, styled);
+    text.push_str(&format!("\n{SCOPE_NOTE}\n"));
+    text
+}
+
+/// Per-step check lines, with token usage when every step passed.
+pub(super) fn format_steps(steps: &[StepReport], usage: &check::Usage, styled: bool) -> String {
     let mut text = String::new();
-    for step in &report.steps {
+    for step in steps {
         let mark = match (step.ok, styled) {
             (true, true) => "✓".with(Color::Green).bold().to_string(),
             (false, true) => "✗".with(Color::Red).bold().to_string(),
@@ -379,10 +387,10 @@ fn format_check(report: &CheckReport, styled: bool) -> String {
             text.push_str(&format!("  Hint: {hint}\n"));
         }
     }
-    if report.ok {
+    if steps.iter().all(|step| step.ok) {
         text.push_str(&format!(
             "\nTool calling works ({} input, {} output tokens).\n",
-            report.usage.input_tokens, report.usage.output_tokens
+            usage.input_tokens, usage.output_tokens
         ));
     }
     text

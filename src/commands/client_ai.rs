@@ -11,6 +11,8 @@ use crate::cli::{AiClientCommand, AiClientSubcommand};
 use crate::config::AppConfig;
 use crate::render::print_json_pretty;
 
+mod check;
+
 const COMPLETION_CONTRACT: u32 = 1;
 const RESPONSE_LIMIT: usize = 64 * 1024;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(15);
@@ -31,6 +33,9 @@ pub(crate) async fn cmd_ai_client(
                 print_report(&report);
                 Ok(())
             }
+        }
+        AiClientSubcommand::Check { json } => {
+            check::run(Connection::open(database, config, true).await?, json).await
         }
     }
 }
@@ -102,6 +107,110 @@ struct Features {
     tools: bool,
 }
 
+/// This device's way to the running server: its sync server URL and the
+/// enrolled bearer credential that paired devices present for AI routes.
+pub(super) struct Connection {
+    pub(super) server: String,
+    http: reqwest::Client,
+    authorization: reqwest::header::HeaderValue,
+}
+
+impl Connection {
+    /// `None` when this database doesn't take part in sync.
+    pub(super) async fn open(
+        database: &Database,
+        config: &AppConfig,
+        attended: bool,
+    ) -> Result<Option<Self>> {
+        let Some(credential) =
+            crate::sync::encrypted::device_credential(database, config, attended).await?
+        else {
+            return Ok(None);
+        };
+        let mut authorization = reqwest::header::HeaderValue::from_str(&format!(
+            "Bearer {}",
+            hex::encode(credential.bearer.expose())
+        ))?;
+        authorization.set_sensitive(true);
+        Ok(Some(Self {
+            server: credential.server,
+            http: crate::sync_http::HttpDriver::new()?.http,
+            authorization,
+        }))
+    }
+
+    /// Sends one request and returns its status and body, read up to one byte
+    /// past `limit`. The error describes a network failure without any URL.
+    pub(super) async fn send(
+        &self,
+        path: &str,
+        json_body: Option<&Value>,
+        timeout: Duration,
+        limit: usize,
+    ) -> std::result::Result<(u16, Vec<u8>), String> {
+        let url = reqwest::Url::parse(&self.server)
+            .and_then(|url| url.join(path))
+            .map_err(|_| "the sync server URL is invalid".to_string())?;
+        let request = match json_body {
+            Some(body) => self.http.post(url).json(body),
+            None => self.http.get(url),
+        };
+        let mut response = request
+            .header(reqwest::header::AUTHORIZATION, self.authorization.clone())
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|error| describe_network_error(&error))?;
+        let status = response.status().as_u16();
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| describe_network_error(&error))?
+        {
+            body.extend_from_slice(&chunk);
+            if body.len() > limit {
+                break;
+            }
+        }
+        Ok((status, body))
+    }
+}
+
+pub(super) const SYNC_NOT_SET_UP: &str = "This database doesn't sync, so it has no server to ask. \
+     Run `aven sync setup` or `aven sync join` first.";
+
+pub(super) fn unreachable_message(detail: &str) -> String {
+    format!(
+        "Couldn't reach the server: {detail}. Check the network and that the server is running."
+    )
+}
+
+/// The state and explanation for a non-success HTTP status from an AI route.
+pub(super) fn http_failure(status: u16) -> (AiState, String) {
+    match status {
+        401 => (
+            AiState::Unauthorized,
+            "The server didn't accept this device's credential. Check `aven sync status`; \
+             this device may have been removed from sync."
+                .into(),
+        ),
+        404 => (
+            AiState::RouteMissing,
+            "The server has no AI routes. Update the server to a version with AI support, or \
+             check that a reverse proxy in front of it forwards /ai/ paths."
+                .into(),
+        ),
+        _ => (
+            AiState::UnexpectedResponse,
+            format!(
+                "The server answered HTTP {status}. Check the server logs and any reverse proxy \
+                 in front of it."
+            ),
+        ),
+    }
+}
+
 /// Asks the running server for its AI capabilities with this device's
 /// credential. Fails only when the local credential can't be read.
 pub(super) async fn probe(
@@ -110,69 +219,25 @@ pub(super) async fn probe(
     attended: bool,
     timeout: Duration,
 ) -> Result<AiStatusReport> {
-    let Some(credential) =
-        crate::sync::encrypted::device_credential(database, config, attended).await?
-    else {
-        return Ok(report(
-            AiState::SyncNotSetUp,
-            None,
-            "This database doesn't sync, so it has no server to ask. Run `aven sync setup` or \
-             `aven sync join` first."
-                .into(),
-        ));
-    };
-    let server = credential.server;
-    let response = match fetch(&server, credential.bearer.expose(), timeout).await {
-        Ok(response) => response,
-        Err(detail) => {
-            return Ok(report(
-                AiState::Unreachable,
-                Some(server),
-                format!(
-                    "Couldn't reach the server: {detail}. Check the network and that the server \
-                     is running."
-                ),
-            ));
-        }
-    };
-    Ok(classify(server, response.0, &response.1))
+    match Connection::open(database, config, attended).await? {
+        Some(connection) => Ok(probe_with(&connection, timeout).await),
+        None => Ok(report(AiState::SyncNotSetUp, None, SYNC_NOT_SET_UP.into())),
+    }
 }
 
-async fn fetch(
-    server: &str,
-    bearer: &[u8; 32],
-    timeout: Duration,
-) -> std::result::Result<(u16, Vec<u8>), String> {
-    let url = reqwest::Url::parse(server)
-        .and_then(|url| url.join("/ai/capabilities"))
-        .map_err(|_| "the sync server URL is invalid".to_string())?;
-    let http = crate::sync_http::HttpDriver::new()
-        .map_err(|_| "the HTTP client is unavailable".to_string())?
-        .http;
-    let mut authorization =
-        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", hex::encode(bearer)))
-            .map_err(|_| "the device credential is invalid".to_string())?;
-    authorization.set_sensitive(true);
-    let mut response = http
-        .get(url)
-        .header(reqwest::header::AUTHORIZATION, authorization)
-        .timeout(timeout)
-        .send()
+pub(super) async fn probe_with(connection: &Connection, timeout: Duration) -> AiStatusReport {
+    let server = connection.server.clone();
+    match connection
+        .send("/ai/capabilities", None, timeout, RESPONSE_LIMIT)
         .await
-        .map_err(|error| describe_network_error(&error))?;
-    let status = response.status().as_u16();
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| describe_network_error(&error))?
     {
-        body.extend_from_slice(&chunk);
-        if body.len() > RESPONSE_LIMIT {
-            break;
-        }
+        Ok((status, body)) => classify(server, status, &body),
+        Err(detail) => report(
+            AiState::Unreachable,
+            Some(server),
+            unreachable_message(&detail),
+        ),
     }
-    Ok((status, body))
 }
 
 fn describe_network_error(error: &reqwest::Error) -> String {
@@ -199,31 +264,11 @@ fn report(state: AiState, server: Option<String>, message: String) -> AiStatusRe
 }
 
 fn classify(server: String, status: u16, body: &[u8]) -> AiStatusReport {
-    let mut result = match status {
-        200 => return classify_capabilities(server, body),
-        401 => report(
-            AiState::Unauthorized,
-            Some(server),
-            "The server didn't accept this device's credential. Check `aven sync status`; \
-             this device may have been removed from sync."
-                .into(),
-        ),
-        404 => report(
-            AiState::RouteMissing,
-            Some(server),
-            "The server has no AI routes. Update the server to a version with AI support, or \
-             check that a reverse proxy in front of it forwards /ai/ paths."
-                .into(),
-        ),
-        _ => report(
-            AiState::UnexpectedResponse,
-            Some(server),
-            format!(
-                "The server answered HTTP {status}. Check the server logs and any reverse proxy \
-                 in front of it."
-            ),
-        ),
-    };
+    if status == 200 {
+        return classify_capabilities(server, body);
+    }
+    let (state, message) = http_failure(status);
+    let mut result = report(state, Some(server), message);
     result.http_status = Some(status);
     result
 }
