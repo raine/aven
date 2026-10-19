@@ -1138,8 +1138,8 @@ failure. `status` and `check` read the configuration from the current process,
 not the running server; use [`aven ai`](#aven-ai) to test the running server
 from a paired device.
 
-See [AI completion server](/ai-completions/) for configuration, limits,
-credential storage, and the HTTP contract.
+See [Server configuration](/server-configuration/#ai-for-ask-aven) for
+`server.yaml`, credential storage, limits, and troubleshooting.
 
 ### `aven ai`
 

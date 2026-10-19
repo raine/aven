@@ -64,16 +64,18 @@ sync.example.com {
 ```
 
 For nginx, allow encrypted image chunks and bootstrap batches up to 4 MiB plus
-framing. Keep send and read
-timeouts longer than Aven's 35-second request deadline; the connection timeout
-can stay shorter:
+framing. Keep the send timeout longer than Aven's 35-second request deadline.
+Keep the read timeout longer than both that deadline and the server's AI
+timeout, `ai.timeout_seconds` (45 seconds by default), so slow
+[Ask Aven](/mobile-app/#ask-aven) requests are not cut off. The connection
+timeout can stay shorter:
 
 ```nginx
 location / {
     client_max_body_size 8m;
     proxy_connect_timeout 10s;
     proxy_send_timeout 40s;
-    proxy_read_timeout 40s;
+    proxy_read_timeout 60s;
     proxy_pass http://127.0.0.1:3746;
 }
 ```
@@ -122,6 +124,8 @@ services:
       - "${AVEN_HOST_IP:-127.0.0.1}:3746:3746"
     volumes:
       - aven-data:/data
+    # API keys for the server's AI provider, one VAR=value per line.
+    # env_file: aven.env
     restart: unless-stopped
     stop_grace_period: 15s
 volumes:
@@ -154,6 +158,14 @@ again if you need a replacement.
 Keep the Compose project name and volume when replacing containers. The volume
 is `aven-sync_aven-data` with the example's project name. `docker compose down`
 keeps it; **`docker compose down --volumes` deletes server storage**.
+
+The server keeps its settings in `/data/server.yaml` on the same volume. To
+set up AI for [Ask Aven](/mobile-app/#ask-aven), uncomment `env_file:` if your
+provider needs an API key, and follow
+[Quick start: Docker Compose](/server-configuration/#quick-start-docker-compose).
+Inside the container, `127.0.0.1` is the container itself, so a local model
+such as Ollama on the host needs another address; see
+[Quick start: Ollama](/server-configuration/#quick-start-ollama).
 
 Keep the published port bound to `127.0.0.1` so only the host's HTTPS proxy can
 reach it. If your proxy runs in another container, connect them over a private
@@ -284,6 +296,13 @@ journalctl --user -u aven-server -f
 
 Binding to a VPN address such as a Tailscale IP requires the VPN interface to
 be up; if the server fails at boot, systemd retries it every five seconds.
+
+### Set up AI for Ask Aven
+
+[Ask Aven](/mobile-app/#ask-aven) on iPhone needs an AI provider configured on
+the server. Run `aven server ai setup` on the server host and restart the
+server; see [AI for Ask Aven](/server-configuration/#ai-for-ask-aven) for the
+systemd, Compose, and Ollama quick starts.
 
 ## Set up sync from one device
 
