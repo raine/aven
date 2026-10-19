@@ -977,7 +977,7 @@ mod tests {
                 primary_task_id: Some(parent_id.clone()),
                 marked_task_ids: vec![],
                 visible_task_ids: vec![parent_id.clone()],
-                focused_sidebar: Some(SidebarCommandTarget::Workspace),
+                focused_sidebar: Some(SidebarCommandTarget::Workspace("default".to_string())),
                 is_empty: false,
                 empty_preferred_action: None,
             },

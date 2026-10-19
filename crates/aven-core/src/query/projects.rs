@@ -36,3 +36,26 @@ pub async fn list_project_items_in_workspace(
         })
         .collect())
 }
+
+/// Counts available, visible open tasks in live projects, grouped by workspace.
+/// Reads persisted projections without loading or reconciling other workspaces.
+pub async fn workspace_open_counts(
+    conn: &mut SqliteConnection,
+) -> Result<std::collections::HashMap<WorkspaceId, i64>> {
+    let sql = format!(
+        "SELECT t.workspace_id, COUNT(*) AS open_count
+         FROM tasks t
+         JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
+         WHERE p.deleted = 0 AND {} AND {}
+         GROUP BY t.workspace_id",
+        fragments::open_task_clause("t"),
+        fragments::available_task_clause("t", "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"),
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get("workspace_id"), row.get("open_count")))
+        .collect())
+}

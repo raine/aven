@@ -65,6 +65,12 @@ Workspace scope shows tasks across projects. Project scope narrows every view to
 
 Type in the project and workspace pickers to filter them.
 
+The sidebar's **Workspaces** section lists every workspace in key order with
+its available open task count. Click a workspace or press `Enter` on it to
+switch; switching clears scope and filters. Select the current workspace to
+show all its projects, keeping your filters. A **current** marker identifies
+which workspace the Projects section belongs to when a project is scoped.
+
 The header and sidebar show the active workspace, scope, view, and filters.
 Click a sidebar heading, or focus it and press `Enter`, to collapse or expand
 that section. Choose which views the sidebar lists with
@@ -281,7 +287,7 @@ See [terminal tips](/tips/#use-ctrl-enter-in-alacritty-and-tmux) for modified-ke
 
 Mouse actions cover the same common outcomes as keyboard commands:
 
-- Click the sidebar or header to change query, layout, scope, project, filter, or ordering.
+- Click the sidebar or header to change workspace, query, layout, scope, project, filter, or ordering.
 - Double-click a task to open detail.
 - In the columns layout, click a lane header to move selected or marked tasks, or right-click a task to choose status.
 - Click an inline image to open its TUI preview, or its text label to use the system viewer.

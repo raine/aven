@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- New: Switch workspaces from the TUI sidebar, with available open task counts for each workspace. ([#35](https://github.com/raine/aven/issues/35))
 - Fix: Aven no longer trusts TLS certificates issued through eight eMudhra intermediate CAs whose private keys were compromised. See [the advisory](https://emudhra.we-have-a-problem.com/).
 
 ## v0.1.50 (2026-10-18)

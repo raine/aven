@@ -270,15 +270,23 @@ fn marker_version(value: Option<&str>) -> Option<u32> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SidebarSection {
     Views,
-    Scope,
+    Workspaces,
     Projects,
 }
 
 impl SidebarSection {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Views => "Views",
+            Self::Workspaces => "Workspaces",
+            Self::Projects => "Projects",
+        }
+    }
+
     fn meta_key(self) -> &'static str {
         match self {
             Self::Views => "tui_sidebar_views_collapsed",
-            Self::Scope => "tui_sidebar_scope_collapsed",
+            Self::Workspaces => "tui_sidebar_scope_collapsed",
             Self::Projects => "tui_sidebar_projects_collapsed",
         }
     }
@@ -290,7 +298,7 @@ impl Database {
         let mut sections = BTreeSet::new();
         for section in [
             SidebarSection::Views,
-            SidebarSection::Scope,
+            SidebarSection::Workspaces,
             SidebarSection::Projects,
         ] {
             if get_meta(&mut conn, section.meta_key())
@@ -523,10 +531,12 @@ mod tests {
                 .await
                 .unwrap()
         };
-        database
-            .set_sidebar_section_collapsed(SidebarSection::Scope, true)
-            .await
-            .unwrap();
+        {
+            let mut conn = database.acquire_writer().await.unwrap();
+            set_meta(&mut conn, "tui_sidebar_scope_collapsed", "true")
+                .await
+                .unwrap();
+        }
         {
             let mut conn = database.acquire_writer().await.unwrap();
             set_meta(&mut conn, SidebarSection::Views.meta_key(), "invalid")
@@ -535,7 +545,7 @@ mod tests {
         }
         assert_eq!(
             database.collapsed_sidebar_sections().await.unwrap(),
-            BTreeSet::from([SidebarSection::Scope])
+            BTreeSet::from([SidebarSection::Workspaces])
         );
         let mut conn = database.acquire_reader().await.unwrap();
         let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM changes")

@@ -26,7 +26,7 @@ impl TuiProjection {
     pub(super) fn rebuild_sidebar(&mut self, app_config: &AppConfig) {
         let mut entries = vec![
             SidebarEntry {
-                label: "Views".to_string(),
+                label: SidebarSection::Views.label().to_string(),
                 count: 0,
                 target: Some(SidebarEntryTarget::Section(SidebarSection::Views)),
                 section: true,
@@ -70,16 +70,10 @@ impl TuiProjection {
                 section: true,
             },
             SidebarEntry {
-                label: "Scope".to_string(),
+                label: SidebarSection::Workspaces.label().to_string(),
                 count: 0,
-                target: Some(SidebarEntryTarget::Section(SidebarSection::Scope)),
+                target: Some(SidebarEntryTarget::Section(SidebarSection::Workspaces)),
                 section: true,
-            },
-            SidebarEntry {
-                label: "Workspace".to_string(),
-                count: self.workspace_open_count(),
-                target: Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)),
-                section: false,
             },
             SidebarEntry {
                 label: String::new(),
@@ -88,7 +82,7 @@ impl TuiProjection {
                 section: true,
             },
             SidebarEntry {
-                label: "Projects".to_string(),
+                label: SidebarSection::Projects.label().to_string(),
                 count: 0,
                 target: Some(SidebarEntryTarget::Section(SidebarSection::Projects)),
                 section: true,
@@ -110,6 +104,29 @@ impl TuiProjection {
             .collect();
         entries.retain(|entry| !matches!(entry.target, Some(SidebarEntryTarget::View(_))));
         entries.splice(1..1, views);
+        let workspace_index = entries
+            .iter()
+            .position(|entry| {
+                entry.target == Some(SidebarEntryTarget::Section(SidebarSection::Workspaces))
+            })
+            .expect("workspace section exists")
+            + 1;
+        entries.splice(
+            workspace_index..workspace_index,
+            self.workspaces.iter().map(|workspace| SidebarEntry {
+                label: workspace.key.clone(),
+                count: if workspace.id == self.active_workspace.id {
+                    self.workspace_open_count()
+                } else {
+                    self.workspace_open_counts
+                        .get(&workspace.id)
+                        .copied()
+                        .unwrap_or_default()
+                },
+                target: Some(SidebarEntryTarget::Workspace(workspace.key.clone())),
+                section: false,
+            }),
+        );
         entries.extend(self.projects.iter().map(|project| SidebarEntry {
             label: if project.inbox_count > 0 {
                 format!("{} {}*", project.prefix, project.name)

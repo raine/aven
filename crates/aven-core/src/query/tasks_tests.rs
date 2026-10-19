@@ -1649,3 +1649,68 @@ async fn work_filters_and_counts_cover_exclusions_at_both_scopes() {
         }
     }
 }
+
+#[tokio::test]
+async fn workspace_open_counts_match_project_totals_and_availability() {
+    let (_temp, mut conn) = test_conn().await;
+    let default = crate::workspaces::default_workspace_id();
+    let other = crate::workspaces::create_workspace(&mut conn, "Other")
+        .await
+        .unwrap();
+    let empty = crate::workspaces::create_workspace(&mut conn, "Empty")
+        .await
+        .unwrap();
+    for workspace in [&default, &other.id] {
+        seed_workspace_project(&mut conn, workspace, "app", "App", "APP").await;
+        seed_workspace_project(&mut conn, workspace, "gone", "Gone", "GON").await;
+        for (status, project) in [
+            ("todo", "app"),
+            ("active", "app"),
+            ("done", "app"),
+            ("canceled", "app"),
+            ("inbox", "app"),
+            ("backlog", "app"),
+            ("todo", "gone"),
+        ] {
+            seed_workspace_task(
+                &mut conn,
+                workspace,
+                &crate::ids::new_id(),
+                status,
+                project,
+                status,
+                "none",
+                "001",
+            )
+            .await;
+        }
+    }
+    sqlx::query("UPDATE tasks SET available_at = '2999-01-01T00:00:00Z' WHERE status = 'inbox'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET deleted = 1 WHERE status = 'backlog'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projects SET deleted = 1 WHERE key = 'gone'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET available_at = '2000-01-01T00:00:00Z' WHERE workspace_id = ? AND status = 'inbox'").bind(&other.id).execute(&mut *conn).await.unwrap();
+    let counts = crate::query::projects::workspace_open_counts(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(counts[&default], 2);
+    assert_eq!(counts[&other.id], 3);
+    assert_eq!(counts.get(&empty.id).copied().unwrap_or_default(), 0);
+    for workspace in [&default, &other.id, &empty.id] {
+        let projects = list_project_items_in_workspace(&mut conn, workspace)
+            .await
+            .unwrap();
+        assert_eq!(
+            counts.get(workspace).copied().unwrap_or_default(),
+            projects.iter().map(|p| p.open_count).sum::<i64>()
+        );
+    }
+}

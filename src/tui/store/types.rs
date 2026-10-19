@@ -592,6 +592,7 @@ pub(crate) enum SidebarEntryTarget {
     Section(SidebarSection),
     View(TaskQuery),
     Scope(TaskScopeTarget),
+    Workspace(String),
 }
 
 #[derive(Debug, Clone)]

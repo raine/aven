@@ -236,12 +236,7 @@ async fn sidebar_enter_selects_the_highlighted_workspace_scope() {
         .store
         .sidebar_entries
         .iter()
-        .position(|entry| {
-            matches!(
-                &entry.target,
-                Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace))
-            )
-        })
+        .position(|entry| matches!(&entry.target, Some(SidebarEntryTarget::Workspace(_))))
         .unwrap();
     app.list.focus_sidebar();
     app.list.select_sidebar(Some(workspace_index));

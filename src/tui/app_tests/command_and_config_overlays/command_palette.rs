@@ -115,12 +115,7 @@ async fn colon_dispatch_opens_contextual_panels_for_sidebar_targets() {
             "scope-project",
         ),
         (
-            |target| {
-                matches!(
-                    target,
-                    SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)
-                )
-            },
+            |target| matches!(target, SidebarEntryTarget::Workspace(_)),
             "scope-all",
         ),
         (

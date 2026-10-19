@@ -16,6 +16,7 @@ impl TuiStore {
         self.projection
             .workspaces
             .sort_by(|left, right| left.key.cmp(&right.key));
+        self.projection.rebuild_sidebar(&self.app_config);
         Ok(format!("created workspace {display}"))
     }
 
@@ -46,6 +47,7 @@ impl TuiStore {
             .workspaces
             .sort_by(|left, right| left.key.cmp(&right.key));
 
+        self.projection.rebuild_sidebar(&self.app_config);
         if renames_active {
             Ok(format!(
                 "renamed active workspace to {} ({})",

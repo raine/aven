@@ -148,6 +148,7 @@ pub(crate) struct TuiProjection {
     pub(crate) projects: Vec<ProjectListItem>,
     pub(crate) labels: Vec<String>,
     pub(crate) workspaces: Vec<Workspace>,
+    pub(crate) workspace_open_counts: std::collections::HashMap<crate::ids::WorkspaceId, i64>,
     pub(crate) active_workspace: Workspace,
     pub(crate) counts: SidebarCounts,
     pub(crate) sidebar_entries: Vec<SidebarEntry>,
@@ -651,6 +652,7 @@ impl TuiProjection {
             projects: Vec::new(),
             labels: Vec::new(),
             workspaces: Vec::new(),
+            workspace_open_counts: Default::default(),
             active_workspace,
             counts: SidebarCounts::default(),
             sidebar_entries: Vec::new(),
@@ -683,6 +685,9 @@ impl TuiProjection {
         inject_refresh_failure(fail_at, RefreshFailureStage::Projects)?;
         self.projects = database
             .list_project_items_from_current_projection(&workspace_id)
+            .await?;
+        self.workspace_open_counts = database
+            .workspace_open_counts_from_current_projection()
             .await?;
         self.labels = database.list_labels(&workspace_id, None).await?;
         let fallback_scope = self.ensure_valid_scope();

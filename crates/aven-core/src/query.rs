@@ -276,6 +276,14 @@ impl Database {
             .await
     }
 
+    /// Reads available open counts across persisted workspace projections.
+    pub async fn workspace_open_counts_from_current_projection(
+        &self,
+    ) -> Result<std::collections::HashMap<WorkspaceId, i64>> {
+        let mut conn = self.acquire_reader().await?;
+        projects::workspace_open_counts(&mut conn).await
+    }
+
     pub async fn list_project_items(
         &self,
         workspace_id: &WorkspaceId,

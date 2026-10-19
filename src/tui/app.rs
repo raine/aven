@@ -437,7 +437,15 @@ impl App {
             .and_then(|entry| entry.target.as_ref())
             .map(|target| match target {
                 SidebarEntryTarget::View(view) => SidebarCommandTarget::View(*view),
-                SidebarEntryTarget::Scope(scope) => SidebarCommandTarget::from_scope(scope),
+                SidebarEntryTarget::Scope(crate::tui::store::TaskScopeTarget::Project(project)) => {
+                    SidebarCommandTarget::Project(project.clone())
+                }
+                SidebarEntryTarget::Scope(crate::tui::store::TaskScopeTarget::Workspace) => {
+                    SidebarCommandTarget::Workspace(self.store.active_workspace.key.clone())
+                }
+                SidebarEntryTarget::Workspace(workspace) => {
+                    SidebarCommandTarget::Workspace(workspace.clone())
+                }
                 SidebarEntryTarget::Section(section) => SidebarCommandTarget::Section(*section),
             })
     }

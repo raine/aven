@@ -226,13 +226,7 @@ impl App {
     pub(super) async fn submit_header_menu(&mut self, action: HeaderMenuAction) -> Result<()> {
         self.overlay = None;
         match action {
-            HeaderMenuAction::Workspace(workspace) => {
-                let selected = self.store.switch_workspace(workspace).await?;
-                self.list.clear_last_change();
-                self.clear_navigation_history();
-                self.apply_filter_selection(selected);
-                Ok(())
-            }
+            HeaderMenuAction::Workspace(workspace) => self.switch_workspace(workspace).await,
             HeaderMenuAction::WorkspaceScope => self.show_scope(TaskScopeTarget::Workspace).await,
             HeaderMenuAction::ProjectScope(project) => {
                 self.show_scope(TaskScopeTarget::Project(project)).await
@@ -356,10 +350,18 @@ impl App {
             self.begin_switch_workspace().await?;
             return Ok(());
         };
+        self.switch_workspace(workspace).await
+    }
+
+    pub(super) async fn switch_workspace(&mut self, workspace: String) -> Result<()> {
         let selected = self.store.switch_workspace(workspace).await?;
         self.list.clear_last_change();
         self.clear_navigation_history();
         self.apply_filter_selection(selected);
+        self.list
+            .select_sidebar_target(Some(&crate::tui::store::SidebarEntryTarget::Workspace(
+                self.store.active_workspace.key.clone(),
+            )));
         Ok(())
     }
 }

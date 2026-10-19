@@ -1145,3 +1145,92 @@ async fn text_panel_mouse_scrolls_and_closes_outside() {
 
     assert!(app.overlay.is_none());
 }
+
+#[tokio::test]
+async fn sidebar_workspaces_keep_key_order_counts_and_target_after_switching() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Default task")).await;
+    for name in ["Zulu", "Alpha", "Empty"] {
+        app.store.create_workspace(name.to_string()).await.unwrap();
+    }
+    let keys: Vec<_> = app
+        .store
+        .sidebar_entries
+        .iter()
+        .filter_map(|entry| match &entry.target {
+            Some(SidebarEntryTarget::Workspace(key)) => Some(key.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys, ["alpha", "default", "empty", "zulu"]);
+    app.submit_switch_workspace(vec!["alpha".to_string()])
+        .await
+        .unwrap();
+    app.store.create_project("Extra".to_string()).await.unwrap();
+    create_and_select_task(&mut app, test_task_draft("Alpha task")).await;
+    let mut deferred = test_task_draft("Deferred");
+    deferred.available_at = Some("2999-01-01T00:00:00Z".to_string());
+    create_and_select_task(&mut app, deferred).await;
+    app.show_scope(TaskScopeTarget::Project("extra".to_string()))
+        .await
+        .unwrap();
+    app.submit_filter_priority(vec!["urgent".to_string()])
+        .await
+        .unwrap();
+    let rows: Vec<_> = app
+        .store
+        .sidebar_entries
+        .iter()
+        .filter_map(|entry| {
+            if let Some(SidebarEntryTarget::Workspace(key)) = &entry.target {
+                Some((key.as_str(), entry.count))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [("alpha", 1), ("default", 1), ("empty", 0), ("zulu", 0)]
+    );
+    assert!(app.store.tasks.is_empty());
+    let target = SidebarEntryTarget::Workspace("default".to_string());
+    app.apply_sidebar_target(Some(target.clone()))
+        .await
+        .unwrap();
+    assert_eq!(app.store.active_workspace.key, "default");
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    assert_eq!(app.store.view_state.filter_modifiers, Default::default());
+    assert_eq!(
+        app.list.sidebar_entries()[app.list.selected_sidebar().unwrap()].target,
+        Some(target)
+    );
+    assert!(
+        app.store
+            .projects
+            .iter()
+            .all(|project| project.key != "extra")
+    );
+    assert!(
+        app.store
+            .tasks
+            .iter()
+            .all(|task| task.task.title == "Default task")
+    );
+    app.go_back().await.unwrap();
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("no previous navigation state")
+    );
+
+    app.submit_filter_priority(vec!["high".to_string()])
+        .await
+        .unwrap();
+    app.apply_sidebar_target(Some(SidebarEntryTarget::Workspace("default".to_string())))
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store.view_state.filter_modifiers.priority.as_deref(),
+        Some("high")
+    );
+}

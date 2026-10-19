@@ -185,7 +185,14 @@ pub(super) fn render_sidebar(
                 ));
             }
             let marker = sidebar_icon(entry);
-            let label = sidebar_label(entry);
+            let mut label = sidebar_label(entry);
+            let workspace_current = matches!(&entry.target, Some(SidebarEntryTarget::Workspace(key)) if *key == store.active_workspace.key);
+            let workspace_inactive = matches!(&entry.target, Some(SidebarEntryTarget::Workspace(_))) && !workspace_current;
+            if workspace_current && store.view_state.scope != TaskScope::Workspace {
+                let suffix = " · current";
+                let available = content_width.saturating_sub(SIDEBAR_ICON_WIDTH + 2 + entry.count.to_string().width() + suffix.width());
+                label = format!("{}{suffix}", truncate_width(&label, available));
+            }
             let selected = index == list.selected_sidebar().unwrap_or(usize::MAX);
             let is_active_view = sidebar_entry_active(entry, store);
             let color = match &entry.target {
@@ -195,10 +202,13 @@ pub(super) fn render_sidebar(
                 Some(SidebarEntryTarget::View(TaskQuery::Active)) => theme.fg_muted,
                 Some(SidebarEntryTarget::View(TaskQuery::Todo)) => theme.fg_dim,
                 Some(SidebarEntryTarget::View(TaskQuery::Epics)) => theme.attention,
+                Some(SidebarEntryTarget::Workspace(_)) if workspace_inactive => theme.fg_dim,
                 _ => theme.fg,
             };
             let label_style = if is_active_view {
                 Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
+            } else if workspace_inactive {
+                theme.dim()
             } else if selected {
                 Style::new().fg(theme.fg).add_modifier(Modifier::BOLD)
             } else {
@@ -290,6 +300,9 @@ fn badge(theme: &Theme, count: i64, active: bool) -> Span<'static> {
 
 fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
     match &entry.target {
+        Some(SidebarEntryTarget::Workspace(key)) => {
+            *key == store.active_workspace.key && store.view_state.scope == TaskScope::Workspace
+        }
         Some(SidebarEntryTarget::View(view)) => *view == store.view_state.query,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => {
             store.view_state.scope == TaskScope::Workspace
@@ -320,7 +333,8 @@ fn sidebar_icon(entry: &SidebarEntry) -> &'static str {
         Some(SidebarEntryTarget::View(TaskQuery::Epics)) => EPIC_MARKER,
         Some(SidebarEntryTarget::View(TaskQuery::Recurring)) => RECURRING_MARKER,
         Some(SidebarEntryTarget::View(TaskQuery::Open)) => OPEN_MARKER,
-        Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
+        Some(SidebarEntryTarget::Workspace(_))
+        | Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)) => WORKSPACE_MARKER,
         Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(_))) => PROJECT_MARKER,
         Some(SidebarEntryTarget::Section(_)) | None => " ",
     }
@@ -353,7 +367,8 @@ fn sidebar_label(entry: &SidebarEntry) -> String {
             .unwrap_or(&entry.label)
             .trim_end_matches('*')
             .to_string(),
-        Some(SidebarEntryTarget::Section(_)) | None => entry.label.clone(),
+        Some(SidebarEntryTarget::Section(section)) => section.label().to_string(),
+        Some(SidebarEntryTarget::Workspace(_)) | None => entry.label.clone(),
     }
 }
 
@@ -424,7 +439,7 @@ mod tests {
 
     #[test]
     fn sidebar_section_indicators_are_right_aligned_without_overflow() {
-        for label in ["Views", "Scope", "Projects"] {
+        for label in ["Views", "Workspaces", "Projects"] {
             for collapsed in [false, true] {
                 for width in 0..=34 {
                     let line = sidebar_section_line(THEME, label, collapsed, width);

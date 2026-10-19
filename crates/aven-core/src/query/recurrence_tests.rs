@@ -952,3 +952,35 @@ async fn base_projection_groups_terminal_occurrences_before_limits() {
     .await;
     assert_eq!(expanded.len(), 2);
 }
+
+#[tokio::test]
+async fn workspace_open_counts_exclude_paused_and_archived_occurrences() {
+    let (_temp, database, workspace) = setup().await;
+    let paused = create(&database, &workspace, "Paused", 1).await;
+    let archived = create(&database, &workspace, "Archived", 1).await;
+    let _visible = create(&database, &workspace, "Visible", 1).await;
+    database
+        .pause_recurrence_series(&workspace, &paused.series.id)
+        .await
+        .unwrap();
+    database
+        .reconcile_recurrence_series(&workspace, &archived.series.id, at(3, 12))
+        .await
+        .unwrap();
+    let counts = database
+        .workspace_open_counts_from_current_projection()
+        .await
+        .unwrap();
+    let projects = database
+        .list_project_items_from_current_projection(&workspace.id)
+        .await
+        .unwrap();
+    assert_eq!(counts[&workspace.id], 2);
+    assert_eq!(
+        counts[&workspace.id],
+        projects
+            .iter()
+            .map(|project| project.open_count)
+            .sum::<i64>()
+    );
+}

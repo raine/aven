@@ -314,9 +314,7 @@ impl App {
             SidebarCommandTarget::Project(project) => {
                 SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))
             }
-            SidebarCommandTarget::Workspace => {
-                SidebarEntryTarget::Scope(TaskScopeTarget::Workspace)
-            }
+            SidebarCommandTarget::Workspace(workspace) => SidebarEntryTarget::Workspace(workspace),
         };
         self.apply_sidebar_target(Some(target)).await
     }
@@ -325,7 +323,16 @@ impl App {
         &mut self,
         target: Option<crate::tui::store::SidebarEntryTarget>,
     ) -> Result<()> {
+        let activated_target = target.clone();
         match target {
+            Some(crate::tui::store::SidebarEntryTarget::Workspace(workspace)) => {
+                if workspace == self.store.active_workspace.key {
+                    self.show_scope(crate::tui::store::TaskScopeTarget::Workspace)
+                        .await?;
+                } else {
+                    self.switch_workspace(workspace).await?;
+                }
+            }
             Some(crate::tui::store::SidebarEntryTarget::Section(section)) => {
                 self.list
                     .toggle_section(section, &self.store.sidebar_entries);
@@ -347,6 +354,12 @@ impl App {
         self.list.focus_tasks();
         self.overlay = None;
         self.restore_sidebar_selection();
+        if matches!(
+            activated_target,
+            Some(crate::tui::store::SidebarEntryTarget::Workspace(_))
+        ) {
+            self.list.select_sidebar_target(activated_target.as_ref());
+        }
         self.prune_task_marks();
         Ok(())
     }

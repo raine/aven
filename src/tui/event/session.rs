@@ -1,6 +1,6 @@
 use crate::ids::{TaskId, WorkspaceId};
 use crate::tui::app::DetailSection;
-use crate::tui::store::{SidebarSection, TaskQuery, TaskScopeTarget};
+use crate::tui::store::{SidebarSection, TaskQuery};
 use aven_core::recurrence::RecurrenceSeriesId;
 
 use super::Action;
@@ -17,16 +17,7 @@ pub(crate) enum SidebarCommandTarget {
     Section(SidebarSection),
     View(TaskQuery),
     Project(String),
-    Workspace,
-}
-
-impl SidebarCommandTarget {
-    pub(crate) fn from_scope(target: &TaskScopeTarget) -> Self {
-        match target {
-            TaskScopeTarget::Workspace => Self::Workspace,
-            TaskScopeTarget::Project(project) => Self::Project(project.clone()),
-        }
-    }
+    Workspace(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,7 +285,7 @@ fn sidebar_situation(target: &SidebarCommandTarget) -> CommandSituation {
             project: project.clone(),
         },
         SidebarCommandTarget::View(view) => CommandSituation::SidebarView { view: *view },
-        SidebarCommandTarget::Workspace => CommandSituation::SidebarWorkspace,
+        SidebarCommandTarget::Workspace(_) => CommandSituation::SidebarWorkspace,
         SidebarCommandTarget::Section(_) => CommandSituation::Neutral,
     }
 }

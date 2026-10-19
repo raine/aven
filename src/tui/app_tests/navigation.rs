@@ -365,7 +365,7 @@ async fn sidebar_sections_collapse_independently_and_headers_expand_with_mouse()
         app.refresh().await.unwrap();
         for section in [
             SidebarSection::Views,
-            SidebarSection::Scope,
+            SidebarSection::Workspaces,
             SidebarSection::Projects,
         ] {
             assert!(!app.list.section_collapsed(section));
@@ -382,7 +382,7 @@ async fn sidebar_sections_collapse_independently_and_headers_expand_with_mouse()
         app.select_edge(false).await.unwrap();
         for section in [
             SidebarSection::Views,
-            SidebarSection::Scope,
+            SidebarSection::Workspaces,
             SidebarSection::Projects,
             SidebarSection::Views,
         ] {
@@ -395,17 +395,19 @@ async fn sidebar_sections_collapse_independently_and_headers_expand_with_mouse()
         assert_eq!(app.store.view_state.query, TaskQuery::Queue);
         assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
         for section in [
-            SidebarSection::Scope,
+            SidebarSection::Workspaces,
             SidebarSection::Views,
             SidebarSection::Projects,
         ] {
             click_sidebar_target(&mut app, SidebarEntryTarget::Section(section), width, 24).await;
             assert!(!app.list.section_collapsed(section));
-            if section == SidebarSection::Scope {
+            if section == SidebarSection::Workspaces {
                 assert!(app.list.section_collapsed(SidebarSection::Views));
                 assert!(app.list.section_collapsed(SidebarSection::Projects));
                 assert!(app.list.sidebar_entries().iter().any(|entry| entry.target
-                    == Some(SidebarEntryTarget::Scope(TaskScopeTarget::Workspace))));
+                    == Some(SidebarEntryTarget::Workspace(
+                        app.store.active_workspace.key.clone()
+                    ))));
             }
         }
         app.list
@@ -436,7 +438,7 @@ async fn sidebar_header_indicators_render_at_right_with_whole_row_targets() {
         app.list.focus_sidebar();
         for section in [
             SidebarSection::Views,
-            SidebarSection::Scope,
+            SidebarSection::Workspaces,
             SidebarSection::Projects,
         ] {
             let target = SidebarEntryTarget::Section(section);
@@ -660,7 +662,7 @@ async fn sidebar_heading_command_keeps_captured_section_identity() {
 
 #[tokio::test]
 async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
-    use crate::tui::store::SidebarSection::{Projects, Scope, Views};
+    use crate::tui::store::SidebarSection::{Projects, Views, Workspaces};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("sidebar.db");
     let open = async || {
@@ -669,7 +671,7 @@ async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
             .unwrap()
     };
     let mut app = open().await;
-    for section in [Views, Scope, Projects] {
+    for section in [Views, Workspaces, Projects] {
         assert!(!app.list.section_collapsed(section));
     }
     for section in [Views, Projects] {
@@ -680,7 +682,7 @@ async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
     drop(app);
     let mut app = open().await;
     assert!(app.list.section_collapsed(Views));
-    assert!(!app.list.section_collapsed(Scope));
+    assert!(!app.list.section_collapsed(Workspaces));
     assert!(app.list.section_collapsed(Projects));
     assert!(
         !app.list
@@ -691,7 +693,7 @@ async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
     app.show_view(TaskQuery::Ready).await.unwrap();
     app.refresh().await.unwrap();
     assert!(app.list.section_collapsed(Views));
-    for section in [Views, Scope] {
+    for section in [Views, Workspaces] {
         app.apply_sidebar_target(Some(SidebarEntryTarget::Section(section)))
             .await
             .unwrap();
@@ -699,7 +701,7 @@ async fn sidebar_sections_restore_on_reopen_and_expansion_persists() {
     drop(app);
     let app = open().await;
     assert!(!app.list.section_collapsed(Views));
-    assert!(app.list.section_collapsed(Scope));
+    assert!(app.list.section_collapsed(Workspaces));
     assert!(app.list.section_collapsed(Projects));
     assert!(app.list.sidebar_entries().iter().any(|entry| matches!(
         entry.target,
@@ -743,9 +745,72 @@ async fn sidebar_load_failure_warns_and_defaults_to_expanded() {
     );
     for section in [
         SidebarSection::Views,
-        SidebarSection::Scope,
+        SidebarSection::Workspaces,
         SidebarSection::Projects,
     ] {
         assert!(!app.list.section_collapsed(section));
     }
+}
+
+#[tokio::test]
+async fn workspace_rows_render_three_states_and_click_switches() {
+    use ratatui::style::Modifier;
+    let mut app = test_app().await;
+    app.store
+        .create_workspace("Other".to_string())
+        .await
+        .unwrap();
+    app.store
+        .create_project("Mobile".to_string())
+        .await
+        .unwrap();
+    app.show_scope(TaskScopeTarget::Project("mobile".to_string()))
+        .await
+        .unwrap();
+    // Keep the cursor elsewhere so workspace styling is tested independently.
+    app.list
+        .select_sidebar_target(Some(&SidebarEntryTarget::View(TaskQuery::Queue)));
+    let buffer = render_app_buffer(&mut app, 140, 40);
+    let row_for = |app: &App, key: &str| {
+        2 + app
+            .list
+            .sidebar_entries()
+            .iter()
+            .position(|entry| entry.target == Some(SidebarEntryTarget::Workspace(key.to_string())))
+            .unwrap() as u16
+    };
+    let active_row = row_for(&app, "default");
+    let other_row = row_for(&app, "other");
+    assert_eq!(buffer[(3, active_row)].fg, app.theme.fg);
+    assert_eq!(buffer[(3, other_row)].fg, app.theme.fg_dim);
+    let text: String = (0..25)
+        .map(|col| buffer[(col, active_row)].symbol())
+        .collect();
+    assert!(text.contains("default · current"));
+
+    click_sidebar_target(
+        &mut app,
+        SidebarEntryTarget::Workspace("default".to_string()),
+        140,
+        40,
+    )
+    .await;
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    app.list
+        .select_sidebar_target(Some(&SidebarEntryTarget::View(TaskQuery::Queue)));
+    let buffer = render_app_buffer(&mut app, 140, 40);
+    assert_eq!(buffer[(3, active_row)].fg, app.theme.accent);
+    assert!(buffer[(3, active_row)].modifier.contains(Modifier::BOLD));
+    click_sidebar_target(
+        &mut app,
+        SidebarEntryTarget::Workspace("other".to_string()),
+        140,
+        40,
+    )
+    .await;
+    assert_eq!(app.store.active_workspace.key, "other");
+    assert_eq!(
+        app.list.sidebar_entries()[app.list.selected_sidebar().unwrap()].target,
+        Some(SidebarEntryTarget::Workspace("other".to_string()))
+    );
 }
