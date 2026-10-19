@@ -1110,6 +1110,7 @@ its `server.yaml` and store login credentials in `private/ai` beside it. AI
 changes apply after the server restarts.
 
 ```sh
+aven server ai setup [--provider <provider> --model <model>] [--endpoint <url>] [--yes] [--no-check]
 aven server ai providers
 aven server ai login [provider]
 aven server ai logout <provider>
@@ -1117,6 +1118,13 @@ aven server ai status [--json]
 aven server ai check [--json]
 ```
 
+`setup` is a guided wizard: it prompts for a tool-capable provider (tested
+ones first), a model and, for local or custom endpoints, the endpoint URL; logs
+in to ChatGPT or GitHub Copilot inline; writes the `ai` choice to `server.yaml`
+atomically while keeping the rest of the file; warns about `AVEN_AI_*`
+overrides; runs `check`; and prints how to restart the server. Without a
+terminal it requires `--provider` and `--model`. `--yes` skips confirmation and
+keeps an existing login, and `--no-check` skips the billable check.
 `providers` lists supported providers, credential sources, JSON-schema
 strategies, tool support, and exclusions. `login` starts an interactive OAuth
 device flow for ChatGPT or GitHub Copilot; without a provider it lists them, and

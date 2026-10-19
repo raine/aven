@@ -159,3 +159,43 @@ fn template_is_written_once_and_loads_as_defaults_or_uncommented() {
     );
     assert_eq!(config.attachments.grace_days, 30);
 }
+
+#[test]
+fn ai_selection_edits_only_the_ai_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.yaml");
+
+    write_ai_selection(&path, "ollama", "llama3.2", Some("http://127.0.0.1:11434")).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(&template()), "{text}");
+    assert!(
+        text.ends_with(
+            "\nai:\n  provider: ollama\n  model: llama3.2\n  endpoint: http://127.0.0.1:11434\n"
+        ),
+        "{text}"
+    );
+
+    fs::write(
+        &path,
+        "# mine\nai:\n  provider: ollama\n  endpoint: http://h:1\n  model: old\n  timeout_seconds: 90 # slow\nattachments:\n  grace_days: 3\n",
+    )
+    .unwrap();
+    write_ai_selection(&path, "chatgpt", "gpt-6-astra", None).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "# mine\nai:\n  provider: chatgpt\n  model: gpt-6-astra\n  timeout_seconds: 90 # slow\nattachments:\n  grace_days: 3\n"
+    );
+
+    let error = write_ai_selection(&path, "chatgpt", "m", Some("http://h:1")).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("ai.endpoint is supported only"),
+        "{error:#}"
+    );
+    fs::write(&path, "ai: {provider: ollama, model: m}\n").unwrap();
+    let error = write_ai_selection(&path, "ollama", "n", None).unwrap_err();
+    assert!(format!("{error:#}").contains("block mapping"), "{error:#}");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "ai: {provider: ollama, model: m}\n"
+    );
+}

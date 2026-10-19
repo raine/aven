@@ -88,6 +88,7 @@ qrcode = { version = "0.14.1", default-features = false }
 terminal-colorsaurus = "1.0.3"
 clap_complete = "4.6"
 rig-core = { version = "=0.42.0", default-features = false, features = ["rustls"] }
+inquire = "0.9.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

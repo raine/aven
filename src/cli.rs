@@ -30,7 +30,7 @@ pub(crate) use administration::{
     ProjectPathSubcommand, ProjectSubcommand, SelfUpdateArgs, SkillCommand, SkillInstallArgs,
     SkillSubcommand, WorkspaceCommand, WorkspaceSubcommand,
 };
-pub(crate) use ai::{AiClientCommand, AiClientSubcommand, AiCommand, AiSubcommand};
+pub(crate) use ai::{AiClientCommand, AiClientSubcommand, AiCommand, AiSetupArgs, AiSubcommand};
 pub(crate) use data_safety::{
     AttachmentAddArgs, AttachmentCommand, AttachmentDeleteArgs, AttachmentGetArgs,
     AttachmentListArgs, AttachmentPruneArgs, AttachmentSubcommand, BackupCommand,

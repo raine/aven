@@ -25,6 +25,9 @@ pub(crate) struct AiCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum AiSubcommand {
+    /// Choose a provider and model, log in, write server.yaml and run the check
+    #[command(after_long_help = SETUP_HELP)]
+    Setup(AiSetupArgs),
     /// List supported providers and authentication requirements
     Providers,
     /// Log in to an OAuth provider (chatgpt or copilot)
@@ -78,4 +81,34 @@ pub(crate) enum AiClientSubcommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+const SETUP_HELP: &str = r#"Without flags, setup prompts for a tool-capable provider (tested ones first),
+a model and, for local or custom endpoints, the endpoint URL. ChatGPT and
+GitHub Copilot log in inline. API-key providers read their key from the server
+process environment; setup explains where and runs the check when the key is
+also set in this shell. Setup writes only ai.provider, ai.model and
+ai.endpoint in server.yaml, keeping the rest of the file, then runs
+`aven server ai check` and prints how to restart the server.
+
+Without a terminal, pass --provider and --model. --yes accepts the existing
+login and skips the confirmation prompt."#;
+
+#[derive(Args)]
+pub(crate) struct AiSetupArgs {
+    /// Provider to configure, as listed by `aven server ai providers`
+    #[arg(long)]
+    pub(crate) provider: Option<String>,
+    /// Model name at the provider
+    #[arg(long)]
+    pub(crate) model: Option<String>,
+    /// Endpoint URL for llamafile, ollama or an OpenAI-compatible server
+    #[arg(long)]
+    pub(crate) endpoint: Option<String>,
+    /// Do not ask for confirmation; keep an existing login
+    #[arg(long, short = 'y')]
+    pub(crate) yes: bool,
+    /// Skip the billable tool-call check
+    #[arg(long)]
+    pub(crate) no_check: bool,
 }
