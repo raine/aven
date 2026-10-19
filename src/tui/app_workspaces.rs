@@ -3,9 +3,20 @@ use anyhow::Result;
 use crate::projects::normalize_key;
 use crate::tui::app::App;
 use crate::tui::overlay::{OverlayState, PickerIntent, TextIntent};
+use crate::workspaces::Workspace;
 
 pub(crate) const ADD_WORKSPACE_TITLE: &str = "Create workspace";
 pub(crate) const RENAME_WORKSPACE_TITLE: &str = "Rename workspace";
+pub(crate) const DELETE_WORKSPACE_TITLE: &str = "Delete workspace";
+
+fn workspace_delete_prompt(workspace: &Workspace, warnings: &[String]) -> String {
+    let mut lines = warnings.to_vec();
+    lines.push(format!(
+        "Type {} to delete workspace {} on every device:",
+        workspace.key, workspace.name
+    ));
+    lines.join("\n")
+}
 
 fn validate_workspace_name(value: &str) -> std::result::Result<String, &'static str> {
     let name = value.trim();
@@ -121,16 +132,113 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn begin_delete_workspace(&mut self) {
+        self.pending_shortcut.clear();
+        let items = self.store.workspace_delete_picker_items();
+        if items.is_empty() {
+            self.set_warning("only the default workspace exists, and it cannot be deleted");
+            return;
+        }
+        self.open_picker_overlay(
+            PickerIntent::DeleteWorkspace,
+            DELETE_WORKSPACE_TITLE,
+            items,
+            false,
+        );
+    }
+
+    pub(super) async fn submit_delete_workspace_picker(
+        &mut self,
+        values: Vec<String>,
+    ) -> Result<()> {
+        let Some(key) = self.require_picker_value(values, "no matching workspace") else {
+            self.begin_delete_workspace();
+            return Ok(());
+        };
+        let Some(workspace) = self
+            .store
+            .workspaces
+            .iter()
+            .find(|candidate| candidate.key == key)
+            .cloned()
+        else {
+            self.set_warning("workspace no longer exists");
+            return Ok(());
+        };
+        let warnings = self.store.workspace_deletion_warnings(&workspace).await?;
+        self.overlay = Some(OverlayState::text_input(
+            TextIntent::ConfirmDeleteWorkspace {
+                workspace: workspace.clone(),
+                warnings: warnings.clone(),
+            },
+            DELETE_WORKSPACE_TITLE,
+            workspace_delete_prompt(&workspace, &warnings),
+            String::new(),
+        ));
+        Ok(())
+    }
+
+    pub(super) async fn submit_delete_workspace_name(
+        &mut self,
+        workspace: Workspace,
+        warnings: Vec<String>,
+        value: String,
+    ) -> Result<()> {
+        if value.trim() != workspace.key {
+            self.set_warning("workspace key does not match");
+            let prompt = workspace_delete_prompt(&workspace, &warnings);
+            self.overlay = Some(OverlayState::text_input(
+                TextIntent::ConfirmDeleteWorkspace {
+                    workspace,
+                    warnings,
+                },
+                DELETE_WORKSPACE_TITLE,
+                prompt,
+                value,
+            ));
+            return Ok(());
+        }
+        match self.store.delete_workspace(&workspace).await {
+            Ok(message) => {
+                let message = if self.report_deleted_active_workspace() {
+                    format!("{message}; switched to default")
+                } else {
+                    message
+                };
+                self.set_success(message);
+            }
+            Err(error) => self.set_error(format!("{error:#}")),
+        }
+        Ok(())
+    }
+
+    /// Reports a switch to the default workspace after a refresh found the
+    /// active workspace deleted, here or on another device.
+    pub(super) fn report_deleted_active_workspace(&mut self) -> bool {
+        let Some(name) = self.store.take_deleted_active_workspace() else {
+            return false;
+        };
+        self.list.clear_last_change();
+        self.clear_navigation_history();
+        self.detail.close();
+        self.prune_task_marks();
+        self.set_warning(format!("workspace {name} was deleted; switched to default"));
+        true
+    }
+
     pub(super) fn workspace_cancellation_message(&self) -> Option<&'static str> {
         match self.overlay.as_ref() {
             Some(OverlayState::TextInput(state)) => match &state.intent {
                 TextIntent::AddWorkspace => Some("workspace creation canceled"),
                 TextIntent::RenameWorkspace { .. } => Some("workspace rename canceled"),
+                TextIntent::ConfirmDeleteWorkspace { .. } => Some("workspace deletion canceled"),
                 _ => None,
             },
-            Some(OverlayState::Picker(state)) if state.intent == PickerIntent::RenameWorkspace => {
-                Some("workspace rename canceled")
-            }
+            Some(OverlayState::Picker(state)) => match state.intent {
+                PickerIntent::RenameWorkspace => Some("workspace rename canceled"),
+                PickerIntent::DeleteWorkspace => Some("workspace deletion canceled"),
+                _ => None,
+            },
             _ => None,
         }
     }

@@ -121,13 +121,28 @@ and retain historical replay and mixed-version evidence.
 
 ### Protocol constants
 
-`crates/aven-core/src/sync/wire.rs` declares `SYNC_PROTOCOL_VERSION`, the active
-server protocol and upper bound of production client support.
+`crates/aven-core/src/sync/wire.rs` declares `SYNC_PROTOCOL_VERSION`, the newest
+protocol whose operations this build can read, validate, and apply.
 
 `crates/aven-core/src/sync/protocol.rs` declares
 `MAINTAINED_PROTOCOL_BASELINE`, the oldest protocol the client promises to retain.
-Both are currently 18. Protocols 19 and 20 in compatibility tests are internal
-test contracts, not advertised production implementations.
+The baseline is 18 and `SYNC_PROTOCOL_VERSION` is 19. Protocol 20 in
+compatibility tests is an internal test contract, not an advertised production
+implementation.
+
+Reading and producing are separate. Wire validation, encrypted-tail validation,
+shared snapshot and JSON import validation, and the integrity check accept every
+operation up to `SYNC_PROTOCOL_VERSION`. The creation gate only lets a replica
+produce an operation once its established protocol reaches that operation's
+requirement. Encrypted replicas establish protocol 18, so they read protocol-19
+operations from peers but do not produce them.
+
+Protocol 19 adds `delete_workspace`. Its payload is `{"deleted_at": <timestamp>}`
+with no field or base version, and it never targets the default workspace.
+Applying it archives the workspace and replaces its key with `~<id>`, so the
+original key is free for a new workspace. A later `key` field set leaves an
+archived workspace's key unchanged, while `name` sets still apply. Tasks,
+projects, and recurrences keep their workspace and stay hidden with it.
 
 For example, a future baseline of 18 and latest version of 20 would promise real
 support for 18, 19, and 20. Changing the constants alone cannot fulfill that
@@ -287,11 +302,10 @@ an explicit policy decision; do not silently relax baseline import validation.
    that devices left on older releases pause sync, retaining their local work,
    until updated.
 
-The baseline vocabulary test currently compares all production operation names
-and domain values with the frozen protocol-18 contract. At the first extension,
-separate baseline-contract assertions from completeness checks for newer
-registrations. Do not make the test pass by declaring the new vocabulary part of
-protocol 18 or by removing registration coverage.
+The vocabulary test compares all production operation names with the frozen
+protocol-18 list plus each newer protocol's registered list. Add new operations
+to their own protocol list. Do not make the test pass by declaring the new
+vocabulary part of protocol 18 or by removing registration coverage.
 
 ## Required compatibility evidence
 

@@ -220,6 +220,16 @@ pub(crate) enum WorkspaceSubcommand {
         /// Replacement display name
         new_name: String,
     },
+    /// Delete a workspace, hiding it and its contents everywhere
+    #[command(hide = true)]
+    Delete {
+        /// Workspace key or name
+        workspace: String,
+        /// Delete even when tasks, recurring schedules, conflicts or config
+        /// entries still use the workspace
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Args)]

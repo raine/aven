@@ -58,6 +58,26 @@ pub(super) fn validate_set_workspace_field(change: &ChangeWire) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn validate_delete_workspace(change: &ChangeWire) -> Result<()> {
+    ensure_entity_type(change, "workspace")?;
+    ensure_sync_id("entity_id", &change.entity_id)?;
+    if change.entity_id == crate::workspaces::DEFAULT_WORKSPACE_ID {
+        bail!("error invalid-sync-change default-workspace-protected");
+    }
+    if change.field.is_some()
+        || change.base_version.is_some()
+        || change
+            .payload
+            .as_object()
+            .is_none_or(|payload| payload.len() != 1)
+    {
+        bail!("error invalid-sync-change delete-workspace shape");
+    }
+    required_timestamp_payload("deleted_at", &change.payload)?;
+
+    Ok(())
+}
+
 pub(super) fn validate_create_project(change: &ChangeWire) -> Result<()> {
     ensure_entity_type(change, "project")?;
     ensure_project_id("entity_id", &change.entity_id)?;
@@ -676,6 +696,13 @@ mod tests {
             .await
             .unwrap();
         db.publish_device_label([7; 32], "Office Mac")
+            .await
+            .unwrap();
+        crate::test_support::set_established_protocol(db, 19)
+            .await
+            .unwrap();
+        let disposable = db.create_workspace("Disposable").await.unwrap();
+        db.delete_workspace(&disposable.id, &[], false)
             .await
             .unwrap();
     }

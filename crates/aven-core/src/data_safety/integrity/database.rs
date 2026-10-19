@@ -317,10 +317,12 @@ async fn push_meta_checks(
                 .map(|operation_protocol| required.max(operation_protocol))
         },
     );
+    // Received and imported history may need a newer protocol than this
+    // replica produces, but never one this build cannot read.
     let protocol_check = match (protocol, required_protocol) {
         (Ok(protocol), Ok(required)) => IntegrityCheck {
             label: "replica sync protocol",
-            ok: protocol >= required,
+            ok: required <= crate::sync::wire::SYNC_PROTOCOL_VERSION,
             value: format!("recorded={protocol} required={required}"),
         },
         (Err(error), _) | (_, Err(error)) => IntegrityCheck {

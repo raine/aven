@@ -1234,3 +1234,215 @@ async fn sidebar_workspaces_keep_key_order_counts_and_target_after_switching() {
         Some("high")
     );
 }
+
+#[tokio::test]
+async fn workspace_deletion_requires_typed_key_and_falls_back_to_default() {
+    let mut app = test_app().await;
+    aven_core::test_support::set_established_protocol(&app.store.database(), 19)
+        .await
+        .unwrap();
+    app.store
+        .create_workspace("Side".to_string())
+        .await
+        .unwrap();
+    app.store
+        .switch_workspace("side".to_string())
+        .await
+        .unwrap();
+    create_and_select_task(&mut app, test_task_draft("Side task")).await;
+
+    app.execute(Action::BeginDeleteWorkspace).await.unwrap();
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::Picker(PickerState {
+            intent: PickerIntent::DeleteWorkspace,
+            items,
+            ..
+        })) if items.iter().map(|item| item.value.as_str()).collect::<Vec<_>>() == ["side"]
+    ));
+
+    app.submit_delete_workspace_picker(vec!["side".to_string()])
+        .await
+        .unwrap();
+    let Some(OverlayState::TextInput(TextInputState {
+        intent:
+            TextIntent::ConfirmDeleteWorkspace {
+                workspace,
+                warnings,
+            },
+        prompt,
+        ..
+    })) = app.overlay.take()
+    else {
+        panic!("expected workspace deletion confirmation");
+    };
+    assert_eq!(
+        warnings,
+        ["It still has 1 tasks (1 open), 0 recurring schedules and 0 unresolved conflicts."]
+    );
+    assert!(prompt.ends_with("Type side to delete workspace Side on every device:"));
+
+    app.submit_delete_workspace_name(workspace.clone(), warnings.clone(), "Side".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("workspace key does not match")
+    );
+    assert_eq!(app.store.active_workspace.key, "side");
+    assert!(matches!(
+        &app.overlay,
+        Some(OverlayState::TextInput(TextInputState {
+            intent: TextIntent::ConfirmDeleteWorkspace { .. },
+            ..
+        }))
+    ));
+
+    app.overlay = None;
+    app.submit_delete_workspace_name(workspace, warnings, "side".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("deleted workspace side; switched to default")
+    );
+    assert_eq!(app.store.active_workspace.key, "default");
+    assert!(
+        app.store
+            .workspaces
+            .iter()
+            .all(|workspace| workspace.key != "side")
+    );
+    assert!(app.store.tasks.is_empty());
+    assert!(!app.report_deleted_active_workspace());
+}
+
+#[tokio::test]
+async fn workspace_deletion_elsewhere_switches_to_default_on_refresh() {
+    let mut app = test_app().await;
+    let database = app.store.database();
+    aven_core::test_support::set_established_protocol(&database, 19)
+        .await
+        .unwrap();
+    app.store
+        .create_workspace("Side".to_string())
+        .await
+        .unwrap();
+    app.store
+        .switch_workspace("side".to_string())
+        .await
+        .unwrap();
+    let side = app.store.active_workspace.id.clone();
+
+    database.delete_workspace(&side, &[], true).await.unwrap();
+    app.store.refresh(None).await.unwrap();
+
+    assert_eq!(app.store.active_workspace.key, "default");
+    assert!(app.report_deleted_active_workspace());
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("workspace Side was deleted; switched to default")
+    );
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Warning));
+    assert!(!app.report_deleted_active_workspace());
+}
+
+#[tokio::test]
+async fn workspace_deletion_reports_unavailable_and_cancellation() {
+    let mut app = test_app().await;
+    app.store
+        .create_workspace("Side".to_string())
+        .await
+        .unwrap();
+
+    app.begin_delete_workspace();
+    app.cancel_overlay();
+    assert_eq!(
+        toast_message(&app).as_deref(),
+        Some("workspace deletion canceled")
+    );
+
+    let workspace = app
+        .store
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.key == "side")
+        .cloned()
+        .unwrap();
+    app.submit_delete_workspace_name(workspace, Vec::new(), "side".to_string())
+        .await
+        .unwrap();
+    assert_eq!(toast_severity(&app), Some(ToastSeverity::Error));
+    assert!(
+        toast_message(&app).is_some_and(|message| message.contains("workspace-delete-unavailable"))
+    );
+    assert!(
+        app.store
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.key == "side")
+    );
+}
+
+async fn app_in_deleted_side_workspace() -> App {
+    let mut app = test_app().await;
+    let database = app.store.database();
+    aven_core::test_support::set_established_protocol(&database, 19)
+        .await
+        .unwrap();
+    app.store
+        .create_workspace("Side".to_string())
+        .await
+        .unwrap();
+    app.store
+        .switch_workspace("side".to_string())
+        .await
+        .unwrap();
+    create_and_select_task(&mut app, test_task_draft("Side task")).await;
+    app
+}
+
+#[tokio::test]
+async fn workspace_fallback_does_not_restore_the_open_detail_task() {
+    let mut app = app_in_deleted_side_workspace().await;
+    let task_id = app.store.tasks[0].task.id.clone();
+    app.open_detail_task(&task_id, 0).await;
+    assert!(app.detail.is_active());
+
+    let side = app.store.active_workspace.id.clone();
+    app.store
+        .database()
+        .delete_workspace(&side, &[], true)
+        .await
+        .unwrap();
+    app.refresh().await.unwrap();
+
+    assert_eq!(app.store.active_workspace.key, "default");
+    assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+}
+
+#[tokio::test]
+async fn workspace_fallback_does_not_restore_visible_deleted_rows() {
+    let mut app = app_in_deleted_side_workspace().await;
+    let task_id = app.store.tasks[0].task.id.clone();
+    app.handle_normal_key(KeyCode::Char('t')).await.unwrap();
+    app.handle_normal_key(KeyCode::Char('D')).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('y')))
+        .await
+        .unwrap();
+    assert!(app.store.tasks.iter().any(|item| item.task.id == task_id));
+
+    let side = app.store.active_workspace.id.clone();
+    app.store
+        .database()
+        .delete_workspace(&side, &[], true)
+        .await
+        .unwrap();
+    app.store
+        .refresh_preserving_visible_deleted(None)
+        .await
+        .unwrap();
+
+    assert_eq!(app.store.active_workspace.key, "default");
+    assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+}

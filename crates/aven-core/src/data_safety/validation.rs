@@ -153,6 +153,7 @@ fn validate_shared_history_provenance(export: &AvenExport) -> Result<()> {
 
 pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
     use crate::sync::protocol::{MAINTAINED_PROTOCOL_BASELINE, validate_operation};
+    use crate::sync::wire::SYNC_PROTOCOL_VERSION;
     for row in &export.tables.tasks {
         validate_operation(
             MAINTAINED_PROTOCOL_BASELINE,
@@ -177,9 +178,11 @@ pub(crate) fn validate_shared_snapshot(export: &AvenExport) -> Result<()> {
             &serde_json::to_value(row)?,
         )?;
     }
+    // History may hold any operation this build can read, including ones the
+    // importing replica could not produce itself.
     for row in &export.tables.changes {
         validate_operation(
-            MAINTAINED_PROTOCOL_BASELINE,
+            SYNC_PROTOCOL_VERSION,
             &row.op_type,
             row.field.as_deref(),
             &serde_json::from_str(&row.payload)?,

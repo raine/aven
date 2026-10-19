@@ -159,6 +159,13 @@ pub async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str) -> Re
     crate::db::set_meta(conn, key, value).await
 }
 
+/// Records the replica's established sync protocol, which gates the
+/// operations it may produce.
+pub async fn set_established_protocol(database: &Database, protocol: u32) -> Result<()> {
+    let mut conn = database.acquire_writer().await?;
+    crate::sync::protocol::establish_protocol(&mut conn, protocol).await
+}
+
 #[cfg(test)]
 pub async fn test_conn() -> (tempfile::TempDir, PoolConnection<Sqlite>) {
     let temp = tempfile::tempdir().unwrap();

@@ -7,9 +7,6 @@ use std::{collections::HashSet, fmt};
 
 pub(super) use aven_protocol::tail::envelope::Projection;
 
-/// Operation protocol encoded in v1 encrypted-tail envelope headers.
-const ENCRYPTED_OPERATION_PROTOCOL: u32 = 18;
-
 /// Payload keys accepted for each supported operation, or None when unsupported.
 pub(super) fn payload_keys(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {
@@ -156,6 +153,7 @@ pub(super) fn payload_keys(op: &str) -> Option<&'static [&'static str]> {
         ],
         "create_workspace" => &["key", "name", "created_at"],
         "set_workspace_field" => &["value"],
+        "delete_workspace" => &["deleted_at"],
         "attachment_add" => &[
             "attachment_id",
             "sha256",
@@ -177,7 +175,11 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
     valid(c.server_seq.is_none() && c.change_id.len() <= 256)?;
     let keys = payload_keys(&c.op_type).context("error encrypted-tail-operation-unsupported")?;
     crate::sync::wire::validate_local_change_shape(c)
-        .and_then(|()| crate::sync::protocol::validate_change(ENCRYPTED_OPERATION_PROTOCOL, c))
+        // Records are checked against every operation this build can read; the
+        // creation gate separately limits what this replica may produce.
+        .and_then(|()| {
+            crate::sync::protocol::validate_change(crate::sync::wire::SYNC_PROTOCOL_VERSION, c)
+        })
         .map_err(|_| anyhow::anyhow!("error encrypted-tail-domain"))?;
     let p = c
         .payload
@@ -211,7 +213,7 @@ pub(super) fn validate(c: &ChangeWire) -> Result<Projection> {
     }
     let workspace_op = matches!(
         c.op_type.as_str(),
-        "create_workspace" | "set_workspace_field"
+        "create_workspace" | "set_workspace_field" | "delete_workspace"
     );
     if workspace_op
         || matches!(

@@ -173,6 +173,10 @@ impl App {
                 needs_redraw = true;
             }
 
+            if self.report_deleted_active_workspace() {
+                needs_redraw = true;
+            }
+
             if self.detail_hydration_required()
                 && let Err(error) = self.ensure_selected_task_detail().await
             {
@@ -628,6 +632,7 @@ impl App {
             .as_ref()
             .map(|_| self.detail_focus_targets(ratatui::layout::Size::new(80, 24)))
             .unwrap_or_default();
+        let workspace_id = self.store.active_workspace.id.clone();
         let result = match kind {
             RefreshKind::User => {
                 self.store
@@ -646,6 +651,7 @@ impl App {
             })
             .unwrap_or_else(|| {
                 if let Some(item) = detail_task
+                    && self.store.active_workspace.id == workspace_id
                     && self
                         .store
                         .tasks

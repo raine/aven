@@ -71,6 +71,38 @@ async fn resolve_inferred_workspace(
     bail!("error workspace-required hint=\"pass --workspace or configure workspace.default\"")
 }
 
+/// Names the local configuration entries that select this workspace.
+pub(crate) async fn config_entries_for_workspace(
+    database: &Database,
+    config: &AppConfig,
+    workspace: &Workspace,
+) -> Result<Vec<String>> {
+    let mut entries = Vec::new();
+    let names = config
+        .workspace
+        .default
+        .iter()
+        .map(|name| ("workspace.default".to_string(), name))
+        .chain(
+            config
+                .workspace
+                .routes
+                .iter()
+                .enumerate()
+                .map(|(index, route)| (format!("workspace.routes[{index}]"), &route.workspace)),
+        );
+    for (entry, name) in names {
+        if database
+            .find_workspace(name)
+            .await?
+            .is_some_and(|found| found.id == workspace.id)
+        {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
 fn longest_matching_route(
     cwd: &Path,
     routes: &[WorkspaceRouteConfig],

@@ -46,15 +46,27 @@ pub(super) async fn set_workspace_field(
                 .execute(&mut *conn)
                 .await?;
         }
+        // A deleted workspace keeps its ID-derived key, so a rename racing the
+        // deletion cannot take a live key or diverge between replicas.
         "key" => {
-            sqlx::query("UPDATE workspaces SET key = ?, updated_at = ? WHERE id = ?")
-                .bind(value)
-                .bind(&ts)
-                .bind(&change.entity_id)
-                .execute(&mut *conn)
-                .await?;
+            sqlx::query(
+                "UPDATE workspaces SET key = ?, updated_at = ? WHERE id = ? AND archived = 0",
+            )
+            .bind(value)
+            .bind(&ts)
+            .bind(&change.entity_id)
+            .execute(&mut *conn)
+            .await?;
         }
         _ => anyhow::bail!("error invalid-sync-change field={field}"),
     }
     Ok(())
+}
+
+pub(super) async fn delete_workspace(
+    conn: &mut SqliteConnection,
+    change: &ChangeWire,
+) -> Result<()> {
+    let deleted_at = str_payload(&change.payload, "deleted_at")?;
+    crate::workspaces::archive_workspace(conn, &change.entity_id, &deleted_at).await
 }

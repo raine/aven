@@ -57,6 +57,7 @@ pub mod op_type {
         CLOSE_RECURRENCE_PAUSE = "close_recurrence_pause";
         STOP_RECURRENCE_SERIES = "stop_recurrence_series";
         PUBLISH_DEVICE_LABEL = "publish_device_label";
+        DELETE_WORKSPACE = "delete_workspace";
     }
 }
 

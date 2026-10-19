@@ -85,7 +85,7 @@ pub(super) async fn set_project_metadata(
         Some(&project_id),
     )
     .await?;
-    let workspace = crate::workspaces::workspace_for_id(conn, &workspace_id).await?;
+    let workspace = crate::workspaces::stored_workspace_for_id(conn, &workspace_id).await?;
     apply_project_metadata(
         conn,
         &workspace,

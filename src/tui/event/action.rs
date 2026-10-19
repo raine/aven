@@ -141,6 +141,7 @@ pub(crate) enum Action {
     BeginSwitchWorkspace,
     BeginAddWorkspace,
     BeginRenameWorkspace,
+    BeginDeleteWorkspace,
     ClearFilters,
     ToggleClosedFilter,
     ToggleDeletedFilter,

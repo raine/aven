@@ -19,7 +19,7 @@ mod test_support;
 #[cfg(test)]
 mod tests;
 
-pub const SYNC_PROTOCOL_VERSION: u32 = 18;
+pub const SYNC_PROTOCOL_VERSION: u32 = 19;
 const MAX_CHANGE_PAYLOAD_BYTES: usize = 64 * 1024;
 
 pub(crate) fn serialize_change_payload(payload: &Value) -> Result<String> {
@@ -246,6 +246,7 @@ pub(crate) fn validate_local_change_shape(change: &ChangeWire) -> Result<()> {
         op_type::PUBLISH_DEVICE_LABEL => changes::validate_publish_device_label(change)?,
         op_type::CREATE_WORKSPACE => changes::validate_create_workspace(change)?,
         op_type::SET_WORKSPACE_FIELD => changes::validate_set_workspace_field(change)?,
+        op_type::DELETE_WORKSPACE => changes::validate_delete_workspace(change)?,
         op_type::CREATE_PROJECT => changes::validate_create_project(change)?,
         op_type::SET_PROJECT_METADATA => changes::validate_set_project_metadata(change)?,
         op_type::CREATE_LABEL => changes::validate_create_label(change)?,

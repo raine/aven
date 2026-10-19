@@ -49,7 +49,7 @@ pub(crate) fn validate_behavior_protocol(protocol: u32) -> Result<()> {
         return Ok(());
     }
     #[cfg(test)]
-    if matches!(protocol, 19 | 20) {
+    if protocol == 20 {
         return Ok(());
     }
     Err(SyncCompatibilityError {
@@ -122,6 +122,9 @@ const BASELINE_OPERATIONS: &[&str] = &[
     "stop_recurrence_series",
     "publish_device_label",
 ];
+/// Operations added by protocol 19. Every supported build reads them; a replica
+/// produces them only once its established protocol reaches 19.
+const PROTOCOL_19_OPERATIONS: &[&str] = &["delete_workspace"];
 const STATUSES: &[&str] = &["inbox", "backlog", "todo", "active", "done", "canceled"];
 const PRIORITIES: &[&str] = &["none", "low", "medium", "high", "urgent"];
 const SOURCES: &[&str] = &["cli", "tui", "api", "ios", "android", "unknown"];
@@ -238,15 +241,16 @@ pub(crate) fn validate_operation(
 
 pub(crate) fn required_protocol(op: &str) -> Result<u32> {
     #[cfg(test)]
-    match op {
-        "test_protocol_19" => return Ok(19),
-        "test_protocol_20" => return Ok(20),
-        _ => {}
+    if op == "test_protocol_20" {
+        return Ok(20);
     }
-    if !BASELINE_OPERATIONS.contains(&op) {
-        bail!("error invalid-sync-change op_type={op} unregistered-operation");
+    if BASELINE_OPERATIONS.contains(&op) {
+        return Ok(MAINTAINED_PROTOCOL_BASELINE);
     }
-    Ok(MAINTAINED_PROTOCOL_BASELINE)
+    if PROTOCOL_19_OPERATIONS.contains(&op) {
+        return Ok(19);
+    }
+    bail!("error invalid-sync-change op_type={op} unregistered-operation");
 }
 
 fn registered(value: &str, values: &[&str]) -> Result<()> {
@@ -287,7 +291,8 @@ mod tests {
 
     #[test]
     fn baseline_vocabulary_is_explicit_and_complete() {
-        assert_eq!(crate::change_log::op_type::ALL, BASELINE_OPERATIONS);
+        let registered = [BASELINE_OPERATIONS, PROTOCOL_19_OPERATIONS].concat();
+        assert_eq!(crate::change_log::op_type::ALL, registered);
         assert_eq!(crate::choices::STATUSES, STATUSES);
         assert_eq!(crate::choices::PRIORITIES, PRIORITIES);
         assert_eq!(crate::choices::TASK_SOURCES, SOURCES);

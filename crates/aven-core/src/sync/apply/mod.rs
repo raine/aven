@@ -37,6 +37,7 @@ pub(crate) async fn apply_remote_change(
         op_type::PUBLISH_DEVICE_LABEL => {}
         op_type::CREATE_WORKSPACE => workspace::create_workspace(conn, change).await?,
         op_type::SET_WORKSPACE_FIELD => workspace::set_workspace_field(conn, change).await?,
+        op_type::DELETE_WORKSPACE => workspace::delete_workspace(conn, change).await?,
         op_type::CREATE_PROJECT => project::create_project(conn, change).await?,
         op_type::SET_PROJECT_METADATA => project::set_project_metadata(conn, change).await?,
         op_type::CREATE_LABEL => label::create_label(conn, change).await?,

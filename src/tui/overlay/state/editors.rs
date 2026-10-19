@@ -34,6 +34,10 @@ pub(crate) enum TextIntent {
     RenameWorkspace {
         workspace: String,
     },
+    ConfirmDeleteWorkspace {
+        workspace: crate::workspaces::Workspace,
+        warnings: Vec<String>,
+    },
     RenameProject {
         project: String,
     },
@@ -132,6 +136,7 @@ pub(crate) enum PickerIntent {
     DeleteLabel,
     SwitchWorkspace,
     RenameWorkspace,
+    DeleteWorkspace,
     PickConflictVariant {
         choice: ConflictResolutionChoice,
         targets: Vec<ConflictTarget>,
@@ -179,7 +184,8 @@ impl PickerIntent {
             | Self::RenameLabel
             | Self::DeleteLabel
             | Self::SwitchWorkspace
-            | Self::RenameWorkspace => PickerMode::Filter,
+            | Self::RenameWorkspace
+            | Self::DeleteWorkspace => PickerMode::Filter,
             _ => PickerMode::Navigate,
         }
     }

@@ -82,7 +82,9 @@ pub(in crate::tui::ui) fn render_text_input(
     let input = input_line(theme, "", &state.input, state.cursor);
     let confirms_named_delete = matches!(
         state.kind,
-        TextInputKind::ConfirmDeleteProject | TextInputKind::ConfirmDeleteLabel
+        TextInputKind::ConfirmDeleteProject
+            | TextInputKind::ConfirmDeleteLabel
+            | TextInputKind::ConfirmDeleteWorkspace
     );
     let lines = if confirms_named_delete {
         let mut lines = state

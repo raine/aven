@@ -89,6 +89,9 @@ pub(crate) struct TuiStore {
     /// A manual sync or a Sync dialog operation is running.
     pub(crate) sync_busy: bool,
     refresh_health: RefreshHealth,
+    /// Name of an active workspace that a refresh found deleted and replaced
+    /// with the default workspace, until the app reports it.
+    deleted_active_workspace: Option<String>,
     #[cfg(test)]
     fail_next_refresh: Option<RefreshFailureStage>,
     #[cfg(test)]
@@ -258,6 +261,7 @@ impl TuiStore {
             db_stats: TuiDatabaseStats::default(),
             sync_busy: false,
             refresh_health: RefreshHealth::Healthy,
+            deleted_active_workspace: None,
             #[cfg(test)]
             fail_next_refresh: None,
             #[cfg(test)]
@@ -496,7 +500,11 @@ impl TuiStore {
             .filter(|(_, item)| item.task.deleted)
             .map(|(index, item)| (index, item.clone()))
             .collect::<Vec<_>>();
+        let workspace_id = self.active_workspace.id.clone();
         let mut result = self.refresh_with_scope_fallback(selected).await?;
+        if self.active_workspace.id != workspace_id {
+            return Ok(result);
+        }
         for (index, item) in visible_deleted {
             if self
                 .tasks
@@ -558,6 +566,7 @@ impl TuiStore {
         let fail_at = self.fail_next_refresh.take();
         #[cfg(not(test))]
         let fail_at = None;
+        let requested_workspace = active_workspace.clone();
         let mut candidate = TuiProjection::new(active_workspace, view_state);
         // Parts of the sync status may be unreadable mid-operation; the refresh
         // keeps these last-known values until they can be read again.
@@ -585,6 +594,9 @@ impl TuiStore {
             .as_ref()
             .map(|undo| undo.entry_id.clone())
             .filter(|id| Some(id) != previous_undo_entry_id.as_ref());
+        if candidate.active_workspace.id != requested_workspace.id {
+            self.deleted_active_workspace = Some(requested_workspace.name);
+        }
         self.projection = candidate;
         self.derived = DerivedTaskProjections::default();
         self.refresh_health = RefreshHealth::Healthy;
@@ -676,8 +688,9 @@ impl TuiProjection {
         recurrence_detail_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
         fail_at: Option<RefreshFailureStage>,
     ) -> Result<Option<String>> {
-        let workspace_id = self.active_workspace.id.clone();
         self.workspaces = database.list_workspaces().await?;
+        self.fall_back_from_deleted_workspace();
+        let workspace_id = self.active_workspace.id.clone();
         let reconciliation = database.reconcile_recurrence_reports(&workspace_id).await?;
         if reconciliation.changed > 0 {
             crate::daemon::wake_if_enabled(app_config);
@@ -854,6 +867,29 @@ impl TuiProjection {
             TaskScope::Workspace => None,
             TaskScope::Project(project) => Some(project.as_str()),
         }
+    }
+
+    /// Switches to the default workspace when the active one is no longer
+    /// listed because it was deleted, here or on another device.
+    fn fall_back_from_deleted_workspace(&mut self) {
+        if self
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == self.active_workspace.id)
+        {
+            return;
+        }
+        let Some(default) = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id.as_str() == aven_core::workspaces::DEFAULT_WORKSPACE_ID)
+        else {
+            return;
+        };
+        self.active_workspace = default.clone();
+        self.view_state.scope = TaskScope::Workspace;
+        self.view_state.filter_modifiers = TaskFilterModifiers::default();
+        self.view_state.reset_projection_origin();
     }
 
     fn ensure_valid_scope(&mut self) -> Option<String> {

@@ -678,3 +678,63 @@ fn renamed_default_workspace_still_opens_database() {
     let workspaces = ok(env.aven(&db, ["workspace", "list"]));
     contains_all(&workspaces, &["personal", "name=\"personal\""]);
 }
+
+#[test]
+fn workspace_delete_reports_refusals_then_frees_the_name() {
+    let env = TestEnv::new();
+    let db = env.db("delete.sqlite");
+    ok(env.aven(&db, ["workspace", "create", "Side"]));
+    contains_all(
+        &fail(env.aven(&db, ["workspace", "delete", "side", "--force"])),
+        &["error workspace-delete-unavailable"],
+    );
+
+    // A replica produces the deletion once its established protocol allows it.
+    common::execute_sql(
+        &db,
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('sync_established_protocol', '19')",
+    );
+    contains_all(
+        &fail(env.aven(&db, ["workspace", "delete", "default"])),
+        &["error default-workspace-protected"],
+    );
+    ok(env.aven(
+        &db,
+        [
+            "--workspace",
+            "side",
+            "add",
+            "done task",
+            "--status",
+            "done",
+        ],
+    ));
+    ok(env.aven(&db, ["--workspace", "side", "add", "open task"]));
+    contains_all(
+        &fail(env.aven(&db, ["workspace", "delete", "side"])),
+        &["error workspace-not-empty key=side tasks=2 open=1 recurrences=0 conflicts=0"],
+    );
+    env.write_config(&format!(
+        "local:\n  db_path: \"{}\"\n\nworkspace:\n  default: \"Side\"\n",
+        db.display()
+    ));
+    contains_all(
+        &fail(env.aven_config(["workspace", "delete", "side"])),
+        &["error workspace-in-config key=side entries=workspace.default"],
+    );
+
+    let deleted = ok(env.aven_config(["workspace", "delete", "side", "--force"]));
+    assert_eq!(deleted.trim(), "deleted-workspace side tasks=2 open=1");
+    let config = std::fs::read_to_string(env.config_file()).unwrap();
+    assert!(config.contains("default: \"Side\""));
+    contains_none(&ok(env.aven(&db, ["workspace", "list"])), &["side"]);
+    contains_all(
+        &fail(env.aven(&db, ["--workspace", "side", "list"])),
+        &["error unknown-workspace", "input=side"],
+    );
+    ok(env.aven(&db, ["workspace", "create", "Side"]));
+    contains_all(
+        &ok(env.aven(&db, ["workspace", "list"])),
+        &["side name=\"Side\""],
+    );
+}

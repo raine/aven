@@ -659,7 +659,7 @@ pub(super) async fn set_state(conn: &mut SqliteConnection, change: &ChangeWire) 
                 .await?;
             }
         }
-        let workspace = crate::workspaces::workspace_for_id(conn, &workspace_id).await?;
+        let workspace = crate::workspaces::stored_workspace_for_id(conn, &workspace_id).await?;
         crate::operations::conflicts::cleanup_recurrence_projections(
             conn,
             &workspace,

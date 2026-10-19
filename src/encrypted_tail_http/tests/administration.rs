@@ -6,7 +6,8 @@ async fn administered_state(db: &Database) -> Vec<String> {
     let mut c = aven_core::test_support::acquire(db).await.unwrap();
     let mut rows: Vec<String> = Vec::new();
     for sql in [
-        "SELECT 'workspace ' || id || ' ' || key || ' ' || name FROM workspaces",
+        "SELECT 'workspace ' || id || ' ' || key || ' ' || name || ' archived=' || archived
+         FROM workspaces",
         "SELECT 'project ' || workspace_id || ' ' || id || ' ' || key || ' ' || name
                 || ' ' || prefix || ' deleted=' || deleted FROM projects",
         "SELECT 'label ' || workspace_id || ' ' || name FROM labels",
@@ -128,7 +129,7 @@ async fn project_label_and_workspace_administration_crosses_http_and_converges()
     let expected = administered_state(&f.seed).await;
     assert_eq!(administered_state(&f.peer).await, expected);
     for row in [
-        format!("workspace {} lab Lab", side.id),
+        format!("workspace {} lab Lab archived=0", side.id),
         format!("label {} topic", w.id),
         format!("label {} untouched", w.id),
         "task 0000000000000000 owner after administration project=core labels=topic,untouched"
@@ -259,6 +260,75 @@ async fn remote_label_commands_ordered_before_pending_deletion_or_rename_follow_
             .unwrap();
         assert_eq!(labels, ["kept", "tag"]);
     }
+    assert_eq!(
+        administered_state(&f.peer).await,
+        administered_state(&f.seed).await
+    );
+}
+
+#[tokio::test]
+async fn workspace_deletion_converges_and_keeps_concurrent_peer_edits() {
+    let f = fixture_with(with_relations()).await;
+    let side = f.seed.create_workspace("Side").await.unwrap();
+    let task = f
+        .seed
+        .create_task(&side, draft("side task"))
+        .await
+        .unwrap()
+        .task;
+    converge(&f).await;
+
+    // The peer renames the workspace and edits its contents while the seed
+    // deletes it; the deletion is accepted first.
+    f.peer.rename_workspace("side", "Lab").await.unwrap();
+    let peer_side = f.peer.find_workspace("lab").await.unwrap().unwrap();
+    f.peer
+        .rename_project(&peer_side, "app", "Renamed", None)
+        .await
+        .unwrap();
+    f.peer
+        .update_task(
+            &peer_side,
+            &task.id,
+            TaskUpdate {
+                title: Some("edited after delete".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    aven_core::test_support::set_established_protocol(&f.seed, 19)
+        .await
+        .unwrap();
+    f.seed.delete_workspace(&side.id, &[], true).await.unwrap();
+    aven_core::test_support::set_established_protocol(&f.seed, 18)
+        .await
+        .unwrap();
+    converge(&f).await;
+
+    let expected = administered_state(&f.seed).await;
+    assert_eq!(administered_state(&f.peer).await, expected);
+    for row in [
+        format!("workspace {} ~{} Lab archived=1", side.id, side.id),
+        format!(
+            "task {} edited after delete project=renamed labels=",
+            side.id
+        ),
+    ] {
+        assert!(expected.contains(&row), "{row} missing from {expected:#?}");
+    }
+    for db in [&f.seed, &f.peer] {
+        assert!(
+            db.list_workspaces()
+                .await
+                .unwrap()
+                .iter()
+                .all(|workspace| workspace.id != side.id)
+        );
+    }
+    let recreated = f.peer.create_workspace("Side").await.unwrap();
+    assert_ne!(recreated.id, side.id);
+    converge(&f).await;
     assert_eq!(
         administered_state(&f.peer).await,
         administered_state(&f.seed).await

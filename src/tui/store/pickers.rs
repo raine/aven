@@ -140,6 +140,18 @@ impl TuiStore {
             .collect()
     }
 
+    pub(crate) fn workspace_delete_picker_items(&self) -> Vec<PickerItem> {
+        let mut items = self.workspace_rename_picker_items();
+        if let Some(default) = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id.as_str() == aven_core::workspaces::DEFAULT_WORKSPACE_ID)
+        {
+            items.retain(|item| item.value != default.key);
+        }
+        items
+    }
+
     pub(crate) fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
         self.selected_task(index)
             .map(dependency_picker_items)

@@ -520,7 +520,7 @@ async fn dispatch_database(
             }
             None => sync::encrypted::sync(&database, &config, args.json).await,
         },
-        DatabaseCommand::Workspace(args) => cmd_workspace(&database, args).await,
+        DatabaseCommand::Workspace(args) => cmd_workspace(&database, &config, args).await,
         DatabaseCommand::Text(args) => {
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
