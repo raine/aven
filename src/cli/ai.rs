@@ -7,7 +7,8 @@ AVEN_AI_MODEL and AVEN_AI_ENDPOINT override the file. Changes apply after the
 server restarts.
 
 These commands check this shell's view of the configuration, not the running
-server. To ask the running server from a paired device, use `aven ai status`."#;
+server. To ask the running server from a paired device, use `aven ai status`
+or `aven ai check`."#;
 
 const AI_CLIENT_HELP: &str = r#"These commands ask the running sync server from this device, over the sync
 server URL and with this device's sync credential, the same way paired devices
@@ -64,7 +65,8 @@ ai.model in server.yaml, restart the server, then run `aven server ai check`."#;
 const CHECK_HELP: &str = r#"The check sends two requests from this process using server.yaml and this
 environment, not through the running server: one that offers an inert tool and
 expects a call to it, then one that replays that call with a tool result and
-expects a text answer. The Ask Aven agent needs both to work."#;
+expects a text answer. The Ask Aven agent needs both to work. To run the same
+exchange through the running server from a paired device, use `aven ai check`."#;
 
 #[derive(Args)]
 #[command(after_long_help = AI_CLIENT_HELP)]
@@ -77,6 +79,13 @@ pub(crate) struct AiClientCommand {
 pub(crate) enum AiClientSubcommand {
     /// Ask the running sync server whether its AI is ready for this device
     Status {
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run a billable two-round tool-call exchange through the running server
+    #[command(after_long_help = AI_CLIENT_CHECK_HELP)]
+    Check {
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -112,3 +121,12 @@ pub(crate) struct AiSetupArgs {
     #[arg(long)]
     pub(crate) no_check: bool,
 }
+
+const AI_CLIENT_CHECK_HELP: &str = r#"The check sends two billable completion requests through the running sync
+server, from this device and with its sync credential: one that offers an inert
+tool and expects a call to it, then one that replays that call with a tool
+result and expects a text answer. The Ask Aven agent needs both to work.
+
+Unlike `aven server ai check`, which runs on the server host from server.yaml
+and that shell's environment, this exercises the server process that devices
+actually reach, through any reverse proxy in front of it."#;
