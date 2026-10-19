@@ -1,6 +1,7 @@
 mod ai;
 mod attachments;
 mod bulk_update;
+mod client_ai;
 mod config;
 mod conflicts;
 mod context;
@@ -26,6 +27,7 @@ mod workspaces;
 pub(crate) use self::ai::cmd_ai;
 pub(crate) use self::attachments::cmd_attachment;
 pub(crate) use self::bulk_update::cmd_bulk_update;
+pub(crate) use self::client_ai::cmd_ai_client;
 pub(crate) use self::config::cmd_config;
 pub(crate) use self::conflicts::cmd_conflict;
 pub(crate) use self::context::cmd_context;

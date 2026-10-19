@@ -376,6 +376,21 @@ fn next_daemon_resource_generation() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// This device's sync server and bearer, or `None` when sync isn't set up.
+/// `attended` allows a keychain prompt in an interactive terminal.
+pub(crate) async fn device_credential(
+    database: &Database,
+    config: &AppConfig,
+    attended: bool,
+) -> Result<Option<engine::DeviceCredential>> {
+    let host = if attended {
+        DesktopHost::foreground(config)
+    } else {
+        DesktopHost::background(config)
+    };
+    engine::device_credential(database, &host).await
+}
+
 pub(crate) async fn status_report(database: &Database, config: &AppConfig) -> Result<StatusReport> {
     engine::status_report(database, &DesktopHost::background(config)).await
 }

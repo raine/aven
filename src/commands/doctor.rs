@@ -12,7 +12,7 @@ use crate::config::AppConfig;
 use crate::render::print_json_pretty;
 
 use bootstrap::{inspect_config, resolve_doctor_db_path};
-use checks::{add_daemon_section, add_runtime_database_sections};
+use checks::{add_ai_section, add_daemon_section, add_runtime_database_sections};
 pub(super) use render::DoctorRenderer;
 pub(super) use report::{DoctorReport, DoctorRow, DoctorSection, DoctorStatus};
 
@@ -235,6 +235,7 @@ pub(crate) async fn cmd_doctor(
         args.integrity,
     )
     .await;
+    add_ai_section(&mut report, config, bootstrap.config.is_some(), database).await;
     add_daemon_section(&mut report, config, database).await;
 
     report.finish();

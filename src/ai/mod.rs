@@ -43,6 +43,8 @@ pub(crate) struct CapabilitiesResponse {
     pub(crate) completion_contract: u32,
     pub(crate) features: Features,
     pub(crate) limits: Limits,
+    pub(crate) provider: Option<String>,
+    pub(crate) model: Option<String>,
     pub(crate) setup_hint: Option<String>,
 }
 
@@ -337,6 +339,8 @@ enum BackendState {
 
 pub(crate) struct AiService {
     state: BackendState,
+    provider: Option<String>,
+    model: Option<String>,
     max_output_tokens: u64,
     timeout: Duration,
     semaphore: Semaphore,
@@ -353,6 +357,8 @@ impl AiService {
         let state = Self::build_state(&config.ai, &config.paths.ai_credentials_dir());
         Self {
             state,
+            provider: config.ai.provider.clone(),
+            model: config.ai.model.clone(),
             max_output_tokens,
             timeout,
             semaphore,
@@ -439,6 +445,8 @@ impl AiService {
                 max_request_bytes: MAX_REQUEST_BYTES,
                 max_output_tokens: self.max_output_tokens,
             },
+            provider: self.provider.clone(),
+            model: self.model.clone(),
             setup_hint,
         }
     }
