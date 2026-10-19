@@ -1,3 +1,4 @@
+pub(crate) mod check;
 mod registry;
 mod transport;
 
@@ -24,6 +25,7 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::server_config::{AiConfig, ServerConfig};
+pub(crate) use registry::{AuthKind, provider_display_name, provider_info};
 use registry::{CompletionBackend, SchemaStrategy};
 
 pub(crate) const MAX_REQUEST_BYTES: usize = 512 * 1024;
@@ -51,6 +53,17 @@ pub(crate) enum AvailabilityStatus {
     Unconfigured,
     AuthenticationRequired,
     TemporarilyUnavailable,
+}
+
+impl AvailabilityStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Unconfigured => "unconfigured",
+            Self::AuthenticationRequired => "authentication_required",
+            Self::TemporarilyUnavailable => "temporarily_unavailable",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -212,6 +225,20 @@ struct ErrorBody {
 }
 
 impl ErrorCategory {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidRequest => "invalid_request",
+            Self::UnsupportedCapability => "unsupported_capability",
+            Self::Unconfigured => "unconfigured",
+            Self::AuthenticationFailure => "authentication_failure",
+            Self::RateLimit => "rate_limit",
+            Self::Timeout => "timeout",
+            Self::MalformedProviderResponse => "malformed_provider_response",
+            Self::CanceledRequest => "canceled_request",
+            Self::TemporaryProviderFailure => "temporary_provider_failure",
+        }
+    }
+
     fn status(self) -> StatusCode {
         match self {
             Self::InvalidRequest | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
@@ -338,13 +365,14 @@ impl AiService {
         let (Some(provider), Some(model)) = (ai.provider.as_deref(), ai.model.as_deref()) else {
             return BackendState::Unavailable {
                 status: AvailabilityStatus::Unconfigured,
-                hint: "configure ai.provider and ai.model in server.yaml".to_string(),
+                hint: "set ai.provider and ai.model in server.yaml, then restart the server"
+                    .to_string(),
             };
         };
         let Some(info) = registry::provider_info(provider) else {
             return BackendState::Unavailable {
                 status: AvailabilityStatus::Unconfigured,
-                hint: "select a provider listed by aven server ai providers".to_string(),
+                hint: "set ai.provider to a provider listed by `aven server ai providers`, then restart the server".to_string(),
             };
         };
         let private_dir = if info.auth == registry::AuthKind::OAuth {
@@ -353,7 +381,7 @@ impl AiService {
                 Err(_) => {
                     return BackendState::Unavailable {
                         status: AvailabilityStatus::TemporarilyUnavailable,
-                        hint: "AI credential storage is unavailable".to_string(),
+                        hint: "make private/ai beside server.yaml a writable directory, then restart the server".to_string(),
                     };
                 }
             }
@@ -364,11 +392,15 @@ impl AiService {
             return BackendState::Unavailable {
                 status: AvailabilityStatus::AuthenticationRequired,
                 hint: match info.auth {
-                    registry::AuthKind::OAuth => format!("run aven server ai login {provider}"),
+                    registry::AuthKind::OAuth => format!(
+                        "run `aven server ai login {provider}` on the server host, then restart the server"
+                    ),
                     registry::AuthKind::ApiKey(name) => {
-                        format!("set {name} for the server process")
+                        format!("set {name} in the server's environment, then restart the server")
                     }
-                    registry::AuthKind::None => "check provider configuration".to_string(),
+                    registry::AuthKind::None => {
+                        "check the AI provider settings, then restart the server".to_string()
+                    }
                 },
             };
         }
@@ -382,7 +414,8 @@ impl AiService {
             },
             Err(_) => BackendState::Unavailable {
                 status: AvailabilityStatus::TemporarilyUnavailable,
-                hint: "check the configured AI provider and credentials".to_string(),
+                hint: "check the AI provider settings and credentials, then restart the server"
+                    .to_string(),
             },
         }
     }
@@ -854,6 +887,7 @@ pub(crate) fn exclusions() -> &'static [(&'static str, &'static str)] {
     registry::EXCLUSIONS
 }
 
+/// Runs the interactive OAuth device flow for `provider`.
 pub(crate) async fn login(provider: &str, credentials_dir: &Path) -> Result<()> {
     let info = registry::provider_info(provider)
         .with_context(|| format!("unsupported AI provider {provider}"))?;
@@ -867,27 +901,39 @@ pub(crate) async fn login(provider: &str, credentials_dir: &Path) -> Result<()> 
     registry::login(provider, &dir).await
 }
 
-pub(crate) async fn check(config: &ServerConfig) -> Result<CompletionResponse> {
-    let request: CompletionRequest = serde_json::from_value(serde_json::json!({
-        "request_id": "aven-ai-check",
-        "messages": [
-            {"role": "system", "content": [{"type": "text", "text": "Return only the requested JSON."}]},
-            {"role": "user", "content": [{"type": "text", "text": "Return a JSON object with ok set to true."}]}
-        ],
-        "output": {
-            "type": "json_schema",
-            "schema": {
-                "type": "object",
-                "properties": {"ok": {"type": "boolean"}},
-                "required": ["ok"],
-                "additionalProperties": false
-            }
+/// Removes stored OAuth credentials for `provider` and returns the removed
+/// path, or `None` when nothing was stored.
+pub(crate) fn logout(provider: &str, credentials_dir: &Path) -> Result<Option<PathBuf>> {
+    let info = registry::provider_info(provider)
+        .with_context(|| format!("unsupported AI provider {provider}"))?;
+    if info.auth != registry::AuthKind::OAuth {
+        bail!(
+            "provider {provider} uses {} instead of stored login credentials",
+            info.auth.description()
+        );
+    }
+    let path = credentials_dir.join(provider);
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect {}", path.display()));
         }
-    }))?;
-    AiService::from_config(config)
-        .complete(request)
-        .await
-        .map_err(|error| anyhow::anyhow!("AI check failed: {:?}", error))
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
+        Ok(_) => fs::remove_file(&path),
+    }
+    .with_context(|| format!("remove {}", path.display()))?;
+    Ok(Some(path))
+}
+
+/// Runs the synthetic tool-call exchange against this process's service.
+pub(crate) async fn check(service: &AiService) -> check::Outcome<ErrorCategory> {
+    check::run(|request| async move {
+        let request: CompletionRequest =
+            serde_json::from_value(request).map_err(|_| ErrorCategory::InvalidRequest)?;
+        let response = service.complete(request).await?;
+        serde_json::to_value(response).map_err(|_| ErrorCategory::MalformedProviderResponse)
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -53,7 +53,9 @@ aven server ai login chatgpt
 aven server ai login copilot
 ```
 
-Login stores credentials but does not select the server provider or model. Set `ai.provider` to `chatgpt` or `copilot`, and set `ai.model` to a model available to the authenticated account.
+Only ChatGPT and GitHub Copilot use `login`. Without a provider argument or a configured `ai.provider`, `login` lists them. For an API-key provider it explains which environment variable the server reads instead of starting a flow.
+
+Login stores credentials but does not select the server provider or model. Set `ai.provider` to `chatgpt` or `copilot`, set `ai.model` to a model available to the authenticated account, restart the server, then run `aven server ai check`.
 
 The long-running server does not start an interactive login. Missing OAuth material produces `authentication_required`. Expired or invalid credentials fail the provider request.
 
@@ -62,26 +64,37 @@ The long-running server does not start an interactive login. Missing OAuth mater
 Remove locally stored OAuth credentials with:
 
 ```sh
-config_dir=/path/to/server-config-dir  # the directory that holds server.yaml
-rm -f "$config_dir/private/ai/chatgpt/auth.json"
-rm -f "$config_dir/private/ai/copilot/access-token" \
-  "$config_dir/private/ai/copilot/api-key.json"
+aven server ai logout chatgpt
+aven server ai logout copilot
 ```
 
-This removes Aven's local credentials. It does not revoke access at the provider. Use the provider's account settings when you also need to revoke the authorization.
+Restart the server afterwards so it stops using them. This removes Aven's local credentials. It does not revoke access at the provider. Use the provider's account settings when you also need to revoke the authorization.
 
-Inspect local configuration and credential presence without contacting or billing a provider:
+## Check the setup
+
+At startup the server logs its config path and one AI line, for example:
+
+```text
+ai status=authentication_required provider=chatgpt model=gpt-5 hint="run `aven server ai login chatgpt` on the server host, then restart the server"
+```
+
+Inspect configuration and credential presence without contacting or billing a provider:
 
 ```sh
 aven server ai status
 aven server ai status --json
 ```
 
-A `ready` status does not verify that the configured model is available to the account. Make one synthetic, billable request to verify the complete setup:
+`status` prints the config path, credential directory, provider and model with where each came from (`server.yaml`, an `AVEN_AI_*` variable, or not set), the availability status, and a hint with the next step. It reads `server.yaml` and the environment of the process running the command, not the running server, so a change shows here before the server picks it up at its next restart.
+
+A `ready` status does not verify that the configured model is available to the account or can call tools. Run the billable check to verify the complete setup:
 
 ```sh
 aven server ai check
+aven server ai check --json
 ```
+
+The check makes two completions with an inert synthetic tool: the first must return a call to the tool, the second replays that assistant message unchanged with a tool result and must return a text answer. The iOS agent needs both. Output lists each step; a failing step shows its error category and a hint. The command exits non-zero when any step fails and never prints credentials or provider responses. Like `status`, it runs from the current process with the server's configuration, not through the running server.
 
 ## HTTP contract
 

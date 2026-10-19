@@ -222,6 +222,7 @@ async fn serve(bind: SocketAddr, unsafe_public_bind: bool, config: &ServerConfig
     };
     tokio::spawn(prune_images(database.clone(), image_policy.grace));
     let ai_service = Arc::new(AiService::from_config(config));
+    log_ai_state(config, &ai_service);
     let ai_app = Router::new()
         .route("/ai/capabilities", get(ai::capabilities_handler))
         .route(
@@ -306,6 +307,17 @@ async fn serve_connections(
     }
     let _ = tokio::time::timeout(SHUTDOWN_GRACE, graceful.shutdown()).await;
     Ok(())
+}
+
+fn log_ai_state(config: &ServerConfig, service: &AiService) {
+    let capabilities = service.capabilities();
+    let provider = config.ai.provider.as_deref().unwrap_or("none");
+    let model = config.ai.model.as_deref().unwrap_or("none");
+    let status = capabilities.status.as_str();
+    match capabilities.setup_hint.as_deref() {
+        Some(hint) => info!(status = %status, provider = %provider, model = %model, hint, "ai"),
+        None => info!(status = %status, provider = %provider, model = %model, "ai"),
+    }
 }
 
 #[cfg(test)]

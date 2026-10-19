@@ -48,16 +48,44 @@ fn server_config_beside_the_data_is_overridden_by_environment() {
     let stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status.status.success(), "{stdout}");
     assert!(
-        stdout.contains("provider=ollama provider_source=file"),
+        stdout.contains("Provider:     ollama (server.yaml)\n"),
         "{stdout}"
     );
     assert!(
-        stdout.contains("model=env-model model_source=env"),
+        stdout.contains("Model:        env-model (AVEN_AI_MODEL)\n"),
         "{stdout}"
     );
     assert!(
-        stdout.contains(&format!("config={}", config.display())),
+        stdout.contains(&format!("Config:       {}\n", config.display())),
         "{stdout}"
+    );
+    assert!(stdout.contains("Status:       ready\n"), "{stdout}");
+    assert!(stdout.contains("not the running server"), "{stdout}");
+
+    let json = env.aven_config_env(
+        [
+            "server".as_ref(),
+            "ai".as_ref(),
+            "status".as_ref(),
+            "--json".as_ref(),
+            "--data".as_ref(),
+            data.as_os_str(),
+        ],
+        [("AVEN_AI_MODEL", "env-model")],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(json["provider"], "ollama");
+    assert_eq!(json["provider_source"], "file");
+    assert_eq!(json["model"], "env-model");
+    assert_eq!(json["model_source"], "env");
+    assert_eq!(json["config_path"], config.display().to_string());
+    assert_eq!(
+        json["credentials_dir"],
+        config
+            .with_file_name("private")
+            .join("ai")
+            .display()
+            .to_string()
     );
 
     let other = env.path("elsewhere.yaml");
@@ -71,7 +99,177 @@ fn server_config_beside_the_data_is_overridden_by_environment() {
         ],
         [("AVEN_SERVER_CONFIG", other.as_os_str())],
     );
-    assert!(String::from_utf8_lossy(&status.stdout).contains("provider=none"));
+    assert!(String::from_utf8_lossy(&status.stdout).contains("Provider:     not set\n"));
+}
+
+fn server_ai<'a>(
+    env: &TestEnv,
+    config: &std::path::Path,
+    args: impl IntoIterator<Item = &'a str>,
+    envs: &[(&str, &str)],
+) -> std::process::Output {
+    let mut command = vec!["server".to_string(), "ai".to_string()];
+    command.extend(args.into_iter().map(str::to_string));
+    command.extend(["--config".to_string(), config.display().to_string()]);
+    env.aven_config_env(command, envs.iter().copied())
+}
+
+#[test]
+fn login_explains_choices_and_logout_removes_stored_credentials() {
+    let env = TestEnv::new();
+    let config = write_server_config(&env, "");
+
+    let choices = server_ai(&env, &config, ["login"], &[]);
+    let stdout = String::from_utf8_lossy(&choices.stdout);
+    assert!(choices.status.success(), "{stdout}");
+    assert!(stdout.contains("aven server ai login chatgpt"), "{stdout}");
+    assert!(stdout.contains("aven server ai login copilot"), "{stdout}");
+
+    let api_key = server_ai(&env, &config, ["login", "openai"], &[]);
+    let stdout = String::from_utf8_lossy(&api_key.stdout);
+    assert!(api_key.status.success(), "{stdout}");
+    assert!(stdout.contains("OPENAI_API_KEY"), "{stdout}");
+    assert!(stdout.contains("restart"), "{stdout}");
+
+    let stored = config.with_file_name("private").join("ai/chatgpt");
+    fs::create_dir_all(&stored).unwrap();
+    fs::write(stored.join("auth.json"), "{}").unwrap();
+    let logout = server_ai(&env, &config, ["logout", "chatgpt"], &[]);
+    let stdout = String::from_utf8_lossy(&logout.stdout);
+    assert!(logout.status.success(), "{stdout}");
+    assert!(!stored.exists());
+    assert!(stdout.contains("Restart the server"), "{stdout}");
+    assert!(stdout.contains("does not revoke"), "{stdout}");
+
+    let again = server_ai(&env, &config, ["logout", "chatgpt"], &[]);
+    assert!(String::from_utf8_lossy(&again.stdout).contains("No stored ChatGPT credentials"));
+}
+
+/// Serves one canned Ollama chat reply per connection and returns the bodies.
+fn ollama_stub(
+    replies: Vec<serde_json::Value>,
+) -> (String, thread::JoinHandle<Vec<serde_json::Value>>) {
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", upstream.local_addr().unwrap());
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for message in replies {
+            let (mut stream, _) = upstream.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            let split = request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+            requests.push(serde_json::from_slice(&request[split..]).unwrap());
+            let body = serde_json::json!({"model":"fixture-model", "created_at":"2026-10-19T00:00:00Z", "message":message, "done":true, "prompt_eval_count":10, "eval_count":5}).to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        }
+        requests
+    });
+    (endpoint, handle)
+}
+
+fn ollama_config(env: &TestEnv, endpoint: &str) -> std::path::PathBuf {
+    write_server_config(
+        env,
+        &format!("ai:\n  provider: ollama\n  model: fixture-model\n  endpoint: {endpoint}\n"),
+    )
+}
+
+#[test]
+fn check_runs_a_tool_call_and_replays_the_result() {
+    let env = TestEnv::new();
+    let (endpoint, stub) = ollama_stub(vec![
+        serde_json::json!({"role":"assistant", "content":"", "tool_calls":[{"function":{"name":"aven_check_lookup", "arguments":{"key":"status"}}}]}),
+        serde_json::json!({"role":"assistant", "content":"response-body-marker"}),
+    ]);
+    let config = ollama_config(&env, &endpoint);
+
+    let output = server_ai(&env, &config, ["check"], &[]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("✓ configuration"), "{stdout}");
+    assert!(stdout.contains("✓ tool_call"), "{stdout}");
+    assert!(stdout.contains("✓ tool_result"), "{stdout}");
+    assert!(
+        stdout.contains("Tool calling works (20 input, 10 output tokens)"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("response-body-marker"), "{stdout}");
+
+    let requests = stub.join().unwrap();
+    assert_eq!(
+        requests[0]["tools"][0]["function"]["name"],
+        "aven_check_lookup"
+    );
+    let messages = requests[1]["messages"].as_array().unwrap();
+    assert_eq!(
+        messages[messages.len() - 2]["tool_calls"][0]["function"]["arguments"]["key"],
+        "status"
+    );
+    assert_eq!(messages.last().unwrap()["role"], "tool");
+    assert_eq!(messages.last().unwrap()["tool_name"], "aven_check_lookup");
+}
+
+#[test]
+fn check_fails_when_the_model_or_integration_cannot_call_tools() {
+    let env = TestEnv::new();
+    let (endpoint, stub) = ollama_stub(vec![
+        serde_json::json!({"role":"assistant", "content":"response-body-marker"}),
+    ]);
+    let config = ollama_config(&env, &endpoint);
+    let output = server_ai(&env, &config, ["check", "--json"], &[]);
+    assert!(!output.status.success());
+    stub.join().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("response-body-marker"), "{stdout}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["steps"][0]["step"], "configuration");
+    assert_eq!(report["steps"][1]["step"], "tool_call");
+    assert_eq!(report["steps"][1]["error"], "no_tool_call");
+    assert!(
+        report["steps"][1]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("restart the server")
+    );
+
+    // This integration drops tools, so the check stops before any request.
+    let config = write_server_config(
+        &env,
+        "ai:\n  provider: hyperbolic\n  model: fixture-model\n",
+    );
+    let output = server_ai(
+        &env,
+        &config,
+        ["check"],
+        &[("HYPERBOLIC_API_KEY", "secret-key-marker")],
+    );
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("✗ tool_call"), "{stdout}");
+    assert!(stdout.contains("unsupported_capability"), "{stdout}");
+    assert!(stdout.contains("tools=true"), "{stdout}");
+    assert!(!stdout.contains("secret-key-marker"), "{stdout}");
+}
+
+#[tokio::test]
+async fn server_without_credentials_logs_why_ai_is_unavailable() {
+    let env = TestEnv::new();
+    let config = write_server_config(&env, "ai:\n  provider: anthropic\n  model: fixture-model\n");
+    let vault = aven_core::test_support::PublishedVault::new().await;
+    let server = TestServer::start_prepared_with_env(
+        &env,
+        vault.db.path(),
+        [
+            ("AVEN_SERVER_CONFIG", config.as_os_str()),
+            ("ANTHROPIC_API_KEY", std::ffi::OsStr::new("")),
+        ],
+    );
+    let output = server.output();
+    assert!(output.contains(&config.display().to_string()), "{output}");
+    assert!(
+        output.contains("ai status=authentication_required provider=anthropic model=fixture-model hint=\"set ANTHROPIC_API_KEY in the server's environment, then restart the server\""),
+        "{output}"
+    );
 }
 
 #[test]

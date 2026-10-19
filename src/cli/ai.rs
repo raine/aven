@@ -17,17 +17,38 @@ pub(crate) struct AiCommand {
 pub(crate) enum AiSubcommand {
     /// List supported providers and authentication requirements
     Providers,
-    /// Authenticate an OAuth provider
+    /// Log in to an OAuth provider (chatgpt or copilot)
+    #[command(after_long_help = LOGIN_HELP)]
     Login {
-        /// Provider to authenticate; defaults to ai.provider
+        /// OAuth provider: chatgpt or copilot; defaults to ai.provider
         provider: Option<String>,
     },
-    /// Show the server AI configuration and credential readiness
+    /// Remove stored OAuth credentials for a provider
+    Logout {
+        /// OAuth provider: chatgpt or copilot
+        provider: String,
+    },
+    /// Show the AI configuration and credential readiness this host sees
     Status {
         /// Emit JSON
         #[arg(long)]
         json: bool,
     },
-    /// Make one billable synthetic completion with the configured provider
-    Check,
+    /// Run a billable two-round tool-call exchange with the configured provider
+    #[command(after_long_help = CHECK_HELP)]
+    Check {
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
+
+const LOGIN_HELP: &str = r#"Only chatgpt and copilot use interactive login. API-key providers read their
+key from the server process environment; set it there and restart the server.
+Login stores credentials but does not select the provider: set ai.provider and
+ai.model in server.yaml, restart the server, then run `aven server ai check`."#;
+
+const CHECK_HELP: &str = r#"The check sends two requests from this process using server.yaml and this
+environment, not through the running server: one that offers an inert tool and
+expects a call to it, then one that replays that call with a tool result and
+expects a text answer. The Ask Aven agent needs both to work."#;
