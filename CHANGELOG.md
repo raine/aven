@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: Aven no longer trusts TLS certificates issued through eight eMudhra intermediate CAs whose private keys were compromised. See [the advisory](https://emudhra.we-have-a-problem.com/).
+
 ## v0.1.50 (2026-10-18)
 
 - Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven) is now available. Jot a task down on your phone and it lands in your terminal queue. See [the mobile apps](https://aventasks.dev/mobile/).
