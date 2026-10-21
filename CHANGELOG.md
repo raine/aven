@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Remove the TUI sidebar’s static Filters section and give Backlog a distinct icon. ([#35](https://github.com/raine/aven/issues/35))
+
 - New: Switch workspaces from the TUI sidebar, with available open task counts for each workspace. ([#35](https://github.com/raine/aven/issues/35))
 - New: Syncs workspace deletions made on devices running a later Aven release. Update every device before a later release enables deleting workspaces.
 - Changed: `aven`, `aven list`, and `aven search` default to the current directory’s project. Use `--all-projects` (`-A`) or set `scope: workspace` for all projects; TUI search follows the active scope, with `Ctrl+S` to widen it.

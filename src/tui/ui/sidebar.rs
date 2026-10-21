@@ -5,7 +5,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
 use unicode_width::UnicodeWidthStr;
 
-use crate::choices::TaskPriority;
 use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::{
@@ -22,7 +21,7 @@ const COLUMNS_MARKER: &str = "\u{f0db}";
 const INBOX_MARKER: &str = "\u{f01c}";
 const TODO_MARKER: &str = "\u{f0ae}";
 const ACTIVE_MARKER: &str = "\u{f111}";
-const BACKLOG_MARKER: &str = "\u{f017}";
+const BACKLOG_MARKER: &str = "\u{f187}";
 const DONE_MARKER: &str = "\u{f00c}";
 const UPCOMING_MARKER: &str = "\u{f017}";
 const CONFLICT_MARKER: &str = "\u{f071}";
@@ -166,7 +165,7 @@ pub(super) fn render_sidebar(
 ) {
     list.sync_sidebar(&store.sidebar_entries);
     let content_width = area.width.saturating_sub(if overlay { 2 } else { 1 }) as usize;
-    let mut items: Vec<ListItem> = list
+    let items: Vec<ListItem> = list
         .sidebar_entries()
         .iter()
         .enumerate()
@@ -228,26 +227,6 @@ pub(super) fn render_sidebar(
         })
         .collect();
 
-    let urgent_count = store
-        .tasks
-        .iter()
-        .filter(|task| task.task.priority == TaskPriority::Urgent)
-        .count() as i64;
-    let conflict_count = store.tasks.iter().filter(|task| task.has_conflict).count() as i64;
-    items.extend([
-        ListItem::new(Line::from("")),
-        ListItem::new(Line::from("FILTERS").style(theme.dim().add_modifier(Modifier::BOLD))),
-        filter_item(theme, "▲", "urgent", urgent_count, theme.danger, area.width),
-        filter_item(
-            theme,
-            "⚡",
-            "conflicts",
-            conflict_count,
-            theme.conflict,
-            area.width,
-        ),
-    ]);
-
     let highlight_style = if focus == Focus::Sidebar {
         theme.highlight()
     } else {
@@ -285,17 +264,6 @@ fn sidebar_section_line(
         format!(" {label}{spacer}{indicator} ")
     };
     Line::from(text).style(theme.dim().bg(theme.bg_raised).add_modifier(Modifier::BOLD))
-}
-
-fn badge(theme: &Theme, count: i64, active: bool) -> Span<'static> {
-    if count <= 0 {
-        return Span::raw(" ");
-    }
-    let color = if active { theme.accent } else { theme.fg_muted };
-    Span::styled(
-        format!("{count:>2}"),
-        Style::new().fg(color).add_modifier(Modifier::BOLD),
-    )
 }
 
 fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
@@ -409,28 +377,6 @@ fn sidebar_entry_line(
     ])
 }
 
-fn filter_item(
-    theme: &Theme,
-    icon: &str,
-    label: &str,
-    count: i64,
-    color: Color,
-    width: u16,
-) -> ListItem<'static> {
-    let icon_cell = if icon == "⚡" {
-        format!("{icon} ")
-    } else {
-        format!("{icon}  ")
-    };
-    let count_width = if count > 0 { 2 } else { 1 };
-    let label_width = (width as usize).saturating_sub(icon_cell.width() + count_width + 2);
-    ListItem::new(Line::from(vec![
-        Span::styled(icon_cell, Style::new().fg(color)),
-        Span::styled(format!("{label:<label_width$}"), theme.muted()),
-        badge(theme, count, false),
-    ]))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,6 +414,77 @@ mod tests {
         assert_eq!(sidebar_icon_cell("○").width(), 3);
         assert_eq!(sidebar_icon_cell(QUEUE_MARKER).width(), 3);
         assert_eq!(sidebar_icon_cell(EPIC_MARKER).width(), 3);
+    }
+
+    #[test]
+    fn counted_workspace_and_epic_rows_use_shared_icons() {
+        for (target, marker) in [
+            (
+                SidebarEntryTarget::Workspace("personal".into()),
+                WORKSPACE_MARKER,
+            ),
+            (
+                SidebarEntryTarget::Scope(TaskScopeTarget::Workspace),
+                WORKSPACE_MARKER,
+            ),
+            (SidebarEntryTarget::View(TaskQuery::Epics), EPIC_MARKER),
+        ] {
+            let entry = SidebarEntry {
+                label: "Example".into(),
+                count: 123,
+                section: false,
+                target: Some(target),
+            };
+            assert_eq!(sidebar_icon(&entry), marker);
+            let line = sidebar_entry_line(
+                THEME,
+                &entry,
+                sidebar_icon(&entry),
+                "Example",
+                THEME.muted(),
+                THEME.fg,
+                false,
+                25,
+            );
+            assert_eq!(line.width(), 25);
+            assert!(
+                line.to_string()
+                    .starts_with(&format!("{}Example", sidebar_icon_cell(marker)))
+            );
+            assert!(line.to_string().ends_with("123"));
+        }
+    }
+
+    #[test]
+    fn sidebar_row_icons_are_distinct_nerd_font_glyphs() {
+        let markers = [
+            QUEUE_MARKER,
+            READY_MARKER,
+            BLOCKED_MARKER,
+            OVERDUE_MARKER,
+            COLUMNS_MARKER,
+            INBOX_MARKER,
+            TODO_MARKER,
+            ACTIVE_MARKER,
+            BACKLOG_MARKER,
+            DONE_MARKER,
+            UPCOMING_MARKER,
+            CONFLICT_MARKER,
+            SEARCH_MARKER,
+            RECENT_MARKER,
+            EPIC_MARKER,
+            RECURRING_MARKER,
+            OPEN_MARKER,
+            WORKSPACE_MARKER,
+            PROJECT_MARKER,
+        ];
+        let unique: std::collections::HashSet<_> = markers.into_iter().collect();
+        assert_eq!(unique.len(), markers.len());
+        for marker in markers {
+            assert_eq!(marker.chars().count(), 1);
+            assert!(('\u{e000}'..='\u{f8ff}').contains(&marker.chars().next().unwrap()));
+            assert_eq!(sidebar_icon_cell(marker).width(), 3);
+        }
     }
 
     #[test]
