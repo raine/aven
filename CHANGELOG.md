@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- UX: Type directly in TUI priority pickers and label filters without pressing `/`, with clearer selection highlights and colored priority icons.
 - Fix: Remove the TUI sidebar’s static Filters section and give Backlog a distinct icon. ([#35](https://github.com/raine/aven/issues/35))
 - UX: Set custom project prefixes with `aven project create --prefix` or the TUI's two-field rename dialog (`p r`, `Tab` to switch fields). Renaming a project no longer regenerates its prefix. ([#35](https://github.com/raine/aven/issues/35))
 - Fix: Create labels in the TUI even when their names are substrings of existing labels. ([#35](https://github.com/raine/aven/issues/35))
