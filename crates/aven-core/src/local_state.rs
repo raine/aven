@@ -155,7 +155,11 @@ impl Database {
             .and_then(|value| value.parse::<WorkspaceId>().ok());
         let selected = stored_id
             .and_then(|id| workspaces.iter().find(|workspace| workspace.id == id))
-            .or_else(|| workspaces.first())
+            .or_else(|| {
+                workspaces
+                    .iter()
+                    .find(|workspace| workspace.key == "default")
+            })
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("no available workspace"))?;
         set_meta(&mut tx, IOS_QUEUE_WORKSPACE_META_KEY, selected.id.as_str()).await?;
@@ -459,6 +463,33 @@ mod tests {
         assert_eq!(
             database.daemon_sync_state().await.unwrap(),
             DaemonSyncState::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn deleted_queue_workspace_falls_back_to_default_not_alphabetical_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("queue.sqlite");
+        let database = Database::open(&path).await.unwrap();
+        database.create_workspace("Alpha").await.unwrap();
+        let personal = database.create_workspace("Personal").await.unwrap();
+        database.select_queue_workspace(&personal.id).await.unwrap();
+        crate::test_support::set_established_protocol(&database, 19)
+            .await
+            .unwrap();
+        database
+            .delete_workspace(&personal.id, &[], true)
+            .await
+            .unwrap();
+        assert_eq!(
+            database.restore_queue_workspace().await.unwrap().key,
+            "default"
+        );
+        database.close().await;
+        let reopened = Database::open(&path).await.unwrap();
+        assert_eq!(
+            reopened.restore_queue_workspace().await.unwrap().key,
+            "default"
         );
     }
 
