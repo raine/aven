@@ -345,19 +345,23 @@ fn search_scope_chip_count_and_toggle_hint_follow_scope() {
         (None, None, false),
         (Some("app"), Some(3), true),
     ] {
-        let rendered = render_overlay_view(OverlayView::Search {
-            project: project.map(str::to_string),
-            original_project: Some("app".into()),
-            other_project_matches: count,
-            input: "missing".into(),
-            cursor: 7,
-            results: &[],
-            selected: 0,
-            total_matches: 0,
-            stale,
-            no_matches_cached: !stale,
-            intent: SearchKind::Navigate,
-        });
+        let rendered = render_overlay_view_at(
+            OverlayView::Search {
+                project: project.map(str::to_string),
+                original_project: Some("app".into()),
+                other_project_matches: count,
+                input: "missing".into(),
+                cursor: 7,
+                results: &[],
+                selected: 0,
+                total_matches: 0,
+                stale,
+                no_matches_cached: !stale,
+                intent: SearchKind::Navigate,
+            },
+            160,
+            30,
+        );
         assert!(rendered.contains("Search"));
         assert!(rendered.contains(project.unwrap_or("all projects")));
         assert_eq!(
