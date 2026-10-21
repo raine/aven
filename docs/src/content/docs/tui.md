@@ -57,7 +57,7 @@ Use the sidebar or the `v` command family to switch queries and layouts.
 
 Workspace scope shows tasks across projects. Project scope narrows every view to one project.
 
-`aven` and `aven tui` start in the project inferred from the current directory, or silently use workspace scope if none matches. Use `aven -A` (or `aven tui --all-projects`) for all projects, `-p <project>` for a specific project, or set [`scope: workspace`](/configuration/#default-project-scope) to change the default. Clicking the workspace scope row or pressing `g a` widens to all projects.
+`aven` and `aven tui` start in the project inferred from the current directory, or silently use workspace scope if none matches. Use `aven -A` (or `aven tui --all-projects`) for all projects, `-p <project>` for a specific project, or set [`scope: workspace`](/configuration/#default-project-scope) to change the default. Clicking the active workspace row or pressing `g a` widens to all projects.
 
 | Key | Action |
 | --- | --- |
