@@ -55,3 +55,5 @@ pub(crate) use view::{
     OrderMenuView, OverlayView, OverlayViewContext, PickerKind, PickerView, RecurrenceHistoryView,
     SearchKind, SyncDialogView, TagComboboxView, TextInputKind, TextInputView, TextPanelView,
 };
+
+pub(crate) use tag_combobox::TAG_COMBOBOX_CREATE;

@@ -108,6 +108,8 @@ Press `a` to open the task composer. Project, status, priority, labels, availabi
 
 Press `Ctrl-s` to create the task from any field, or `Ctrl-Enter` in terminals that support it. `Enter` creates from the title, opens pickers on metadata fields, and adds a newline in the description. Text fields support `Alt-Left` and `Alt-Right` to move by word and `Alt-Backspace` to delete one.
 
+In the label picker, typing filters existing labels. If the name is new, a `+ create` row appears below the matches. Use `↑` or `↓` to highlight it, then `Enter`, `Space`, or `Tab` to create and select the label. The best existing match stays highlighted by default.
+
 Press `Ctrl-g` to create the task and start another with the same project, status, priority, and labels. It isn't available for repeating tasks.
 
 New tasks default to `inbox`, or `todo` when they have a priority or repeat. The status field marks this default with `(auto)`. Choosing a status overrides it; choose **Auto** to go back.

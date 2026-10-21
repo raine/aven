@@ -8,7 +8,7 @@ use super::state::{
     MultilineIntent, OrderMenuState, OverlayState, OverlayState::*, PickerIntent, PickerItem,
     PickerMode, SearchIntent, SearchResultItem, TagComboboxIntent, TextIntent,
 };
-use super::tag_combobox::{tag_combobox_completion, tag_combobox_matches};
+use super::tag_combobox::{tag_combobox_completion, tag_combobox_rows};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SearchKind {
@@ -455,7 +455,7 @@ impl<'a> PickerView<'a> {
 
 impl<'a> TagComboboxView<'a> {
     pub(crate) fn from_state(state: &'a super::state::TagComboboxState) -> Self {
-        let visible_indices = tag_combobox_matches(state);
+        let visible_indices = tag_combobox_rows(state);
         Self {
             kind: (&state.intent).into(),
             title: state.title.clone(),

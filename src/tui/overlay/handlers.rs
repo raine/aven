@@ -18,8 +18,8 @@ use super::state::{
     TagComboboxState, TextPanelState,
 };
 use super::tag_combobox::{
-    handle_tag_combobox_key, normalize_tag_combobox_highlight, tag_combobox_matches,
-    toggle_tag_combobox_label,
+    TAG_COMBOBOX_CREATE, handle_tag_combobox_key, normalize_tag_combobox_highlight,
+    tag_combobox_rows, toggle_tag_combobox_label,
 };
 use crate::tui::overlay::{
     PickerView, TagComboboxView, confirm_layout, picker_layout, tag_combobox_layout,
@@ -112,6 +112,7 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
         }
         OverlayState::TagCombobox(mut state) => {
             state.input.insert_paste(text);
+            state.highlighted = tag_combobox_rows(&state).first().copied().unwrap_or(0);
             normalize_tag_combobox_highlight(&mut state);
             OverlayState::TagCombobox(state)
         }
@@ -675,6 +676,12 @@ fn handle_tag_combobox_mouse(
         TagComboboxMouseTarget::Input => OverlayOutcome::None(OverlayState::TagCombobox(state)),
         TagComboboxMouseTarget::Row(index) => {
             state.highlighted = index;
+            if index == TAG_COMBOBOX_CREATE {
+                return handle_tag_combobox_key(
+                    state,
+                    KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+                );
+            }
             toggle_tag_combobox_label(&mut state, index);
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
@@ -734,8 +741,7 @@ pub(crate) fn wrap_index_by_value(
 }
 
 fn move_tag_combobox_highlight(state: &mut TagComboboxState, delta: isize) {
-    if let Some(next) = wrap_index_by_value(&tag_combobox_matches(state), state.highlighted, delta)
-    {
+    if let Some(next) = wrap_index_by_value(&tag_combobox_rows(state), state.highlighted, delta) {
         state.highlighted = next;
     }
 }

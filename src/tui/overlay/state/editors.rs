@@ -417,6 +417,7 @@ pub(crate) struct TagComboboxState {
     pub(crate) options: Vec<String>,
     pub(crate) selected: Vec<String>,
     pub(crate) partial: Vec<String>,
+    /// An option index, or `TAG_COMBOBOX_CREATE` for the synthetic create row.
     pub(crate) highlighted: usize,
 }
 

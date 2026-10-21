@@ -7,6 +7,7 @@ description: Release notes for aven.
 
 - Fix: Remove the TUI sidebar’s static Filters section and give Backlog a distinct icon. ([#35](https://github.com/raine/aven/issues/35))
 - UX: Set custom project prefixes with `aven project create --prefix` or the TUI's two-field rename dialog (`p r`, `Tab` to switch fields). Renaming a project no longer regenerates its prefix. ([#35](https://github.com/raine/aven/issues/35))
+- Fix: Create labels in the TUI even when their names are substrings of existing labels. ([#35](https://github.com/raine/aven/issues/35))
 
 - New: Switch workspaces from the TUI sidebar, with available open task counts for each workspace. ([#35](https://github.com/raine/aven/issues/35))
 - New: Syncs workspace deletions made on devices running a later Aven release. Update every device before a later release enables deleting workspaces.

@@ -4,6 +4,17 @@ use crate::labels::normalize_label;
 
 use super::state::{OverlayOutcome, OverlayState, OverlaySubmit, TagComboboxState};
 
+/// Synthetic row identity, distinct from every index into the label options.
+pub(crate) const TAG_COMBOBOX_CREATE: usize = usize::MAX;
+
+pub(crate) fn tag_combobox_rows(state: &TagComboboxState) -> Vec<usize> {
+    let mut rows = tag_combobox_matches(state);
+    if tag_combobox_has_create_option(state) {
+        rows.push(TAG_COMBOBOX_CREATE);
+    }
+    rows
+}
+
 pub(crate) fn tag_combobox_matches(state: &TagComboboxState) -> Vec<usize> {
     ranked_matches(&state.options, state.input.as_str())
 }
@@ -23,7 +34,7 @@ pub(crate) fn tag_combobox_completion(state: &TagComboboxState) -> Option<String
 }
 
 pub(crate) fn normalize_tag_combobox_highlight(state: &mut TagComboboxState) {
-    let matches = tag_combobox_matches(state);
+    let matches = tag_combobox_rows(state);
     state.highlighted = matches
         .iter()
         .copied()
@@ -62,9 +73,7 @@ pub(crate) fn handle_tag_combobox_key(
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
         KeyCode::Tab => {
-            let has_create_option =
-                tag_combobox_matches(&state).is_empty() && tag_combobox_has_create_option(&state);
-            if has_create_option || !state.input.as_str().is_empty() {
+            if !state.input.as_str().is_empty() {
                 activate_highlighted(&mut state)
             } else {
                 toggle_highlighted_label(&mut state, false);
@@ -88,7 +97,11 @@ pub(crate) fn handle_tag_combobox_key(
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
         _ => {
+            let previous_input = state.input.as_str().to_string();
             state.input.handle_key(key);
+            if state.input.as_str() != previous_input {
+                state.highlighted = tag_combobox_rows(&state).first().copied().unwrap_or(0);
+            }
             normalize_tag_combobox_highlight(&mut state);
             OverlayOutcome::None(OverlayState::TagCombobox(state))
         }
@@ -100,7 +113,9 @@ fn has_pending_label(state: &TagComboboxState) -> bool {
 }
 
 fn activate_highlighted(state: &mut TagComboboxState) -> OverlayOutcome {
-    if tag_combobox_matches(state).is_empty() && tag_combobox_has_create_option(state) {
+    if (state.highlighted == TAG_COMBOBOX_CREATE || tag_combobox_matches(state).is_empty())
+        && tag_combobox_has_create_option(state)
+    {
         let label = normalize_label(state.input.as_str());
         add_label(state, label);
         clear_input(state);
@@ -166,7 +181,7 @@ fn add_label(state: &mut TagComboboxState, label: String) {
 
 fn move_highlight(state: &mut TagComboboxState, delta: isize) {
     if let Some(next) =
-        super::wrap_index_by_value(&tag_combobox_matches(state), state.highlighted, delta)
+        super::wrap_index_by_value(&tag_combobox_rows(state), state.highlighted, delta)
     {
         state.highlighted = next;
     }
@@ -230,6 +245,69 @@ mod tests {
             selected: Vec::new(),
             partial: Vec::new(),
             highlighted: 0,
+        }
+    }
+
+    fn press(state: TagComboboxState, key: KeyEvent) -> TagComboboxState {
+        let OverlayOutcome::None(OverlayState::TagCombobox(state)) =
+            handle_tag_combobox_key(state, key)
+        else {
+            panic!("expected combobox");
+        };
+        state
+    }
+
+    #[test]
+    fn create_substring_with_each_activation_key() {
+        for code in [KeyCode::Enter, KeyCode::Tab, KeyCode::Char(' ')] {
+            for (input, existing) in [("abc", "abcd"), ("bug", "debug"), ("new", "abcd")] {
+                let mut state = tag_combobox_state();
+                state.options = vec![existing.into()];
+                state.input = LineEdit::new(input.into());
+                normalize_tag_combobox_highlight(&mut state);
+                if !tag_combobox_matches(&state).is_empty() {
+                    state = press(state, key(KeyCode::Down));
+                }
+                assert_eq!(state.highlighted, TAG_COMBOBOX_CREATE);
+                assert_eq!(tag_combobox_completion(&state), None);
+                let state = press(state, key(code));
+                assert_eq!(state.selected, vec![input]);
+                assert!(state.options.contains(&existing.to_string()));
+                assert!(state.options.contains(&input.to_string()));
+                assert!(state.input.as_str().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn normalized_exact_match_and_empty_input_have_no_create_row() {
+        let mut state = tag_combobox_state();
+        for input in ["BUG", "", "   "] {
+            state.input = LineEdit::new(input.into());
+            assert!(!tag_combobox_has_create_option(&state));
+            assert!(!tag_combobox_rows(&state).contains(&TAG_COMBOBOX_CREATE));
+        }
+    }
+
+    #[test]
+    fn navigation_wraps_through_create_and_typing_resets_to_best_match() {
+        for (down, up) in [
+            (key(KeyCode::Down), key(KeyCode::Up)),
+            (ctrl(KeyCode::Char('n')), ctrl(KeyCode::Char('p'))),
+        ] {
+            let mut state = tag_combobox_state();
+            state.input = LineEdit::new("b".into());
+            state = press(state, up);
+            assert_eq!(state.highlighted, TAG_COMBOBOX_CREATE);
+            state = press(state, down);
+            assert_eq!(state.highlighted, 0);
+            state = press(state, down);
+            assert_eq!(state.highlighted, TAG_COMBOBOX_CREATE);
+            state = press(state, up);
+            assert_eq!(state.highlighted, 0);
+            state = press(state, up);
+            state = press(state, key(KeyCode::Char('u')));
+            assert_eq!(state.highlighted, 0);
         }
     }
 

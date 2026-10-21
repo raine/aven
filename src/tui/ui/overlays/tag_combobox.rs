@@ -7,7 +7,8 @@ use super::super::dialog::{Dialog, dialog_hint_line};
 use super::super::input::{InputWidth, cursor_cell, input_cursor_spans};
 use crate::labels::normalize_label;
 use crate::tui::overlay::{
-    TAG_COMBOBOX_VIEWPORT_ROWS, TAG_COMBOBOX_WIDTH, TagComboboxView, tag_combobox_layout,
+    TAG_COMBOBOX_CREATE, TAG_COMBOBOX_VIEWPORT_ROWS, TAG_COMBOBOX_WIDTH, TagComboboxView,
+    tag_combobox_layout,
 };
 use crate::tui::theme::Theme;
 
@@ -137,7 +138,7 @@ fn option_lines(
         .collect::<Vec<_>>();
 
     if lines.is_empty() {
-        lines.push(create_option_line(theme, state));
+        lines.push(Line::from(Span::styled("  no labels", theme.dim())));
     }
     while lines.len() < viewport_rows {
         lines.push(Line::from(""));
@@ -146,6 +147,9 @@ fn option_lines(
 }
 
 fn option_line(theme: &Theme, state: &TagComboboxView, index: usize) -> Line<'static> {
+    if index == TAG_COMBOBOX_CREATE {
+        return create_option_line(theme, state);
+    }
     let label = &state.options[index];
     let highlighted = index == state.highlighted;
     let selected = state.selected.contains(label);
@@ -174,8 +178,43 @@ fn create_option_line(theme: &Theme, state: &TagComboboxView) -> Line<'static> {
     if value.is_empty() {
         return Line::from(Span::styled("  no labels", theme.dim()));
     }
+    let highlighted = state.highlighted == TAG_COMBOBOX_CREATE;
+    let style = if highlighted {
+        theme.selected()
+    } else {
+        Style::new().bg(theme.bg_panel)
+    };
+    let marker = if highlighted { "▸" } else { " " };
     Line::from(vec![
-        Span::styled("▸ + ", theme.selected()),
-        Span::styled(format!("create {value}"), theme.selected()),
+        Span::styled(format!("{marker} + "), style),
+        Span::styled(format!("create {value}"), style),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::overlay::{OverlayState, TagComboboxIntent};
+
+    #[test]
+    fn create_row_renders_below_matches_and_scrolls_into_view() {
+        let OverlayState::TagCombobox(mut state) = OverlayState::tag_combobox(
+            TagComboboxIntent::AddTaskLabels,
+            "Labels",
+            vec!["abcd".into()],
+            Vec::new(),
+        ) else {
+            panic!("expected combobox")
+        };
+        state.input = crate::tui::overlay::LineEdit::new("abc".into());
+        let theme = Theme::dark();
+        let view = TagComboboxView::from_state(&state);
+        let lines = option_lines(&theme, &view, 2);
+        assert_eq!(lines[0].to_string(), "▸   abcd");
+        assert_eq!(lines[1].to_string(), "  + create abc");
+        state.highlighted = TAG_COMBOBOX_CREATE;
+        let view = TagComboboxView::from_state(&state);
+        let lines = option_lines(&theme, &view, 1);
+        assert_eq!(lines[0].to_string(), "▸ + create abc");
+    }
 }
