@@ -196,7 +196,10 @@ fn continue_picker(state: PickerState) -> OverlayOutcome {
 }
 
 pub(super) fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
-    if state.intent.is_priority() && visible_picker_indices(&state).is_empty() {
+    if (state.intent.is_priority()
+        || matches!(state.intent, super::state::PickerIntent::FilterLabel))
+        && visible_picker_indices(&state).is_empty()
+    {
         return continue_picker(state);
     }
     let values = if state.multi {
@@ -254,7 +257,7 @@ mod tests {
 
     fn picker_navigation_state() -> PickerState {
         PickerState {
-            intent: PickerIntent::FilterLabel,
+            intent: PickerIntent::AddTaskStatus,
             title: "Pick".to_string(),
             filter: crate::tui::overlay::LineEdit::blank(),
             items: vec![
@@ -341,6 +344,50 @@ mod tests {
             panic!("expected picker to remain open");
         };
         state
+    }
+
+    #[test]
+    fn label_filter_accepts_navigation_letters_as_text() {
+        for label in ["javascript", "kotlin", "ios"] {
+            let mut state = PickerState::new(
+                PickerIntent::FilterLabel,
+                "Filter: label",
+                vec![
+                    PickerItem {
+                        label: "bug".into(),
+                        value: "bug".into(),
+                        selected: true,
+                    },
+                    PickerItem {
+                        label: label.into(),
+                        value: label.into(),
+                        selected: false,
+                    },
+                ],
+                false,
+            );
+            assert_eq!(state.mode, PickerMode::Filter);
+            for ch in label.chars().take(2) {
+                state = press(state, KeyCode::Char(ch));
+            }
+            assert_eq!(state.selected, 1);
+            assert_eq!(visible_picker_indices(&state), vec![1]);
+            let unmatched = press(state.clone(), KeyCode::Char('z'));
+            assert!(visible_picker_indices(&unmatched).is_empty());
+            let unmatched = press(unmatched, KeyCode::Enter);
+            let restored = press(unmatched, KeyCode::Backspace);
+            assert_eq!(restored.filter, state.filter);
+            assert!(matches!(
+                handle_picker_key(restored, key(KeyCode::Esc)),
+                OverlayOutcome::Cancelled
+            ));
+            let OverlayOutcome::Submitted(OverlaySubmit::Picker { values, .. }) =
+                handle_picker_key(state, key(KeyCode::Enter))
+            else {
+                panic!("expected submission");
+            };
+            assert_eq!(values, vec![label]);
+        }
     }
 
     #[test]

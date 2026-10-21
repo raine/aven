@@ -170,7 +170,7 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
         || label_picker
         || matches!(
             state.kind,
-            PickerKind::SwitchWorkspace | PickerKind::Priority
+            PickerKind::SwitchWorkspace | PickerKind::Priority | PickerKind::FilterLabel
         ) {
         picker_row_count(row_count, viewport_rows)
     } else {

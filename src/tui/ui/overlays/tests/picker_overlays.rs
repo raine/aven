@@ -388,3 +388,20 @@ fn priority_highlight_fills_row_and_empty_message_keeps_footer() {
     assert!(rendered.contains("no matching priorities"));
     assert!(rendered.contains("Enter submit"));
 }
+
+#[test]
+fn label_filter_shows_direct_typing_and_cancel_hints() {
+    let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+        kind: PickerKind::from(&PickerIntent::FilterLabel),
+        title: "Filter: label".to_string(),
+        filter: "missing".to_string(),
+        filter_cursor: 7,
+        mode: PickerMode::Filter,
+        ..picker_view()
+    }));
+    assert!(rendered.contains("no matching labels"));
+    assert!(rendered.contains("type filter"));
+    assert!(rendered.contains("Up/Down move"));
+    assert!(rendered.contains("Esc cancel"));
+    assert!(rendered.contains("Enter submit"));
+}

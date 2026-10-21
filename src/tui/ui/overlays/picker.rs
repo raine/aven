@@ -66,6 +66,19 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, theme: &Theme, state:
                 " ".repeat(usize::from(layout.list.width).saturating_sub(line.width())),
             ));
             lines.push(line);
+        } else if state.kind == PickerKind::FilterLabel {
+            let text = format!("{marker}{}", item.label);
+            lines.push(
+                Line::from(format!(
+                    "{text}{}",
+                    " ".repeat(usize::from(layout.list.width).saturating_sub(text.width()))
+                ))
+                .style(if *index == state.selected {
+                    theme.selected()
+                } else {
+                    theme.dim()
+                }),
+            );
         } else if state.kind == PickerKind::GoToBlocker {
             lines.push(blocker_picker_line(
                 theme,
@@ -101,7 +114,10 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, theme: &Theme, state:
             priority_picker_submit_label(state.kind)
                 .or_else(|| generic_picker_submit_label(state.kind))
                 .unwrap_or("submit"),
-            matches!(state.kind, PickerKind::SwitchWorkspace),
+            matches!(
+                state.kind,
+                PickerKind::SwitchWorkspace | PickerKind::FilterLabel
+            ),
         ));
     }
     Dialog::new(theme, &state.title, 0, 0).render_text_at(frame, layout.area, Text::from(lines));
@@ -110,6 +126,7 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, theme: &Theme, state:
 fn picker_empty_label(kind: PickerKind) -> Option<&'static str> {
     match kind {
         PickerKind::SwitchWorkspace => Some("  no matching workspaces"),
+        PickerKind::FilterLabel => Some("  no matching labels"),
         PickerKind::Priority => Some("  no matching priorities"),
         _ => None,
     }

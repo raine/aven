@@ -293,6 +293,7 @@ pub(crate) enum PickerKind {
     RenameProject,
     DeleteProject,
     LabelAdministration,
+    FilterLabel,
     SwitchWorkspace,
     GoToBlocker,
     Generic,
@@ -301,6 +302,7 @@ pub(crate) enum PickerKind {
 impl From<&PickerIntent> for PickerKind {
     fn from(intent: &PickerIntent) -> Self {
         match intent {
+            PickerIntent::FilterLabel => Self::FilterLabel,
             PickerIntent::AddTaskProject => Self::AddTaskProject,
             PickerIntent::AddTaskPriority | PickerIntent::FilterPriority => Self::Priority,
             PickerIntent::EditProject { .. } => Self::EditProject,

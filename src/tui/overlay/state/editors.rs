@@ -168,12 +168,16 @@ impl PickerIntent {
     }
 
     pub(crate) fn filter_escape_cancels(&self) -> bool {
-        matches!(self, Self::ScopeProject | Self::SwitchWorkspace)
+        matches!(
+            self,
+            Self::ScopeProject | Self::SwitchWorkspace | Self::FilterLabel
+        )
     }
 
     pub(crate) fn initial_mode(&self) -> PickerMode {
         match self {
-            Self::AddTaskProject
+            Self::FilterLabel
+            | Self::AddTaskProject
             | Self::EditProject { .. }
             | Self::ScopeProject
             | Self::RenameProject
