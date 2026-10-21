@@ -193,6 +193,11 @@ fn check_runs_a_tool_call_and_replays_the_result() {
         "{stdout}"
     );
     assert!(!stdout.contains("response-body-marker"), "{stdout}");
+    assert_eq!(
+        stdout.matches("not the running server").count(),
+        1,
+        "{stdout}"
+    );
 
     let requests = stub.join().unwrap();
     assert_eq!(
