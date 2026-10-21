@@ -291,6 +291,10 @@ async fn setup(
     let _guard = coordination::acquire(database).await?;
     let (server, setup_id, secret) = match invitation {
         Some(invitation) => {
+            store
+                .check_seed_origin(database, &invitation.server)
+                .await?;
+            host.check_reachability(&invitation.server).await?;
             store.bind_seed_origin(database, &invitation.server).await?;
             (
                 invitation.server.clone(),
@@ -304,6 +308,7 @@ async fn setup(
                 "error sync-setup-not-started hint=\"rerun `aven sync setup`\""
             );
             let (server, setup_id) = store.retained_seed_setup(database).await?;
+            host.check_reachability(&server).await?;
             (server, setup_id, None)
         }
     };
@@ -768,7 +773,9 @@ pub async fn run_join(
         store.enrollment_readiness(database).await?,
         EnrollmentReadiness::Enrolled { .. }
     ) {
-        server.context("error sync-join-incomplete")?
+        let server = server.context("error sync-join-incomplete")?;
+        host.check_reachability(&server).await?;
+        server
     } else {
         let invitation = invitation()?;
         ensure!(
@@ -782,6 +789,7 @@ pub async fn run_join(
             Some(invitation) => (invitation.server, Some(invitation.invitation)),
             None => (server.context("error sync-join-invitation-required")?, None),
         };
+        host.check_reachability(&server).await?;
         let client = enrollment::Client::new(&server, link.clone())?;
         let deadline = Instant::now() + Duration::from_secs(invitation_seconds());
         await_join(

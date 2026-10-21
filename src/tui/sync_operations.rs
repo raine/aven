@@ -119,6 +119,7 @@ pub(crate) struct DeviceSnapshot {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SyncActivity {
     pub(crate) running: Option<RunningOperation>,
+    pub(crate) network_status: Option<String>,
     pub(crate) last: Option<OperationResult>,
     pub(crate) devices: Option<DeviceSnapshot>,
     /// A join timed out in this session; guidance about an expired invitation
@@ -169,6 +170,7 @@ pub(super) enum OperationEvent {
 pub(super) struct SyncOperations {
     task: Option<JoinHandle<Result<Done>>>,
     progress: Arc<Mutex<Option<Progress>>>,
+    network_status: Arc<Mutex<Option<String>>>,
     /// The submitted setup invitation, kept in memory so an interrupted setup
     /// can retry in this session without pasting it again.
     setup_invitation: Option<Zeroizing<String>>,
@@ -180,6 +182,7 @@ impl SyncOperations {
         Self {
             task: None,
             progress: Arc::new(Mutex::new(None)),
+            network_status: Arc::new(Mutex::new(None)),
             setup_invitation: None,
             activity: SyncActivity::default(),
         }
@@ -325,7 +328,11 @@ impl SyncOperations {
         if kind != OperationKind::ListDevices {
             self.activity.last = None;
         }
-        self.task = Some(tokio::spawn(work));
+        *self.network_status.lock().expect("network status lock") = None;
+        self.activity.network_status = None;
+        self.task = Some(tokio::spawn(
+            crate::sync_http::NETWORK_STATUS.scope(self.network_status.clone(), work),
+        ));
         true
     }
 
@@ -334,6 +341,7 @@ impl SyncOperations {
         if let Some(task) = self.task.take_if(|task| task.is_finished()) {
             let kind = running.kind;
             self.activity.running = None;
+            self.activity.network_status = None;
             let result = match task.await.context("sync operation stopped") {
                 Ok(Ok(finished)) => self.finish(finished),
                 Ok(Err(error)) | Err(error) => Some(OperationResult::Failed(
@@ -351,6 +359,15 @@ impl SyncOperations {
                 self.activity.last = Some(result.clone());
             }
             return Some(OperationEvent::Finished(kind, result));
+        }
+        let network = self
+            .network_status
+            .lock()
+            .expect("network status lock")
+            .clone();
+        if network != self.activity.network_status {
+            self.activity.network_status = network;
+            return Some(OperationEvent::Progressed);
         }
         let progress = (*self.progress.lock().expect("progress lock"))?;
         let amount = progress.amount;
@@ -497,6 +514,29 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
+    }
+
+    #[tokio::test]
+    async fn polling_reports_connectivity_changes_without_losing_stage() {
+        let mut operations = SyncOperations::new();
+        assert!(operations.spawn(OperationKind::Setup, std::future::pending()));
+        *operations.progress.lock().unwrap() = Some(Stage::UploadingData.into());
+        operations.poll().await;
+        *operations.network_status.lock().unwrap() = Some("Retrying".into());
+        assert_eq!(operations.poll().await, Some(OperationEvent::Progressed));
+        assert_eq!(
+            operations.activity.network_status.as_deref(),
+            Some("Retrying")
+        );
+        assert_eq!(
+            operations.activity.running.unwrap().stage,
+            Some(Stage::UploadingData)
+        );
+        assert_eq!(operations.poll().await, None);
+        *operations.network_status.lock().unwrap() = None;
+        assert_eq!(operations.poll().await, Some(OperationEvent::Progressed));
+        assert!(operations.activity.network_status.is_none());
+        operations.task.take().unwrap().abort();
     }
 
     #[tokio::test]

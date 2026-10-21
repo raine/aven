@@ -512,7 +512,23 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
         error.contains("tasks: 4 (including scheduled and recurring)"),
         "{error}"
     );
-    // Setup interrupted before the server answers resumes the same capture.
+    // A reachable server can disappear after the probe; setup must still
+    // retain the capture when the claim's outcome is unknown.
+    let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
+    let disappearing = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            let count = socket.read(&mut bytes).await.unwrap();
+            if bytes[..count].starts_with(b"HEAD ") {
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        }
+    });
     let error = failure(
         &a.run_with_input(&["sync", "setup", "--yes"], &setup_invitation)
             .await,
@@ -521,6 +537,8 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     assert_eq!(status(&a).await["state"], "setup-incomplete");
     let error = failure(&a.run(&["sync"]).await);
     assert!(error.contains("sync-setup-incomplete"), "{error}");
+    disappearing.abort();
+    let _ = disappearing.await;
     // Reissue keeps the setup ID the interrupted device bound, with a new secret.
     let reissued = line_with(
         &operator
@@ -1140,5 +1158,42 @@ async fn cli_cloud_setup_confirmation_labels_hosting_without_dispatching_credent
         let normalized = aven_core::sync::client::server_origin(origin).unwrap();
         assert!(error.contains(&format!("Server: {normalized}")), "{error}");
         assert_eq!(status(&node).await["state"], "not-set-up");
+    }
+}
+
+#[tokio::test]
+async fn unreachable_setup_and_join_leave_database_unassociated() {
+    let temp = tempfile::tempdir().unwrap();
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", socket.local_addr().unwrap());
+    drop(socket);
+    let (setup, device) = sample_invitations(&origin);
+    for (name, command, invitation) in [
+        ("setup-offline", "setup", setup),
+        ("join-offline", "join", device),
+    ] {
+        let node = Installation::new(temp.path(), name);
+        let args = vec!["sync", command, "--yes"];
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            node.run_with_input(&args, &invitation),
+        )
+        .await
+        .unwrap();
+        let error = failure(&output);
+        assert!(
+            error.contains(&format!("Couldn't reach the sync server at {origin}")),
+            "{error}"
+        );
+        assert!(
+            error.contains("Try again once the server is reachable"),
+            "{error}"
+        );
+        let db = aven_core::db::Database::open(&node.db()).await.unwrap();
+        assert_eq!(
+            super::local_phase(&db).await.unwrap(),
+            super::LocalPhase::NotSetUp
+        );
+        assert!(db.seed_publication_intent_bytes().await.unwrap().is_none());
     }
 }

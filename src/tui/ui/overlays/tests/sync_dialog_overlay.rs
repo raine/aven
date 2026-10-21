@@ -288,6 +288,7 @@ fn running(kind: OperationKind, stage: Option<Stage>) -> SyncActivity {
         }),
         last: None,
         devices: None,
+        network_status: None,
         join_timed_out: false,
     }
 }
@@ -767,6 +768,7 @@ fn results_distinguish_images_from_tasks() {
                 },
             }),
             devices: None,
+            network_status: None,
             join_timed_out: false,
         },
     );
@@ -842,6 +844,7 @@ fn failures_show_plain_messages_without_raw_error_chains() {
         running: None,
         last: Some(OperationResult::Failed(failure)),
         devices: None,
+        network_status: None,
         join_timed_out: false,
     };
     let status = TuiSyncStatus {
@@ -1220,6 +1223,7 @@ fn commands_render_in_code_style_without_backticks() {
         running: None,
         last: Some(OperationResult::Failed(failure)),
         devices: None,
+        network_status: None,
         join_timed_out: false,
     };
     let state = SyncDialogState::default();
@@ -1390,4 +1394,24 @@ fn automatic_sync_confirmation_explains_each_outcome() {
     let unsupported = page(AutomaticSyncService::Unsupported);
     assert!(unsupported.contains("nothing"), "{unsupported}");
     assert!(unsupported.contains("aven daemon"), "{unsupported}");
+}
+
+#[test]
+fn connectivity_feedback_is_visible_above_setup_progress() {
+    let mut activity = running(OperationKind::Setup, Some(Stage::PreparingData));
+    activity.network_status = Some(crate::sync::error_explanations::connectivity_message(
+        "http://10.0.0.1:3747",
+        true,
+    ));
+    let rendered = render_page(SyncPage::Home, local_status(), activity);
+    assert!(rendered.contains("http://10.0.0.1:3747"), "{rendered}");
+    assert!(rendered.contains("Retrying."), "{rendered}");
+    assert!(rendered.contains("VPN"), "{rendered}");
+    let checking = render_page(
+        SyncPage::Home,
+        local_status(),
+        running(OperationKind::Setup, None),
+    );
+    assert!(checking.contains("Checking the sync server"));
+    assert!(!checking.contains("Preparing your data"));
 }

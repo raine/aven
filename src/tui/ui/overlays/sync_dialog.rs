@@ -385,7 +385,13 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
     if let Some(running) = &view.activity.running
         && matches!(running.kind, OperationKind::Setup | OperationKind::Join)
     {
-        progress_lines(theme, lines, running, width);
+        progress_lines(
+            theme,
+            lines,
+            running,
+            view.activity.network_status.as_deref(),
+            width,
+        );
         if running.kind == OperationKind::Join {
             push_expired_join_guidance(theme, lines, view.activity, width);
         }
@@ -432,7 +438,13 @@ fn home_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, width: 
 
     if let Some(running) = &view.activity.running {
         lines.push(Line::from(""));
-        progress_lines(theme, lines, running, width);
+        progress_lines(
+            theme,
+            lines,
+            running,
+            view.activity.network_status.as_deref(),
+            width,
+        );
         return;
     }
     push_last_result(
@@ -571,8 +583,26 @@ fn progress_lines(
     theme: &Theme,
     lines: &mut Vec<Line<'static>>,
     running: &RunningOperation,
+    network_status: Option<&str>,
     width: usize,
 ) {
+    if let Some(message) = network_status {
+        lines.extend(paragraph(
+            theme,
+            message,
+            Style::new().fg(theme.danger),
+            width,
+        ));
+        lines.push(Line::from(""));
+    }
+    if running.stage.is_none() && matches!(running.kind, OperationKind::Setup | OperationKind::Join)
+    {
+        lines.push(Line::from(Span::styled(
+            "Checking the sync server…",
+            theme.muted(),
+        )));
+        return;
+    }
     if progress_title(running).is_none() {
         lines.push(spinner_line(theme, running));
         return;
@@ -789,7 +819,13 @@ fn devices_lines(theme: &Theme, body: &mut Body, view: &SyncDialogView<'_>, widt
         lines.extend(paragraph(theme, &freshness, theme.muted(), width));
     }
     if let Some(running) = &activity.running {
-        lines.push(spinner_line(theme, running));
+        progress_lines(
+            theme,
+            lines,
+            running,
+            activity.network_status.as_deref(),
+            width,
+        );
     }
     match activity.device_result() {
         Some(OperationResult::Removed(removal)) => {

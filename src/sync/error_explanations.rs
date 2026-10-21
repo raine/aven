@@ -1144,3 +1144,76 @@ mod tests {
         assert!(!explanation.combined().contains("reset"));
     }
 }
+
+/// Connectivity wording shared by transient feedback and terminal errors.
+pub(crate) fn connectivity_message(server: &str, retrying: bool) -> String {
+    let private = reqwest::Url::parse(server)
+        .ok()
+        .and_then(|url| {
+            url.host_str()?
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .ok()
+        })
+        .is_some_and(|ip| match ip {
+            std::net::IpAddr::V4(ip) => {
+                ip.is_private()
+                    || ip.is_link_local()
+                    || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]))
+            }
+            std::net::IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local(),
+        });
+    let action = if retrying {
+        "Retrying."
+    } else {
+        "Try again once the server is reachable. Local work continues."
+    };
+    let hint = if private {
+        "Check your VPN or network connection."
+    } else {
+        "Check your network connection and server address."
+    };
+    format!("Couldn't reach the sync server at {server}. {action} {hint}")
+}
+
+pub(crate) fn connectivity_error(error: &Error) -> Option<String> {
+    error
+        .downcast_ref::<crate::sync_http::ConnectivityError>()
+        .map(|error| error.0.clone())
+}
+
+#[cfg(test)]
+mod connectivity_tests {
+    use super::*;
+
+    #[test]
+    fn vpn_hints_cover_private_and_cgnat_boundaries() {
+        for host in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "100.64.0.1",
+            "100.127.255.255",
+            "[fd00::1]",
+        ] {
+            let server = format!("http://{host}:3747");
+            let message = connectivity_message(&server, true);
+            assert!(message.contains(&server));
+            assert!(message.contains("Retrying."));
+            assert!(message.contains("VPN"), "{message}");
+        }
+        for host in [
+            "172.15.255.255",
+            "172.32.0.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "sync.example.com",
+        ] {
+            let message = connectivity_message(&format!("https://{host}"), false);
+            assert!(!message.contains("VPN"), "{message}");
+            assert!(!message.contains("Retrying"));
+            assert!(message.contains("Try again"));
+        }
+    }
+}

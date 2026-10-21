@@ -22,9 +22,25 @@ async fn seed_origin_is_canonical_immutable_and_erased_by_reset() {
     let keys = root.path().join("keys");
     let store = isolated_store(&db, &keys).await;
     store
+        .check_seed_origin(&db, "https://other.example")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .read_owned(SEED_ORIGIN_ITEM, SEED_ORIGIN_BYTES, false)
+            .unwrap()
+            .is_none()
+    );
+    store
         .bind_seed_origin(&db, "https://SYNC.example:443/")
         .await
         .unwrap();
+    assert!(
+        store
+            .check_seed_origin(&db, "https://other.example")
+            .await
+            .is_err()
+    );
     // A crash before seed creation still leaves the intended destination pinned.
     let error = store
         .bind_seed_origin(&db, "https://other.example")

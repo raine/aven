@@ -3,8 +3,11 @@ use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
 use crate::tui::sync_operations::{FailureSignal, OperationFailure, OperationKind};
 
 pub(super) fn failure(kind: OperationKind, error: &anyhow::Error) -> OperationFailure {
-    let message = error_explanations::explain(action(kind), ErrorSurface::Tui, error)
-        .map(|explanation| explanation.combined())
+    let message = error_explanations::connectivity_error(error)
+        .or_else(|| {
+            error_explanations::explain(action(kind), ErrorSurface::Tui, error)
+                .map(|explanation| explanation.combined())
+        })
         .unwrap_or_else(|| fallback(kind).to_string());
     OperationFailure {
         kind,
@@ -76,6 +79,19 @@ mod tests {
     use anyhow::anyhow;
 
     use super::*;
+
+    #[test]
+    fn connectivity_errors_keep_the_origin_and_action_for_setup_and_join() {
+        let message = error_explanations::connectivity_message("http://10.0.0.1:3747", false);
+        let error = anyhow::Error::new(crate::sync_http::ConnectivityError(message.clone()));
+        for kind in [
+            OperationKind::Setup,
+            OperationKind::Join,
+            OperationKind::ListDevices,
+        ] {
+            assert_eq!(failure(kind, &error).message, message);
+        }
+    }
 
     #[test]
     fn join_timeouts_keep_conditional_expiry_guidance() {

@@ -93,6 +93,13 @@ impl DesktopHost {
 }
 
 impl ClientHost for DesktopHost {
+    fn check_reachability<'a>(
+        &'a self,
+        server: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move { driver()?.check_reachability(server).await })
+    }
+
     fn ensure_sync_allowed(&self) -> Result<()> {
         self.config.ensure_sync_allowed()
     }

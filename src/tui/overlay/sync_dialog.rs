@@ -929,6 +929,7 @@ mod tests {
             }),
             last: None,
             devices: None,
+            network_status: None,
             join_timed_out: false,
         };
         assert!(

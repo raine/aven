@@ -21,6 +21,24 @@ impl ProtectedLocalKeyStore {
         database: &Database,
         server: &str,
     ) -> anyhow::Result<()> {
+        self.seed_origin(database, server, true).await
+    }
+
+    /// Checks a setup origin without binding it or contacting the server.
+    pub(crate) async fn check_seed_origin(
+        &self,
+        database: &Database,
+        server: &str,
+    ) -> anyhow::Result<()> {
+        self.seed_origin(database, server, false).await
+    }
+
+    async fn seed_origin(
+        &self,
+        database: &Database,
+        server: &str,
+        bind: bool,
+    ) -> anyhow::Result<()> {
         self.validate_database(database).await?;
         let origin = crate::sync::client::server_origin(server)?;
         let established = database.local_seed_genesis_commitment().await?.is_some()
@@ -39,7 +57,10 @@ impl ProtectedLocalKeyStore {
             !established && !self.seed_authority_exists()?,
             SEED_ORIGIN_MISSING
         );
-        self.write_owned(SEED_ORIGIN_ITEM, SEED_ORIGIN_BYTES, origin.as_bytes())
+        if bind {
+            self.write_owned(SEED_ORIGIN_ITEM, SEED_ORIGIN_BYTES, origin.as_bytes())?;
+        }
+        Ok(())
     }
 
     /// The canonical origin and setup ID that started setup was bound to, so

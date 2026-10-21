@@ -1,4 +1,4 @@
-//! What engine operations need from their host besides HTTP.
+//! Host policy, local resources, and optional reachability checks for engine operations.
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,6 +10,15 @@ use crate::db::Database;
 pub trait ClientHost: Send + Sync {
     /// Refuses sync while the host's policy disables it.
     fn ensure_sync_allowed(&self) -> Result<()>;
+
+    /// Optional host reachability probe before setup or join changes local state.
+    /// Hosts without a probe rely on the operation's ordinary transport errors.
+    fn check_reachability<'a>(
+        &'a self,
+        _server: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
 
     /// Storage for protected keys. Called only when an operation opens the
     /// key store, so databases that don't take part in sync never need it.

@@ -99,6 +99,9 @@ pub fn report_cli_error(error: &anyhow::Error) {
 }
 
 fn cli_error_lines(error: &anyhow::Error) -> Vec<String> {
+    if let Some(message) = sync::error_explanations::connectivity_error(error) {
+        return vec![format!("Error: {message} [sync-network]")];
+    }
     match sync::error_explanations::explain(
         sync::error_explanations::ErrorAction::General,
         sync::error_explanations::ErrorSurface::Cli,
@@ -563,6 +566,22 @@ mod tests {
         assert!(lines[1].starts_with("Next: "));
         assert!(!lines.join("\n").contains("bootstrap-origin"));
         assert!(!lines.join("\n").contains("raw internal hint"));
+    }
+
+    #[test]
+    fn cli_connectivity_errors_include_origin_and_vpn_guidance() {
+        let message =
+            crate::sync::error_explanations::connectivity_message("http://10.0.0.1:3747", false);
+        let error = anyhow!("error enrollment-network outcome-unknown")
+            .context(crate::sync_http::ConnectivityError(message.clone()));
+        assert_eq!(
+            super::cli_error_lines(&error),
+            vec![format!("Error: {message} [sync-network]")]
+        );
+        assert!(crate::sync::error_explanations::has_code(
+            &error,
+            "sync-network"
+        ));
     }
 
     #[test]
