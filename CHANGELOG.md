@@ -3,17 +3,14 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
-
-- UX: Type directly in TUI priority pickers and label filters without pressing `/`, with clearer selection highlights and colored priority icons.
-- Fix: Remove the TUI sidebar’s static Filters section and give Backlog a distinct icon. ([#35](https://github.com/raine/aven/issues/35))
-- UX: Set custom project prefixes with `aven project create --prefix` or the TUI's two-field rename dialog (`p r`, `Tab` to switch fields). Renaming a project no longer regenerates its prefix. ([#35](https://github.com/raine/aven/issues/35))
-- Fix: Create labels in the TUI even when their names are substrings of existing labels. ([#35](https://github.com/raine/aven/issues/35))
+## v0.1.51 (2026-10-21)
 
 - New: Switch workspaces from the TUI sidebar, with available open task counts for each workspace. ([#35](https://github.com/raine/aven/issues/35))
-- New: Syncs workspace deletions made on devices running a later Aven release. Update every device before a later release enables deleting workspaces.
+- UX: Type directly in TUI priority pickers and label filters without pressing `/`, with clearer selection highlights and colored priority icons.
+- UX: Set custom project prefixes with `aven project create --prefix` or the TUI's two-field rename dialog (`p r`, `Tab` to switch fields). ([#35](https://github.com/raine/aven/issues/35))
 - Changed: `aven`, `aven list`, and `aven search` default to the current directory’s project. Use `--all-projects` (`-A`) or set `scope: workspace` for all projects; TUI search follows the active scope, with `Ctrl+S` to widen it.
-- Fix: Aven no longer trusts TLS certificates issued through eight eMudhra intermediate CAs whose private keys were compromised. See [the advisory](https://emudhra.we-have-a-problem.com/).
+- Fix: Remove the TUI sidebar’s static Filters section and give Backlog a distinct icon. ([#35](https://github.com/raine/aven/issues/35))
+- Fix: Create labels in the TUI even when their names are substrings of existing labels. ([#35](https://github.com/raine/aven/issues/35))
 
 ## v0.1.50 (2026-10-18)
 
