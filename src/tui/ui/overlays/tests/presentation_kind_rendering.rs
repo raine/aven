@@ -198,7 +198,7 @@ fn project_picker_kinds_control_submit_hints_with_changed_titles() {
 #[test]
 fn add_task_priority_kind_uses_priority_renderer() {
     let rendered = render_overlay_view(OverlayView::Picker(PickerView {
-        kind: PickerKind::AddTaskPriority,
+        kind: PickerKind::Priority,
         title: "Changed add task priority".to_string(),
         items: borrow_slice(vec![picker_item("urgent", "urgent")]),
         visible_indices: vec![0],

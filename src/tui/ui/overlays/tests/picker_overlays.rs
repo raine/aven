@@ -321,3 +321,70 @@ fn picker_rendered_rows_are_mouse_targets() {
         }
     }
 }
+
+#[test]
+fn priority_pickers_share_icons_colors_highlight_and_typing_hint() {
+    for intent in [
+        crate::tui::overlay::PickerIntent::FilterPriority,
+        crate::tui::overlay::PickerIntent::AddTaskPriority,
+    ] {
+        let kind = PickerKind::from(&intent);
+        assert_eq!(kind, PickerKind::Priority);
+        let rendered = render_overlay_view(OverlayView::Picker(PickerView {
+            kind,
+            title: "Priority".to_string(),
+            items: borrow_slice(vec![picker_item("urgent", "urgent")]),
+            visible_indices: vec![0],
+            ..picker_view()
+        }));
+        assert!(rendered.contains("▲ urgent"));
+        assert!(rendered.contains("type filter"));
+        assert!(!rendered.contains("/ filter"));
+    }
+    for theme in [Theme::dark(), Theme::light(), Theme::terminal()] {
+        for value in ["none", "low", "medium", "high", "urgent"] {
+            let item = picker_item(value, value);
+            let selected = super::picker::priority_picker_line(&theme, &item, true);
+            assert_eq!(selected.style, theme.selected());
+            assert_eq!(
+                selected.spans[1].content,
+                format!("{} ", priority_icon(value))
+            );
+            assert_eq!(selected.spans[1].style.fg, theme.priority(value).fg);
+            assert_eq!(selected.spans[2].style.fg, Some(theme.fg));
+            let plain = super::picker::priority_picker_line(&theme, &item, false);
+            assert_ne!(plain.style, selected.style);
+        }
+    }
+}
+
+#[test]
+fn priority_highlight_fills_row_and_empty_message_keeps_footer() {
+    let theme = Theme::dark();
+    let mut state = PickerView {
+        kind: PickerKind::Priority,
+        items: borrow_slice(vec![picker_item("none", "none"), picker_item("low", "low")]),
+        visible_indices: vec![0, 1],
+        ..picker_view()
+    };
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    let layout = crate::tui::overlay::picker_layout(&state, ratatui::layout::Size::new(100, 30));
+    terminal
+        .draw(|frame| render_picker(frame, &theme, &state))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    for x in layout.list.x..layout.list.right() {
+        assert_eq!(buffer[(x, layout.list.y)].bg, theme.bg_selected);
+        assert_ne!(buffer[(x, layout.list.y + 1)].bg, theme.bg_selected);
+    }
+    state.mode = PickerMode::Filter;
+    state.filter = "invalid".to_string();
+    state.filter_cursor = 7;
+    state.visible_indices.clear();
+    terminal
+        .draw(|frame| render_picker(frame, &theme, &state))
+        .unwrap();
+    let rendered = buffer_text(terminal.backend());
+    assert!(rendered.contains("no matching priorities"));
+    assert!(rendered.contains("Enter submit"));
+}

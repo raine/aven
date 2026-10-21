@@ -1025,7 +1025,7 @@ fn add_task_picker_lines(
         let selected = index == state.selected;
         let line = match state.kind {
             PickerKind::AddTaskProject => project_picker_line(theme, item, selected),
-            PickerKind::AddTaskPriority => priority_picker_line(theme, item, selected),
+            PickerKind::Priority => priority_picker_line(theme, item, selected),
             _ => {
                 let marker = if selected { "▸ " } else { "  " };
                 let style = if selected {

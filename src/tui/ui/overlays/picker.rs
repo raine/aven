@@ -61,7 +61,11 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, theme: &Theme, state:
             ""
         };
         if priority_picker_submit_label(state.kind).is_some() {
-            lines.push(priority_picker_line(theme, item, *index == state.selected));
+            let mut line = priority_picker_line(theme, item, *index == state.selected);
+            line.spans.push(Span::raw(
+                " ".repeat(usize::from(layout.list.width).saturating_sub(line.width())),
+            ));
+            lines.push(line);
         } else if state.kind == PickerKind::GoToBlocker {
             lines.push(blocker_picker_line(
                 theme,
@@ -79,20 +83,36 @@ pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, theme: &Theme, state:
         lines.push(Line::from(Span::styled(label, theme.dim())));
     }
     lines.push(Line::from(""));
-    lines.push(picker_hint_line_with_escape(
-        theme,
-        state.mode,
-        state.multi,
-        priority_picker_submit_label(state.kind)
-            .or_else(|| generic_picker_submit_label(state.kind))
-            .unwrap_or("submit"),
-        matches!(state.kind, PickerKind::SwitchWorkspace),
-    ));
+    if state.kind == PickerKind::Priority && state.mode == PickerMode::Navigate {
+        lines.push(dialog_hint_line(
+            theme,
+            &[
+                ("type", "filter"),
+                ("j/k", "move"),
+                ("Esc", "cancel"),
+                ("Enter", "submit"),
+            ],
+        ));
+    } else {
+        lines.push(picker_hint_line_with_escape(
+            theme,
+            state.mode,
+            state.multi,
+            priority_picker_submit_label(state.kind)
+                .or_else(|| generic_picker_submit_label(state.kind))
+                .unwrap_or("submit"),
+            matches!(state.kind, PickerKind::SwitchWorkspace),
+        ));
+    }
     Dialog::new(theme, &state.title, 0, 0).render_text_at(frame, layout.area, Text::from(lines));
 }
 
 fn picker_empty_label(kind: PickerKind) -> Option<&'static str> {
-    matches!(kind, PickerKind::SwitchWorkspace).then_some("  no matching workspaces")
+    match kind {
+        PickerKind::SwitchWorkspace => Some("  no matching workspaces"),
+        PickerKind::Priority => Some("  no matching priorities"),
+        _ => None,
+    }
 }
 
 pub(in crate::tui::ui) fn priority_picker_line(
@@ -107,9 +127,16 @@ pub(in crate::tui::ui) fn priority_picker_line(
             format!("{} ", priority_icon(&item.value)),
             theme.priority(&item.value).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(item.label.clone(), theme.priority(&item.value)),
+        Span::styled(
+            item.label.clone(),
+            if selected {
+                theme.selected()
+            } else {
+                theme.priority(&item.value)
+            },
+        ),
     ])
-    .style(if theme.is_terminal() && selected {
+    .style(if selected {
         theme.selected()
     } else {
         Style::new()
@@ -348,7 +375,7 @@ fn generic_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
 }
 
 fn priority_picker_submit_label(kind: PickerKind) -> Option<&'static str> {
-    matches!(kind, PickerKind::AddTaskPriority).then_some("submit")
+    matches!(kind, PickerKind::Priority).then_some("submit")
 }
 
 pub(in crate::tui::ui) fn project_picker_line(

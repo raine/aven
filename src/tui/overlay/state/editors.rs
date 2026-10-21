@@ -163,6 +163,10 @@ pub(crate) enum PickerIntent {
 }
 
 impl PickerIntent {
+    pub(crate) fn is_priority(&self) -> bool {
+        matches!(self, Self::AddTaskPriority | Self::FilterPriority)
+    }
+
     pub(crate) fn filter_escape_cancels(&self) -> bool {
         matches!(self, Self::ScopeProject | Self::SwitchWorkspace)
     }

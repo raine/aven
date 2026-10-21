@@ -286,7 +286,7 @@ pub(crate) struct MultilineInputView<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PickerKind {
     AddTaskProject,
-    AddTaskPriority,
+    Priority,
     EditProject,
     ScopeProject,
     ProjectPathProject,
@@ -302,7 +302,7 @@ impl From<&PickerIntent> for PickerKind {
     fn from(intent: &PickerIntent) -> Self {
         match intent {
             PickerIntent::AddTaskProject => Self::AddTaskProject,
-            PickerIntent::AddTaskPriority => Self::AddTaskPriority,
+            PickerIntent::AddTaskPriority | PickerIntent::FilterPriority => Self::Priority,
             PickerIntent::EditProject { .. } => Self::EditProject,
             PickerIntent::ScopeProject => Self::ScopeProject,
             PickerIntent::AddProjectPath | PickerIntent::RemoveProjectPath => {

@@ -166,7 +166,12 @@ pub(crate) fn picker_layout(state: &PickerView, terminal_size: Size) -> PickerLa
     } else {
         0
     };
-    let list_rows = if project_picker || label_picker || state.kind == PickerKind::SwitchWorkspace {
+    let list_rows = if project_picker
+        || label_picker
+        || matches!(
+            state.kind,
+            PickerKind::SwitchWorkspace | PickerKind::Priority
+        ) {
         picker_row_count(row_count, viewport_rows)
     } else {
         row_count.min(viewport_rows)

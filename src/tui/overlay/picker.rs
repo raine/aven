@@ -25,6 +25,8 @@ pub(crate) fn visible_picker_indices(state: &PickerState) -> Vec<usize> {
                 .starts_with(crate::tui::store::CREATE_PROJECT_PICKER_VALUE_PREFIX)
             {
                 !filter.is_empty() && !exact_project
+            } else if state.intent.is_priority() {
+                item.value.starts_with(&filter)
             } else {
                 picker_item_matches(item, &filter, &dashless_filter)
             }
@@ -129,6 +131,15 @@ fn handle_picker_navigation_key(mut state: PickerState, key: KeyEvent) -> Overla
             move_picker_selection(&mut state, -1);
             OverlayOutcome::None(OverlayState::Picker(state))
         }
+        KeyCode::Char(_)
+            if state.intent.is_priority()
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            state.mode = PickerMode::Filter;
+            handle_picker_filter_key(state, key)
+        }
         _ => OverlayOutcome::None(OverlayState::Picker(state)),
     }
 }
@@ -185,6 +196,9 @@ fn continue_picker(state: PickerState) -> OverlayOutcome {
 }
 
 pub(super) fn picker_submit_outcome(state: PickerState) -> OverlayOutcome {
+    if state.intent.is_priority() && visible_picker_indices(&state).is_empty() {
+        return continue_picker(state);
+    }
     let values = if state.multi {
         state
             .items
@@ -303,6 +317,86 @@ mod tests {
             multi: false,
             mode: PickerMode::Filter,
         }
+    }
+
+    fn priority_state(intent: PickerIntent) -> PickerState {
+        PickerState::new(
+            intent,
+            "Priority",
+            ["none", "low", "medium", "high", "urgent"]
+                .into_iter()
+                .map(|value| PickerItem {
+                    label: value.to_string(),
+                    value: value.to_string(),
+                    selected: value == "low",
+                })
+                .collect(),
+            false,
+        )
+    }
+
+    fn press(state: PickerState, code: KeyCode) -> PickerState {
+        let OverlayOutcome::None(OverlayState::Picker(state)) = handle_picker_key(state, key(code))
+        else {
+            panic!("expected picker to remain open");
+        };
+        state
+    }
+
+    #[test]
+    fn priorities_accept_direct_prefixes_and_confirm_explicitly() {
+        for intent in [PickerIntent::FilterPriority, PickerIntent::AddTaskPriority] {
+            for (prefix, value) in [
+                ("u", "urgent"),
+                ("hi", "high"),
+                ("med", "medium"),
+                ("N", "none"),
+            ] {
+                let mut state = priority_state(intent.clone());
+                for ch in prefix.chars() {
+                    state = press(state, KeyCode::Char(ch));
+                }
+                assert_eq!(state.items[state.selected].value, value);
+                assert_eq!(visible_picker_indices(&state), vec![state.selected]);
+                let OverlayOutcome::Submitted(OverlaySubmit::Picker {
+                    intent: submitted,
+                    values,
+                    ..
+                }) = handle_picker_key(state, key(KeyCode::Enter))
+                else {
+                    panic!("expected submission");
+                };
+                assert_eq!(submitted, intent);
+                assert_eq!(values, vec![value]);
+            }
+        }
+    }
+
+    #[test]
+    fn priority_navigation_and_text_modes_do_not_confuse_jk() {
+        let state = press(
+            priority_state(PickerIntent::FilterPriority),
+            KeyCode::Char('j'),
+        );
+        assert_eq!(state.selected, 2);
+        let state = press(state, KeyCode::Char('k'));
+        assert_eq!(state.selected, 1);
+        let state = press(state, KeyCode::Char('h'));
+        let state = press(state, KeyCode::Char('j'));
+        assert_eq!(state.filter.as_str(), "hj");
+        assert!(visible_picker_indices(&state).is_empty());
+        let state = press(state, KeyCode::Enter);
+        let state = press(state, KeyCode::Backspace);
+        assert_eq!(state.items[state.selected].value, "high");
+        let state = press(state, KeyCode::Backspace);
+        let state = press(state, KeyCode::Down);
+        assert_eq!(state.items[state.selected].value, "urgent");
+        let state = press(state, KeyCode::Esc);
+        assert_eq!(state.mode, PickerMode::Navigate);
+        assert!(matches!(
+            handle_picker_key(state, key(KeyCode::Esc)),
+            OverlayOutcome::Cancelled
+        ));
     }
 
     #[test]
