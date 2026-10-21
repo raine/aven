@@ -417,8 +417,18 @@ pub(crate) async fn cmd_show(
 pub(crate) async fn cmd_list(
     database: &Database,
     workspace: &Workspace,
-    args: ListArgs,
+    mut args: ListArgs,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<()> {
+    args.project = crate::projects::browsing_project(
+        database,
+        workspace,
+        routing,
+        args.project.as_deref(),
+        args.all_projects,
+        true,
+    )
+    .await?;
     if args.ready && args.blocked {
         bail!(
             "error list-dependency-filter-conflict hint=\"pass at most one of --ready or --blocked\""
@@ -490,8 +500,18 @@ struct SearchJsonItem {
 pub(crate) async fn cmd_search(
     database: &Database,
     workspace: &Workspace,
-    args: TaskSearchArgs,
+    mut args: TaskSearchArgs,
+    routing: &crate::routing::InvocationRouting<'_>,
 ) -> Result<()> {
+    args.project = crate::projects::browsing_project(
+        database,
+        workspace,
+        routing,
+        args.project.as_deref(),
+        args.all_projects,
+        true,
+    )
+    .await?;
     let text = args.query.join(" ");
     if text.trim().is_empty() {
         bail!("error search-query-required hint=\"pass one or more search terms\"");

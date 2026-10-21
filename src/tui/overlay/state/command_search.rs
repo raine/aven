@@ -48,6 +48,9 @@ pub(crate) struct SearchState {
     pub(crate) total_matches: usize,
     pub(crate) results_query: Option<String>,
     pub(crate) intent: SearchIntent,
+    pub(crate) project: Option<String>,
+    pub(crate) original_project: Option<String>,
+    pub(crate) other_project_matches: Option<usize>,
 }
 
 impl SearchState {
@@ -62,6 +65,12 @@ impl SearchState {
             selected: 0,
             total_matches: 0,
             results_query: None,
+            project: match &intent {
+                SearchIntent::AddEpicChild { project_key, .. } => Some(project_key.clone()),
+                _ => None,
+            },
+            original_project: None,
+            other_project_matches: None,
             intent,
         }
     }
@@ -71,6 +80,7 @@ impl SearchState {
     }
 
     pub(crate) fn clear_results(&mut self) {
+        self.other_project_matches = None;
         self.results.clear();
         self.selected = 0;
         self.total_matches = 0;

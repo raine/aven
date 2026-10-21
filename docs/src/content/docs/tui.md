@@ -57,6 +57,8 @@ Use the sidebar or the `v` command family to switch queries and layouts.
 
 Workspace scope shows tasks across projects. Project scope narrows every view to one project.
 
+`aven` and `aven tui` start in the project inferred from the current directory, or silently use workspace scope if none matches. Use `aven -A` (or `aven tui --all-projects`) for all projects, `-p <project>` for a specific project, or set [`scope: workspace`](/configuration/#default-project-scope) to change the default. Clicking the workspace scope row or pressing `g a` widens to all projects.
+
 | Key | Action |
 | --- | --- |
 | `g a` | Show all projects in the workspace |
@@ -78,7 +80,9 @@ that section. Choose which views the sidebar lists with
 
 ### Search, filter, and order
 
-Press `/` to search task text, notes, labels, metadata, and refs as you type. `Enter` opens the selected result, and `Tab` opens the full Search results view.
+Press `/` to search task text, notes, labels, metadata, and refs as you type. Search follows the active project scope; the title chip names the project or shows `all projects`. `Enter` opens the selected result, and `Tab` opens the full Search results view in the chosen scope.
+
+When opened from a project, `Ctrl+S` toggles between that project and all projects. If the project has no matches, the dialog shows how many matches exist elsewhere. `Esc` closes the dialog without changing the underlying view. Dependency and related-task searches always cover all projects; epic child search stays in the epic's project.
 
 Filters constrain the current view. Useful filter commands include:
 
@@ -265,13 +269,13 @@ Bind the project-scoped TUI, workspace-wide TUI, composer, or any combination to
 tmux popups:
 
 ```text
-bind C-w display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven tui -p'
-bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven'
+bind C-w display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven'
+bind C-a display-popup -E -d '#{pane_current_path}' -w 80% -h 80% 'aven -A'
 bind t display-popup -E -d '#{pane_current_path}' -w 120 -h 30 'aven tui --add-task-only'
 ```
 
-The `-p` flag scopes Aven to the project inferred from the active pane's current
-directory. Omit it to open Aven at workspace scope.
+Aven defaults to the project inferred from the active pane's current directory.
+Use `-A` to open Aven at workspace scope.
 
 ![aven TUI running in a tmux popup over terminal panes](/tui-tmux-popup.webp)
 

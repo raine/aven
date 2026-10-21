@@ -912,6 +912,9 @@ fn render_overlay_content(
             stale,
             no_matches_cached,
             intent,
+            project,
+            original_project,
+            other_project_matches,
         } => render_search(
             frame,
             theme,
@@ -926,6 +929,9 @@ fn render_overlay_content(
                     no_matches_cached: *no_matches_cached,
                 },
                 intent,
+                project: project.as_deref(),
+                original_project: original_project.as_deref(),
+                other_project_matches: *other_project_matches,
             },
         ),
         OverlayView::Command {

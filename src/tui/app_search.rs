@@ -6,11 +6,12 @@ use tokio::task::JoinHandle;
 use crate::query::{SearchMatchedField, TaskSearchPreviewResultSet};
 use crate::tui::app::{App, SEARCH_PREVIEW_LIMIT};
 use crate::tui::overlay::{LineEdit, OverlayState, SearchIntent, SearchResultItem, SearchState};
+use crate::tui::store::SearchPreview;
 
 struct PendingSearchPreview {
     query: String,
     workspace_id: WorkspaceId,
-    handle: JoinHandle<Result<TaskSearchPreviewResultSet>>,
+    handle: JoinHandle<Result<SearchPreview>>,
 }
 
 enum SearchStateMachine {
@@ -28,6 +29,7 @@ struct CompletedSearchPreview {
     query: String,
     workspace_id: WorkspaceId,
     result_set: TaskSearchPreviewResultSet,
+    other_project_matches: Option<usize>,
 }
 
 pub(super) struct SearchController {
@@ -45,7 +47,7 @@ impl SearchController {
         &mut self,
         query: String,
         workspace_id: WorkspaceId,
-        handle: JoinHandle<Result<TaskSearchPreviewResultSet>>,
+        handle: JoinHandle<Result<SearchPreview>>,
     ) {
         self.cancel();
         self.state = SearchStateMachine::Running(PendingSearchPreview {
@@ -97,7 +99,8 @@ impl SearchController {
         Ok(Some(CompletedSearchPreview {
             query: active.query,
             workspace_id: active.workspace_id,
-            result_set,
+            result_set: result_set.results,
+            other_project_matches: result_set.other_project_matches,
         }))
     }
 }
@@ -117,7 +120,12 @@ impl App {
     pub(crate) fn begin_search(&mut self) {
         self.pending_shortcut.clear();
         self.clear_live_search_preview();
-        self.overlay = Some(OverlayState::Search(SearchState::blank()));
+        let mut state = SearchState::blank();
+        if let crate::tui::store::TaskScope::Project(project) = &self.store.view_state.scope {
+            state.project = Some(project.clone());
+            state.original_project = Some(project.clone());
+        }
+        self.overlay = Some(OverlayState::Search(state));
     }
 
     pub(super) fn begin_add_epic_child(&mut self) {
@@ -167,6 +175,21 @@ impl App {
         key: KeyEvent,
     ) -> Result<()> {
         match key.code {
+            KeyCode::Char('s')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(state.intent, SearchIntent::Navigate)
+                    && state.original_project.is_some() =>
+            {
+                state.project = if state.project.is_some() {
+                    None
+                } else {
+                    state.original_project.clone()
+                };
+                state.clear_results();
+                self.clear_live_search_preview();
+                self.schedule_search_preview(&mut state);
+                self.overlay = Some(OverlayState::Search(state));
+            }
             KeyCode::Esc => {
                 self.clear_live_search_preview();
             }
@@ -175,11 +198,13 @@ impl App {
                     && matches!(state.intent, SearchIntent::Navigate) =>
             {
                 self.clear_live_search_preview();
-                self.accept_search_input(state.input.text).await?;
+                self.accept_search_input(state.input.text, state.project)
+                    .await?;
             }
             KeyCode::Tab if matches!(state.intent, SearchIntent::Navigate) => {
                 self.clear_live_search_preview();
-                self.accept_search_input(state.input.text).await?;
+                self.accept_search_input(state.input.text, state.project)
+                    .await?;
             }
             KeyCode::Tab if !state.results.is_empty() => {
                 state.selected = (state.selected + 1) % state.results.len();
@@ -203,7 +228,8 @@ impl App {
                     self.accept_search_result(state.intent.clone(), state.input.text, result)
                         .await?;
                 } else {
-                    self.accept_search_input(state.input.text).await?;
+                    self.accept_search_input(state.input.text, state.project)
+                        .await?;
                 }
             }
             KeyCode::Down if !state.results.is_empty() => {
@@ -241,8 +267,12 @@ impl App {
         Ok(())
     }
 
-    async fn accept_search_input(&mut self, input: String) -> Result<()> {
+    async fn accept_search_input(&mut self, input: String, project: Option<String>) -> Result<()> {
         let previous = self.capture_navigation_state();
+        let scope = project.map_or(
+            crate::tui::store::TaskScope::Workspace,
+            crate::tui::store::TaskScope::Project,
+        );
         let selected = if self.store.view_state.query == crate::tui::store::TaskQuery::Recurring {
             let restore = previous
                 .anchor
@@ -250,10 +280,10 @@ impl App {
                 .map(crate::tui::store::SelectionRestore::Anchor)
                 .unwrap_or(crate::tui::store::SelectionRestore::Default);
             self.store
-                .set_recurring_search_restoring(input, &restore)
+                .set_recurring_search_restoring(input, scope, &restore)
                 .await?
         } else {
-            self.store.accept_search(&input).await?
+            self.store.accept_search_in_scope(&input, scope).await?
         };
         self.push_navigation_state(previous);
         self.list.select_task(selected);
@@ -451,11 +481,19 @@ impl App {
         state.results_query = Some(query);
     }
 
-    fn start_search_preview(&mut self, query: String, project: Option<String>) {
+    fn start_search_preview(
+        &mut self,
+        query: String,
+        project: Option<String>,
+        count_other_projects: bool,
+    ) {
         let workspace_id = self.store.active_workspace.id.clone();
-        let handle = self
-            .store
-            .spawn_search_preview(query.clone(), project, SEARCH_PREVIEW_LIMIT);
+        let handle = self.store.spawn_search_preview(
+            query.clone(),
+            project,
+            count_other_projects,
+            SEARCH_PREVIEW_LIMIT,
+        );
         self.search.start(query, workspace_id, handle);
     }
 
@@ -484,13 +522,11 @@ impl App {
         }
 
         self.clear_live_search_preview();
-        let project = match &state.intent {
-            SearchIntent::AddEpicChild { project_key, .. } => Some(project_key.clone()),
-            SearchIntent::Navigate
-            | SearchIntent::AddDependency { .. }
-            | SearchIntent::AddRelated { .. } => None,
-        };
-        self.start_search_preview(query, project);
+        self.start_search_preview(
+            query,
+            state.project.clone(),
+            matches!(state.intent, SearchIntent::Navigate),
+        );
     }
 
     pub(super) async fn poll_search_preview(&mut self) -> Result<bool> {
@@ -503,6 +539,7 @@ impl App {
             && self.store.active_workspace.id == completed.workspace_id
             && state.input.text.trim() == completed.query
         {
+            state.other_project_matches = completed.other_project_matches;
             Self::apply_search_preview_results(state, completed.query, completed.result_set);
             changed = true;
         }

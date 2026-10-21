@@ -73,8 +73,21 @@ impl Database {
         cwd: &Path,
         git_root: Option<&Path>,
     ) -> Result<Option<String>> {
+        Ok(self
+            .inferred_existing_project_with_source(workspace_id, config_candidate, cwd, git_root)
+            .await?
+            .map(|(key, _)| key))
+    }
+
+    pub async fn inferred_existing_project_with_source(
+        &self,
+        workspace_id: &WorkspaceId,
+        config_candidate: Option<&str>,
+        cwd: &Path,
+        git_root: Option<&Path>,
+    ) -> Result<Option<(String, &'static str)>> {
         let mut conn = self.acquire_reader().await?;
-        inferred_existing_project_key_in_workspace(
+        inferred_existing_project_with_source_in_workspace(
             &mut conn,
             workspace_id,
             config_candidate,
@@ -130,23 +143,23 @@ impl Database {
     }
 }
 
-async fn inferred_existing_project_key_in_workspace(
+async fn inferred_existing_project_with_source_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     config_candidate: Option<&str>,
     cwd: &Path,
     git_root: Option<&Path>,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, &'static str)>> {
     if let Some(project) = config_candidate
         && let Some(project) = find_project_in_workspace(conn, workspace_id, project).await?
     {
-        return Ok(Some(project.key));
+        return Ok(Some((project.key, "config override")));
     }
 
     if let Some(project) =
         project_from_path_mapping_in_workspace(conn, workspace_id, cwd, git_root).await?
     {
-        return Ok(Some(project.key));
+        return Ok(Some((project.key, "project path mapping")));
     }
 
     let Some(root_name) = git_root.and_then(Path::file_name) else {
@@ -154,7 +167,7 @@ async fn inferred_existing_project_key_in_workspace(
     };
     find_project_in_workspace(conn, workspace_id, &root_name.to_string_lossy())
         .await
-        .map(|project| project.map(|project| project.key))
+        .map(|project| project.map(|project| (project.key, "git root name")))
 }
 
 async fn project_from_path_mapping_in_workspace(

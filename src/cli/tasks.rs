@@ -166,9 +166,12 @@ pub(crate) struct ContextArgs {
 
 #[derive(Args)]
 pub(crate) struct ListArgs {
-    /// Restrict tasks to a project by key or name
-    #[arg(long)]
+    /// Select a project by key or name; omit the value to infer from cwd
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "", conflicts_with = "all_projects")]
     pub(crate) project: Option<String>,
+    /// List across all projects, ignoring the current directory
+    #[arg(short = 'A', long)]
+    pub(crate) all_projects: bool,
     /// Restrict tasks to one status: inbox, backlog, todo, active, done, or canceled
     #[arg(long)]
     pub(crate) status: Option<String>,
@@ -230,8 +233,11 @@ pub(crate) struct ListArgs {
 pub(crate) struct TaskSearchArgs {
     /// One or more search terms matched against task text
     pub(crate) query: Vec<String>,
-    #[arg(long, help = "Restrict matches to a project by key or name")]
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "", conflicts_with = "all_projects", help = "Restrict matches to a project by key or name")]
     pub(crate) project: Option<String>,
+    /// Search across all projects, ignoring the current directory
+    #[arg(short = 'A', long)]
+    pub(crate) all_projects: bool,
     /// Require an exact metadata key and value; repeat to require all
     #[arg(long, value_name = "KEY=VALUE")]
     pub(crate) metadata: Vec<String>,

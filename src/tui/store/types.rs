@@ -132,6 +132,11 @@ impl TaskProjection {
     }
 }
 
+pub(crate) struct SearchPreview {
+    pub(crate) results: crate::query::TaskSearchPreviewResultSet,
+    pub(crate) other_project_matches: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskScope {
     Workspace,

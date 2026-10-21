@@ -200,7 +200,7 @@ aven add --natural "draft release notes" --project aven
 
 ### `aven list`
 
-List tasks in the active workspace. Results are ordered by most recent update first. By default, deleted tasks are excluded.
+List tasks in the project inferred from the current directory, or across the active workspace when none matches. Use `--all-projects` (`-A`) for all projects, or set [`scope: workspace`](/configuration/#default-project-scope) to change the default. This applies to every list filter. Results are ordered by most recent update first. By default, deleted tasks are excluded.
 
 ```sh
 aven list [options]
@@ -208,7 +208,8 @@ aven list [options]
 
 | Option | Description |
 | --- | --- |
-| `--project <project>` | Match one project. |
+| `-p`, `--project [<project>]` | Match one project by key or name. Without a value, infer from the current directory. |
+| `-A`, `--all-projects` | List across all projects in the workspace. Conflicts with `--project`. |
 | `--status <status>` | Match one status. |
 | `--priority <priority>` | Match one priority. |
 | `--label <label>` | Match one label. |
@@ -226,6 +227,8 @@ aven list [options]
 | `--expand-recurring` | Show each dated recurring task as a separate row instead of grouping past tasks by recurring task. |
 | `--limit <number>` | Return at most this many tasks after sorting and filtering. The value must be at least `1`. |
 | `--json` | Print a JSON array. |
+
+When scope is inferred, stderr names the project and inference source and shows the `--all-projects` escape hatch. Explicit `--project` suppresses this note. Stdout remains task records, or a bare array with `--json`.
 
 Normal lists hide open tasks whose availability time is in the future. They include tasks with empty or elapsed availability. `--open` also excludes `done` and `canceled` tasks and composes with project, priority, label, dependency, epic, overdue, recurrence-expansion, and limit filters. It cannot be combined with `--status`, `--all`, `--deleted`, or `--upcoming`. Explicit `--status done` and `--status canceled` lists include matching tasks regardless of availability, and `--deleted` includes matching deleted tasks regardless of availability.
 
@@ -252,10 +255,10 @@ aven list --deleted --json
 
 ### `aven search`
 
-Search task references, titles, descriptions, projects, labels, notes, statuses, priorities, and current attachment filenames and alternative text across the active workspace. Pass `--project` to restrict every candidate source to one project before ranking and limiting. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
+Search task references, titles, descriptions, projects, labels, notes, statuses, priorities, and current attachment filenames and alternative text. Search defaults to the project inferred from the current directory, or the active workspace when none matches. Use `--all-projects` (`-A`) for all projects or `--project` to select one explicitly. Project scope restricts every candidate source before ranking and limiting. Set [`scope: workspace`](/configuration/#default-project-scope) to change the default. Done and canceled tasks participate in normal search. Deleted tasks require `--all`.
 
 ```sh
-aven search <query>... [--project <project>] [--metadata <KEY=VALUE>] \
+aven search <query>... [-p [<project>] | -A] [--metadata <KEY=VALUE>] \
   [--has-metadata <KEY>] [--missing-metadata <KEY>] \
   [--limit <number>] [--all] [--expand-recurring] [--json]
 ```
@@ -263,7 +266,8 @@ aven search <query>... [--project <project>] [--metadata <KEY=VALUE>] \
 | Argument or option | Description |
 | --- | --- |
 | `<query>...` | One or more search terms. Multiple shell arguments are joined with spaces. |
-| `--project <project>` | Search only the selected project, resolved by key or name in the active workspace. |
+| `-p`, `--project [<project>]` | Search only the selected project by key or name. Without a value, infer from the current directory. |
+| `-A`, `--all-projects` | Search across all projects in the workspace. Conflicts with `--project`. |
 | `--metadata <KEY=VALUE>` | Restrict candidates to an exact custom metadata value. Repeat to require multiple values. |
 | `--has-metadata <KEY>` | Restrict candidates to tasks with a value for this metadata field. |
 | `--missing-metadata <KEY>` | Restrict candidates to tasks without a value for this metadata field. |
@@ -271,6 +275,8 @@ aven search <query>... [--project <project>] [--metadata <KEY=VALUE>] \
 | `--all` | Include deleted tasks. |
 | `--expand-recurring` | Return each matching dated task instead of grouping past matches by recurring task. |
 | `--json` | Print ranked results as JSON. Each result uses the list task shape and adds score, matched field, and optional snippet. |
+
+When scope is inferred, stderr names the project and inference source and shows the `--all-projects` escape hatch. Explicit `--project` suppresses this note. Stdout remains task records, or a bare array with `--json`.
 
 Text output identifies the matched field and score and prints a snippet when available. Search JSON preserves the flat task fields used by list JSON, including recurrence metadata and recurrence grouping, then adds `score`, `matched_field`, and `snippet`. Ref-shaped input can resolve a deleted task when `--all` is present.
 
@@ -1188,7 +1194,7 @@ aven demo
 Open the terminal user interface.
 
 ```sh
-aven tui [<task-ref>] [--view <view>] [--layout <layout>] [-p [<project>] | --project [<project>]] [--label <label>] [--priority <priority>] [--add-task | --add-task-only] [--natural]
+aven tui [<task-ref>] [-A] [--view <view>] [--layout <layout>] [-p [<project>] | --project [<project>]] [--label <label>] [--priority <priority>] [--add-task | --add-task-only] [--natural]
 ```
 
 | Argument or option | Description |
@@ -1196,12 +1202,15 @@ aven tui [<task-ref>] [--view <view>] [--layout <layout>] [-p [<project>] | --pr
 | `[<task-ref>]` | Open a task detail directly. Task refs cannot be combined with browse context or composer options. |
 | `--view <view>` | Start with the `queue`, `ready`, `blocked`, `overdue`, `all`, `open`, `inbox`, `active`, `backlog`, `todo`, `done`, `upcoming`, `conflicts`, `epics`, `recurring`, or `recent-actions` query. |
 | `--layout <layout>` | Present a compatible query as `list` or `columns`. |
-| `-p`, `--project [<project>]` | Start in a project. Passing the flag without a value uses the project inferred from the current directory. Omitting the flag starts with workspace scope. |
+| `-p`, `--project [<project>]` | Start in a project. Passing the flag without a value uses the project inferred from the current directory. By default, the current directory determines the project; no match falls back to workspace scope. |
 | `--label <label>` | Apply an initial label filter. |
 | `--priority <priority>` | Apply an initial `none`, `low`, `medium`, `high`, or `urgent` priority filter. |
+| `-A`, `--all-projects` | Start across all projects, ignoring the current directory. Conflicts with `--project`. |
 | `--add-task` | Open the add-task composer over the selected browse context. |
 | `--add-task-only` | Run only the add-task popup and exit after submission or cancellation. Project scope remains available. |
 | `--natural` | Use natural-language intake. Requires `--add-task` or `--add-task-only`. |
+
+`aven` without a subcommand also accepts `-p [<project>]` and `-A`.
 
 Queries, layout, project scope, label, priority, and `--add-task` compose. Columns supports `all`, `open`, `ready`, `blocked`, `overdue`, status, and `conflicts` queries. Incompatible query and layout pairs fail at launch. The `recent-actions` query rejects label and priority filters because it displays change-log entries rather than tasks. `--add-task` and `--add-task-only` are mutually exclusive.
 

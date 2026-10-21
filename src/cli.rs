@@ -68,6 +68,12 @@ pub struct Cli {
     pub(crate) db: Option<PathBuf>,
     #[arg(long, global = true, help = "Use a specific workspace by name or key")]
     pub(crate) workspace: Option<String>,
+    /// Select a project for the TUI; omit the value to infer from cwd
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "", conflicts_with = "all_projects")]
+    pub(crate) project: Option<String>,
+    /// Open the TUI across all projects
+    #[arg(short = 'A', long)]
+    pub(crate) all_projects: bool,
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
 }

@@ -60,7 +60,7 @@ pub(crate) struct TuiArgs {
     /// Open this task's detail directly
     #[arg(
         value_name = "TASK_REF",
-        conflicts_with_all = ["project", "view", "layout", "label", "priority", "add_task", "add_task_only"]
+        conflicts_with_all = ["project", "all_projects", "view", "layout", "label", "priority", "add_task", "add_task_only"]
     )]
     pub(crate) task_ref: Option<String>,
     /// Start in this named view
@@ -70,8 +70,11 @@ pub(crate) struct TuiArgs {
     #[arg(long, value_enum, conflicts_with = "add_task_only")]
     pub(crate) layout: Option<TuiLayoutArg>,
     /// Start in project scope; omit the value to infer from the current directory
-    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "")]
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "", conflicts_with = "all_projects")]
     pub(crate) project: Option<String>,
+    /// Start across all projects, ignoring the current directory
+    #[arg(short = 'A', long)]
+    pub(crate) all_projects: bool,
     /// Apply an initial label filter
     #[arg(long, value_name = "LABEL", conflicts_with = "add_task_only")]
     pub(crate) label: Option<String>,

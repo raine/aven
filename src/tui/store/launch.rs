@@ -35,20 +35,16 @@ impl TuiLaunch {
             });
         }
 
-        let scope = match args.project.as_deref() {
-            Some("") => crate::projects::inferred_existing_project_key_with_routing(
-                database, workspace, routing,
-            )
-            .await?
-            .map_or(TaskScope::Workspace, TaskScope::Project),
-            Some(project) => TaskScope::Project(
-                database
-                    .resolve_existing_project(&workspace.id, project)
-                    .await?
-                    .key,
-            ),
-            None => TaskScope::Workspace,
-        };
+        let scope = crate::projects::browsing_project(
+            database,
+            workspace,
+            routing,
+            args.project.as_deref(),
+            args.all_projects,
+            false,
+        )
+        .await?
+        .map_or(TaskScope::Workspace, TaskScope::Project);
         let view = args.view.map_or(TaskQuery::Queue, TaskQuery::from);
         let layout = args.layout.map_or(TaskLayout::List, TaskLayout::from);
         if !view.supports_layout(layout) {
@@ -174,6 +170,7 @@ mod tests {
             view: None,
             layout: None,
             project: None,
+            all_projects: false,
             label: None,
             priority: None,
             add_task: false,
@@ -423,5 +420,71 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.to_string(), "unknown label");
+    }
+
+    #[tokio::test]
+    async fn default_scope_obeys_inference_config_and_explicit_flags() {
+        let (temp, database, mut conn) = setup().await;
+        seed_project(&mut conn).await;
+        drop(conn);
+        let repo = temp.path().join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        for (preference, explicit, all, cwd, expected) in [
+            (
+                crate::config::DefaultScope::Project,
+                None,
+                false,
+                repo.clone(),
+                TaskScope::Project("app".into()),
+            ),
+            (
+                crate::config::DefaultScope::Project,
+                None,
+                true,
+                repo.clone(),
+                TaskScope::Workspace,
+            ),
+            (
+                crate::config::DefaultScope::Workspace,
+                None,
+                false,
+                repo.clone(),
+                TaskScope::Workspace,
+            ),
+            (
+                crate::config::DefaultScope::Workspace,
+                Some(""),
+                false,
+                repo.clone(),
+                TaskScope::Project("app".into()),
+            ),
+            (
+                crate::config::DefaultScope::Workspace,
+                Some("App"),
+                false,
+                temp.path().to_path_buf(),
+                TaskScope::Project("app".into()),
+            ),
+            (
+                crate::config::DefaultScope::Project,
+                None,
+                false,
+                temp.path().to_path_buf(),
+                TaskScope::Workspace,
+            ),
+        ] {
+            let config = crate::config::AppConfig {
+                scope: preference,
+                ..Default::default()
+            };
+            let routing = crate::routing::InvocationRouting::at(&config, cwd);
+            let mut input = args();
+            input.project = explicit.map(str::to_string);
+            input.all_projects = all;
+            let launch = TuiLaunch::resolve(&database, &Workspace::default(), input, &routing)
+                .await
+                .unwrap();
+            assert_eq!(launch.view_state.scope, expected);
+        }
     }
 }

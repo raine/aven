@@ -24,6 +24,14 @@ impl<'a> InvocationRouting<'a> {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn at(config: &'a AppConfig, cwd: PathBuf) -> Self {
+        Self {
+            invocation_cwd: Ok(cwd),
+            ..Self::new(config)
+        }
+    }
+
     pub(crate) fn invocation_cwd(&self) -> Result<&Path> {
         self.invocation_cwd
             .as_deref()
@@ -52,9 +60,7 @@ impl<'a> InvocationRouting<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::{
-        inferred_existing_project_key_with_routing, inferred_project_key_for_add_with_routing,
-    };
+    use crate::projects::{browsing_project, inferred_project_key_for_add_with_routing};
     use crate::workspaces::{Workspace, resolve_active_workspace_with_routing};
 
     #[tokio::test]
@@ -94,7 +100,7 @@ mod tests {
             Some("captured".to_string())
         );
         assert_eq!(
-            inferred_existing_project_key_with_routing(&database, &workspace, &routing)
+            browsing_project(&database, &workspace, &routing, None, false, false)
                 .await
                 .unwrap(),
             None

@@ -39,9 +39,23 @@ Use `aven doctor` to inspect the active config, database path, workspace, projec
 
 When configuration prevents startup, run `aven doctor --db /expected/path/to/db.sqlite` to bypass database path resolution while retaining the config finding. Doctor does not rewrite the config, create the selected database, or run database migrations. After correcting the file, rerun doctor before starting an ordinary command. Use `aven doctor --json --fail-on-error` in recovery automation.
 
+## Default project scope
+
+`scope: project` (the default) makes `aven`, `aven tui`, `aven list`, and `aven search` follow the current directory's project. Inference tries a config project override, a project path mapping, then the Git root folder name matching an existing project key or name. If no project matches, these commands silently use workspace scope.
+
+```yaml
+scope: workspace
+```
+
+Set `scope: workspace` to default to all projects instead. `--all-projects` (`-A`) bypasses inference for one invocation; `--project <key-or-name>` (`-p`) selects a project. Passing `-p` without a value requests inference even with `scope: workspace`. `-p` and `-A` cannot be combined.
+
+Ref-based commands such as `show`, `context`, and `edit`, as well as `project list` and `label list`, are not narrowed by this setting.
+
 ## Config shape
 
 ```yaml
+scope: project
+
 local:
   db_path: "/path/to/aven.sqlite"
   blob_dir: "/path/to/aven-blobs"

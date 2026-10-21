@@ -6,9 +6,9 @@ use tokio::task::JoinHandle;
 use crate::query::{self, SortDirection, TaskSearchQuery};
 
 use super::{
-    ClosedTaskVisibility, MainRowIdentity, MainRowPosition, MainRowSelection, SelectionRestore,
-    SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskProjectionOrigin, TaskQuery, TaskScope,
-    TaskScopeTarget, TuiStore,
+    ClosedTaskVisibility, MainRowIdentity, MainRowPosition, MainRowSelection, SearchPreview,
+    SelectionRestore, SidebarEntryTarget, TaskFilterModifiers, TaskOrder, TaskProjectionOrigin,
+    TaskQuery, TaskScope, TaskScopeTarget, TuiStore,
 };
 
 async fn search_preview_with_database(
@@ -273,21 +273,52 @@ impl TuiStore {
         &self,
         input: String,
         project: Option<String>,
+        count_other_projects: bool,
         limit: usize,
-    ) -> JoinHandle<Result<query::TaskSearchPreviewResultSet>> {
-        tokio::spawn(search_preview_with_database(
-            self.database.clone(),
-            self.active_workspace.id.clone(),
-            input,
-            project,
-            limit,
-        ))
+    ) -> JoinHandle<Result<SearchPreview>> {
+        let database = self.database.clone();
+        let workspace_id = self.active_workspace.id.clone();
+        tokio::spawn(async move {
+            let results = search_preview_with_database(
+                database.clone(),
+                workspace_id.clone(),
+                input.clone(),
+                project.clone(),
+                limit,
+            )
+            .await?;
+            let other_matches =
+                if count_other_projects && project.is_some() && results.total_matches == 0 {
+                    Some(
+                        search_preview_with_database(database, workspace_id, input, None, 1)
+                            .await?
+                            .total_matches,
+                    )
+                } else {
+                    None
+                };
+            Ok(SearchPreview {
+                results,
+                other_project_matches: other_matches,
+            })
+        })
     }
 
+    #[cfg(test)]
     pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
+        self.accept_search_in_scope(input, self.view_state.scope.clone())
+            .await
+    }
+
+    pub(crate) async fn accept_search_in_scope(
+        &mut self,
+        input: &str,
+        scope: TaskScope,
+    ) -> Result<Option<usize>> {
         let text = input.trim();
         if text.is_empty() {
             let mut view_state = self.view_state.clone();
+            view_state.scope = scope;
             view_state.projection_origin = TaskProjectionOrigin::NamedView;
             view_state.set_query(TaskQuery::Queue);
             return Ok(self
@@ -301,7 +332,10 @@ impl TuiStore {
                 &self.active_workspace.id,
                 TaskSearchQuery {
                     text: text.to_string(),
-                    project: None,
+                    project: match &scope {
+                        TaskScope::Project(key) => Some(key.clone()),
+                        TaskScope::Workspace => None,
+                    },
                     metadata: Vec::new(),
                     has_metadata: Vec::new(),
                     missing_metadata: Vec::new(),
@@ -311,7 +345,7 @@ impl TuiStore {
             )
             .await?;
         let mut view_state = self.view_state.clone();
-        view_state.scope = TaskScope::Workspace;
+        view_state.scope = scope;
         view_state.set_query(TaskQuery::Search);
         view_state.projection_origin = TaskProjectionOrigin::Search {
             query: text.to_string(),
@@ -338,15 +372,18 @@ impl TuiStore {
             .map(MainRowIdentity::RecurrenceSeries)
             .map(SelectionRestore::Identity)
             .unwrap_or(SelectionRestore::Default);
-        self.set_recurring_search_restoring(input, &restore).await
+        self.set_recurring_search_restoring(input, self.view_state.scope.clone(), &restore)
+            .await
     }
 
     pub(crate) async fn set_recurring_search_restoring(
         &mut self,
         input: String,
+        scope: TaskScope,
         restore: &SelectionRestore,
     ) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
+        view_state.scope = scope;
         view_state.recurring.search = (!input.trim().is_empty()).then(|| input.trim().to_string());
         Ok(self
             .refresh_replacement(restore, Some(view_state), None)

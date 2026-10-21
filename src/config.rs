@@ -29,6 +29,14 @@ pub use tui::{
     SidebarView, TableColumn, TaskColumnConfig, TaskTableConfig, TuiAppearance, TuiConfig,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DefaultScope {
+    #[default]
+    Project,
+    Workspace,
+}
+
 const DEFAULT_WAKE_ADDR: &str = "127.0.0.1:47631";
 const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
 
@@ -36,6 +44,8 @@ const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
 pub struct AppConfig {
     #[serde(default)]
     pub local: LocalConfig,
+    #[serde(default)]
+    pub scope: DefaultScope,
     #[serde(default)]
     pub sync: SyncConfig,
     #[serde(default)]

@@ -281,3 +281,137 @@ async fn search_replaces_existing_overlay() {
     app.begin_search();
     assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
 }
+
+async fn scoped_search_app() -> App {
+    let mut app = test_app().await;
+    for (project, title) in [
+        ("app", "needle local"),
+        ("other", "needle remote"),
+        ("other", "elsewhere only"),
+    ] {
+        let mut draft = test_task_draft(title);
+        draft.project = Some(project.into());
+        create_and_select_task(&mut app, draft).await;
+    }
+    app.show_scope(TaskScopeTarget::Project("app".into()))
+        .await
+        .unwrap();
+    app
+}
+
+#[tokio::test]
+async fn search_scope_toggle_is_live_reversible_and_cancel_does_not_change_view() {
+    let mut app = scoped_search_app().await;
+    app.begin_search();
+    type_chars(&mut app, "needle").await;
+    settle_search_preview(&mut app).await;
+    let Some(OverlayState::Search(state)) = &app.overlay else {
+        panic!()
+    };
+    assert_eq!(state.project.as_deref(), Some("app"));
+    assert_eq!(state.results.len(), 1);
+    assert_eq!(state.other_project_matches, None);
+
+    let toggle = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    app.handle_overlay_key(toggle).await.unwrap();
+    settle_search_preview(&mut app).await;
+    let Some(OverlayState::Search(state)) = &app.overlay else {
+        panic!()
+    };
+    assert_eq!(state.project, None);
+    assert_eq!(state.results.len(), 2);
+    assert_eq!(app.store.view_state.scope, TaskScope::Project("app".into()));
+    app.handle_overlay_key(toggle).await.unwrap();
+    // Repeated toggles with identical text must cancel the old-scope request.
+    app.handle_overlay_key(toggle).await.unwrap();
+    app.handle_overlay_key(toggle).await.unwrap();
+    settle_search_preview(&mut app).await;
+    let Some(OverlayState::Search(state)) = &app.overlay else {
+        panic!()
+    };
+    assert_eq!(state.results.len(), 1);
+    assert_eq!(state.results[0].project_key, "app");
+    app.handle_overlay_key(toggle).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    assert_eq!(app.store.view_state.scope, TaskScope::Project("app".into()));
+}
+
+#[tokio::test]
+async fn empty_scoped_search_counts_other_projects_and_accepts_selected_scope() {
+    let mut app = scoped_search_app().await;
+    app.begin_search();
+    type_chars(&mut app, "elsewhere").await;
+    settle_search_preview(&mut app).await;
+    let Some(OverlayState::Search(state)) = &app.overlay else {
+        panic!()
+    };
+    assert!(state.results.is_empty());
+    assert_eq!(state.other_project_matches, Some(1));
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    // Submit without waiting for the new preview.
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    assert_eq!(app.store.tasks.len(), 1);
+    assert_eq!(app.store.tasks[0].task.title, "elsewhere only");
+
+    app.show_scope(TaskScopeTarget::Project("app".into()))
+        .await
+        .unwrap();
+    app.begin_search();
+    type_chars(&mut app, "needle").await;
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    assert_eq!(app.store.view_state.scope, TaskScope::Project("app".into()));
+    assert_eq!(app.store.tasks.len(), 1);
+    assert_eq!(app.store.tasks[0].task.title, "needle local");
+}
+
+#[tokio::test]
+async fn relationship_search_stays_workspace_wide_in_project_scope() {
+    let mut app = scoped_search_app().await;
+    let selection =
+        crate::tui::task_selection::TaskSelection::resolve_single(&app.store.tasks, Some(0))
+            .unwrap();
+    for intent in [
+        SearchIntent::AddDependency {
+            selection: selection.clone(),
+            display_ref: "APP".into(),
+        },
+        SearchIntent::AddRelated {
+            selection: selection,
+            display_ref: "APP".into(),
+        },
+    ] {
+        app.overlay = Some(OverlayState::Search(SearchState::for_intent(intent)));
+        type_chars(&mut app, "elsewhere").await;
+        settle_search_preview(&mut app).await;
+        let Some(OverlayState::Search(state)) = &app.overlay else {
+            panic!()
+        };
+        assert_eq!(state.project, None);
+        assert_eq!(state.original_project, None);
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.results[0].project_key, "other");
+        assert_eq!(state.other_project_matches, None);
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn recurring_search_accepts_the_dialog_scope() {
+    let mut app = scoped_search_app().await;
+    app.show_view(TaskQuery::Recurring).await.unwrap();
+    app.begin_search();
+    type_chars(&mut app, "needle").await;
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    assert_eq!(app.store.view_state.query, TaskQuery::Recurring);
+    assert_eq!(
+        app.store.view_state.recurring.search.as_deref(),
+        Some("needle")
+    );
+}

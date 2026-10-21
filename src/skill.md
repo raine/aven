@@ -45,6 +45,11 @@ aven context APP-7KQ9
 aven show APP-7KQ9 --full
 ```
 
+- `list` and `search` default to the project inferred from the current directory,
+  or the whole workspace when no project matches. Use `--all-projects` (`-A`)
+  for duplicate checks across projects or requests for "all my tasks".
+  `--project <key-or-name>` selects a project explicitly; `scope: workspace` in
+  config changes the default. Ref-based commands remain workspace-wide.
 - Use `list --ready` when choosing work. It excludes blocked tasks and epics.
 - Use `show <ref>` for a one-line status check.
 - Use `context <ref>` before acting. It prints the full description, metadata,

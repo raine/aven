@@ -47,10 +47,10 @@ pub(crate) use task_creation::task_creation_committed;
 pub(crate) use types::SyncStatusCheck;
 pub(crate) use types::{
     ClosedTaskVisibility, ConflictTarget, DetailRevision, MainRowAnchor, MainRowIdentity,
-    MainRowPosition, MainRowSelection, MutationMessage, RecurringSeriesViewState, SelectionRestore,
-    SidebarEntry, SidebarEntryTarget, SidebarSection, TaskFilterModifiers, TaskLayout,
-    TaskListRenderMode, TaskOrder, TaskProjection, TaskProjectionOrigin, TaskQuery, TaskScope,
-    TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
+    MainRowPosition, MainRowSelection, MutationMessage, RecurringSeriesViewState, SearchPreview,
+    SelectionRestore, SidebarEntry, SidebarEntryTarget, SidebarSection, TaskFilterModifiers,
+    TaskLayout, TaskListRenderMode, TaskOrder, TaskProjection, TaskProjectionOrigin, TaskQuery,
+    TaskScope, TaskScopeTarget, TaskViewState, TuiDatabaseStats, TuiSyncStatus, UndoPresentation,
     mutation_committed,
 };
 #[cfg(test)]

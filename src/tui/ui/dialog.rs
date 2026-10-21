@@ -16,6 +16,7 @@ pub(super) struct Dialog<'a> {
     height: u16,
     wrap: bool,
     right_title: Option<Line<'a>>,
+    title_chip: Option<Span<'a>>,
 }
 
 impl<'a> Dialog<'a> {
@@ -27,7 +28,13 @@ impl<'a> Dialog<'a> {
             height,
             wrap: false,
             right_title: None,
+            title_chip: None,
         }
+    }
+
+    pub(super) fn title_chip(mut self, chip: Span<'a>) -> Self {
+        self.title_chip = Some(chip);
+        self
     }
 
     pub(super) fn wrap(mut self) -> Self {
@@ -55,7 +62,15 @@ impl<'a> Dialog<'a> {
 
     pub(super) fn render_block_at(self, frame: &mut Frame, area: Rect) -> Rect {
         frame.render_widget(Clear, area);
-        let block = overlay_block(self.theme, self.title, area.width)
+        let mut title = edge_title(self.theme, self.title, area.width);
+        if let Some(chip) = self.title_chip {
+            title.spans.push(chip);
+            title.spans.push(Span::raw(" "));
+        }
+        let block = overlay_frame()
+            .title(title)
+            .border_style(Style::new().fg(self.theme.accent))
+            .style(Style::new().bg(self.theme.bg_raised))
             .title_top(right_edge_title(self.theme, self.right_title).right_aligned());
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -91,13 +106,6 @@ fn overlay_frame() -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(Padding::horizontal(1))
-}
-
-fn overlay_block<'a>(theme: &Theme, title: &'a str, width: u16) -> Block<'a> {
-    overlay_frame()
-        .title(edge_title(theme, title, width))
-        .border_style(Style::new().fg(theme.accent))
-        .style(Style::new().bg(theme.bg_raised))
 }
 
 fn edge_title<'a>(theme: &Theme, title: &'a str, width: u16) -> Line<'a> {

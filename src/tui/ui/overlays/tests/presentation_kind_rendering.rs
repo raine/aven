@@ -4,6 +4,9 @@ use super::*;
 fn overlay_kinds_use_shared_dialog_chrome() {
     let overlays = [
         OverlayView::Search {
+            project: None,
+            original_project: None,
+            other_project_matches: None,
             input: "query".to_string(),
             cursor: 5,
             results: &[],

@@ -33,6 +33,9 @@ pub(in crate::tui::ui) struct SearchRenderView<'a> {
     pub(in crate::tui::ui) total_matches: usize,
     pub(in crate::tui::ui) status: SearchRenderStatus,
     pub(in crate::tui::ui) intent: &'a SearchKind,
+    pub(in crate::tui::ui) project: Option<&'a str>,
+    pub(in crate::tui::ui) original_project: Option<&'a str>,
+    pub(in crate::tui::ui) other_project_matches: Option<usize>,
 }
 
 pub(in crate::tui::ui) fn render_search(
@@ -48,6 +51,9 @@ pub(in crate::tui::ui) fn render_search(
         total_matches,
         status,
         intent,
+        project,
+        original_project,
+        other_project_matches,
     } = view;
     let width = frame.area().width.saturating_sub(8).clamp(72, 110);
     let result_rows = results.len().min(RESULT_ROWS) as u16;
@@ -57,7 +63,22 @@ pub(in crate::tui::ui) fn render_search(
         (result_rows * 2 + 6).min(frame.area().height.saturating_sub(2))
     };
     let title = intent.title();
-    let mut dialog = Dialog::new(theme, &title, width, height);
+    let chip_style = if project.is_some() {
+        Style::new()
+            .fg(theme.bg_raised)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.dim()
+    };
+    let chip = Span::styled(
+        format!(
+            " {} ",
+            truncate_width(project.unwrap_or("all projects"), 32)
+        ),
+        chip_style,
+    );
+    let mut dialog = Dialog::new(theme, &title, width, height).title_chip(chip);
     if let Some(summary) = search_summary_line(
         theme,
         input,
@@ -81,9 +102,26 @@ pub(in crate::tui::ui) fn render_search(
             Paragraph::new(search_input_line(theme, input, cursor, intent)),
             input_area,
         );
-        frame.render_widget(Paragraph::new(""), input_spacer_area);
+        let message = if !status.stale
+            && let (Some(project), Some(count)) = (project, other_project_matches)
+        {
+            format!("No matches in {project} · {count} in other projects (^S search all projects)")
+        } else {
+            String::new()
+        };
         frame.render_widget(
-            Paragraph::new(search_hint_line(theme, intent, None)),
+            Paragraph::new(message).style(theme.dim()),
+            input_spacer_area,
+        );
+        frame.render_widget(
+            Paragraph::new(search_hint_line(
+                theme,
+                intent,
+                None,
+                project,
+                original_project,
+                area.width,
+            )),
             hint_area,
         );
         return;
@@ -121,7 +159,14 @@ pub(in crate::tui::ui) fn render_search(
 
     frame.render_widget(Paragraph::new(""), hint_spacer_area);
     frame.render_widget(
-        Paragraph::new(search_hint_line(theme, intent, results.get(selected))),
+        Paragraph::new(search_hint_line(
+            theme,
+            intent,
+            results.get(selected),
+            project,
+            original_project,
+            area.width,
+        )),
         hint_area,
     );
 }
@@ -502,13 +547,20 @@ fn search_hint_line(
     theme: &Theme,
     intent: &SearchKind,
     selected: Option<&SearchResultItem>,
+    project: Option<&str>,
+    original_project: Option<&str>,
+    width: u16,
 ) -> Line<'static> {
-    let enter_hint = if selected.is_some_and(|result| result.create_new) {
+    let compact = original_project.is_some() && width < 95;
+    let enter_hint = if compact {
+        "open"
+    } else if selected.is_some_and(|result| result.create_new) {
         "create child"
     } else {
         intent.enter_hint()
     };
     let select_keys = match intent {
+        SearchKind::Navigate if compact => "↑/↓",
         SearchKind::Navigate => "↑/↓ ^N/^P",
         SearchKind::AddDependency | SearchKind::AddRelated | SearchKind::AddEpicChild { .. } => {
             "↑/↓ ^N/^P Tab/Shift+Tab"
@@ -527,6 +579,7 @@ fn search_hint_line(
         Span::styled(format!(" {enter_hint}"), theme.dim()),
     ];
     if let Some(tab_hint) = intent.tab_hint() {
+        let tab_hint = if compact { "results" } else { tab_hint };
         spans.extend([
             Span::styled(
                 "  Tab",
@@ -534,6 +587,20 @@ fn search_hint_line(
             ),
             Span::styled(format!(" {tab_hint}"), theme.dim()),
         ]);
+    }
+    if let Some(original) = original_project {
+        spans.push(Span::styled(
+            "  ^S",
+            Style::new().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            if project.is_some() {
+                " all projects".to_string()
+            } else {
+                format!(" only {original}")
+            },
+            theme.dim(),
+        ));
     }
     spans.extend([
         Span::styled(
@@ -562,5 +629,30 @@ mod tests {
 
         assert_eq!(Line::from(spans.clone()).to_string(), "한…");
         assert_eq!(spans_width(&spans), 3);
+    }
+}
+
+#[cfg(test)]
+mod scope_hint_tests {
+    use super::*;
+
+    #[test]
+    fn narrow_search_keeps_scope_and_close_controls_visible() {
+        let line = search_hint_line(
+            &Theme::dark(),
+            &SearchKind::Navigate,
+            None,
+            Some("app"),
+            Some("app"),
+            69,
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(text.width() <= 69, "{text}");
+        assert!(text.contains("^S all projects"));
+        assert!(text.contains("Esc close"));
     }
 }

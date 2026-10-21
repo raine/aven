@@ -95,6 +95,9 @@ pub(crate) enum OverlayView<'a> {
         stale: bool,
         no_matches_cached: bool,
         intent: SearchKind,
+        project: Option<String>,
+        original_project: Option<String>,
+        other_project_matches: Option<usize>,
     },
     Command {
         input: String,
@@ -519,6 +522,9 @@ impl<'a> OverlayView<'a> {
                     && state.results.is_empty()
                     && state.total_matches == 0,
                 intent: (&state.intent).into(),
+                project: state.project.clone(),
+                original_project: state.original_project.clone(),
+                other_project_matches: state.other_project_matches,
             },
             Command { state } => Self::Command {
                 input: state.input.as_str().to_string(),

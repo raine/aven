@@ -174,6 +174,20 @@ fn render_options_section(help: &mut String) {
     );
     render_row(
         help,
+        "-p, --project [PROJECT]",
+        &paint("-p, --project [PROJECT]", LITERAL_STYLE),
+        "Open the TUI in a project (default: infer from cwd)",
+        width,
+    );
+    render_row(
+        help,
+        "-A, --all-projects",
+        &paint("-A, --all-projects", LITERAL_STYLE),
+        "Open the TUI across all projects",
+        width,
+    );
+    render_row(
+        help,
         "-V, --version",
         &format!(
             "{}, {}",

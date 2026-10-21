@@ -453,6 +453,9 @@ async fn esc_closes_every_overlay_variant() {
             total_matches: 0,
             results_query: None,
             intent: SearchIntent::Navigate,
+            project: None,
+            original_project: None,
+            other_project_matches: None,
         }),
         OverlayState::Command {
             state: CommandState::test_with_input("ref"),

@@ -48,6 +48,9 @@ fn changelog_draws_shared_scrollbar_when_content_overflows() {
 #[test]
 fn overlay_render_includes_search_title_and_input() {
     let rendered = render_overlay_view(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: "query".to_string(),
         cursor: 5,
         results: borrow_slice(vec![search_result_item("Query result")]),
@@ -73,6 +76,9 @@ fn search_empty_summary_distinguishes_fresh_stale_and_cached_results() {
         ("", false, false, false),
     ] {
         let rendered = render_overlay_view(OverlayView::Search {
+            project: None,
+            original_project: None,
+            other_project_matches: None,
             input: input.to_string(),
             cursor: input.len(),
             results: &[],
@@ -95,6 +101,9 @@ fn search_empty_summary_distinguishes_fresh_stale_and_cached_results() {
 #[test]
 fn add_dependency_search_explains_blocker_selection() {
     let rendered = render_overlay_view(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: String::new(),
         cursor: 0,
         results: &[],
@@ -120,6 +129,9 @@ fn add_epic_child_create_action_spans_row_and_updates_enter_hint() {
         display_ref: "APP-YDKM".to_string(),
     };
     let buffer = overlay_buffer(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: "Ship account security".to_string(),
         cursor: 21,
         results: borrow_slice(vec![create, search_result_item("Ship account security")]),
@@ -151,6 +163,9 @@ fn add_epic_child_task_selection_uses_add_enter_hint() {
     create.display_ref.clear();
     create.create_new = true;
     let rendered = render_overlay_view(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: String::new(),
         cursor: 0,
         results: borrow_slice(vec![create, search_result_item("Existing task")]),
@@ -173,6 +188,9 @@ fn search_overlay_marks_epic_results_with_star() {
     let mut result = search_result_item("Query result");
     result.is_epic = true;
     let rendered = render_overlay_view(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: "query".to_string(),
         cursor: 5,
         results: borrow_slice(vec![result]),
@@ -189,6 +207,9 @@ fn search_overlay_marks_epic_results_with_star() {
 #[test]
 fn search_overlay_colors_project_prefix() {
     let buffer = overlay_buffer(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: "query".to_string(),
         cursor: 5,
         results: borrow_slice(vec![search_result_item("Query result")]),
@@ -214,6 +235,9 @@ fn search_overlay_colors_project_prefix() {
 #[test]
 fn search_overlay_vertical_position_ignores_result_count() {
     let empty = overlay_buffer(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: "query".to_string(),
         cursor: 5,
         results: &[],
@@ -224,6 +248,9 @@ fn search_overlay_vertical_position_ignores_result_count() {
         intent: SearchKind::Navigate,
     });
     let populated = overlay_buffer(OverlayView::Search {
+        project: None,
+        original_project: None,
+        other_project_matches: None,
         input: "query".to_string(),
         cursor: 5,
         results: borrow_slice(vec![
@@ -308,5 +335,40 @@ fn text_panel_rendered_border_matches_mouse_boundary() {
                 assert_eq!(outcome == OverlayOutcome::Cancelled, outside);
             }
         }
+    }
+}
+
+#[test]
+fn search_scope_chip_count_and_toggle_hint_follow_scope() {
+    for (project, count, stale) in [
+        (Some("app"), Some(3), false),
+        (None, None, false),
+        (Some("app"), Some(3), true),
+    ] {
+        let rendered = render_overlay_view(OverlayView::Search {
+            project: project.map(str::to_string),
+            original_project: Some("app".into()),
+            other_project_matches: count,
+            input: "missing".into(),
+            cursor: 7,
+            results: &[],
+            selected: 0,
+            total_matches: 0,
+            stale,
+            no_matches_cached: !stale,
+            intent: SearchKind::Navigate,
+        });
+        assert!(rendered.contains("Search"));
+        assert!(rendered.contains(project.unwrap_or("all projects")));
+        assert_eq!(
+            rendered.contains("No matches in app · 3 in other projects (^S search all projects)"),
+            project.is_some() && !stale
+        );
+        assert!(rendered.contains(if project.is_some() {
+            "^S all projects"
+        } else {
+            "^S only app"
+        }));
+        assert!(rendered.contains("Tab open results"));
     }
 }

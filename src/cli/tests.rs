@@ -486,3 +486,28 @@ fn tui_launch_rejects_conflicting_targets_and_modes() {
         .is_ok()
     );
 }
+
+#[test]
+fn project_scope_flags_parse_and_conflict_on_each_surface() {
+    for prefix in [
+        vec!["aven"],
+        vec!["aven", "tui"],
+        vec!["aven", "list"],
+        vec!["aven", "search"],
+    ] {
+        for flags in [
+            vec![],
+            vec!["-p"],
+            vec!["-p", "app"],
+            vec!["-A"],
+            vec!["--all-projects"],
+        ] {
+            let args = [prefix.clone(), flags].concat();
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+        let args = [prefix, vec!["-A", "-p", "app"]].concat();
+        assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+    }
+    assert!(Cli::try_parse_from(["aven", "tui", "ABCD", "-A"]).is_err());
+    assert!(Cli::try_parse_from(["aven", "--db", "test.sqlite", "list", "-A"]).is_ok());
+}

@@ -124,9 +124,18 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let cli = cli::parse_from(args);
-    let command = cli
-        .command
-        .unwrap_or_else(|| Commands::Tui(cli::TuiArgs::default()));
+    if cli.command.is_some() && (cli.project.is_some() || cli.all_projects) {
+        anyhow::bail!(
+            "place --project or --all-projects after the subcommand; top-level scope flags launch the TUI"
+        );
+    }
+    let command = cli.command.unwrap_or_else(|| {
+        Commands::Tui(cli::TuiArgs {
+            project: cli.project,
+            all_projects: cli.all_projects,
+            ..cli::TuiArgs::default()
+        })
+    });
     let metadata = command.metadata();
     logging::init(metadata.log_mode)?;
 
@@ -383,12 +392,12 @@ async fn dispatch_database(
         DatabaseCommand::List(args) => {
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
-            cmd_list(&database, &workspace, args).await
+            cmd_list(&database, &workspace, args, &routing).await
         }
         DatabaseCommand::Search(args) => {
             let workspace =
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
-            cmd_search(&database, &workspace, args).await
+            cmd_search(&database, &workspace, args, &routing).await
         }
         DatabaseCommand::Backup { output } => {
             cmd_backup(

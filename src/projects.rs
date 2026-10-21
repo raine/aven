@@ -42,23 +42,47 @@ pub async fn resolve_project_key_for_add_with_database(
     bail!("near-match project")
 }
 
-pub(crate) async fn inferred_existing_project_key_with_routing(
+/// Resolve browsing scope without changing ref-based commands or task creation.
+pub(crate) async fn browsing_project(
     database: &Database,
     workspace: &crate::workspaces::Workspace,
     routing: &crate::routing::InvocationRouting<'_>,
+    project: Option<&str>,
+    all_projects: bool,
+    announce: bool,
 ) -> Result<Option<String>> {
+    if let Some(project) = project.filter(|value| !value.is_empty()) {
+        return Ok(Some(
+            database
+                .resolve_existing_project(&workspace.id, project)
+                .await?
+                .key,
+        ));
+    }
+    if all_projects
+        || (project.is_none() && routing.config.scope == config::DefaultScope::Workspace)
+    {
+        return Ok(None);
+    }
     let cwd = routing.cwd()?;
     let root = routing.git_root()?;
-    let config_candidate = matching_project_override_for_paths(
+    let candidate = matching_project_override_for_paths(
         routing.config,
         Some(&workspace.id),
         Some(&workspace.key),
         cwd,
         root.unwrap_or(cwd),
     );
-    database
-        .inferred_existing_project_key(&workspace.id, config_candidate.as_deref(), cwd, root)
-        .await
+    let inferred = database
+        .inferred_existing_project_with_source(&workspace.id, candidate.as_deref(), cwd, root)
+        .await?;
+    if announce
+        && project.is_none()
+        && let Some((key, source)) = &inferred
+    {
+        eprintln!("scope: project {key} (from {source}) · --all-projects for everything");
+    }
+    Ok(inferred.map(|(key, _)| key))
 }
 
 pub async fn inferred_project_key_for_add_with_database(
