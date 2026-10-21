@@ -289,7 +289,6 @@ async fn run_check(paths: ServerPaths, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print!("{}", format_check(&report, styled()));
-        println!("\n{SCOPE_NOTE}");
     }
     if !report.ok {
         bail!("AI check failed");
