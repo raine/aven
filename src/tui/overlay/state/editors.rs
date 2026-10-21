@@ -38,9 +38,6 @@ pub(crate) enum TextIntent {
         workspace: crate::workspaces::Workspace,
         warnings: Vec<String>,
     },
-    RenameProject {
-        project: String,
-    },
     ConfirmDeleteProject {
         project: String,
     },

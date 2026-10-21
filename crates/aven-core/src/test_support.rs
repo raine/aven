@@ -54,7 +54,7 @@ pub async fn create_project_in_workspace(
     workspace_id: &WorkspaceId,
     name: &str,
 ) -> Result<crate::projects::ProjectCreateOutcome> {
-    crate::projects::create_project_in_workspace(conn, workspace_id, name).await
+    crate::projects::create_project_in_workspace(conn, workspace_id, name, None).await
 }
 
 pub async fn resolve_or_create_project_in_workspace(

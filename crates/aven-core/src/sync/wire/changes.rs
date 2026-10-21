@@ -545,7 +545,7 @@ mod tests {
     ) {
         use crate::operations::{AttachmentAddInput, TaskUpdate};
 
-        db.create_project(ws, "app").await.unwrap();
+        db.create_project(ws, "app", None).await.unwrap();
         db.create_label(ws, "bug").await.unwrap();
         let a = db
             .create_task(ws, task_draft("first", false))
@@ -662,7 +662,9 @@ mod tests {
             .unwrap();
 
         let destination = db.create_workspace("destination").await.unwrap();
-        db.create_project(&destination, "target").await.unwrap();
+        db.create_project(&destination, "target", None)
+            .await
+            .unwrap();
         db.move_tasks(
             ws,
             crate::operations::MoveTasksInput {
@@ -682,7 +684,7 @@ mod tests {
         db.rename_project(ws, "app", "renamed app", Some("APP"))
             .await
             .unwrap();
-        db.create_project(ws, "disposable").await.unwrap();
+        db.create_project(ws, "disposable", None).await.unwrap();
         db.delete_project(ws, "disposable").await.unwrap();
         db.rename_label_with_tui_undo(ws, "bug", "defect")
             .await

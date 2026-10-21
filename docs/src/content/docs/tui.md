@@ -243,6 +243,13 @@ Press `p` to manage projects and `L` to manage labels. `t B` and `t U` add and
 remove blockers, and `g B` jumps to a blocker. Epic actions live under `t c`. In
 task detail, focus a relationship to open or unlink its task.
 
+Press `p r` to choose a project and edit its Name and Prefix, including from a
+selected sidebar project. Name is focused initially; `Tab` or `Shift+Tab` switches
+fields. Prefix is prefilled and uppercased as you type. Press `Enter` to save both
+fields, `Ctrl+U` to clear text before the cursor, or `Esc` to cancel. Invalid or
+already-used prefixes keep the dialog open with Prefix focused for correction.
+Changing only the name keeps the existing prefix.
+
 See [Organizing tasks](/organize-tasks/) for choosing among workspaces, projects,
 labels, epics, dependencies, and related tasks.
 

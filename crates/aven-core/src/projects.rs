@@ -303,7 +303,7 @@ pub(crate) async fn create_project(
     workspace: &Workspace,
     name: &str,
 ) -> Result<Project> {
-    create_project_in_workspace(conn, &workspace.id, name)
+    create_project_in_workspace(conn, &workspace.id, name, None)
         .await
         .map(|outcome| outcome.project)
 }
@@ -319,13 +319,23 @@ pub(crate) async fn create_project_in_workspace(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     name: &str,
+    prefix: Option<&str>,
 ) -> Result<ProjectCreateOutcome> {
     let workspace = crate::workspaces::workspace_for_id(conn, workspace_id).await?;
     let key = normalize_key(name);
     if key.is_empty() {
         bail!("error invalid-project input={name:?}");
     }
+    let prefix = prefix.map(normalize_prefix).transpose()?;
     if let Some(project) = find_project_in_workspace(conn, &workspace.id, &key).await? {
+        if prefix
+            .as_ref()
+            .is_some_and(|prefix| prefix != &project.prefix)
+        {
+            bail!(
+                "error project-exists project={key}; use project rename with --prefix to change its prefix"
+            );
+        }
         return Ok(ProjectCreateOutcome {
             project,
             created: false,
@@ -333,7 +343,7 @@ pub(crate) async fn create_project_in_workspace(
         });
     }
     if let Some((project, change_id)) =
-        restore_deleted_project(conn, &workspace, &key, name).await?
+        restore_deleted_project(conn, &workspace, &key, name, prefix.as_deref()).await?
     {
         return Ok(ProjectCreateOutcome {
             project,
@@ -341,7 +351,13 @@ pub(crate) async fn create_project_in_workspace(
             change_id: Some(change_id),
         });
     }
-    let prefix = unique_project_prefix(conn, &workspace.id, &key).await?;
+    let prefix = match prefix {
+        Some(prefix) => {
+            ensure_project_prefix_available(conn, &workspace.id, &prefix, None).await?;
+            prefix
+        }
+        None => unique_project_prefix(conn, &workspace.id, &key).await?,
+    };
     let id = ProjectId::new();
     let ts = now();
     sqlx::query(
@@ -392,6 +408,7 @@ async fn restore_deleted_project(
     workspace: &Workspace,
     key: &str,
     name: &str,
+    explicit_prefix: Option<&str>,
 ) -> Result<Option<(Project, String)>> {
     let Some(row) = sqlx::query(
         "SELECT id, workspace_id, key, prefix
@@ -409,7 +426,10 @@ async fn restore_deleted_project(
     let workspace_id: WorkspaceId = row.get("workspace_id");
     let key: String = row.get("key");
     let prefix: String = row.get("prefix");
-    let prefix = if prefix == id.as_str() {
+    let prefix = if let Some(explicit_prefix) = explicit_prefix {
+        ensure_project_prefix_available(conn, &workspace_id, explicit_prefix, Some(&id)).await?;
+        explicit_prefix.to_string()
+    } else if prefix == id.as_str() {
         unique_project_prefix(conn, &workspace_id, &key).await?
     } else {
         prefix
@@ -465,15 +485,7 @@ async fn unique_project_prefix(
     let base = prefix_base(key);
     let mut candidate = base.clone();
     let mut n = 2;
-    while sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM projects WHERE workspace_id = ? AND prefix = ?",
-    )
-    .bind(workspace_id)
-    .bind(&candidate)
-    .fetch_one(&mut *conn)
-    .await?
-        > 0
-    {
+    while project_prefix_exists(conn, workspace_id, &candidate, None).await? {
         candidate = format!("{}{}", base.chars().take(2).collect::<String>(), n);
         n += 1;
     }
@@ -552,7 +564,7 @@ pub(crate) async fn resolve_or_create_project_in_workspace(
     if let Some(existing) = find_project_in_workspace(conn, workspace_id, project).await? {
         return Ok(existing);
     }
-    create_project_in_workspace(conn, workspace_id, project)
+    create_project_in_workspace(conn, workspace_id, project, None)
         .await
         .map(|outcome| outcome.project)
 }
@@ -579,4 +591,46 @@ pub(crate) fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
         name: row.get("name"),
         prefix: row.get("prefix"),
     }
+}
+
+async fn project_prefix_exists(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    prefix: &str,
+    exclude_project_id: Option<&ProjectId>,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM projects
+         WHERE workspace_id = ? AND prefix = ? AND (? IS NULL OR id != ?)",
+    )
+    .bind(workspace_id)
+    .bind(prefix)
+    .bind(exclude_project_id)
+    .bind(exclude_project_id)
+    .fetch_one(&mut *conn)
+    .await?
+        > 0)
+}
+
+pub(crate) fn normalize_prefix(prefix: &str) -> Result<String> {
+    let prefix = prefix.trim().to_ascii_uppercase();
+    if (2..=crate::projects::MAX_EXPLICIT_PROJECT_PREFIX_LEN).contains(&prefix.len())
+        && prefix.chars().all(|ch| ch.is_ascii_alphanumeric())
+    {
+        Ok(prefix)
+    } else {
+        bail!("error invalid-project-prefix prefix={prefix:?}")
+    }
+}
+
+pub(crate) async fn ensure_project_prefix_available(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    prefix: &str,
+    exclude_project_id: Option<&ProjectId>,
+) -> Result<()> {
+    if project_prefix_exists(conn, workspace_id, prefix, exclude_project_id).await? {
+        bail!("error project-prefix-exists prefix={prefix}");
+    }
+    Ok(())
 }

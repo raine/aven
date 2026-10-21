@@ -1850,3 +1850,57 @@ fn bulk_update_ignores_duplicate_label_mutation_args() {
     );
     contains_all(&ok(env.aven(&db, ["show", &task_ref])), &["labels=bug"]);
 }
+
+#[test]
+fn project_custom_prefix_creation_restore_and_rename() {
+    let env = TestEnv::new();
+    let db = env.db("custom-prefix.sqlite");
+    let project_dir = env.path("mapped");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let created = ok(env.aven(
+        &db,
+        [
+            "project",
+            "create",
+            "Agent Offload",
+            "--prefix",
+            " a9 ",
+            "--path",
+            project_dir.to_str().unwrap(),
+        ],
+    ));
+    contains_all(&created, &["prefix=A9"]);
+    let task = extract_ref(&ok(
+        env.aven(&db, ["add", "Retained task", "--project", "agent-offload"])
+    ));
+    let config = std::fs::read(env.config_file()).unwrap();
+    let renamed = ok(env.aven(
+        &db,
+        [
+            "project",
+            "rename",
+            "agent-offload",
+            "Agent Offload",
+            "--prefix",
+            "CUSTOM",
+        ],
+    ));
+    contains_none(&renamed, &["updated-config-project-mapping"]);
+    assert_eq!(std::fs::read(env.config_file()).unwrap(), config);
+    let renamed = ok(env.aven(&db, ["project", "rename", "agent-offload", "Sideagent"]));
+    contains_all(
+        &renamed,
+        &["prefix=CUSTOM", "updated-config-project-mapping"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &task])), &["CUSTOM-"]);
+    contains_all(
+        &fail(env.aven(&db, ["project", "create", "Sideagent", "--prefix", "?"])),
+        &["invalid-project-prefix"],
+    );
+    ok(env.aven(&db, ["project", "delete", "sideagent"]));
+    contains_all(
+        &ok(env.aven(&db, ["project", "create", "Sideagent", "--prefix", "NEW"])),
+        &["prefix=NEW"],
+    );
+    contains_all(&ok(env.aven(&db, ["show", &task])), &["NEW-"]);
+}

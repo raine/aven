@@ -31,9 +31,18 @@ async fn move_and_late_source_edit_converge_across_replicas() {
     let first_db = Database::open(&first).await.unwrap();
     let source = first_db.list_workspaces().await.unwrap().remove(0);
     let target = first_db.create_workspace("Target").await.unwrap();
-    first_db.create_project(&source, "Source").await.unwrap();
-    first_db.create_project(&source, "Alternate").await.unwrap();
-    first_db.create_project(&target, "Target").await.unwrap();
+    first_db
+        .create_project(&source, "Source", None)
+        .await
+        .unwrap();
+    first_db
+        .create_project(&source, "Alternate", None)
+        .await
+        .unwrap();
+    first_db
+        .create_project(&target, "Target", None)
+        .await
+        .unwrap();
     let task = first_db.create_task(&source, draft()).await.unwrap().task;
     let mut peer_draft = draft();
     peer_draft.title = "Source peer".to_string();
@@ -129,9 +138,9 @@ async fn metadata_edits_after_a_pending_move_survive_acknowledgement_and_reopen(
     let server = EncryptedSyncServer::new().await;
     let db = Database::open(&path).await.unwrap();
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
     let input = |value: &str| TaskMetadataInput {
         expected_field_id: None,
         key: "owner".into(),
@@ -187,9 +196,9 @@ async fn moved_and_unmoved_dependency_edges_keep_one_cycle_resolution_order() {
     let first = Database::open(&first_path).await.unwrap();
     let second = Database::open(&second_path).await.unwrap();
     let source = first.list_workspaces().await.unwrap().remove(0);
-    first.create_project(&source, "Source").await.unwrap();
+    first.create_project(&source, "Source", None).await.unwrap();
     let target = first.create_workspace("Target").await.unwrap();
-    first.create_project(&target, "Target").await.unwrap();
+    first.create_project(&target, "Target", None).await.unwrap();
     let x = first.create_task(&source, draft()).await.unwrap().task;
     let mut d = draft();
     d.project = Some("Target".into());
@@ -255,9 +264,9 @@ async fn move_does_not_reapply_label_deletion_to_an_unmoved_task() {
         .unwrap();
     let server = EncryptedSyncServer::new().await;
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
     db.create_label(&source, "tag").await.unwrap();
     let moved = db.create_task(&source, draft()).await.unwrap().task;
     let untouched = db.create_task(&source, draft()).await.unwrap().task;
@@ -306,9 +315,9 @@ async fn move_acknowledgement_preserves_later_undo_and_epic_promotion() {
         .unwrap();
     let server = EncryptedSyncServer::new().await;
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
     let parent = db.create_task(&source, draft()).await.unwrap().task;
     let child = db.create_task(&source, draft()).await.unwrap().task;
     server.sync(&db).await.unwrap();
@@ -400,9 +409,9 @@ async fn pending_related_commands_survive_single_move_acknowledgement() {
         .unwrap();
     let server = EncryptedSyncServer::new().await;
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
     let a = db.create_task(&source, draft()).await.unwrap().task;
     let b = db.create_task(&source, draft()).await.unwrap().task;
     server.sync(&db).await.unwrap();
@@ -445,9 +454,9 @@ async fn epic_removal_then_demotion_matches_combined_and_split_pages() {
             .unwrap();
         let server = EncryptedSyncServer::new().await;
         let source = db.list_workspaces().await.unwrap().remove(0);
-        db.create_project(&source, "Source").await.unwrap();
+        db.create_project(&source, "Source", None).await.unwrap();
         let target = db.create_workspace("Target").await.unwrap();
-        db.create_project(&target, "Target").await.unwrap();
+        db.create_project(&target, "Target", None).await.unwrap();
         let a = db.create_task(&source, draft()).await.unwrap().task;
         let b = db.create_task(&source, draft()).await.unwrap().task;
         db.add_task_to_epic(&source, &a.id, &b.id).await.unwrap();
@@ -509,9 +518,9 @@ async fn earlier_offline_metadata_edit_does_not_leave_a_provisional_move_conflic
         let peer = Database::open(&peer_path).await.unwrap();
         let server = EncryptedSyncServer::new().await;
         let source = db.list_workspaces().await.unwrap().remove(0);
-        db.create_project(&source, "Source").await.unwrap();
+        db.create_project(&source, "Source", None).await.unwrap();
         let target = db.create_workspace("Target").await.unwrap();
-        db.create_project(&target, "Target").await.unwrap();
+        db.create_project(&target, "Target", None).await.unwrap();
         let input = |value: &str| TaskMetadataInput {
             expected_field_id: None,
             key: "owner".into(),
@@ -580,10 +589,10 @@ async fn replay_keeps_deleted_catalogs_and_later_task_timestamp() {
         .unwrap();
     let server = EncryptedSyncServer::new().await;
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
-    db.create_project(&target, "Other").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
+    db.create_project(&target, "Other", None).await.unwrap();
     db.create_label(&source, "tag").await.unwrap();
     let mut d = draft();
     d.labels = vec!["tag".into()];
@@ -664,11 +673,11 @@ async fn concurrent_moves_and_a_return_move_converge() {
         .unwrap();
     let server = EncryptedSyncServer::new().await;
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
     let other = db.create_workspace("Other").await.unwrap();
-    db.create_project(&other, "Other").await.unwrap();
+    db.create_project(&other, "Other", None).await.unwrap();
     let task = db.create_task(&source, draft()).await.unwrap().task;
     server.sync(&db).await.unwrap();
     server.sync(&peer).await.unwrap();
@@ -733,9 +742,9 @@ async fn metadata_replay_retains_a_genuine_post_move_conflict() {
         .unwrap();
     let server = EncryptedSyncServer::new().await;
     let source = db.list_workspaces().await.unwrap().remove(0);
-    db.create_project(&source, "Source").await.unwrap();
+    db.create_project(&source, "Source", None).await.unwrap();
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&target, "Target").await.unwrap();
+    db.create_project(&target, "Target", None).await.unwrap();
     let input = |value: &str| TaskMetadataInput {
         expected_field_id: None,
         key: "owner".into(),

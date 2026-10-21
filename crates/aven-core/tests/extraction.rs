@@ -18,7 +18,7 @@ async fn opens_migrates_and_mutates_through_owned_api() {
     assert_eq!(workspaces.len(), 1);
     let workspace = &workspaces[0];
     let project = database
-        .create_project(workspace, "Core")
+        .create_project(workspace, "Core", None)
         .await
         .unwrap()
         .project;
@@ -98,7 +98,7 @@ async fn tui_task_mutation_uses_one_transaction_for_change_and_undo() {
     let database = Database::open(&path).await.unwrap();
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let project = database
-        .create_project(&workspace, "Core")
+        .create_project(&workspace, "Core", None)
         .await
         .unwrap()
         .project;
@@ -184,7 +184,7 @@ async fn task_metadata_undo_tracks_field_identity_across_renames() {
         .unwrap();
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let project = database
-        .create_project(&workspace, "Core")
+        .create_project(&workspace, "Core", None)
         .await
         .unwrap()
         .project;
@@ -311,7 +311,7 @@ async fn label_and_project_creation_roll_back_when_change_logging_fails() {
                 .expect("label creation must fail")
         } else {
             database
-                .create_project(&workspace, create)
+                .create_project(&workspace, create, None)
                 .await
                 .err()
                 .expect("project creation must fail")
@@ -443,7 +443,7 @@ async fn database_task_field_rolls_back_when_change_logging_fails() {
     let database = Database::open(&path).await.unwrap();
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let project = database
-        .create_project(&workspace, "Atomic")
+        .create_project(&workspace, "Atomic", None)
         .await
         .unwrap()
         .project;
@@ -499,7 +499,7 @@ async fn task_delete_and_restore_roll_back_when_change_logging_fails() {
     let database = Database::open(&path).await.unwrap();
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let project = database
-        .create_project(&workspace, "Atomic")
+        .create_project(&workspace, "Atomic", None)
         .await
         .unwrap()
         .project;

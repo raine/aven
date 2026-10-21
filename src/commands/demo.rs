@@ -109,7 +109,7 @@ async fn seed_demo(
     clock: DemoClock,
 ) -> Result<DemoSummary> {
     for project in PROJECTS {
-        database.create_project(workspace, project).await?;
+        database.create_project(workspace, project, None).await?;
     }
     for label in LABELS {
         database.create_label(workspace, label).await?;

@@ -16,9 +16,15 @@ pub(crate) async fn cmd_project(
     args: ProjectCommand,
 ) -> Result<()> {
     match args.command {
-        ProjectSubcommand::Create { name, path } => {
-            let outcome =
-                create_project_operation(database, workspace, &name, path.as_deref()).await?;
+        ProjectSubcommand::Create { name, path, prefix } => {
+            let outcome = create_project_operation(
+                database,
+                workspace,
+                &name,
+                path.as_deref(),
+                prefix.as_deref(),
+            )
+            .await?;
             let project = outcome.project;
             println!(
                 "created-project {} prefix={} name={}",

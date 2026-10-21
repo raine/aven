@@ -58,6 +58,11 @@ projects in the workspace.
 Use projects for durable ownership, not temporary categories. Moving a task
 changes its displayed project prefix while preserving its identity.
 
+Choose a custom prefix with `aven project create <name> --prefix <prefix>` or
+`aven project rename <project> <name> --prefix <prefix>`. In the TUI, `p r`
+edits both the name and prefix. Prefixes sync across devices; renaming a project
+keeps its prefix unless you explicitly change it.
+
 ## Classify work with labels
 
 Labels describe concerns that can cross project boundaries, such as `security`,

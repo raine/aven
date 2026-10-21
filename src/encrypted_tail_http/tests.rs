@@ -222,7 +222,7 @@ async fn fixture_with(options: FixtureOptions) -> Fixture {
         }
         if move_before_capture {
             let target = seed.create_workspace("Moved").await.unwrap();
-            seed.create_project(&target, "Moved").await.unwrap();
+            seed.create_project(&target, "Moved", None).await.unwrap();
             let tasks = {
                 let mut conn = aven_core::test_support::acquire(&seed).await.unwrap();
                 sqlx::query_scalar("SELECT id FROM tasks WHERE workspace_id=?")

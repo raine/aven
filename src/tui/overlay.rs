@@ -32,11 +32,11 @@ pub(crate) use state::{
     ConfirmIntent, EpicChildRemovalRestoration, HeaderMenuAction, HeaderMenuItem, HeaderMenuKind,
     HeaderMenuState, MultilineInputMode, MultilineInputState, MultilineIntent, OrderMenuState,
     OverlayOutcome, OverlayState, OverlaySubmit, OverlayTarget, PairingOverlay, PickerIntent,
-    PickerItem, PickerMode, PickerState, RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction,
-    RecurrenceHistoryEntryKey, RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode,
-    ScheduleEditorState, SearchIntent, SearchResultItem, SearchState, TagComboboxIntent,
-    TextIntent, TextPanelState, UpdateActionFocus, UpdateNotesState, UpdateOverlayState,
-    header_menu_area,
+    PickerItem, PickerMode, PickerState, ProjectEditField, ProjectEditState,
+    RECURRENCE_HISTORY_PAGE_SIZE, RecurrenceHistoryAction, RecurrenceHistoryEntryKey,
+    RecurrenceHistoryState, ScheduleEditorField, ScheduleEditorMode, ScheduleEditorState,
+    SearchIntent, SearchResultItem, SearchState, TagComboboxIntent, TextIntent, TextPanelState,
+    UpdateActionFocus, UpdateNotesState, UpdateOverlayState, header_menu_area,
 };
 #[cfg(test)]
 pub(crate) use state::{ConfirmState, TextInputState};

@@ -634,33 +634,40 @@ impl App {
             self.begin_rename_project();
             return;
         };
-        self.overlay = Some(OverlayState::text_input(
-            TextIntent::RenameProject {
-                project: project.clone(),
-            },
-            RENAME_PROJECT_TITLE,
-            "new project name:",
-            project,
+        let Some(item) = self.store.projects.iter().find(|item| item.key == project) else {
+            self.set_error("project no longer exists");
+            return;
+        };
+        self.overlay = Some(OverlayState::ProjectEdit(
+            crate::tui::overlay::ProjectEditState::new(
+                project,
+                item.name.clone(),
+                item.prefix.clone(),
+            ),
         ));
     }
 
     pub(super) async fn submit_rename_project(
         &mut self,
-        project: String,
-        value: String,
+        mut state: crate::tui::overlay::ProjectEditState,
     ) -> Result<()> {
-        match self.store.rename_project(&project, value.clone()).await {
-            Ok(result) => {
-                self.apply_mutation_result(result);
-            }
+        match self
+            .store
+            .rename_project(&state.project, &state.name.text, &state.prefix.text)
+            .await
+        {
+            Ok(result) => self.apply_mutation_result(result),
             Err(error) => {
-                self.set_error(format!("{error:#}"));
-                self.overlay = Some(OverlayState::text_input(
-                    TextIntent::RenameProject { project },
-                    RENAME_PROJECT_TITLE,
-                    "new project name:",
-                    value,
-                ));
+                let message = format!("{error:#}");
+                state.focus = if message.starts_with("error invalid-project-prefix")
+                    || message.starts_with("error project-prefix-exists")
+                {
+                    crate::tui::overlay::ProjectEditField::Prefix
+                } else {
+                    crate::tui::overlay::ProjectEditField::Name
+                };
+                self.set_error(message);
+                self.overlay = Some(OverlayState::ProjectEdit(state));
             }
         }
         Ok(())

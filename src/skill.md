@@ -25,7 +25,7 @@ automatic task creation.
 
 - Use the refs printed by Aven, preferably qualified refs such as `APP-7KQ9`.
 - The suffix identifies the task. The project prefix is display context, so it
-  can change when the task changes projects.
+  can change when the task changes projects or its project prefix is edited.
 - Bare suffix refs work when unambiguous. If Aven reports `ambiguous-ref`, retry
   with a longer suffix.
 - Task refs identify the user's local tasks. Keep them out of commit messages,

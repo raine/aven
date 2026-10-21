@@ -372,7 +372,10 @@ async fn move_keeps_prefix_graph_and_late_owned_edits_without_poisoning_other_ed
         .map(|t| t.id)
         .collect::<Vec<_>>();
     let target = f.seed.create_workspace("Moved").await.unwrap();
-    f.seed.create_project(&target, "Destination").await.unwrap();
+    f.seed
+        .create_project(&target, "Destination", None)
+        .await
+        .unwrap();
     let other_a = f
         .seed
         .create_task(&source, draft("other A"))

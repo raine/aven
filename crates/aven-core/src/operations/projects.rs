@@ -9,7 +9,8 @@ use crate::change_log::{ChangeEntity, ChangePayload, append_change, op_type};
 use crate::db::{Database, begin_immediate};
 use crate::ids::now;
 use crate::projects::{
-    create_project_in_workspace, normalize_key, resolve_existing_project_in_workspace,
+    create_project_in_workspace, ensure_project_prefix_available, normalize_key, normalize_prefix,
+    resolve_existing_project_in_workspace,
 };
 use crate::types::Project;
 use crate::undo::{UndoCommand, UndoPayload, record_tui_undo};
@@ -37,10 +38,11 @@ impl Database {
         &self,
         workspace: &Workspace,
         name: &str,
+        prefix: Option<&str>,
     ) -> Result<ProjectOutcome> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let outcome = match create_project_operation(&mut tx, workspace, name).await {
+        let outcome = match create_project_operation(&mut tx, workspace, name, prefix).await {
             Ok(outcome) => outcome,
             Err(error) => {
                 tx.rollback().await?;
@@ -58,7 +60,7 @@ impl Database {
     ) -> Result<ProjectOutcome> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        let outcome = create_project_operation(&mut tx, workspace, name).await?;
+        let outcome = create_project_operation(&mut tx, workspace, name, None).await?;
         if outcome.created {
             record_tui_undo(
                 &mut tx,
@@ -155,8 +157,9 @@ pub(crate) async fn create_project_operation(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     name: &str,
+    prefix: Option<&str>,
 ) -> Result<ProjectOutcome> {
-    let outcome = create_project_in_workspace(conn, &workspace.id, name).await?;
+    let outcome = create_project_in_workspace(conn, &workspace.id, name, prefix).await?;
     if outcome.created {
         info!(project_key = %outcome.project.key, "project created");
     }
@@ -294,15 +297,11 @@ where
     let prefix = match prefix {
         Some(prefix) => {
             let prefix = normalize_prefix(prefix)?;
-            if project_prefix_exists(&mut tx, &workspace.id, &prefix, Some(&previous.id)).await? {
-                bail!("error project-prefix-exists prefix={prefix}");
-            }
+            ensure_project_prefix_available(&mut tx, &workspace.id, &prefix, Some(&previous.id))
+                .await?;
             prefix
         }
-        None => {
-            unique_project_prefix_excluding(&mut tx, &workspace.id, &key, Some(&previous.id))
-                .await?
-        }
+        None => previous.prefix.clone(),
     };
     let changed = previous.key != key || previous.name != new_name || previous.prefix != prefix;
     if !changed {
@@ -436,48 +435,5 @@ async fn resolve_project_key(
     }))
 }
 
-async fn unique_project_prefix_excluding(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    key: &str,
-    exclude_project_id: Option<&ProjectId>,
-) -> Result<String> {
-    let base = crate::projects::prefix_base(key);
-    let mut candidate = base.clone();
-    let mut n = 2;
-    while project_prefix_exists(conn, workspace_id, &candidate, exclude_project_id).await? {
-        candidate = format!("{}{}", base.chars().take(2).collect::<String>(), n);
-        n += 1;
-    }
-    Ok(candidate)
-}
-
-async fn project_prefix_exists(
-    conn: &mut SqliteConnection,
-    workspace_id: &WorkspaceId,
-    prefix: &str,
-    exclude_project_id: Option<&ProjectId>,
-) -> Result<bool> {
-    Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM projects
-         WHERE workspace_id = ? AND prefix = ? AND (? IS NULL OR id != ?)",
-    )
-    .bind(workspace_id)
-    .bind(prefix)
-    .bind(exclude_project_id)
-    .bind(exclude_project_id)
-    .fetch_one(&mut *conn)
-    .await?
-        > 0)
-}
-
-fn normalize_prefix(prefix: &str) -> Result<String> {
-    let prefix = prefix.trim().to_ascii_uppercase();
-    if (2..=crate::projects::MAX_EXPLICIT_PROJECT_PREFIX_LEN).contains(&prefix.len())
-        && prefix.chars().all(|ch| ch.is_ascii_alphanumeric())
-    {
-        Ok(prefix)
-    } else {
-        bail!("error invalid-project-prefix prefix={prefix:?}")
-    }
-}
+#[cfg(test)]
+mod tests;

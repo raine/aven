@@ -812,7 +812,7 @@ aven workspace list
 Manage projects in the active workspace.
 
 ```sh
-aven project create <name> [--path <path>]
+aven project create <name> [--prefix <prefix>] [--path <path>]
 aven project delete <project>
 aven project list [--search <text>] [--limit <number>] [--json]
 aven project rename <project> <new-name> [--prefix <prefix>]
@@ -823,7 +823,11 @@ aven project path list [project]
 
 #### `project create`
 
-Creates a project with a normalized key and a unique display prefix. `--path` also records a canonical directory mapping in the config file.
+Creates a project with a normalized key and a unique display prefix. Use `--prefix` to choose the prefix; otherwise Aven generates one from the name. Prefixes are trimmed, uppercased, and must contain 2–8 ASCII letters or digits. They must be unique within the workspace, including prefixes held by retained deleted projects. Prefixes are stored in the database and synced across devices, not configured per device.
+
+Creating an existing project leaves it unchanged. An explicit prefix must match its current prefix; use `project rename --prefix` to change it. Creating a deleted project restores it with the supplied prefix, or retains its stored prefix when omitted (generating one if it has no usable stored prefix).
+
+`--path` also records a canonical directory mapping in the config file.
 
 #### `project delete`
 
@@ -835,14 +839,14 @@ Lists project keys, prefixes, and names. `--search` performs project search, `--
 
 #### `project rename`
 
-Updates the project's name, normalized key, and display prefix while preserving stable project identity. Without `--prefix`, aven generates a unique prefix from the new key. Existing managed config mappings are rewritten to the new project key.
+Updates the project's name, normalized key, and display prefix while preserving stable project identity. Without `--prefix`, Aven keeps the current prefix. An explicit prefix follows the same validation and uniqueness rules as `project create`. Existing managed config mappings are rewritten when the project key changes.
 
 #### `project path`
 
 `add` and `remove` update managed path mappings in the config file. Paths are canonicalized. `list` prints all mappings or only mappings for the optional project.
 
 ```sh
-aven project create "Aven docs" --path ~/code/aven/docs
+aven project create "Aven docs" --prefix DOCS --path ~/code/aven/docs
 aven project rename aven-docs "Documentation" --prefix DOC
 aven project path add documentation ~/writing/aven
 aven project path list documentation

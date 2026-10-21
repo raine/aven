@@ -147,6 +147,9 @@ pub(crate) enum ProjectSubcommand {
     Create {
         /// Project display name; its key is derived by normalization
         name: String,
+        /// Task-ref prefix (2-8 ASCII letters or digits); defaults to a generated prefix
+        #[arg(long)]
+        prefix: Option<String>,
         /// Map this directory to the project for inference
         #[arg(long)]
         path: Option<PathBuf>,
@@ -164,7 +167,7 @@ pub(crate) enum ProjectSubcommand {
         project: String,
         /// Replacement display name
         new_name: String,
-        /// Replacement task-ref prefix; otherwise derive it from the name
+        /// Replacement task-ref prefix; otherwise keep the current prefix
         #[arg(long)]
         prefix: Option<String>,
     },

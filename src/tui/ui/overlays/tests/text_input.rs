@@ -114,12 +114,6 @@ fn placeholder_text_input_kinds_use_placeholder_style() {
             RENAME_WORKSPACE_NAME_PLACEHOLDER,
         ),
         (
-            TextInputKind::RenameProject,
-            "Rename project",
-            "new project name:",
-            RENAME_PROJECT_NAME_PLACEHOLDER,
-        ),
-        (
             TextInputKind::ConflictManual,
             "Resolve manually",
             "manual value for field=title:",
@@ -139,9 +133,7 @@ fn placeholder_text_input_kinds_use_placeholder_style() {
         assert!(rendered.contains("Enter submit"), "{kind:?}");
         if matches!(
             kind,
-            TextInputKind::RenameLabel
-                | TextInputKind::RenameProject
-                | TextInputKind::RenameWorkspace
+            TextInputKind::RenameLabel | TextInputKind::RenameWorkspace
         ) {
             assert!(rendered.contains("Ctrl+U clear"), "{kind:?}");
         }

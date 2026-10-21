@@ -73,7 +73,7 @@ async fn project_rename_rolls_back_when_undo_recording_fails() {
     reject_undo_inserts(&pool).await;
 
     let error = store
-        .rename_project("before-atomic-rename", "After Atomic Rename".to_string())
+        .rename_project("before-atomic-rename", "After Atomic Rename", "NEW")
         .await
         .unwrap_err();
 
@@ -84,6 +84,12 @@ async fn project_rename_rolls_back_when_undo_recording_fails() {
         .await
         .unwrap();
     assert_eq!(key, "before-atomic-rename");
+    let prefix: String = sqlx::query_scalar("SELECT prefix FROM projects WHERE key = ?")
+        .bind(&key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(prefix, "BAR");
 }
 
 #[tokio::test]
@@ -122,7 +128,7 @@ async fn rename_project_updates_view_filters_and_tasks() {
         .unwrap();
 
     let outcome = store
-        .rename_project("agent-offload", "sideagent".to_string())
+        .rename_project("agent-offload", "sideagent", "SDG")
         .await
         .unwrap();
 
@@ -162,7 +168,7 @@ async fn undo_project_rename_restores_view_filters_and_tasks() {
         .await
         .unwrap();
     store
-        .rename_project("agent-offload", "sideagent".to_string())
+        .rename_project("agent-offload", "sideagent", "SDG")
         .await
         .unwrap();
 

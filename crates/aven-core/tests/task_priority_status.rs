@@ -26,7 +26,7 @@ async fn creation_promotes_only_inbox_tasks_with_actionable_priority() {
         .unwrap();
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let project = database
-        .create_project(&workspace, "Core")
+        .create_project(&workspace, "Core", None)
         .await
         .unwrap()
         .project;
@@ -83,7 +83,7 @@ async fn batch_priority_edit_promotes_only_current_inbox_tasks() {
         .unwrap();
     let workspace = database.list_workspaces().await.unwrap().remove(0);
     let project = database
-        .create_project(&workspace, "Core")
+        .create_project(&workspace, "Core", None)
         .await
         .unwrap()
         .project;

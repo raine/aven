@@ -1648,7 +1648,10 @@ async fn workspace_move_routes_late_images_and_preserves_download_and_pruning() 
     converge(&f).await;
     let source = f.seed.list_workspaces().await.unwrap().remove(0);
     let target = f.seed.create_workspace("Moved").await.unwrap();
-    f.seed.create_project(&target, "Destination").await.unwrap();
+    f.seed
+        .create_project(&target, "Destination", None)
+        .await
+        .unwrap();
     converge(&f).await;
     let task = f
         .seed

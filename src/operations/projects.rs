@@ -7,7 +7,6 @@ use aven_core::db::Database;
 
 use crate::config;
 use crate::config_edit::{self, ProjectPathMappingEdit};
-use crate::projects::project_has_config_mapping;
 use crate::types::Project;
 use crate::workspaces::Workspace;
 
@@ -34,9 +33,10 @@ pub async fn create_project_operation(
     workspace: &Workspace,
     name: &str,
     path: Option<&Path>,
+    prefix: Option<&str>,
 ) -> Result<aven_core::operations::ProjectOutcome> {
     let path = path.map(canonicalize_project_path).transpose()?;
-    let outcome = database.create_project(workspace, name).await?;
+    let outcome = database.create_project(workspace, name, prefix).await?;
     if let Some(path) = path {
         save_project_path_mapping(workspace, &outcome.project, path)?;
     }
@@ -65,25 +65,11 @@ pub async fn rename_project_operation(
     new_name: &str,
     prefix: Option<&str>,
 ) -> Result<ProjectRenameOutcome> {
-    let (outcome, config_mapping) =
-        database
-            .rename_project_before_commit(workspace, project, new_name, prefix, |outcome| {
-                if outcome.changed {
-                    rename_config_project_mapping(
-                        workspace,
-                        &outcome.previous.key,
-                        &outcome.project.key,
-                    )
-                } else {
-                    Ok(project_has_config_mapping(
-                        &workspace.id,
-                        &workspace.key,
-                        &outcome.previous.key,
-                    )
-                    .unwrap_or(false))
-                }
-            })
-            .await?;
+    let (outcome, config_mapping) = database
+        .rename_project_before_commit(workspace, project, new_name, prefix, |outcome| {
+            rename_config_project_mapping(workspace, &outcome.previous.key, &outcome.project.key)
+        })
+        .await?;
     Ok(ProjectRenameOutcome {
         previous: outcome.previous,
         project: outcome.project,
@@ -97,6 +83,9 @@ pub fn rename_config_project_mapping(
     old_project: &str,
     new_project: &str,
 ) -> Result<bool> {
+    if old_project == new_project {
+        return Ok(false);
+    }
     let config_path = config::config_file_path()?;
     config_edit::rename_project_path(&config_path, &workspace.id, old_project, new_project)
 }

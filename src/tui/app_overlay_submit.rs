@@ -47,6 +47,7 @@ impl App {
             }
             OverlaySubmit::HeaderMenu { action } => self.submit_header_menu(action).await?,
             OverlaySubmit::Order { order } => self.submit_order_menu(order).await?,
+            OverlaySubmit::ProjectEdit(state) => self.submit_rename_project(state).await?,
             OverlaySubmit::Text { intent, value } => {
                 self.handle_text_submit(intent, value).await?;
             }
@@ -359,9 +360,6 @@ impl App {
             } => {
                 self.submit_delete_workspace_name(workspace, warnings, value)
                     .await?;
-            }
-            TextIntent::RenameProject { project } => {
-                self.submit_rename_project(project, value).await?;
             }
             TextIntent::ConfirmDeleteProject { project } => {
                 self.submit_delete_project_name(project, value).await?;

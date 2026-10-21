@@ -7,6 +7,7 @@ mod multiline;
 mod onboarding;
 mod pairing;
 mod picker;
+mod project_edit;
 mod recurrence_history;
 mod search;
 mod shared;
@@ -35,6 +36,7 @@ pub(crate) use pairing::pairing_area;
 pub(crate) use pairing::pairing_layout;
 pub(super) use pairing::render_pairing;
 pub(super) use picker::render_picker;
+pub(super) use project_edit::render_project_edit;
 pub(crate) use recurrence_history::recurrence_history_entry_at;
 pub(super) use recurrence_history::render_recurrence_history;
 pub(super) use search::{SearchRenderStatus, SearchRenderView, render_search};
@@ -78,8 +80,7 @@ pub(super) use sync_dialog::{
 pub(super) use text_input::{
     ADD_LABEL_NAME_PLACEHOLDER, ADD_PROJECT_NAME_PLACEHOLDER, ADD_WORKSPACE_NAME_PLACEHOLDER,
     CONFLICT_MANUAL_VALUE_PLACEHOLDER, RENAME_LABEL_NAME_PLACEHOLDER,
-    RENAME_PROJECT_NAME_PLACEHOLDER, RENAME_WORKSPACE_NAME_PLACEHOLDER,
-    placeholder_text_input_line, project_path_input_line,
+    RENAME_WORKSPACE_NAME_PLACEHOLDER, placeholder_text_input_line, project_path_input_line,
 };
 
 #[cfg(test)]

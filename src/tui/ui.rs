@@ -866,6 +866,7 @@ fn overlay_dims_underlay(overlay: &OverlayView, inline_title_editor: bool) -> bo
         | OverlayView::Search { .. }
         | OverlayView::Command { .. }
         | OverlayView::Metadata(_)
+        | OverlayView::ProjectEdit(_)
         | OverlayView::AddTask(_)
         | OverlayView::MultilineInput(_)
         | OverlayView::Picker(_)
@@ -958,6 +959,7 @@ fn render_overlay_content(
         OverlayView::AddTask(state) => self::overlays::render_add_task(frame, theme, state),
         OverlayView::TextInput(state)
             if state.kind == TextInputKind::EditTitle && inline_title_editor => {}
+        OverlayView::ProjectEdit(state) => self::overlays::render_project_edit(frame, theme, state),
         OverlayView::TextInput(state) => render_text_input(frame, theme, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, theme, state),
         OverlayView::Picker(state) => render_picker(frame, theme, state),

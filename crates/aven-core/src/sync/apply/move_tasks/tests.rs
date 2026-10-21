@@ -55,8 +55,16 @@ async fn relocation_preserves_complete_conflicts_versions_and_metadata_aliases()
         .unwrap();
     let source = db.list_workspaces().await.unwrap().remove(0);
     let target = db.create_workspace("Target").await.unwrap();
-    let source_project = db.create_project(&source, "Source").await.unwrap().project;
-    let target_project = db.create_project(&target, "Target").await.unwrap().project;
+    let source_project = db
+        .create_project(&source, "Source", None)
+        .await
+        .unwrap()
+        .project;
+    let target_project = db
+        .create_project(&target, "Target", None)
+        .await
+        .unwrap()
+        .project;
     let task = db
         .create_task(&source, draft(&["owner", "removed"]))
         .await
@@ -242,8 +250,12 @@ async fn unversioned_live_value_clears_an_earlier_aliased_tombstone_version() {
         .unwrap();
     let source = db.list_workspaces().await.unwrap().remove(0);
     let target = db.create_workspace("Target").await.unwrap();
-    db.create_project(&source, "Source").await.unwrap();
-    let project = db.create_project(&target, "Target").await.unwrap().project;
+    db.create_project(&source, "Source", None).await.unwrap();
+    let project = db
+        .create_project(&target, "Target", None)
+        .await
+        .unwrap()
+        .project;
     let task = db
         .create_task(&source, draft(&["a", "z"]))
         .await

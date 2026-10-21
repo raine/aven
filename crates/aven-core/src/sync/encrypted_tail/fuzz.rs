@@ -164,9 +164,13 @@ fn has_float(value: &serde_json::Value) -> bool {
 fn changes() -> Vec<ChangeWire> {
     crate::sync::fuzz::with_history(async |db| {
         let source = db.list_workspaces().await.unwrap().remove(0);
-        db.create_project(&source, "Move source").await.unwrap();
+        db.create_project(&source, "Move source", None)
+            .await
+            .unwrap();
         let target = db.create_workspace("Move destination").await.unwrap();
-        db.create_project(&target, "Destination").await.unwrap();
+        db.create_project(&target, "Destination", None)
+            .await
+            .unwrap();
         let task = db
             .create_task(
                 &source,

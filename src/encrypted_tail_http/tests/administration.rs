@@ -48,6 +48,16 @@ async fn project_label_and_workspace_administration_crosses_http_and_converges()
     converge(&f).await;
 
     // Every administration command queues ahead of a later ordinary task edit.
+    let custom = f
+        .seed
+        .create_project(&w, "Custom", Some(" c9 "))
+        .await
+        .unwrap()
+        .project;
+    f.seed
+        .rename_project(&w, &custom.key, "Renamed custom", None)
+        .await
+        .unwrap();
     let side = f.seed.create_workspace("Side").await.unwrap();
     f.seed.create_task(&side, draft("side task")).await.unwrap();
     f.seed.rename_workspace("side", "Lab").await.unwrap();
@@ -55,6 +65,14 @@ async fn project_label_and_workspace_administration_crosses_http_and_converges()
         .rename_project(&w, "app", "Core", Some("CORE"))
         .await
         .unwrap();
+    assert_eq!(
+        f.seed
+            .resolve_existing_project(&w.id, "renamed-custom")
+            .await
+            .unwrap()
+            .prefix,
+        "C9"
+    );
     let mut scratch = draft("scratch task");
     scratch.project = Some("scratch".into());
     f.seed.create_task(&w, scratch).await.unwrap();

@@ -401,8 +401,14 @@ mod tests {
             .unwrap();
         let source = database.list_workspaces().await.unwrap().remove(0);
         let target = database.create_workspace("Target").await.unwrap();
-        database.create_project(&source, "Source").await.unwrap();
-        database.create_project(&target, "Target").await.unwrap();
+        database
+            .create_project(&source, "Source", None)
+            .await
+            .unwrap();
+        database
+            .create_project(&target, "Target", None)
+            .await
+            .unwrap();
         (temp, database, source, target)
     }
 

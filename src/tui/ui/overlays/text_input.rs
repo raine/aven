@@ -177,7 +177,6 @@ pub(in crate::tui::ui) const RENAME_LABEL_NAME_PLACEHOLDER: &str = "Enter label 
 pub(in crate::tui::ui) const ADD_WORKSPACE_NAME_PLACEHOLDER: &str = "Enter workspace name here...";
 pub(in crate::tui::ui) const RENAME_WORKSPACE_NAME_PLACEHOLDER: &str =
     "Enter workspace name here...";
-pub(in crate::tui::ui) const RENAME_PROJECT_NAME_PLACEHOLDER: &str = "Enter project name here...";
 pub(in crate::tui::ui) const CONFLICT_MANUAL_VALUE_PLACEHOLDER: &str = "Enter manual value here...";
 
 fn text_input_placeholder(kind: TextInputKind) -> Option<&'static str> {
@@ -187,7 +186,6 @@ fn text_input_placeholder(kind: TextInputKind) -> Option<&'static str> {
         TextInputKind::RenameLabel => Some(RENAME_LABEL_NAME_PLACEHOLDER),
         TextInputKind::AddWorkspace => Some(ADD_WORKSPACE_NAME_PLACEHOLDER),
         TextInputKind::RenameWorkspace => Some(RENAME_WORKSPACE_NAME_PLACEHOLDER),
-        TextInputKind::RenameProject => Some(RENAME_PROJECT_NAME_PLACEHOLDER),
         TextInputKind::ConflictManual => Some(CONFLICT_MANUAL_VALUE_PLACEHOLDER),
         _ => None,
     }
@@ -203,7 +201,7 @@ fn render_placeholder_text_input(
     let content = dialog.render_block(frame);
     let hints = if matches!(
         state.kind,
-        TextInputKind::RenameLabel | TextInputKind::RenameProject | TextInputKind::RenameWorkspace
+        TextInputKind::RenameLabel | TextInputKind::RenameWorkspace
     ) {
         &[("Enter", "submit"), ("Ctrl+U", "clear"), ("Esc", "cancel")][..]
     } else {

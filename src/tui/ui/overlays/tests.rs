@@ -68,6 +68,7 @@ fn render_non_help_overlay_content(frame: &mut Frame, overlay: &OverlayView<'_>)
         ),
         OverlayView::Metadata(state) => super::metadata::render(frame, theme, state),
         OverlayView::AddTask(state) => render_add_task(frame, theme, state),
+        OverlayView::ProjectEdit(state) => render_project_edit(frame, theme, state),
         OverlayView::TextInput(state) => render_text_input(frame, theme, state),
         OverlayView::MultilineInput(state) => render_multiline_input(frame, theme, state),
         OverlayView::Picker(state) => render_picker(frame, theme, state),

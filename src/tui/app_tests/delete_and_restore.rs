@@ -280,20 +280,18 @@ async fn rename_project_submission_updates_selected_project() {
     assert!(app.notification.is_none());
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
 
-    assert!(matches!(
-        app.overlay,
-        Some(OverlayState::TextInput(TextInputState {
-            intent: TextIntent::RenameProject { .. },
-            ..
-        }))
-    ));
-    app.submit_rename_project("agent-offload".to_string(), "sideagent".to_string())
-        .await
-        .unwrap();
+    assert!(matches!(app.overlay, Some(OverlayState::ProjectEdit(_))));
+    app.submit_rename_project(crate::tui::overlay::ProjectEditState::new(
+        "agent-offload".to_string(),
+        "sideagent".to_string(),
+        "AO".to_string(),
+    ))
+    .await
+    .unwrap();
 
     assert_eq!(
         toast_message(&app).as_deref(),
-        Some("renamed project sideagent prefix=SDG · u undo")
+        Some("renamed project sideagent prefix=AO · u undo")
     );
     assert!(
         app.store
@@ -402,4 +400,109 @@ async fn delete_project_cancel_discards_intent() {
         }))
     ));
     app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+}
+
+#[tokio::test]
+async fn project_prefix_editor_preserves_inputs_on_errors_and_saves_from_either_field() {
+    use crate::tui::overlay::{ProjectEditField, handle_generic_overlay_paste};
+    let mut app = test_app().await;
+    app.store
+        .create_project("Agent Offload".into())
+        .await
+        .unwrap();
+    app.store.create_project("Other".into()).await.unwrap();
+    app.begin_rename_project_for(Some("agent-offload"));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let Some(OverlayState::ProjectEdit(state)) = &app.overlay else {
+        panic!("expected project editor")
+    };
+    assert_eq!(state.name.text, "Agent Offload");
+    assert_eq!(state.prefix.text, "AO");
+    assert_eq!(state.focus, ProjectEditField::Name);
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    app.overlay = Some(handle_generic_overlay_paste(
+        "Renamed Project",
+        app.overlay.take().unwrap(),
+    ));
+    app.handle_overlay_key(key(KeyCode::Tab)).await.unwrap();
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('x')))
+        .await
+        .unwrap();
+    let Some(OverlayState::ProjectEdit(state)) = &app.overlay else {
+        panic!("expected project editor")
+    };
+    assert_eq!(state.prefix.text, "X");
+    // Submit from Name to prove the validation failure moves focus back to Prefix.
+    app.handle_overlay_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
+        .await
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let Some(OverlayState::ProjectEdit(state)) = &app.overlay else {
+        panic!("expected project editor")
+    };
+    assert_eq!(state.name.text, "Renamed Project");
+    assert_eq!(state.prefix.text, "X");
+    assert_eq!(state.focus, ProjectEditField::Prefix);
+    assert!(
+        toast_message(&app)
+            .unwrap()
+            .contains("invalid-project-prefix")
+    );
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    app.overlay = Some(handle_generic_overlay_paste(
+        "oth",
+        app.overlay.take().unwrap(),
+    ));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    let Some(OverlayState::ProjectEdit(state)) = &app.overlay else {
+        panic!("expected project editor")
+    };
+    assert_eq!(state.name.text, "Renamed Project");
+    assert_eq!(state.prefix.text, "OTH");
+    assert_eq!(state.focus, ProjectEditField::Prefix);
+    assert!(
+        toast_message(&app)
+            .unwrap()
+            .contains("project-prefix-exists")
+    );
+    assert!(
+        app.store
+            .projects
+            .iter()
+            .any(|p| p.key == "agent-offload" && p.prefix == "AO")
+    );
+    app.handle_overlay_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    app.overlay = Some(handle_generic_overlay_paste(
+        "cus7",
+        app.overlay.take().unwrap(),
+    ));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(app.overlay.is_none());
+    assert!(
+        app.store.projects.iter().any(|p| p.key == "renamed-project"
+            && p.name == "Renamed Project"
+            && p.prefix == "CUS7")
+    );
+    app.begin_rename_project_for(Some("renamed-project"));
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    app.handle_overlay_key(key(KeyCode::Char('2')))
+        .await
+        .unwrap();
+    app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
+    assert!(app.overlay.is_none());
+    assert!(
+        app.store
+            .projects
+            .iter()
+            .any(|p| p.key == "renamed-project2" && p.prefix == "CUS7")
+    );
 }

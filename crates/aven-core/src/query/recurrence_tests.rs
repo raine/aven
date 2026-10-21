@@ -243,7 +243,7 @@ async fn recurring_series_list_filters_lifecycle_and_searches_title_or_ref() {
 async fn recurring_series_list_respects_project_scope() {
     let (_temp, database, workspace) = setup().await;
     let mobile = database
-        .create_project(&workspace, "Mobile")
+        .create_project(&workspace, "Mobile", None)
         .await
         .unwrap()
         .project;

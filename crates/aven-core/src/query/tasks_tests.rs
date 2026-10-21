@@ -779,6 +779,7 @@ async fn project_filters_use_project_id_after_key_change() {
         &mut conn,
         &crate::workspaces::default_workspace_id(),
         "App",
+        None,
     )
     .await
     .unwrap();

@@ -84,6 +84,11 @@ pub(crate) fn handle_generic_overlay_paste(text: &str, overlay: OverlayState) ->
             state.refresh_recurrence_preview();
             OverlayState::AddTask(state)
         }
+        OverlayState::ProjectEdit(mut state) => {
+            state.input_mut().insert_paste(text);
+            state.prefix.text.make_ascii_uppercase();
+            OverlayState::ProjectEdit(state)
+        }
         OverlayState::TextInput(mut state) => {
             state.input.insert_paste(text);
             OverlayState::TextInput(state)
@@ -450,6 +455,23 @@ pub(crate) fn handle_generic_overlay_key(
                 }
             }
         }
+        OverlayState::ProjectEdit(mut state) => match key.code {
+            KeyCode::Esc => OverlayOutcome::Cancelled,
+            KeyCode::Enter => OverlayOutcome::Submitted(OverlaySubmit::ProjectEdit(state)),
+            KeyCode::Tab | KeyCode::BackTab => {
+                use super::state::ProjectEditField;
+                state.focus = match state.focus {
+                    ProjectEditField::Name => ProjectEditField::Prefix,
+                    ProjectEditField::Prefix => ProjectEditField::Name,
+                };
+                OverlayOutcome::None(OverlayState::ProjectEdit(state))
+            }
+            _ => {
+                state.input_mut().handle_key(key);
+                state.prefix.text.make_ascii_uppercase();
+                OverlayOutcome::None(OverlayState::ProjectEdit(state))
+            }
+        },
         OverlayState::TextInput(mut state) => match key.code {
             KeyCode::Esc => OverlayOutcome::Cancelled,
             KeyCode::Char('d')

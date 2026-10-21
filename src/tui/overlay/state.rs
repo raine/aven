@@ -54,6 +54,7 @@ pub(crate) enum OverlayState {
         state: CommandState,
     },
     AddTask(Box<AddTaskState>),
+    ProjectEdit(ProjectEditState),
     TextInput(TextInputState),
     MultilineInput(MultilineInputState),
     Picker(PickerState),
@@ -357,6 +358,7 @@ impl TextPanelState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlaySubmit {
+    ProjectEdit(ProjectEditState),
     MetadataSave {
         state: Box<super::metadata::MetadataState>,
         remove: bool,
@@ -673,6 +675,38 @@ mod tests {
             openable: false,
             archived_projection: false,
             resolved_at: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectEditField {
+    Name,
+    Prefix,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectEditState {
+    pub(crate) project: String,
+    pub(crate) name: LineEdit,
+    pub(crate) prefix: LineEdit,
+    pub(crate) focus: ProjectEditField,
+}
+
+impl ProjectEditState {
+    pub(crate) fn new(project: String, name: String, prefix: String) -> Self {
+        Self {
+            project,
+            name: LineEdit::new(name),
+            prefix: LineEdit::new(prefix),
+            focus: ProjectEditField::Name,
+        }
+    }
+
+    pub(crate) fn input_mut(&mut self) -> &mut LineEdit {
+        match self.focus {
+            ProjectEditField::Name => &mut self.name,
+            ProjectEditField::Prefix => &mut self.prefix,
         }
     }
 }
