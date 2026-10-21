@@ -379,7 +379,7 @@ async fn relationship_search_stays_workspace_wide_in_project_scope() {
             display_ref: "APP".into(),
         },
         SearchIntent::AddRelated {
-            selection: selection,
+            selection,
             display_ref: "APP".into(),
         },
     ] {
