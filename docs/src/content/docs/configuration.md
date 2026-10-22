@@ -250,6 +250,15 @@ project:
       paths: ["~/code/aven"]
 ```
 
+A path belongs to one project per workspace. `aven project path add <project> <path>`
+refuses a path already owned by another project. Use `--move` to reassign a managed
+mapping; unmanaged overrides must be edited manually. Re-adding a managed path to
+its current project leaves the config unchanged.
+
+For monorepos, map separate subdirectories to their projects rather than sharing
+the repository root. The deepest matching path wins, and a current-directory
+match takes precedence over a Git-root match.
+
 ## Sync and daemon settings
 
 Sync is optional, self-hosted, and end-to-end encrypted. The server is chosen

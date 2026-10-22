@@ -312,6 +312,7 @@ mod tests {
                 workspace: &workspace.key,
                 project: "checkle",
                 path: other_root.clone(),
+                move_existing: false,
             },
         )
         .unwrap();
@@ -322,6 +323,7 @@ mod tests {
                 workspace: &workspace.key,
                 project: "mobile-app",
                 path: project_root.clone(),
+                move_existing: false,
             },
         )
         .unwrap();

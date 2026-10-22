@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: Refuse project path conflicts instead of silently evicting the existing owner. Use `aven project path add --move` to explicitly reassign a managed mapping. ([#40](https://github.com/raine/aven/issues/40))
+
 ## v0.1.52 (2026-10-31)
 
 - Breaking: `aven server` uses a separate `server.yaml` instead of the client configuration. See the [migration guide](https://aventasks.dev/migration-guide/#move-server-settings-to-serveryaml).

@@ -14,6 +14,7 @@ pub struct ProjectPathOutcome {
     pub project: Project,
     pub path: String,
     pub config_path: PathBuf,
+    pub moved_from: Option<String>,
 }
 
 pub struct ProjectDeleteOutcome {
@@ -44,12 +45,13 @@ pub async fn create_project_operation(
                 workspace: &workspace.key,
                 project: &aven_core::projects::normalize_key(name),
                 path: path.clone(),
+                move_existing: false,
             },
         )?;
     }
     let outcome = database.create_project(workspace, name, prefix).await?;
     if let Some(path) = path {
-        save_project_path_mapping(workspace, &outcome.project, path).with_context(|| {
+        save_project_path_mapping(workspace, &outcome.project, path, false).with_context(|| {
             format!(
                 "Project {} {} but its path mapping was not saved",
                 outcome.project.key,
@@ -139,21 +141,24 @@ fn save_project_path_mapping(
     workspace: &Workspace,
     project: &Project,
     path: PathBuf,
+    move_existing: bool,
 ) -> Result<ProjectPathOutcome> {
     let config_path = config::config_file_path()?;
-    config_edit::add_project_path(
+    let moved_from = config_edit::add_project_path(
         &config_path,
         ProjectPathMappingEdit {
             workspace_id: &workspace.id,
             workspace: &workspace.key,
             project: &project.key,
             path: path.clone(),
+            move_existing,
         },
     )?;
     Ok(ProjectPathOutcome {
         project: project.clone(),
         path: path.display().to_string(),
         config_path,
+        moved_from,
     })
 }
 
@@ -162,12 +167,13 @@ pub async fn add_project_path_operation(
     workspace: &Workspace,
     project: &str,
     path: &Path,
+    move_existing: bool,
 ) -> Result<ProjectPathOutcome> {
     let project = database
         .resolve_existing_project(&workspace.id, project)
         .await?;
     let path = canonicalize_project_path(path)?;
-    save_project_path_mapping(workspace, &project, path)
+    save_project_path_mapping(workspace, &project, path, move_existing)
 }
 
 pub async fn remove_project_path_operation(
@@ -202,6 +208,7 @@ pub async fn remove_project_path_operation(
         project,
         path,
         config_path,
+        moved_from: None,
     })
 }
 
@@ -241,6 +248,7 @@ pub async fn list_project_paths_operation(
                     project: project.clone(),
                     path: path.display().to_string(),
                     config_path: config_path.clone(),
+                    moved_from: None,
                 }),
         );
     }

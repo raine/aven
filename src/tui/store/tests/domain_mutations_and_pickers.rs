@@ -298,6 +298,7 @@ async fn protected_mapping_callback_rolls_back_project_and_undo_record() {
             workspace: &store.active_workspace.key,
             project: "before",
             path: dir.path().to_path_buf(),
+            move_existing: false,
         },
     )
     .unwrap();

@@ -1136,6 +1136,51 @@ fn singular_list_commands_list_workspace_values() {
 }
 
 #[test]
+fn project_path_conflict_requires_explicit_move() {
+    let env = TestEnv::new();
+    let db = env.db("path-conflict.sqlite");
+    let directory = env.path("monorepo");
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.to_str().unwrap();
+    for project in ["probe-one", "probe-two"] {
+        ok(env.aven(&db, ["project", "create", project]));
+    }
+    ok(env.aven(&db, ["project", "path", "add", "probe-one", path]));
+    let original = std::fs::read(env.config_file()).unwrap();
+    let error = fail(env.aven(&db, ["project", "path", "add", "probe-two", path]));
+    contains_all(&error, &["already mapped to project probe-one", "--move"]);
+    assert_eq!(std::fs::read(env.config_file()).unwrap(), original);
+    let repeated = ok(env.aven(&db, ["project", "path", "add", "probe-one", path]));
+    contains_none(&repeated, &["moved-from="]);
+    assert_eq!(std::fs::read(env.config_file()).unwrap(), original);
+    let moved = ok(env.aven(&db, ["project", "path", "add", "probe-two", path, "--move"]));
+    contains_all(
+        &moved,
+        &["added-project-path probe-two", "moved-from=probe-one"],
+    );
+    let listed = ok(env.aven(&db, ["project", "path", "list"]));
+    contains_all(&listed, &["probe-two"]);
+    contains_none(&listed, &["probe-one"]);
+
+    let unmanaged = format!(
+        "project:\n  overrides:\n    - project: probe-one\n      paths: [{}]\n",
+        serde_json::to_string(path).unwrap()
+    );
+    std::fs::write(env.config_file(), &unmanaged).unwrap();
+    for args in [
+        vec!["project", "path", "add", "probe-two", path],
+        vec!["project", "path", "add", "probe-two", path, "--move"],
+    ] {
+        let error = fail(env.aven(&db, args));
+        contains_all(&error, &["probe-one", "unmanaged override", "manually"]);
+        assert_eq!(
+            std::fs::read_to_string(env.config_file()).unwrap(),
+            unmanaged
+        );
+    }
+}
+
+#[test]
 fn project_rename_updates_managed_path_mapping() {
     let env = TestEnv::new();
     let db = env.db("rename-project-path.sqlite");

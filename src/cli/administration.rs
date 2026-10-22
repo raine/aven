@@ -186,6 +186,9 @@ pub(crate) enum ProjectPathSubcommand {
         project: String,
         /// Directory from which this project should be inferred
         path: PathBuf,
+        /// Reassign a path owned by another project (managed mappings only)
+        #[arg(long = "move")]
+        move_existing: bool,
     },
     /// Remove a path mapping from a project
     Remove {
