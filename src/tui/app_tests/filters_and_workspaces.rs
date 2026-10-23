@@ -266,9 +266,6 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
 
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('l')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
     type_chars(&mut app, "backend").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(
@@ -278,9 +275,6 @@ async fn filter_shortcuts_apply_label_status_priority_and_deleted() {
     assert_eq!(toast_message(&app), None);
     app.handle_normal_key(KeyCode::Char('f')).await.unwrap();
     app.handle_normal_key(KeyCode::Char('p')).await.unwrap();
-    app.handle_overlay_key(key(KeyCode::Char('/')))
-        .await
-        .unwrap();
     type_chars(&mut app, "urgent").await;
     app.handle_overlay_key(key(KeyCode::Enter)).await.unwrap();
     assert_eq!(

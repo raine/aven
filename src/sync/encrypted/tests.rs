@@ -515,20 +515,7 @@ async fn cli_sets_up_pairs_and_syncs_two_installations() {
     // A reachable server can disappear after the probe; setup must still
     // retain the capture when the claim's outcome is unknown.
     let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
-    let disappearing = tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        loop {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut bytes = [0; 4096];
-            let count = socket.read(&mut bytes).await.unwrap();
-            if bytes[..count].starts_with(b"HEAD ") {
-                socket
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    .await
-                    .unwrap();
-            }
-        }
-    });
+    let disappearing = spawn_probe_only_server(listener);
     let error = failure(
         &a.run_with_input(&["sync", "setup", "--yes"], &setup_invitation)
             .await,
@@ -1196,4 +1183,22 @@ async fn unreachable_setup_and_join_leave_database_unassociated() {
         );
         assert!(db.seed_publication_intent_bytes().await.unwrap().is_none());
     }
+}
+
+/// Answers reachability probes but drops setup requests before admitting a claim.
+fn spawn_probe_only_server(listener: tokio::net::TcpListener) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            let count = socket.read(&mut bytes).await.unwrap();
+            if bytes[..count].starts_with(b"HEAD ") {
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        }
+    })
 }

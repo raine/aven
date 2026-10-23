@@ -124,11 +124,9 @@ async fn force_reset_abandons_an_unresumable_setup() {
     device.ok(&["add", "Kept after abandoned setup"]).await;
 
     let server_data = root.join("lost-server.sqlite");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let disappearing = super::spawn_probe_only_server(listener);
     let setup = line_with(
         &operator
             .ok(&[
@@ -137,7 +135,7 @@ async fn force_reset_abandons_an_unresumable_setup() {
                 "--data",
                 &server_data.display().to_string(),
                 "--url",
-                &format!("http://127.0.0.1:{port}"),
+                &format!("http://{address}"),
             ])
             .await,
         "aven-setup:",
@@ -147,6 +145,7 @@ async fn force_reset_abandons_an_unresumable_setup() {
             .run_with_input(&["sync", "setup", "--yes"], &setup)
             .await,
     );
+    disappearing.abort();
     assert!(error.contains("sync-setup-outcome-unknown"), "{error}");
     assert_eq!(status(&device).await["state"], "setup-incomplete");
 
