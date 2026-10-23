@@ -12,7 +12,7 @@ aven is a local-first task manager for power users and coding agents. It keeps w
 - See what to work on next across all your repositories in one queue, while keeping every task tied to its project.
 - Add tasks from the TUI, CLI, natural-language intake, a tmux popup, or an agent workflow.
 - Organize and schedule work with priorities, labels, epics, dependencies, due dates, deferred availability, and recurring tasks.
-- Let coding agents work from the same queue you do: they can pick up ready work, capture follow-ups, and leave notes that outlive the chat session.
+- Let coding agents work the same queue as you: they can pick up ready work, capture follow-ups, and leave notes that outlive the chat session.
 - Move quickly through task management in a polished, keyboard-first TUI.
 - Add tasks and work your queue from your phone with Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven), synced end-to-end encrypted with your computer.
 - Work offline with tasks stored in SQLite. Optional self-hosted sync, end-to-end encrypted, shares them across machines.
