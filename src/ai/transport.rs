@@ -81,12 +81,44 @@ impl HttpClientExt for BoundedHttpClient {
 
     async fn send_streaming<T>(
         &self,
-        _request: http::Request<T>,
+        request: http::Request<T>,
     ) -> http_client::Result<StreamingResponse>
     where
         T: Into<Bytes> + Send,
     {
-        Err(unsupported_transport_error())
+        let (parts, body) = request.into_parts();
+        let response = self
+            .client
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
+            .body(body.into())
+            .send()
+            .await
+            .map_err(instance_error)?;
+        if !response.status().is_success() {
+            return Err(http_client::Error::InvalidStatusCodeWithDetails {
+                status: response.status(),
+                body: "provider request failed".into(),
+                headers: Box::new(response.headers().clone()),
+            });
+        }
+        let mut builder = http::Response::builder().status(response.status());
+        *builder.headers_mut().ok_or(http_client::Error::NoHeaders)? = response.headers().clone();
+        let limit = self.max_response_bytes;
+        let stream = response.bytes_stream().scan(0usize, move |total, chunk| {
+            let chunk = chunk.map_err(instance_error).and_then(|chunk| {
+                *total = total.saturating_add(chunk.len());
+                if *total > limit {
+                    Err(limit_error())
+                } else {
+                    Ok(chunk)
+                }
+            });
+            std::future::ready(Some(chunk))
+        });
+        builder
+            .body(Box::pin(stream) as rig_core::http_client::sse::BoxedStream)
+            .map_err(http_client::Error::Protocol)
     }
 }
 
@@ -127,6 +159,40 @@ mod tests {
     use std::thread;
 
     use super::*;
+
+    #[tokio::test]
+    async fn streaming_delivers_before_eof_and_bounds_wire_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).unwrap();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\none\r\n").unwrap();
+            socket.flush().unwrap();
+            wait.recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            let _ = write!(socket, "4\r\nmore\r\n0\r\n\r\n");
+        });
+        let client = BoundedHttpClient {
+            max_response_bytes: 6,
+            ..Default::default()
+        };
+        let request = http::Request::post(format!("http://{addr}/stream"))
+            .body(Bytes::new())
+            .unwrap();
+        let mut body = client.send_streaming(request).await.unwrap().into_body();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(2), body.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, Bytes::from_static(b"one"));
+        release.send(()).unwrap();
+        assert!(body.next().await.unwrap().is_err());
+        server.join().unwrap();
+    }
 
     #[tokio::test]
     async fn bounds_success_bodies_and_discards_provider_error_text() {

@@ -1,5 +1,6 @@
 pub(crate) mod check;
 mod registry;
+mod streaming;
 mod transport;
 
 use std::collections::VecDeque;
@@ -345,7 +346,7 @@ pub(crate) struct AiService {
     model: Option<String>,
     max_output_tokens: u64,
     timeout: Duration,
-    semaphore: Semaphore,
+    semaphore: Arc<Semaphore>,
     requests_per_minute: u32,
     recent_requests: Mutex<VecDeque<Instant>>,
 }
@@ -354,7 +355,7 @@ impl AiService {
     pub(crate) fn from_config(config: &ServerConfig) -> Self {
         let max_output_tokens = config.ai.max_output_tokens();
         let timeout = Duration::from_secs(config.ai.timeout_seconds());
-        let semaphore = Semaphore::new(config.ai.max_concurrent_requests());
+        let semaphore = Arc::new(Semaphore::new(config.ai.max_concurrent_requests()));
         let requests_per_minute = config.ai.requests_per_minute();
         let state = Self::build_state(&config.ai, &config.paths.ai_credentials_dir());
         Self {
@@ -440,7 +441,7 @@ impl AiService {
                 text: true,
                 json_schema: true,
                 tools: matches!(self.state, BackendState::Ready { tools: true, .. }),
-                streaming: false,
+                streaming: matches!(self.state, BackendState::Ready { .. }),
                 images: false,
             },
             limits: Limits {
@@ -880,6 +881,8 @@ pub(crate) async fn capabilities_handler(
 ) -> Json<CapabilitiesResponse> {
     Json(service.capabilities())
 }
+
+pub(crate) use streaming::streaming_handler;
 
 pub(crate) async fn completion_handler(
     State(service): State<Arc<AiService>>,

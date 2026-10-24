@@ -20,7 +20,7 @@ fn ready_service() -> AiService {
         model: Some("test-model".to_string()),
         max_output_tokens: 128,
         timeout: Duration::from_millis(5),
-        semaphore: Semaphore::new(1),
+        semaphore: Arc::new(Semaphore::new(1)),
         requests_per_minute: 2,
         recent_requests: Mutex::new(VecDeque::new()),
     }

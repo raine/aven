@@ -1091,10 +1091,21 @@ that holds
 change history, including storage from the unencrypted sync of earlier
 releases. The server shuts down gracefully on an operating-system termination
 signal. The server also exposes authenticated `GET /ai/capabilities` and
-`POST /ai/completions`. Both routes require a currently enrolled device’s
+`POST /ai/completions`, plus `POST /ai/completions/stream` for server-sent
+events. All three routes require a currently enrolled device’s
 encrypted-sync bearer credential, including on loopback. Unknown and revoked
 credentials are refused. AI configuration controls provider availability, not
 device enrollment.
+
+Clients check `features.streaming` in capabilities before using the streaming
+endpoint. It accepts the same request as `/ai/completions` and emits JSON SSE
+events: `text_delta` contains `request_id` and provisional `text`; `completion`
+contains the full completion response, including replay metadata and tool calls.
+Only the final completion authorizes tool execution or conversation replay.
+An `error` event carries `request_id` and `error.category`; EOF without a
+completion is an incomplete answer. Streaming uses the same authentication,
+request limits, concurrency budget and overall timeout as ordinary completions.
+Reverse proxies must forward SSE without buffering.
 
 ```sh
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746

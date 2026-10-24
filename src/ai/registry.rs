@@ -23,7 +23,26 @@ pub(crate) type CompletionFuture<'a> = Pin<
     Box<dyn Future<Output = std::result::Result<CompletionResponse, CompletionError>> + Send + 'a>,
 >;
 
+pub(crate) type StreamingFuture<'a> = Pin<
+    Box<
+        dyn Future<
+                Output = std::result::Result<
+                    rig_core::streaming::StreamingCompletionResponse,
+                    CompletionError,
+                >,
+            > + Send
+            + 'a,
+    >,
+>;
+
 pub(crate) trait CompletionBackend: Send + Sync {
+    fn stream(&self, _request: CompletionRequest) -> StreamingFuture<'_> {
+        Box::pin(async {
+            Err(CompletionError::ProviderError(
+                "streaming unsupported".into(),
+            ))
+        })
+    }
     fn complete(&self, request: CompletionRequest) -> CompletionFuture<'_>;
 }
 
@@ -31,6 +50,10 @@ impl<M> CompletionBackend for M
 where
     M: CompletionModel + Send + Sync,
 {
+    fn stream(&self, request: CompletionRequest) -> StreamingFuture<'_> {
+        Box::pin(CompletionModel::stream(self, request))
+    }
+
     fn complete(&self, request: CompletionRequest) -> CompletionFuture<'_> {
         Box::pin(self.completion(request))
     }

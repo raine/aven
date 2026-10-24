@@ -230,6 +230,11 @@ async fn serve(bind: SocketAddr, unsafe_public_bind: bool, config: &ServerConfig
             post(ai::completion_handler)
                 .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
         )
+        .route(
+            "/ai/completions/stream",
+            post(ai::streaming_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
+        )
         .layer(RequestDecompressionLayer::new())
         .layer(middleware::from_fn_with_state(
             database.clone(),
