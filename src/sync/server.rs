@@ -226,11 +226,6 @@ async fn serve(bind: SocketAddr, unsafe_public_bind: bool, config: &ServerConfig
     let ai_app = Router::new()
         .route("/ai/capabilities", get(ai::capabilities_handler))
         .route(
-            "/ai/completions",
-            post(ai::completion_handler)
-                .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
-        )
-        .route(
             "/ai/completions/stream",
             post(ai::streaming_handler)
                 .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),

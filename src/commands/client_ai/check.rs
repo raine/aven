@@ -136,23 +136,29 @@ async fn check_server(connection: &Connection, report: &mut CheckReport, json: b
 async fn complete(connection: &Connection, request: Value) -> Result<Value, RemoteError> {
     let (status, body) = connection
         .send(
-            "/ai/completions",
+            "/ai/completions/stream",
             Some(&request),
             COMPLETION_TIMEOUT,
             COMPLETION_RESPONSE_LIMIT,
         )
         .await
         .map_err(RemoteError::Network)?;
-    classify_completion(status, &body)
+    classify_completion(
+        status,
+        &body,
+        request["request_id"]
+            .as_str()
+            .ok_or(RemoteError::Malformed)?,
+    )
 }
 
-fn classify_completion(status: u16, body: &[u8]) -> Result<Value, RemoteError> {
+fn classify_completion(status: u16, body: &[u8], request_id: &str) -> Result<Value, RemoteError> {
     if body.len() > COMPLETION_RESPONSE_LIMIT {
         return Err(RemoteError::Malformed);
     }
     let parsed = serde_json::from_slice::<Value>(body).ok();
     if status == 200 {
-        return parsed.ok_or(RemoteError::Malformed);
+        return collect_events(body, request_id);
     }
     let category = parsed
         .as_ref()
@@ -162,6 +168,56 @@ fn classify_completion(status: u16, body: &[u8]) -> Result<Value, RemoteError> {
         Some(category) => RemoteError::Category(category),
         None => RemoteError::Http(status),
     })
+}
+
+fn collect_events(body: &[u8], request_id: &str) -> Result<Value, RemoteError> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| RemoteError::Malformed)?
+        .replace("\r\n", "\n");
+    let mut completion = None;
+    let mut event = "";
+    let mut data = Vec::new();
+    for line in text.lines() {
+        if line.starts_with(':') {
+            continue;
+        }
+        if line.is_empty() {
+            if data.is_empty() {
+                event = "";
+                continue;
+            }
+            if completion.is_some() {
+                return Err(RemoteError::Malformed);
+            }
+            let value: Value =
+                serde_json::from_str(&data.join("\n")).map_err(|_| RemoteError::Malformed)?;
+            if value["request_id"].as_str() != Some(request_id) {
+                return Err(RemoteError::Malformed);
+            }
+            match event {
+                "text_delta" if value["text"].is_string() => {}
+                "completion" => completion = Some(value),
+                "error" => {
+                    return Err(serde_json::from_value(value["error"]["category"].clone())
+                        .map(RemoteError::Category)
+                        .unwrap_or(RemoteError::Malformed));
+                }
+                _ => return Err(RemoteError::Malformed),
+            }
+            data.clear();
+            event = "";
+        } else if let Some(value) = line.strip_prefix("event:") {
+            event = value.trim();
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data.push(value.strip_prefix(' ').unwrap_or(value));
+        } else {
+            return Err(RemoteError::Malformed);
+        }
+    }
+    if !data.is_empty() || !event.is_empty() {
+        return Err(RemoteError::Malformed);
+    }
+    completion.ok_or(RemoteError::Malformed)
 }
 
 fn scope_note(server: &str, billed: bool) -> String {
@@ -184,7 +240,8 @@ mod tests {
     #[test]
     fn completion_failures_keep_server_categories_and_route_problems_apart() {
         let envelope = br#"{"error":{"category":"unsupported_capability","retryable":false}}"#;
-        let Err(RemoteError::Category(category)) = classify_completion(400, envelope) else {
+        let Err(RemoteError::Category(category)) = classify_completion(400, envelope, "test")
+        else {
             panic!("expected a category");
         };
         assert_eq!(category, ErrorCategory::UnsupportedCapability);
@@ -197,7 +254,8 @@ mod tests {
             (404, "route_missing"),
             (502, "unexpected_response"),
         ] {
-            let failure = classify_completion(status, b"<html>bad gateway</html>").unwrap_err();
+            let failure =
+                classify_completion(status, b"<html>bad gateway</html>", "test").unwrap_err();
             assert_eq!(failure.describe().0, error);
         }
         assert_eq!(
@@ -207,10 +265,17 @@ mod tests {
             "unreachable"
         );
         assert!(matches!(
-            classify_completion(200, b"not json"),
+            classify_completion(200, b"not json", "test"),
             Err(RemoteError::Malformed)
         ));
-        assert!(classify_completion(200, br#"{"message":{}}"#).is_ok());
+        assert!(classify_completion(200, br#"{"message":{}}"#, "test").is_err());
+        let frame = b"event: completion\ndata: {\"request_id\":\"test\",\"message\":{}}\n\n";
+        assert!(classify_completion(200, frame, "test").is_ok());
+        assert!(classify_completion(200, frame, "other").is_err());
+        assert!(classify_completion(200, &frame[..frame.len() - 1], "test").is_err());
+        let twice = [frame.as_slice(), frame.as_slice()].concat();
+        assert!(classify_completion(200, &twice, "test").is_err());
+        assert!(matches!(classify_completion(200, b"event: error\ndata: {\"request_id\":\"test\",\"error\":{\"category\":\"timeout\"}}\n\n", "test"), Err(RemoteError::Category(ErrorCategory::Timeout))));
     }
 
     #[test]

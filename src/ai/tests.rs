@@ -3,7 +3,7 @@ use super::*;
 struct PendingBackend;
 
 impl CompletionBackend for PendingBackend {
-    fn complete(&self, _request: RigRequest) -> registry::CompletionFuture<'_> {
+    fn stream(&self, _request: RigRequest) -> registry::StreamingFuture<'_> {
         Box::pin(std::future::pending())
     }
 }
@@ -14,7 +14,6 @@ fn ready_service() -> AiService {
             backend: Box::new(PendingBackend),
             schema: SchemaStrategy::NativeVerbatim,
             tools: true,
-            provider: "test".to_string(),
         },
         provider: Some("test".to_string()),
         model: Some("test-model".to_string()),
@@ -87,15 +86,15 @@ fn rejects_deep_schema() {
 #[tokio::test]
 async fn service_enforces_timeout_concurrency_and_rate_limits() {
     let service = ready_service();
-    let error = service.complete(request()).await.unwrap_err();
+    let error = service.collect_completion(request()).await.unwrap_err();
     assert_eq!(error, ErrorCategory::Timeout);
 
     let permit = service.semaphore.try_acquire().unwrap();
-    let error = service.complete(request()).await.unwrap_err();
+    let error = service.collect_completion(request()).await.unwrap_err();
     assert_eq!(error, ErrorCategory::RateLimit);
     drop(permit);
 
-    let error = service.complete(request()).await.unwrap_err();
+    let error = service.collect_completion(request()).await.unwrap_err();
     assert_eq!(error, ErrorCategory::RateLimit);
 }
 
@@ -539,12 +538,15 @@ async fn unsupported_tools_fail_before_rate_admission_and_are_advertised() {
     }
     assert!(!service.capabilities().features.tools);
     assert_eq!(
-        service.complete(tool_request()).await.unwrap_err(),
+        service
+            .collect_completion(tool_request())
+            .await
+            .unwrap_err(),
         ErrorCategory::UnsupportedCapability
     );
     assert!(service.recent_requests.lock().unwrap().is_empty());
     assert_eq!(
-        service.complete(request()).await.unwrap_err(),
+        service.collect_completion(request()).await.unwrap_err(),
         ErrorCategory::Timeout
     );
 }
@@ -659,7 +661,7 @@ fn structured_provider_errors_use_codes_and_types_not_message_text() {
     ] {
         for body in [
             serde_json::json!({"type":"error", "error":detail}),
-            serde_json::json!({"type":"response.failed", "response":{"error":detail}}),
+            serde_json::json!({"type":"response.failed", "sequence_number":1, "response":{"id":"resp_test","object":"response","created_at":0,"status":"failed","model":"fixture-model","output":[],"tools":[],"error":detail}}),
             detail,
         ] {
             let error = CompletionError::from_provider_body(body.to_string());
@@ -703,7 +705,7 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
             false,
         ),
         (
-            serde_json::json!({"type":"response.failed", "response":{"error":{"code":"context_length_exceeded", "message":"private-schema-marker"}}}),
+            serde_json::json!({"type":"response.failed", "sequence_number":1, "response":{"id":"resp_test","object":"response","created_at":0,"status":"failed","model":"fixture-model","output":[],"tools":[],"error":{"code":"context_length_exceeded", "message":"private-schema-marker"}}}),
             "invalid_request",
             StatusCode::BAD_REQUEST,
             false,
@@ -721,7 +723,7 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
             true,
         ),
         (
-            serde_json::json!({"type":"response.failed", "response":{"error":{"code":"server_error", "message":"private-schema-marker"}}}),
+            serde_json::json!({"type":"response.failed", "sequence_number":1, "response":{"id":"resp_test","object":"response","created_at":0,"status":"failed","model":"fixture-model","output":[],"tools":[],"error":{"code":"server_error", "message":"private-schema-marker"}}}),
             "temporary_provider_failure",
             StatusCode::SERVICE_UNAVAILABLE,
             true,
@@ -752,11 +754,14 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
             backend: Box::new(client.completion_model("fixture-model")),
             schema: SchemaStrategy::Prompted,
             tools: true,
-            provider: "chatgpt".into(),
         };
         let mut request = tool_request();
         request.tools[0].parameters = serde_json::json!({"type":"object", "properties":{"status":{"type":"string", "enum":null}}});
-        let response = service.complete(request).await.unwrap_err().into_response();
+        let response = service
+            .collect_completion(request)
+            .await
+            .unwrap_err()
+            .into_response();
         assert_eq!(response.status(), status);
         let bytes = axum::body::to_bytes(response.into_body(), 1024)
             .await

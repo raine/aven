@@ -8,9 +8,7 @@ use std::pin::Pin;
 use anyhow::{Context, Result, anyhow, bail};
 use crossterm::style::{Color, Stylize};
 use rig_core::client::{CompletionClient, Nothing};
-use rig_core::completion::{
-    CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
-};
+use rig_core::completion::{CompletionError, CompletionModel, CompletionRequest};
 use rig_core::providers::{
     anthropic, azure, chatgpt, cohere, copilot, deepseek, doubleword, gemini, groq, huggingface,
     hyperbolic, llamafile, minimax, mira, mistral, moonshot, ollama, openai, openrouter,
@@ -18,10 +16,6 @@ use rig_core::providers::{
 };
 
 use super::transport::BoundedHttpClient;
-
-pub(crate) type CompletionFuture<'a> = Pin<
-    Box<dyn Future<Output = std::result::Result<CompletionResponse, CompletionError>> + Send + 'a>,
->;
 
 pub(crate) type StreamingFuture<'a> = Pin<
     Box<
@@ -36,14 +30,7 @@ pub(crate) type StreamingFuture<'a> = Pin<
 >;
 
 pub(crate) trait CompletionBackend: Send + Sync {
-    fn stream(&self, _request: CompletionRequest) -> StreamingFuture<'_> {
-        Box::pin(async {
-            Err(CompletionError::ProviderError(
-                "streaming unsupported".into(),
-            ))
-        })
-    }
-    fn complete(&self, request: CompletionRequest) -> CompletionFuture<'_>;
+    fn stream(&self, request: CompletionRequest) -> StreamingFuture<'_>;
 }
 
 impl<M> CompletionBackend for M
@@ -52,10 +39,6 @@ where
 {
     fn stream(&self, request: CompletionRequest) -> StreamingFuture<'_> {
         Box::pin(CompletionModel::stream(self, request))
-    }
-
-    fn complete(&self, request: CompletionRequest) -> CompletionFuture<'_> {
-        Box::pin(self.completion(request))
     }
 }
 

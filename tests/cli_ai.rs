@@ -157,8 +157,10 @@ fn ollama_stub(
             let (mut stream, _) = upstream.accept().unwrap();
             let request = read_http_request(&mut stream);
             let split = request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-            requests.push(serde_json::from_slice(&request[split..]).unwrap());
-            let body = serde_json::json!({"model":"fixture-model", "created_at":"2026-10-19T00:00:00Z", "message":message, "done":true, "prompt_eval_count":10, "eval_count":5}).to_string();
+            let request: serde_json::Value = serde_json::from_slice(&request[split..]).unwrap();
+            assert_eq!(request["stream"], true);
+            requests.push(request);
+            let body = serde_json::json!({"model":"fixture-model", "created_at":"2026-10-19T00:00:00Z", "message":message, "done":true, "prompt_eval_count":10, "eval_count":5}).to_string() + "\n";
             write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
         }
         requests
@@ -445,10 +447,11 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
     let body: serde_json::Value = capabilities.json().await.unwrap();
     assert_eq!(body["status"], "unconfigured");
     assert_eq!(body["completion_contract"], 1);
+    assert!(body["features"].get("streaming").is_none());
     assert_eq!(body["limits"]["max_request_bytes"], 524_288);
 
     let completion = client
-        .post(format!("{url}/ai/completions"))
+        .post(format!("{url}/ai/completions/stream"))
         .bearer_auth(&credential)
         .json(&serde_json::json!({
             "request_id": "test-1",
@@ -473,7 +476,7 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
     for (size, expected) in [(524_288, "unconfigured"), (524_289, "invalid_request")] {
         let padded = format!("{}{}", valid, " ".repeat(size - valid.len()));
         let response = client
-            .post(format!("{url}/ai/completions"))
+            .post(format!("{url}/ai/completions/stream"))
             .bearer_auth(&credential)
             .header("content-type", "application/json")
             .body(padded)
@@ -510,7 +513,8 @@ async fn synthetic_json_schema_completion_uses_the_generic_service() {
             "prompt_eval_count": 9,
             "eval_count": 5
         })
-        .to_string();
+        .to_string()
+            + "\n";
         write!(
             stream,
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
@@ -535,7 +539,7 @@ async fn synthetic_json_schema_completion_uses_the_generic_service() {
         [("AVEN_SERVER_CONFIG", &config)],
     );
     let response = reqwest::Client::new()
-        .post(format!("{}/ai/completions", server.url))
+        .post(format!("{}/ai/completions/stream", server.url))
         .bearer_auth(&credential)
         .json(&serde_json::json!({
             "request_id": "synthetic-1",
@@ -549,7 +553,7 @@ async fn synthetic_json_schema_completion_uses_the_generic_service() {
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let body: serde_json::Value = response.json().await.unwrap();
+    let body = completion_from_sse(response).await;
     assert_eq!(body["request_id"], "synthetic-1");
     assert_eq!(
         body["message"]["content"][0]["text"],
@@ -652,7 +656,7 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
             } else {
                 serde_json::json!({"role":"assistant", "content":"generated-marker"})
             };
-            let body = serde_json::json!({"model":"fixture-model", "created_at":"2026-10-18T00:00:00Z", "message":message, "done":true, "prompt_eval_count":10, "eval_count":5}).to_string();
+            let body = serde_json::json!({"model":"fixture-model", "created_at":"2026-10-18T00:00:00Z", "message":message, "done":true, "prompt_eval_count":10, "eval_count":5}).to_string() + "\n";
             write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body).unwrap();
         }
     });
@@ -689,14 +693,14 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
         "output":{"type":"text"}
     });
     let first = client
-        .post(format!("{}/ai/completions", server.url))
+        .post(format!("{}/ai/completions/stream", server.url))
         .bearer_auth(&credential)
         .json(&request)
         .send()
         .await
         .unwrap();
     assert_eq!(first.status(), reqwest::StatusCode::OK);
-    let first: serde_json::Value = first.json().await.unwrap();
+    let first = completion_from_sse(first).await;
     assert_eq!(first["finish_reason"], "tool_calls");
     let id = first["message"]["content"][0]["id"].as_str().unwrap();
     request["messages"].as_array_mut().unwrap().extend([
@@ -705,14 +709,14 @@ async fn agent_turn_replays_native_calls_and_named_results_without_logging_conte
     ]);
     request["request_id"] = serde_json::json!("turn-2");
     let second = client
-        .post(format!("{}/ai/completions", server.url))
+        .post(format!("{}/ai/completions/stream", server.url))
         .bearer_auth(&credential)
         .json(&request)
         .send()
         .await
         .unwrap();
     assert_eq!(second.status(), reqwest::StatusCode::OK);
-    let second: serde_json::Value = second.json().await.unwrap();
+    let second = completion_from_sse(second).await;
     assert_eq!(second["finish_reason"], "stop");
     assert_eq!(second["message"]["content"][0]["text"], "generated-marker");
     stub.join().unwrap();
@@ -799,7 +803,7 @@ async fn ai_accepts_only_current_device_credentials_and_hides_revocation() {
             }))
         }
     };
-    for path in ["/ai/capabilities", "/ai/completions"] {
+    for path in ["/ai/capabilities", "/ai/completions/stream"] {
         for bearer in [&credential, &peer_credential] {
             let response = request(path).bearer_auth(bearer).send().await.unwrap();
             if path == "/ai/capabilities" {
@@ -852,7 +856,7 @@ async fn ai_accepts_only_current_device_credentials_and_hides_revocation() {
         .apply_membership_management(&peer_auth, &revoke)
         .await
         .unwrap();
-    for path in ["/ai/capabilities", "/ai/completions"] {
+    for path in ["/ai/capabilities", "/ai/completions/stream"] {
         let revoked = request(path).bearer_auth(&credential).send().await.unwrap();
         assert_eq!(revoked.status(), reqwest::StatusCode::UNAUTHORIZED);
         assert!(revoked.bytes().await.unwrap().is_empty());
@@ -866,4 +870,21 @@ async fn ai_accepts_only_current_device_credentials_and_hides_revocation() {
     for secret in [&credential, &peer_credential, &old_token] {
         assert!(!server.output().contains(secret));
     }
+}
+
+async fn completion_from_sse(response: reqwest::Response) -> serde_json::Value {
+    assert!(
+        response.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    let text = response.text().await.unwrap();
+    let frames: Vec<_> = text
+        .split("\n\n")
+        .filter(|frame| frame.starts_with("event: completion\n"))
+        .collect();
+    assert_eq!(frames.len(), 1, "{text}");
+    assert!(!text.contains("event: error"), "{text}");
+    serde_json::from_str(frames[0].strip_prefix("event: completion\ndata: ").unwrap()).unwrap()
 }

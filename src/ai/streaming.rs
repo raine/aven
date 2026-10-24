@@ -15,6 +15,21 @@ struct StreamState {
 }
 
 impl AiService {
+    /// Diagnostics consume the same stream as HTTP clients, without rendering deltas.
+    pub(crate) async fn collect_completion(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<CompletionResponse, ErrorCategory> {
+        let state = self.start_stream(request).await?;
+        let mut stream = Box::pin(outputs(state));
+        while let Some(output) = stream.next().await {
+            if let StreamOutput::Completion(response) = output? {
+                return Ok(response);
+            }
+        }
+        Err(ErrorCategory::MalformedProviderResponse)
+    }
+
     async fn start_stream(&self, request: CompletionRequest) -> Result<StreamState, ErrorCategory> {
         let validated = request.validate()?;
         let BackendState::Ready {
@@ -53,7 +68,12 @@ impl AiService {
     }
 }
 
-fn events(state: StreamState) -> impl Stream<Item = Result<Event, Infallible>> + Send {
+enum StreamOutput {
+    Text { request_id: String, text: String },
+    Completion(CompletionResponse),
+}
+
+fn outputs(state: StreamState) -> impl Stream<Item = Result<StreamOutput, ErrorCategory>> + Send {
     futures::stream::unfold(state, |mut state| async move {
         let provider = state.provider.as_mut()?;
         loop {
@@ -70,13 +90,11 @@ fn events(state: StreamState) -> impl Stream<Item = Result<Event, Infallible>> +
                     if state.text_bytes as u64 > limit {
                         ErrorCategory::MalformedProviderResponse
                     } else {
-                        let event = Event::default()
-                            .event("text_delta")
-                            .json_data(serde_json::json!({
-                                "request_id":state.request_id, "text":text.text
-                            }))
-                            .expect("text event serializes");
-                        return Some((Ok(event), state));
+                        let output = StreamOutput::Text {
+                            request_id: state.request_id.clone(),
+                            text: text.text,
+                        };
+                        return Some((Ok(output), state));
                     }
                 }
                 Ok(Some(Ok(_))) => continue,
@@ -93,11 +111,7 @@ fn events(state: StreamState) -> impl Stream<Item = Result<Event, Infallible>> +
                     };
                     match result {
                         Ok(response) => {
-                            let event = Event::default()
-                                .event("completion")
-                                .json_data(response)
-                                .expect("completion serializes");
-                            return Some((Ok(event), state));
+                            return Some((Ok(StreamOutput::Completion(response)), state));
                         }
                         Err(error) => error,
                     }
@@ -106,14 +120,26 @@ fn events(state: StreamState) -> impl Stream<Item = Result<Event, Infallible>> +
             // Provisional text never authorizes replay or tool execution. Dropping
             // the provider stream cancels its request, including on client disconnect.
             state.provider = None;
-            let event = Event::default()
-                .event("error")
-                .json_data(serde_json::json!({
-                    "request_id":state.request_id, "error":{"category":error}
-                }))
-                .expect("error event serializes");
-            return Some((Ok(event), state));
+            return Some((Err(error), state));
         }
+    })
+}
+
+fn events(state: StreamState) -> impl Stream<Item = Result<Event, Infallible>> + Send {
+    let request_id = state.request_id.clone();
+    outputs(state).map(move |output| {
+        Ok(match output {
+            Ok(StreamOutput::Text { request_id, text }) => Event::default()
+                .event("text_delta")
+                .json_data(serde_json::json!({"request_id":request_id,"text":text})),
+            Ok(StreamOutput::Completion(response)) => {
+                Event::default().event("completion").json_data(response)
+            }
+            Err(category) => Event::default().event("error").json_data(
+                serde_json::json!({"request_id":request_id,"error":{"category":category}}),
+            ),
+        }
+        .expect("completion event serializes"))
     })
 }
 

@@ -23,7 +23,6 @@ use rig_core::message::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Semaphore;
-use tracing::{info, warn};
 
 use crate::server_config::{AiConfig, ServerConfig};
 pub(crate) use registry::{
@@ -76,7 +75,6 @@ pub(crate) struct Features {
     text: bool,
     json_schema: bool,
     tools: bool,
-    streaming: bool,
     images: bool,
 }
 
@@ -332,7 +330,6 @@ enum BackendState {
         backend: Box<dyn CompletionBackend>,
         schema: SchemaStrategy,
         tools: bool,
-        provider: String,
     },
     Unavailable {
         status: AvailabilityStatus,
@@ -419,7 +416,6 @@ impl AiService {
                 backend,
                 schema: info.schema,
                 tools: info.tools,
-                provider: provider.to_string(),
             },
             Err(_) => BackendState::Unavailable {
                 status: AvailabilityStatus::TemporarilyUnavailable,
@@ -441,7 +437,6 @@ impl AiService {
                 text: true,
                 json_schema: true,
                 tools: matches!(self.state, BackendState::Ready { tools: true, .. }),
-                streaming: matches!(self.state, BackendState::Ready { .. }),
                 images: false,
             },
             limits: Limits {
@@ -452,54 +447,6 @@ impl AiService {
             model: self.model.clone(),
             setup_hint,
         }
-    }
-
-    pub(crate) async fn complete(
-        &self,
-        request: CompletionRequest,
-    ) -> std::result::Result<CompletionResponse, ErrorCategory> {
-        let validated = request.validate()?;
-        let BackendState::Ready {
-            backend,
-            schema,
-            tools,
-            provider,
-        } = &self.state
-        else {
-            return Err(self.unavailable_error());
-        };
-        if !tools && validated.requires_tools() {
-            return Err(ErrorCategory::UnsupportedCapability);
-        }
-        let request_id = validated.0.request_id.clone();
-        let rig_request = validated.into_rig(*schema, self.max_output_tokens)?;
-        self.admit()?;
-        let permit = self
-            .semaphore
-            .try_acquire()
-            .map_err(|_| ErrorCategory::RateLimit)?;
-        let started = Instant::now();
-        let result = tokio::time::timeout(self.timeout, backend.complete(rig_request)).await;
-        drop(permit);
-        let response = match result {
-            Err(_) => return Err(ErrorCategory::Timeout),
-            Ok(Err(error)) => {
-                let category = classify_provider_error(&error);
-                warn!(provider, outcome = ?category, duration_ms = started.elapsed().as_millis(), "AI completion failed");
-                return Err(category);
-            }
-            Ok(Ok(response)) => response,
-        };
-        let response = project_response(request_id, response, self.max_output_tokens)?;
-        info!(
-            provider,
-            outcome = "success",
-            duration_ms = started.elapsed().as_millis(),
-            input_tokens = response.usage.input_tokens,
-            output_tokens = response.usage.output_tokens,
-            "AI completion finished"
-        );
-        Ok(response)
     }
 
     fn unavailable_error(&self) -> ErrorCategory {
@@ -884,14 +831,6 @@ pub(crate) async fn capabilities_handler(
 
 pub(crate) use streaming::streaming_handler;
 
-pub(crate) async fn completion_handler(
-    State(service): State<Arc<AiService>>,
-    request: std::result::Result<Json<CompletionRequest>, JsonRejection>,
-) -> std::result::Result<Json<CompletionResponse>, ErrorCategory> {
-    let Json(request) = request.map_err(|_| ErrorCategory::InvalidRequest)?;
-    service.complete(request).await.map(Json)
-}
-
 pub(crate) fn providers() -> &'static [registry::ProviderInfo] {
     registry::PROVIDERS
 }
@@ -943,7 +882,7 @@ pub(crate) async fn check(service: &AiService) -> check::Outcome<ErrorCategory> 
     check::run(|request| async move {
         let request: CompletionRequest =
             serde_json::from_value(request).map_err(|_| ErrorCategory::InvalidRequest)?;
-        let response = service.complete(request).await?;
+        let response = service.collect_completion(request).await?;
         serde_json::to_value(response).map_err(|_| ErrorCategory::MalformedProviderResponse)
     })
     .await
