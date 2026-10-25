@@ -167,8 +167,16 @@ mod tests {
         let (release, wait) = std::sync::mpsc::channel();
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4096];
-            socket.read(&mut request).unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0u8];
+                socket.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+                assert!(
+                    request.len() <= 4096,
+                    "request headers exceed fixture limit"
+                );
+            }
             write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\none\r\n").unwrap();
             socket.flush().unwrap();
             wait.recv_timeout(std::time::Duration::from_secs(5))

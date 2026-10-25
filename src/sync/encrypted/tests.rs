@@ -971,8 +971,11 @@ fn ollama_stub(replies: Vec<serde_json::Value>) -> (String, std::thread::JoinHan
                     break;
                 }
             }
-            reader.read_exact(&mut vec![0; length]).unwrap();
-            let body = serde_json::json!({"model": "fixture-model", "created_at": "2026-10-19T00:00:00Z", "message": message, "done": true, "prompt_eval_count": 10, "eval_count": 5}).to_string();
+            let mut request = vec![0; length];
+            reader.read_exact(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
+            assert_eq!(request["stream"], true);
+            let body = serde_json::json!({"model": "fixture-model", "created_at": "2026-10-19T00:00:00Z", "message": message, "done": true, "prompt_eval_count": 10, "eval_count": 5}).to_string() + "\n";
             write!(
                 reader.get_mut(),
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
