@@ -1019,12 +1019,13 @@ async fn modal_overlay_mouse_does_not_reach_detail_underlay() {
 }
 
 #[tokio::test]
-async fn mouse_wheel_ignored_in_sidebar_focus() {
+async fn mouse_wheel_outside_sidebar_ignored_in_sidebar_focus() {
     let mut app = test_app().await;
     create_and_select_task(&mut app, test_task_draft("first")).await;
     create_and_select_task(&mut app, test_task_draft("second")).await;
     app.list.select_task(Some(0));
     app.list.focus_sidebar();
+    let sidebar = app.list.selected_sidebar();
 
     app.dispatch_mouse(mouse_wheel(MouseEventKind::ScrollDown), (80, 24).into())
         .await
@@ -1032,6 +1033,7 @@ async fn mouse_wheel_ignored_in_sidebar_focus() {
 
     assert_eq!(app.list.selected_task(), Some(0));
     assert_eq!(app.list.focus(), Focus::Sidebar);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
 }
 
 #[tokio::test]

@@ -78,6 +78,16 @@ Click a sidebar heading, or focus it and press `Enter`, to collapse or expand
 that section. Choose which views the sidebar lists with
 [`tui.sidebar.views`](/configuration/#tui-sidebar-views).
 
+Use `Tab` (or `Left` in list layout) to focus the sidebar. Browse with
+`Up`/`Down` or `k`/`j`, page with `PageUp`/`PageDown` (half a page with
+`Ctrl-u`/`Ctrl-d`), and use `Home`/`End` to reach the edges. Long lists keep the highlighted row visible;
+page navigation and mouse wheel movement stop at the first and last selectable
+rows. While browsing tasks, the wheel over the visible sidebar focuses and
+browses it without changing the active scope or task selection. Active task
+detail, triage cards, and overlays retain wheel ownership. Press `Enter` to
+activate the highlighted view or project, or `Esc`/`Tab` to return to tasks
+without activating it.
+
 ### Search, filter, and order
 
 Press `/` to search task text, notes, labels, metadata, and refs as you type. Search follows the active project scope; the title chip names the project or shows `all projects`. `Enter` opens the selected result, and `Tab` opens the full Search results view in the chosen scope.

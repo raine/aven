@@ -814,3 +814,304 @@ async fn workspace_rows_render_three_states_and_click_switches() {
         Some(SidebarEntryTarget::Workspace("other".to_string()))
     );
 }
+
+fn assert_sidebar_highlight_visible(app: &mut App, size: (u16, u16)) {
+    let buffer = render_app_buffer(app, size.0, size.1);
+    let layout = crate::tui::ui::sidebar_layout_for(
+        ratatui::layout::Rect::new(0, 0, size.0, size.1),
+        app.list.focus(),
+        app.list.sidebar_visible(),
+    )
+    .unwrap();
+    let selected = app.list.selected_sidebar().unwrap();
+    let row = selected
+        .checked_sub(app.list.sidebar_state().offset())
+        .unwrap();
+    assert!(row < usize::from(layout.content.height));
+    assert_eq!(
+        buffer[(layout.content.x, layout.content.y + row as u16)].bg,
+        app.theme.highlight().bg.unwrap()
+    );
+}
+
+#[tokio::test]
+async fn sidebar_wheel_browses_long_list_without_activating_scope() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Selected task")).await;
+    for index in 0..30 {
+        app.store
+            .create_project(format!("Project {index:02}"))
+            .await
+            .unwrap();
+    }
+    app.refresh().await.unwrap();
+    let task = app.list.selected_task();
+    let scope = app.store.view_state.scope.clone();
+    let size = (140, 24);
+    let layout = crate::tui::ui::sidebar_layout(
+        ratatui::layout::Rect::new(0, 0, size.0, size.1),
+        Focus::Tasks,
+    )
+    .unwrap();
+    let wheel = wheel_down(layout.content.x + 1, layout.content.y + 2);
+    assert!(app.dispatch_mouse(wheel, size.into()).await.unwrap());
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    for _ in 0..app.list.sidebar_entries().len() {
+        app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    }
+    let last = app
+        .list
+        .sidebar_entries()
+        .iter()
+        .rposition(|entry| entry.target.is_some());
+    assert_eq!(app.list.selected_sidebar(), last);
+    assert!(!app.dispatch_mouse(wheel, size.into()).await.unwrap());
+    assert_sidebar_highlight_visible(&mut app, size);
+    assert!(app.list.sidebar_state().offset() > 0);
+    assert_eq!(app.list.selected_task(), task);
+    assert_eq!(app.store.view_state.scope, scope);
+    app.dispatch_key(key(KeyCode::Enter), size.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        app.store.view_state.scope,
+        TaskScope::Project("project-29".into())
+    );
+    assert_eq!(app.list.focus(), Focus::Tasks);
+}
+
+#[tokio::test]
+async fn sidebar_keyboard_pages_keep_highlight_visible_in_short_overlay() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Selected task")).await;
+    for index in 0..30 {
+        app.store
+            .create_project(format!("Project {index:02}"))
+            .await
+            .unwrap();
+    }
+    app.refresh().await.unwrap();
+    for size in [(140, 24), (90, 18)] {
+        app.list.focus_tasks();
+        app.dispatch_key(key(KeyCode::Tab), size.into())
+            .await
+            .unwrap();
+        assert_eq!(app.list.focus(), Focus::Sidebar);
+        app.dispatch_key(key(KeyCode::Home), size.into())
+            .await
+            .unwrap();
+        let first = app.list.selected_sidebar();
+        let layout = crate::tui::ui::sidebar_layout(
+            ratatui::layout::Rect::new(0, 0, size.0, size.1),
+            Focus::Sidebar,
+        )
+        .unwrap();
+        let pages = app
+            .list
+            .sidebar_entries()
+            .len()
+            .div_ceil(usize::from(layout.content.height))
+            + 1;
+        for _ in 0..pages {
+            app.dispatch_key(key(KeyCode::PageDown), size.into())
+                .await
+                .unwrap();
+            assert_sidebar_highlight_visible(&mut app, size);
+        }
+        assert_eq!(
+            app.list.selected_sidebar(),
+            app.list
+                .sidebar_entries()
+                .iter()
+                .rposition(|entry| entry.target.is_some())
+        );
+        app.dispatch_key(key(KeyCode::End), size.into())
+            .await
+            .unwrap();
+        assert_sidebar_highlight_visible(&mut app, size);
+        for _ in 0..pages {
+            app.dispatch_key(key(KeyCode::PageUp), size.into())
+                .await
+                .unwrap();
+            assert_sidebar_highlight_visible(&mut app, size);
+        }
+        assert_eq!(app.list.selected_sidebar(), first);
+        app.dispatch_key(key(KeyCode::Down), size.into())
+            .await
+            .unwrap();
+        assert_ne!(app.list.selected_sidebar(), first);
+        app.dispatch_key(key(KeyCode::Up), size.into())
+            .await
+            .unwrap();
+        assert_eq!(app.list.selected_sidebar(), first);
+        let selected = app.list.selected_sidebar();
+        app.dispatch_key(key(KeyCode::Esc), size.into())
+            .await
+            .unwrap();
+        assert_eq!(app.list.focus(), Focus::Tasks);
+        assert_eq!(app.list.selected_sidebar(), selected);
+        assert_eq!(app.store.view_state.scope, TaskScope::Workspace);
+    }
+}
+
+#[tokio::test]
+async fn sidebar_wheel_does_not_leak_through_modal_or_tiny_terminal() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    app.list.select_task(Some(0));
+    let selected = app.list.selected_sidebar();
+    app.begin_search();
+    app.dispatch_mouse(wheel_down(2, 4), (140, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(app.list.selected_sidebar(), selected);
+    assert_eq!(app.list.selected_task(), Some(0));
+    assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+    app.overlay = None;
+    for size in [(69, 24), (140, 17)] {
+        app.dispatch_mouse(wheel_down(2, 4), size.into())
+            .await
+            .unwrap();
+        assert_eq!(app.list.selected_sidebar(), selected);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.list.focus(), Focus::Tasks);
+    }
+}
+
+#[tokio::test]
+async fn mouse_wheel_over_sidebar_preserves_active_detail_routing() {
+    let mut app = test_app().await;
+    let mut draft = test_task_draft("Scrollable detail");
+    draft.description = (0..100)
+        .map(|index| format!("Description line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    create_and_select_task(&mut app, draft).await;
+    app.show_detail(0);
+    let size = (140, 24);
+    let sidebar = app.list.selected_sidebar();
+    let task = app.list.selected_task();
+    let scope = app.store.view_state.scope.clone();
+    let wheel = wheel_down(3, 4);
+
+    app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert_eq!(app.list.selected_task(), task);
+    assert!(app.detail.is_active());
+    let scroll = app.detail.state().unwrap().scroll();
+    assert!(scroll > 0);
+
+    let mut up = wheel;
+    up.kind = MouseEventKind::ScrollUp;
+    app.dispatch_mouse(up, size.into()).await.unwrap();
+    assert!(app.detail.state().unwrap().scroll() < scroll);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+
+    app.dispatch_mouse(wheel_down(80, 8), size.into())
+        .await
+        .unwrap();
+    let scroll = app.detail.state().unwrap().scroll();
+    assert!(scroll > 0);
+    app.begin_search();
+    app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    assert_eq!(app.detail.state().unwrap().scroll(), scroll);
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert_eq!(app.list.selected_task(), task);
+
+    app.overlay = None;
+    app.detail.close();
+    app.dispatch_mouse(wheel, size.into()).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    assert_eq!(app.list.selected_task(), task);
+    assert_eq!(app.store.view_state.scope, scope);
+}
+
+#[tokio::test]
+async fn sidebar_pages_use_visible_content_height() {
+    let mut app = test_app().await;
+    for index in 0..60 {
+        app.store
+            .create_project(format!("Project {index:02}"))
+            .await
+            .unwrap();
+    }
+    app.refresh().await.unwrap();
+    app.list.focus_sidebar();
+    let start = app.list.sidebar_entries().iter().position(|entry| {
+        matches!(&entry.target, Some(SidebarEntryTarget::Scope(TaskScopeTarget::Project(project))) if project == "project-00")
+    }).unwrap();
+    let scope = app.store.view_state.scope.clone();
+    let task = app.list.selected_task();
+    for size in [(140, 24), (90, 19)] {
+        let layout = crate::tui::ui::sidebar_layout(
+            ratatui::layout::Rect::new(0, 0, size.0, size.1),
+            Focus::Sidebar,
+        )
+        .unwrap();
+        let page = usize::from(layout.content.height);
+        for (event, distance) in [
+            (key(KeyCode::PageDown), page),
+            (
+                KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+                page.div_ceil(2),
+            ),
+        ] {
+            app.list.select_sidebar(Some(start));
+            app.dispatch_key(event, size.into()).await.unwrap();
+            assert_eq!(app.list.selected_sidebar(), Some(start + distance));
+            assert_sidebar_highlight_visible(&mut app, size);
+            let reverse = if event.code == KeyCode::PageDown {
+                key(KeyCode::PageUp)
+            } else {
+                KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)
+            };
+            app.dispatch_key(reverse, size.into()).await.unwrap();
+            assert_eq!(app.list.selected_sidebar(), Some(start));
+        }
+    }
+    app.dispatch_key(key(KeyCode::Tab), (90, 19).into())
+        .await
+        .unwrap();
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.store.view_state.scope, scope);
+    assert_eq!(app.list.selected_task(), task);
+}
+
+#[tokio::test]
+async fn sidebar_wheel_respects_visibility_and_prefix_ownership() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("First")).await;
+    create_and_select_task(&mut app, test_task_draft("Second")).await;
+    // A narrow sidebar is only visible with sidebar focus.
+    app.list.select_task(Some(0));
+    app.dispatch_mouse(wheel_down(3, 5), (90, 18).into())
+        .await
+        .unwrap();
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_task(), Some(1));
+    app.list.focus_sidebar();
+    app.select_edge(false).await.unwrap();
+    let first = app.list.selected_sidebar();
+    app.dispatch_mouse(wheel_down(3, 5), (90, 18).into())
+        .await
+        .unwrap();
+    assert_ne!(app.list.selected_sidebar(), first);
+    assert_sidebar_highlight_visible(&mut app, (90, 18));
+    let sidebar = app.list.selected_sidebar();
+    app.dispatch_key(key(KeyCode::Char('t')), (140, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_mouse(wheel_down(3, 5), (140, 24).into())
+        .await
+        .unwrap();
+    app.dispatch_key(key(KeyCode::PageDown), (140, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert_eq!(app.list.selected_task(), Some(1));
+    assert!(!app.pending_shortcut.is_empty());
+}

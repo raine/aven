@@ -394,3 +394,26 @@ async fn triage_opened_in_a_project_scope_covers_only_that_project() {
         TaskScope::Project("mobile-app".to_string())
     );
 }
+
+#[tokio::test]
+async fn triage_owns_wheel_over_sidebar_and_paging() {
+    let mut app = app_with_inbox(&["First", "Second"]).await;
+    let session = app.triage.as_ref().unwrap();
+    session.scroll_max.set(100);
+    session.scroll_viewport.set(10);
+    let sidebar = app.list.selected_sidebar();
+    let task = app.list.selected_task();
+    let focus = app.list.focus();
+    app.dispatch_mouse(wheel_down(3, 5), (140, 24).into())
+        .await
+        .unwrap();
+    assert_eq!(app.triage.as_ref().unwrap().card_scroll(), 3);
+    app.dispatch_key(key(KeyCode::PageDown), (140, 24).into())
+        .await
+        .unwrap();
+    assert!(app.triage.as_ref().unwrap().card_scroll() > 3);
+    assert_eq!(app.triage.as_ref().unwrap().cursor, 0);
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert_eq!(app.list.selected_task(), task);
+    assert_eq!(app.list.focus(), focus);
+}
