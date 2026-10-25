@@ -91,7 +91,7 @@ impl TaskCreationOptions {
         Self {
             epic_id: None,
             undo: TaskCreationUndo::None,
-            create_missing_labels: false,
+            create_missing_labels: true,
             require_existing_project: true,
             capture_undo_snapshot: true,
             require_existing_epic: false,

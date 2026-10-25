@@ -253,16 +253,6 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
             due_on: None,
             labels: Vec::new(),
         },
-        TaskCapture {
-            description: String::new(),
-            title: "Stale label".to_string(),
-            project: Some("ios".to_string()),
-            status: TaskStatus::Inbox,
-            priority: TaskPriority::None,
-            source: TaskSource::Ios,
-            due_on: None,
-            labels: vec!["missing".to_string()],
-        },
     ] {
         assert!(
             store
@@ -271,6 +261,32 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
                 .is_err()
         );
     }
+
+    let labelled = store
+        .capture_queue_task(
+            &workspace.id,
+            TaskCapture {
+                description: String::new(),
+                title: "New label".to_string(),
+                project: Some("ios".to_string()),
+                status: TaskStatus::Inbox,
+                priority: TaskPriority::None,
+                source: TaskSource::Ios,
+                due_on: None,
+                labels: vec!["capture".to_string(), "Fresh Idea".to_string()],
+            },
+        )
+        .await
+        .unwrap();
+    let detail = store
+        .task_detail(&workspace.id, &labelled.task_id)
+        .await
+        .unwrap();
+    assert_eq!(detail.labels, ["capture", "fresh-idea"]);
+    assert_eq!(
+        store.queue_state().await.unwrap().labels,
+        ["capture", "fresh-idea"]
+    );
 
     let undone = store
         .undo_queue_capture(&captured.undo_token)
