@@ -369,7 +369,7 @@ mod tests {
         serde_json::to_vec(&serde_json::json!({
             "status": status,
             "completion_contract": 1,
-            "features": {"text": true, "json_schema": true, "tools": tools, "images": false},
+            "features": {"text": true, "json_schema": true, "tools": tools},
             "limits": {"max_request_bytes": 524288, "max_output_tokens": 4096},
             "provider": "chatgpt",
             "model": "gpt-5",

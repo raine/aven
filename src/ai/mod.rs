@@ -81,7 +81,6 @@ pub(crate) struct Features {
     text: bool,
     json_schema: bool,
     tools: bool,
-    images: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -341,7 +340,6 @@ enum BackendState {
         backend: Box<dyn CompletionBackend>,
         schema: SchemaStrategy,
         tools: bool,
-        images: bool,
     },
     Unavailable {
         status: AvailabilityStatus,
@@ -428,7 +426,6 @@ impl AiService {
                 backend,
                 schema: info.schema,
                 tools: info.tools,
-                images: info.images,
             },
             Err(_) => BackendState::Unavailable {
                 status: AvailabilityStatus::TemporarilyUnavailable,
@@ -450,7 +447,6 @@ impl AiService {
                 text: true,
                 json_schema: true,
                 tools: matches!(self.state, BackendState::Ready { tools: true, .. }),
-                images: matches!(self.state, BackendState::Ready { images: true, .. }),
             },
             limits: Limits {
                 max_request_bytes: MAX_REQUEST_BYTES,
@@ -618,15 +614,6 @@ fn validate_schema(schema: &Value, max_bytes: usize) -> std::result::Result<usiz
 struct ValidatedRequest(CompletionRequest);
 
 impl ValidatedRequest {
-    fn requires_images(&self) -> bool {
-        self.0.messages.iter().any(|message| {
-            message
-                .content
-                .iter()
-                .any(|block| matches!(block, ContentBlock::Image { .. }))
-        })
-    }
-
     fn requires_tools(&self) -> bool {
         !self.0.tools.is_empty()
             || self.0.messages.iter().any(|message| {

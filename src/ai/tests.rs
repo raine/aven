@@ -14,7 +14,6 @@ fn ready_service() -> AiService {
             backend: Box::new(PendingBackend),
             schema: SchemaStrategy::NativeVerbatim,
             tools: true,
-            images: true,
         },
         provider: Some("test".to_string()),
         model: Some("test-model".to_string()),
@@ -110,22 +109,6 @@ fn rejects_misplaced_unknown_malformed_and_oversized_images() {
 }
 
 #[tokio::test]
-async fn unsupported_images_fail_before_rate_admission_and_are_advertised() {
-    let mut service = ready_service();
-    assert!(service.capabilities().features.images);
-    if let BackendState::Ready { images, .. } = &mut service.state {
-        *images = false;
-    }
-    assert!(!service.capabilities().features.images);
-    let request = image_request("user", "image/jpeg", &STANDARD.encode(b"fixture"));
-    assert_eq!(
-        service.collect_completion(request).await.unwrap_err(),
-        ErrorCategory::UnsupportedCapability
-    );
-    assert!(service.recent_requests.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
 async fn responses_wire_sends_images_as_data_url_input_images() {
     use rig_core::client::CompletionClient;
     use rig_core::providers::chatgpt;
@@ -159,7 +142,6 @@ async fn responses_wire_sends_images_as_data_url_input_images() {
         backend: Box::new(client.completion_model("fixture-model")),
         schema: SchemaStrategy::Prompted,
         tools: true,
-        images: true,
     };
     let data = STANDARD.encode(b"\xff\xd8\xff fixture");
     let _ = service
@@ -887,7 +869,6 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
             backend: Box::new(client.completion_model("fixture-model")),
             schema: SchemaStrategy::Prompted,
             tools: true,
-            images: true,
         };
         let mut request = tool_request();
         request.tools[0].parameters = serde_json::json!({"type":"object", "properties":{"status":{"type":"string", "enum":null}}});
