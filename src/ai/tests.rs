@@ -14,6 +14,7 @@ fn ready_service() -> AiService {
             backend: Box::new(PendingBackend),
             schema: SchemaStrategy::NativeVerbatim,
             tools: true,
+            images: true,
         },
         provider: Some("test".to_string()),
         model: Some("test-model".to_string()),
@@ -43,6 +44,138 @@ fn validates_and_converts_neutral_request() {
     assert_eq!(converted.max_tokens, Some(128));
     assert!(converted.output_schema.is_some());
     assert!(converted.tools.is_empty());
+}
+
+fn image_request(role: &str, media_type: &str, data: &str) -> CompletionRequest {
+    serde_json::from_value(serde_json::json!({
+        "request_id": "image-1",
+        "messages": [{"role": role, "content": [
+            {"type": "text", "text": "What does this screenshot show?"},
+            {"type": "image", "media_type": media_type, "data": data}
+        ]}],
+        "output": {"type": "text"}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn converts_user_images_to_typed_base64_content() {
+    let data = STANDARD.encode(b"\xff\xd8\xff fixture");
+    let converted = image_request("user", "image/jpeg", &data)
+        .validate()
+        .unwrap()
+        .into_rig(SchemaStrategy::NativeVerbatim, 128)
+        .unwrap();
+    let Some(RigMessage::User { content }) = converted.chat_history.first() else {
+        panic!("expected a user message");
+    };
+    let image = content
+        .iter()
+        .find_map(|item| match item {
+            UserContent::Image(image) => Some(image),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(image.data, DocumentSourceKind::Base64(data));
+    assert_eq!(image.media_type, Some(ImageMediaType::JPEG));
+}
+
+#[test]
+fn rejects_misplaced_unknown_malformed_and_oversized_images() {
+    let data = STANDARD.encode(b"fixture");
+    for request in [
+        image_request("assistant", "image/jpeg", &data),
+        image_request("system", "image/jpeg", &data),
+        image_request("user", "image/heic", &data),
+        image_request("user", "image/jpeg", "not base64!"),
+        image_request(
+            "user",
+            "image/jpeg",
+            &STANDARD.encode(vec![0; MAX_IMAGE_BYTES + 1]),
+        ),
+        image_request("user", "image/png", ""),
+    ] {
+        assert!(matches!(
+            request.validate(),
+            Err(ErrorCategory::InvalidRequest)
+        ));
+    }
+    let mut request = image_request("user", "image/png", &data);
+    let image = request.messages[0].content[1].clone();
+    request.messages[0].content = vec![image; MAX_IMAGES + 1];
+    assert!(matches!(
+        request.validate(),
+        Err(ErrorCategory::InvalidRequest)
+    ));
+}
+
+#[tokio::test]
+async fn unsupported_images_fail_before_rate_admission_and_are_advertised() {
+    let mut service = ready_service();
+    assert!(service.capabilities().features.images);
+    if let BackendState::Ready { images, .. } = &mut service.state {
+        *images = false;
+    }
+    assert!(!service.capabilities().features.images);
+    let request = image_request("user", "image/jpeg", &STANDARD.encode(b"fixture"));
+    assert_eq!(
+        service.collect_completion(request).await.unwrap_err(),
+        ErrorCategory::UnsupportedCapability
+    );
+    assert!(service.recent_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn responses_wire_sends_images_as_data_url_input_images() {
+    use rig_core::client::CompletionClient;
+    use rig_core::providers::chatgpt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (sent, received) = tokio::sync::oneshot::channel::<Value>();
+    let sent = Arc::new(Mutex::new(Some(sent)));
+    let app = axum::Router::new().route(
+        "/responses",
+        axum::routing::post(move |Json(body): Json<Value>| async move {
+            if let Some(sent) = sent.lock().unwrap().take() {
+                let _ = sent.send(body);
+            }
+            let event = serde_json::json!({"type":"error", "error":{"type":"overloaded_error", "message":"fixture"}});
+            ([("content-type", "text/event-stream")], format!("data: {event}\n\n"))
+        }),
+    );
+    let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = chatgpt::Client::builder()
+        .api_key(chatgpt::ChatGPTAuth::AccessToken {
+            access_token: "offline-fixture-token".into(),
+            account_id: None,
+        })
+        .base_url(endpoint)
+        .http_client(transport::BoundedHttpClient::default())
+        .build()
+        .unwrap();
+    let mut service = ready_service();
+    service.timeout = Duration::from_secs(5);
+    service.state = BackendState::Ready {
+        backend: Box::new(client.completion_model("fixture-model")),
+        schema: SchemaStrategy::Prompted,
+        tools: true,
+        images: true,
+    };
+    let data = STANDARD.encode(b"\xff\xd8\xff fixture");
+    let _ = service
+        .collect_completion(image_request("user", "image/jpeg", &data))
+        .await;
+    let body = received.await.unwrap();
+    let parts = body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|item| item["content"].as_array().cloned().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(parts.iter().any(|part| part["type"] == "input_image"
+        && part["image_url"] == format!("data:image/jpeg;base64,{data}")));
+    upstream.abort();
+    let _ = upstream.await;
 }
 
 #[cfg(unix)]
@@ -754,6 +887,7 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
             backend: Box::new(client.completion_model("fixture-model")),
             schema: SchemaStrategy::Prompted,
             tools: true,
+            images: true,
         };
         let mut request = tool_request();
         request.tools[0].parameters = serde_json::json!({"type":"object", "properties":{"status":{"type":"string", "enum":null}}});

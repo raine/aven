@@ -36,12 +36,12 @@ impl AiService {
             backend,
             schema,
             tools,
-            ..
+            images,
         } = &self.state
         else {
             return Err(self.unavailable_error());
         };
-        if !tools && validated.requires_tools() {
+        if (!tools && validated.requires_tools()) || (!images && validated.requires_images()) {
             return Err(ErrorCategory::UnsupportedCapability);
         }
         let request_id = validated.0.request_id.clone();

@@ -14,11 +14,15 @@ use axum::Json;
 use axum::extract::{State, rejection::JsonRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use rig_core::completion::{CompletionRequest as RigRequest, FinishReason as RigFinishReason};
 use rig_core::message::{
-    AssistantContent, Message as RigMessage, ProviderCallId, Reasoning, ToolCall, ToolCallId,
-    ToolFunction, ToolResult, ToolResultContent, UserContent,
+    AssistantContent, DocumentSourceKind, Image, ImageMediaType, Message as RigMessage,
+    ProviderCallId, Reasoning, ToolCall, ToolCallId, ToolFunction, ToolResult, ToolResultContent,
+    UserContent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,6 +37,8 @@ use registry::{CompletionBackend, SchemaStrategy};
 pub(crate) const MAX_REQUEST_BYTES: usize = 512 * 1024;
 const MAX_MESSAGES: usize = 64;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
+const MAX_IMAGES: usize = 4;
+const MAX_IMAGE_BYTES: usize = 320 * 1024;
 const MAX_TOOLS: usize = 16;
 const MAX_TOOL_SCHEMA_BYTES: usize = 32 * 1024;
 const MAX_SCHEMA_BYTES: usize = 24 * 1024;
@@ -123,6 +129,11 @@ enum ContentBlock {
     },
     Reasoning {
         opaque: String,
+    },
+    /// Base64 (standard alphabet) image bytes, only in user messages.
+    Image {
+        media_type: String,
+        data: String,
     },
     ToolResult {
         call_id: String,
@@ -330,6 +341,7 @@ enum BackendState {
         backend: Box<dyn CompletionBackend>,
         schema: SchemaStrategy,
         tools: bool,
+        images: bool,
     },
     Unavailable {
         status: AvailabilityStatus,
@@ -416,6 +428,7 @@ impl AiService {
                 backend,
                 schema: info.schema,
                 tools: info.tools,
+                images: info.images,
             },
             Err(_) => BackendState::Unavailable {
                 status: AvailabilityStatus::TemporarilyUnavailable,
@@ -437,7 +450,7 @@ impl AiService {
                 text: true,
                 json_schema: true,
                 tools: matches!(self.state, BackendState::Ready { tools: true, .. }),
-                images: false,
+                images: matches!(self.state, BackendState::Ready { images: true, .. }),
             },
             limits: Limits {
                 max_request_bytes: MAX_REQUEST_BYTES,
@@ -498,6 +511,7 @@ impl CompletionRequest {
             return Err(ErrorCategory::InvalidRequest);
         }
         let mut text_bytes = 0usize;
+        let mut images = 0usize;
         for message in &self.messages {
             if message.content.is_empty() && !matches!(message.role, Role::Assistant) {
                 return Err(ErrorCategory::InvalidRequest);
@@ -527,6 +541,16 @@ impl CompletionRequest {
                     (Role::Assistant, ContentBlock::Reasoning { opaque }) => {
                         let _: Reasoning = decode_opaque(opaque)?;
                     }
+                    (Role::User, ContentBlock::Image { media_type, data }) => {
+                        image_media_type(media_type)?;
+                        let decoded = STANDARD
+                            .decode(data)
+                            .map_err(|_| ErrorCategory::InvalidRequest)?;
+                        images += 1;
+                        if decoded.is_empty() || decoded.len() > MAX_IMAGE_BYTES {
+                            return Err(ErrorCategory::InvalidRequest);
+                        }
+                    }
                     (
                         Role::Tool,
                         ContentBlock::ToolResult {
@@ -545,7 +569,7 @@ impl CompletionRequest {
                 }
             }
         }
-        if text_bytes > MAX_TEXT_BYTES || self.tools.len() > MAX_TOOLS {
+        if text_bytes > MAX_TEXT_BYTES || images > MAX_IMAGES || self.tools.len() > MAX_TOOLS {
             return Err(ErrorCategory::InvalidRequest);
         }
         let mut schema_bytes = 0;
@@ -563,6 +587,14 @@ impl CompletionRequest {
             validate_schema(schema, MAX_SCHEMA_BYTES)?;
         }
         Ok(ValidatedRequest(self))
+    }
+}
+
+fn image_media_type(value: &str) -> std::result::Result<ImageMediaType, ErrorCategory> {
+    match value {
+        "image/jpeg" => Ok(ImageMediaType::JPEG),
+        "image/png" => Ok(ImageMediaType::PNG),
+        _ => Err(ErrorCategory::InvalidRequest),
     }
 }
 
@@ -586,6 +618,15 @@ fn validate_schema(schema: &Value, max_bytes: usize) -> std::result::Result<usiz
 struct ValidatedRequest(CompletionRequest);
 
 impl ValidatedRequest {
+    fn requires_images(&self) -> bool {
+        self.0.messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Image { .. }))
+        })
+    }
+
     fn requires_tools(&self) -> bool {
         !self.0.tools.is_empty()
             || self.0.messages.iter().any(|message| {
@@ -652,6 +693,14 @@ impl ValidatedRequest {
                         }
                         ContentBlock::Reasoning { opaque } => {
                             assistant.push(AssistantContent::Reasoning(decode_opaque(&opaque)?))
+                        }
+                        ContentBlock::Image { media_type, data } => {
+                            user.push(UserContent::Image(Image {
+                                data: DocumentSourceKind::Base64(data),
+                                media_type: Some(image_media_type(&media_type)?),
+                                detail: None,
+                                additional_params: None,
+                            }))
                         }
                         ContentBlock::ToolResult {
                             call_id,
