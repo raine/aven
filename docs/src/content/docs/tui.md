@@ -85,7 +85,9 @@ page navigation and mouse wheel movement stop at the first and last selectable
 rows. While browsing tasks, the wheel over the visible sidebar focuses and
 browses it without changing the active scope or task selection. Scrolling over
 the task list returns focus to tasks and moves the task selection; no click is
-needed to switch between panes. Hovering alone does not change focus. Active task
+needed to switch between panes. Clicking blank space in the task pane also
+focuses it, without changing the selected task. Hovering alone does not change
+focus. Active task
 detail, triage cards, and overlays retain wheel ownership. Press `Enter` to
 activate the highlighted view or project, or `Esc`/`Tab` to return to tasks
 without activating it.

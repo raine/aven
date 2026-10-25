@@ -1141,3 +1141,53 @@ async fn sidebar_wheel_focus_follows_pointer_even_at_task_edge() {
     assert_eq!(app.list.focus(), Focus::Sidebar);
     assert_eq!(app.store.view_state.scope, scope);
 }
+
+#[tokio::test]
+async fn sidebar_focus_returns_on_blank_task_area_click_without_changing_selection() {
+    let mut app = test_app().await;
+    for with_task in [false, true] {
+        if with_task {
+            create_and_select_task(&mut app, test_task_draft("Selected task")).await;
+        }
+        for size in [(140, 24), (90, 18)] {
+            app.list.focus_sidebar();
+            let _ = render_app_buffer(&mut app, size.0, size.1);
+            let task = app.list.selected_task();
+            let sidebar = app.list.selected_sidebar();
+            let scope = app.store.view_state.scope.clone();
+            assert!(
+                app.dispatch_mouse(click_at(70, size.1 - 4), size.into())
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(app.list.focus(), Focus::Tasks);
+            assert_eq!(app.list.selected_task(), task);
+            assert_eq!(app.list.selected_sidebar(), sidebar);
+            assert_eq!(app.store.view_state.scope, scope);
+            assert!(app.detail.is_inactive());
+        }
+    }
+}
+
+#[tokio::test]
+async fn sidebar_blank_click_focus_respects_bounds_and_overlay_ownership() {
+    let mut app = test_app().await;
+    app.list.focus_sidebar();
+    let size = (140, 24).into();
+    // The divider and footer are outside the task pane.
+    for mouse in [click_at(80, 1), click_at(80, 23), right_click(80, 18)] {
+        app.dispatch_mouse(mouse, size).await.unwrap();
+        assert_eq!(app.list.focus(), Focus::Sidebar);
+    }
+    app.begin_search();
+    app.dispatch_mouse(click_at(80, 18), size).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    assert!(matches!(app.overlay, Some(OverlayState::Search(_))));
+    app.overlay = None;
+    app.dispatch_key(key(KeyCode::Char('t')), size)
+        .await
+        .unwrap();
+    app.dispatch_mouse(click_at(80, 18), size).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    assert!(!app.pending_shortcut.is_empty());
+}

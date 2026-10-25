@@ -385,7 +385,18 @@ impl App {
                 self.list.select_sidebar_target(Some(&target));
                 self.apply_sidebar_target(Some(target)).await?;
             }
-            PointerEvent::None => self.list.clear_task_click(),
+            PointerEvent::None => {
+                self.list.clear_task_click();
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && outside_sidebar
+                    && !self.prefix_hints_active()
+                    && self
+                        .task_area_for_mouse(terminal_size)
+                        .contains((mouse.column, mouse.row).into())
+                {
+                    self.list.focus_tasks();
+                }
+            }
         }
 
         Ok(())
