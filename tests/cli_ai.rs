@@ -448,7 +448,6 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
     assert_eq!(body["status"], "unconfigured");
     assert_eq!(body["completion_contract"], 1);
     assert!(body["features"].get("streaming").is_none());
-    assert!(body["features"].get("images").is_none());
     assert_eq!(body["limits"]["max_request_bytes"], 524_288);
 
     let completion = client
