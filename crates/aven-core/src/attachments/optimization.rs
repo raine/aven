@@ -41,7 +41,7 @@ pub async fn optimize_image_bytes(
 type PngOptimizationResult = std::result::Result<(Vec<u8>, Vec<u8>), (Vec<u8>, oxipng::PngError)>;
 
 fn optimize_png(bytes: Vec<u8>) -> PngOptimizationResult {
-    let mut options = oxipng::Options::from_preset(4);
+    let mut options = oxipng::Options::from_preset(2);
     options.strip = oxipng::StripChunks::Safe;
     options.timeout = Some(Duration::from_secs(10));
     options.max_decompressed_size = Some(

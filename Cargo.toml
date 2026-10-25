@@ -18,7 +18,7 @@ flate2 = "1.1"
 hex = "0.4"
 image = { version = "=0.25.9", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 hkdf = "0.13"
-oxipng = { version = "10.1", default-features = false }
+oxipng = { version = "10.1", default-features = false, features = ["parallel"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 sha2 = "0.11"
