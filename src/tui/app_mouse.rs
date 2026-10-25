@@ -38,8 +38,8 @@ impl App {
             && self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row);
         let previous_sidebar = (self.list.focus(), self.list.selected_sidebar());
         let task_list_wheel =
-            !sidebar_wheel && self.routes_wheel_to_task_list(mouse.kind, terminal_size);
-        let previous_selection = self.list.selected_task();
+            !sidebar_wheel && self.routes_wheel_to_task_list(mouse, terminal_size);
+        let previous_selection = (self.list.focus(), self.list.selected_task());
         if mouse.kind != MouseEventKind::Moved {
             self.handle_mouse(mouse, terminal_size).await?;
             if let Some(previous_scroll) = shortcut_scroll {
@@ -48,7 +48,8 @@ impl App {
             if sidebar_wheel {
                 return Ok((self.list.focus(), self.list.selected_sidebar()) != previous_sidebar);
             }
-            return Ok(!task_list_wheel || self.list.selected_task() != previous_selection);
+            return Ok(!task_list_wheel
+                || (self.list.focus(), self.list.selected_task()) != previous_selection);
         }
         let previous_hover = self
             .detail
@@ -103,7 +104,11 @@ impl App {
                 if self.dispatch_mouse_scroll(kind, terminal_size) {
                     return Ok(());
                 }
-                return self.handle_task_list_wheel(delta, terminal_size).await;
+                if self.routes_wheel_to_task_list(mouse, terminal_size) {
+                    self.list.focus_tasks();
+                    return self.handle_task_list_wheel(delta, terminal_size).await;
+                }
+                return Ok(());
             }
             MouseInput::DetailPress => {
                 if self
@@ -469,18 +474,20 @@ impl App {
         }
     }
 
-    pub(super) fn routes_wheel_to_task_list(
-        &self,
-        kind: MouseEventKind,
-        terminal_size: Size,
-    ) -> bool {
-        matches!(kind, MouseEventKind::ScrollDown | MouseEventKind::ScrollUp)
-            && !self.prefix_hints_active()
+    pub(super) fn routes_wheel_to_task_list(&self, mouse: MouseEvent, terminal_size: Size) -> bool {
+        matches!(
+            mouse.kind,
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+        ) && !self.prefix_hints_active()
             && self.overlay.is_none()
             && terminal_size.width >= 70
             && terminal_size.height >= 18
             && !self.detail_underlay()
-            && self.list.focus() == Focus::Tasks
+            && !self.sidebar_contains_mouse(terminal_size, mouse.column, mouse.row)
+            && (self.list.focus() == Focus::Tasks
+                || self
+                    .task_area_for_mouse(terminal_size)
+                    .contains((mouse.column, mouse.row).into()))
     }
 
     pub(super) async fn handle_task_list_wheel(

@@ -1115,3 +1115,29 @@ async fn sidebar_wheel_respects_visibility_and_prefix_ownership() {
     assert_eq!(app.list.selected_task(), Some(1));
     assert!(!app.pending_shortcut.is_empty());
 }
+
+#[tokio::test]
+async fn sidebar_wheel_focus_follows_pointer_even_at_task_edge() {
+    let mut app = test_app().await;
+    create_and_select_task(&mut app, test_task_draft("Only task")).await;
+    let size = (140, 24).into();
+    let scope = app.store.view_state.scope.clone();
+    assert!(app.dispatch_mouse(wheel_down(3, 5), size).await.unwrap());
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    let sidebar = app.list.selected_sidebar();
+    let mut hover = wheel_down(80, 5);
+    hover.kind = MouseEventKind::Moved;
+    app.dispatch_mouse(hover, size).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    app.dispatch_mouse(wheel_down(80, 0), size).await.unwrap();
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    // Focus changes require redraw even when selection is clamped at the edge.
+    assert!(app.dispatch_mouse(wheel_down(80, 5), size).await.unwrap());
+    assert_eq!(app.list.focus(), Focus::Tasks);
+    assert_eq!(app.list.selected_task(), Some(0));
+    assert_eq!(app.list.selected_sidebar(), sidebar);
+    assert!(!app.dispatch_mouse(wheel_down(80, 5), size).await.unwrap());
+    assert!(app.dispatch_mouse(wheel_down(3, 5), size).await.unwrap());
+    assert_eq!(app.list.focus(), Focus::Sidebar);
+    assert_eq!(app.store.view_state.scope, scope);
+}
