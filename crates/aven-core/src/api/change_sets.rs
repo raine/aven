@@ -2,7 +2,9 @@ use super::{Error, ErrorCode, Store, TaskCapture, TaskEdit};
 use crate::ids::{TaskId, WorkspaceId};
 use crate::operations::{ChangeSetOperation, IndexedChangeSetError};
 
-pub use crate::operations::{ChangeSetOutcome, ChangeTarget, CreatedTaskRef};
+pub use crate::operations::{
+    AttachmentChange, AttachmentChangeKind, ChangeSetOutcome, ChangeTarget, CreatedTaskRef,
+};
 
 /// A staged consumer mutation. Fields use the same rules as capture and edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,16 @@ pub enum ChangeOp {
     AddNote {
         target: ChangeTarget,
         body: String,
+    },
+    /// Attaches a staged agent asset. The caller chooses `attachment_id` (a task
+    /// attachment ID) and should keep it stable across retries. A task that already
+    /// has a live attachment with the same bytes is reported as already present.
+    AddAttachment {
+        target: ChangeTarget,
+        attachment_id: String,
+        pin_id: String,
+        filename: Option<String>,
+        alt_text: Option<String>,
     },
 }
 
@@ -87,6 +99,19 @@ impl Store {
                     ChangeOp::AddNote { target, body } => {
                         Ok(ChangeSetOperation::AddNote { target, body })
                     }
+                    ChangeOp::AddAttachment {
+                        target,
+                        attachment_id,
+                        pin_id,
+                        filename,
+                        alt_text,
+                    } => Ok(ChangeSetOperation::AddAttachment {
+                        target,
+                        attachment_id,
+                        pin_id,
+                        filename,
+                        alt_text,
+                    }),
                 };
                 result.map_err(|error| ChangeSetError {
                     operation_index: Some(index),
@@ -103,7 +128,8 @@ impl Store {
 
     /// Reverses the entire set in one transaction. Subsequent edits can invalidate
     /// the receipt; recurrence undo also retains its unsynced/untouched-successor rules.
-    /// Created tasks are soft-deleted, as with undo_queue_capture.
+    /// Created tasks are soft-deleted, as with undo_queue_capture. Only attachments the
+    /// set inserted are deleted; one already deleted by the user is left as it is.
     pub async fn undo_change_set(&self, undo_token: &str) -> Result<(), Error> {
         let token = serde_json::from_str(undo_token).map_err(|_| {
             Error::new(

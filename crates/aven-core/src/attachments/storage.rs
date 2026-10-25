@@ -119,7 +119,8 @@ pub async fn remove_staged_blob_if_unreferenced(
                  SELECT 1 FROM blob_upload_reservations
                  WHERE sha256 = ? AND expires_at > ?
              )
-             OR EXISTS(SELECT 1 FROM local_shared_capture_pins WHERE sha256 = ?)",
+             OR EXISTS(SELECT 1 FROM local_shared_capture_pins WHERE sha256 = ?)
+             OR EXISTS(SELECT 1 FROM local_agent_asset_pins WHERE sha256 = ?)",
     )
     .bind(sha256)
     .bind(sha256)
@@ -127,6 +128,7 @@ pub async fn remove_staged_blob_if_unreferenced(
     .bind(now())
     .bind(sha256)
     .bind(now())
+    .bind(sha256)
     .bind(sha256)
     .fetch_one(&mut *tx)
     .await;

@@ -1,6 +1,8 @@
 mod change_set;
+pub use change_set::{
+    AttachmentChange, AttachmentChangeKind, ChangeSetOutcome, ChangeTarget, CreatedTaskRef,
+};
 pub(crate) use change_set::{ChangeSetOperation, IndexedChangeSetError};
-pub use change_set::{ChangeSetOutcome, ChangeTarget, CreatedTaskRef};
 mod attachment_creation;
 mod consumer;
 mod creation;

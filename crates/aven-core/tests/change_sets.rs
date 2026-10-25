@@ -1,6 +1,7 @@
 use aven_core::api::{
-    ChangeOp, ChangeTarget, CreateRecurrenceSeries, CreateTask, ErrorCode, OptionalDateUpdate,
-    RecurrenceDuePolicy, RecurrenceFrequency, RecurrenceRule, RecurrenceScheduleInput, Store,
+    AgentAssetInput, AttachmentChangeKind, ChangeOp, ChangeTarget, CreateRecurrenceSeries,
+    CreateTask, ErrorCode, ImageOptimizationPolicy, OptionalDateUpdate, RecurrenceDuePolicy,
+    RecurrenceFrequency, RecurrenceRule, RecurrenceScheduleInput, StagedAgentAsset, Store,
     TaskCapture, TaskEdit,
 };
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
@@ -173,6 +174,22 @@ fn note(target: ChangeTarget, body: &str) -> ChangeOp {
     ChangeOp::AddNote {
         target,
         body: body.into(),
+    }
+}
+fn png(width: u32) -> Vec<u8> {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::new(width, 1))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
+fn attach(target: ChangeTarget, attachment_id: &str, pin: &StagedAgentAsset) -> ChangeOp {
+    ChangeOp::AddAttachment {
+        target,
+        attachment_id: attachment_id.into(),
+        pin_id: pin.pin_id.clone(),
+        filename: Some("screenshot.png".into()),
+        alt_text: Some("A screenshot".into()),
     }
 }
 fn local(id: &str) -> ChangeTarget {
@@ -813,4 +830,336 @@ async fn changed_recurrence_successor_prevents_every_inverse() {
     assert_eq!(f.snapshot(&recurring).await.status, "done");
     assert_eq!(f.snapshot(&successor).await.title, "later successor edit");
     assert_eq!(f.counts().await, before);
+}
+
+impl Fixture {
+    async fn stage(&self, width: u32) -> StagedAgentAsset {
+        self.store
+            .stage_agent_asset(
+                &self.workspace,
+                AgentAssetInput {
+                    bytes: png(width),
+                    declared_media_type: Some("image/png".into()),
+                    optimization_policy: ImageOptimizationPolicy::Preserve,
+                },
+            )
+            .await
+            .unwrap()
+    }
+
+    fn object(&self, sha256: &str) -> std::path::PathBuf {
+        aven_core::attachments::object_path(
+            &aven_core::attachments::default_blob_dir(self.db.path()),
+            sha256,
+        )
+        .unwrap()
+    }
+
+    /// (attachment_id, deleted) rows of a task in creation order.
+    async fn attachments(&mut self, task: &TaskId) -> Vec<(String, bool)> {
+        sqlx::query_as(
+            "SELECT attachment_id, deleted != 0 FROM task_attachments
+             WHERE task_id = ? ORDER BY created_at, attachment_id",
+        )
+        .bind(task)
+        .fetch_all(&mut self.conn)
+        .await
+        .unwrap()
+    }
+
+    async fn pin_count(&mut self) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM local_agent_asset_pins")
+            .fetch_one(&mut self.conn)
+            .await
+            .unwrap()
+    }
+}
+
+fn attachment_id() -> String {
+    aven_core::ids::new_id()
+}
+
+#[tokio::test]
+async fn staged_asset_is_protected_until_released_or_swept() {
+    let mut f = Fixture::new().await;
+    let asset = f.stage(3).await;
+    assert_eq!(
+        (asset.media_type.as_str(), asset.width, asset.height),
+        ("image/png", 3, 1)
+    );
+    assert!(f.object(&asset.sha256).exists());
+    let aggressive = aven_core::attachments::LifecyclePolicy {
+        grace: std::time::Duration::ZERO,
+        ..Default::default()
+    };
+    let blob_dir = aven_core::attachments::default_blob_dir(f.db.path());
+    f.db.prune_attachments(&blob_dir, aggressive, true)
+        .await
+        .unwrap();
+    assert!(f.object(&asset.sha256).exists(), "pin protects from prune");
+
+    assert!(f.store.release_agent_asset(&asset.pin_id).await.unwrap());
+    assert!(!f.object(&asset.sha256).exists());
+    assert!(!f.store.release_agent_asset(&asset.pin_id).await.unwrap());
+
+    let old = f.stage(4).await;
+    let fresh = f.stage(5).await;
+    sqlx::query(
+        "UPDATE local_agent_asset_pins SET created_at = '2020-01-01T00:00:00Z' WHERE pin_id = ?",
+    )
+    .bind(&old.pin_id)
+    .execute(&mut f.conn)
+    .await
+    .unwrap();
+    let day = std::time::Duration::from_secs(86_400);
+    assert_eq!(f.store.sweep_agent_assets(day).await.unwrap(), 1);
+    assert!(!f.object(&old.sha256).exists());
+    assert!(f.object(&fresh.sha256).exists());
+    assert_eq!(f.pin_count().await, 1);
+
+    let invalid = f
+        .store
+        .stage_agent_asset(
+            &f.workspace,
+            AgentAssetInput {
+                bytes: b"not an image".to_vec(),
+                declared_media_type: None,
+                optimization_policy: ImageOptimizationPolicy::Optimize,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid.code, ErrorCode::Validation);
+}
+
+#[tokio::test]
+async fn created_task_attachment_applies_and_undoes() {
+    let mut f = Fixture::new().await;
+    let asset = f.stage(3).await;
+    let id = attachment_id();
+    let result = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![create("a"), attach(local("a"), &id, &asset)],
+        )
+        .await
+        .unwrap();
+    let task = result.created["a"].task_id.clone();
+    assert_eq!(result.attachments.len(), 1);
+    let change = &result.attachments[0];
+    assert_eq!(change.operation_index, 1);
+    assert_eq!(change.task_id, task);
+    assert_eq!(change.attachment_id, id);
+    assert_eq!(change.kind, AttachmentChangeKind::Added);
+    let detail = f.store.task_detail(&f.workspace, &task).await.unwrap();
+    assert_eq!(detail.attachments.len(), 1);
+    assert_eq!(
+        detail.attachments[0].alt_text.as_deref(),
+        Some("A screenshot")
+    );
+    assert_eq!(
+        detail.attachments[0].filename.as_deref(),
+        Some("screenshot.png")
+    );
+    assert_eq!(detail.attachments[0].width, Some(3));
+
+    f.store.undo_change_set(&result.undo_token).await.unwrap();
+    assert_eq!(f.attachments(&task).await, [(id, true)]);
+    assert!(f.snapshot(&task).await.deleted);
+    // The session can still attach the same image elsewhere.
+    assert_eq!(f.pin_count().await, 1);
+    let again = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![attach(existing(&f.task), &attachment_id(), &asset)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.attachments[0].kind, AttachmentChangeKind::Added);
+    // Releasing the pin keeps a blob that tasks reference.
+    assert!(f.store.release_agent_asset(&asset.pin_id).await.unwrap());
+    assert!(f.object(&asset.sha256).exists());
+}
+
+#[tokio::test]
+async fn duplicate_on_same_task_is_already_present_and_undo_keeps_original() {
+    let mut f = Fixture::new().await;
+    let task = f.task.clone();
+    let asset = f.stage(3).await;
+    let original = attachment_id();
+    let first = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![attach(existing(&task), &original, &asset)],
+        )
+        .await
+        .unwrap();
+    // A retry with the same ID and a second request in one set both dedupe.
+    let duplicate = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![
+                attach(existing(&task), &original, &asset),
+                attach(existing(&task), &attachment_id(), &asset),
+            ],
+        )
+        .await
+        .unwrap();
+    for change in &duplicate.attachments {
+        assert_eq!(change.kind, AttachmentChangeKind::AlreadyPresent);
+        assert_eq!(change.attachment_id, original);
+    }
+    f.store
+        .undo_change_set(&duplicate.undo_token)
+        .await
+        .unwrap();
+    assert_eq!(f.attachments(&task).await, [(original.clone(), false)]);
+
+    // The user already removed the attachment; undo still succeeds.
+    let workspace = f.db.resolve_workspace("default").await.unwrap();
+    f.db.delete_task_attachment(&workspace, &original)
+        .await
+        .unwrap();
+    f.store.undo_change_set(&first.undo_token).await.unwrap();
+    assert_eq!(f.attachments(&task).await, [(original, true)]);
+}
+
+#[tokio::test]
+async fn recurring_task_attachment_applies_and_archived_occurrence_is_rejected() {
+    let mut f = Fixture::new().await;
+    let recurring = f.recurring().await;
+    let asset = f.stage(3).await;
+    let id = attachment_id();
+    let result = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![attach(existing(&recurring), &id, &asset)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.attachments[0].kind, AttachmentChangeKind::Added);
+    f.store.undo_change_set(&result.undo_token).await.unwrap();
+    assert_eq!(f.attachments(&recurring).await, [(id, true)]);
+
+    f.exec("UPDATE recurrence_occurrences SET slot_on = '2000-01-01', projection_state = 'archived', archived_at = '2020-01-01T00:00:00Z'").await;
+    let error = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![
+                create("a"),
+                attach(existing(&recurring), &attachment_id(), &asset),
+            ],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.operation_index, Some(1));
+    assert_eq!(error.error.code, ErrorCode::Validation);
+    assert!(error.error.message.contains("occurrence-archived"));
+}
+
+#[tokio::test]
+async fn invalid_attachment_ops_are_rejected_at_their_index_before_writes() {
+    let mut f = Fixture::new().await;
+    let asset = f.stage(3).await;
+    let other = f.stage(4).await;
+    let used = attachment_id();
+    f.store
+        .apply_change_set(&f.workspace, vec![attach(existing(&f.task), &used, &asset)])
+        .await
+        .unwrap();
+    let before = f.counts().await;
+    let cases = vec![
+        // The parent create was excluded from the set.
+        (
+            attach(local("excluded"), &attachment_id(), &asset),
+            ErrorCode::Validation,
+        ),
+        (
+            ChangeOp::AddAttachment {
+                target: existing(&f.task),
+                attachment_id: attachment_id(),
+                pin_id: "missing".into(),
+                filename: None,
+                alt_text: None,
+            },
+            ErrorCode::NotFound,
+        ),
+        (
+            ChangeOp::AddAttachment {
+                target: existing(&f.task),
+                attachment_id: attachment_id(),
+                pin_id: asset.pin_id.clone(),
+                filename: None,
+                alt_text: Some("x".repeat(501)),
+            },
+            ErrorCode::Validation,
+        ),
+        (
+            attach(existing(&f.task), "short", &asset),
+            ErrorCode::Validation,
+        ),
+        // The ID belongs to a row holding different bytes.
+        (
+            attach(existing(&f.task), &used, &other),
+            ErrorCode::Validation,
+        ),
+    ];
+    for (op, code) in cases {
+        let error = f
+            .store
+            .apply_change_set(&f.workspace, vec![create("a"), op])
+            .await
+            .unwrap_err();
+        assert_eq!(error.operation_index, Some(1), "{error}");
+        assert_eq!(error.error.code, code, "{error}");
+        assert_eq!(f.counts().await, before);
+    }
+    // Pins belong to the workspace that staged them.
+    let foreign = f.db.create_workspace("foreign").await.unwrap();
+    f.db.resolve_or_create_project(&foreign.id, "Core")
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .apply_change_set(
+            &foreign.id,
+            vec![create("a"), attach(local("a"), &attachment_id(), &asset)],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.operation_index, Some(1), "{error}");
+    assert_eq!(error.error.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn failed_apply_leaves_the_pin_intact_for_retry() {
+    let mut f = Fixture::new().await;
+    let task = f.task.clone();
+    let asset = f.stage(3).await;
+    let id = attachment_id();
+    let ops = vec![
+        attach(existing(&task), &id, &asset),
+        note(existing(&task), "x"),
+    ];
+    f.exec("CREATE TRIGGER reject_note BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'note rejected'); END;").await;
+    let error = f
+        .store
+        .apply_change_set(&f.workspace, ops.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.operation_index, Some(1));
+    assert!(f.attachments(&task).await.is_empty());
+    assert_eq!(f.pin_count().await, 1);
+    assert!(f.object(&asset.sha256).exists());
+
+    f.exec("DROP TRIGGER reject_note").await;
+    let result = f.store.apply_change_set(&f.workspace, ops).await.unwrap();
+    assert_eq!(result.attachments[0].kind, AttachmentChangeKind::Added);
+    assert_eq!(f.attachments(&task).await, [(id, false)]);
 }

@@ -8,7 +8,9 @@ use sqlx::{AssertSqlSafe, Row};
 use crate::attachments::AttachmentBytesState;
 use crate::attachments::decode::{ImageFacts, ValidatedImage, validate_image};
 use crate::attachments::optimization::{ImageOptimizationPolicy, optimize_image_bytes};
-use crate::attachments::storage::{blob_inventory_row, sha256_hex, store_validated_blob};
+use crate::attachments::storage::{
+    StoredBlob, blob_inventory_row, sha256_hex, store_validated_blob,
+};
 use crate::attachments::validation::{
     validate_alt_text, validate_attachment_id, validate_filename,
 };
@@ -114,11 +116,11 @@ fn attachment_from_row(row: &sqlx::sqlite::SqliteRow) -> TaskAttachment {
     }
 }
 
-async fn require_attachment(
+pub(crate) async fn find_attachment(
     conn: &mut SqliteConnection,
     workspace_id: &WorkspaceId,
     attachment_id: &str,
-) -> Result<TaskAttachment> {
+) -> Result<Option<TaskAttachment>> {
     let row = sqlx::query(AssertSqlSafe(format!(
         "SELECT {ATTACHMENT_COLUMNS}
          FROM task_attachments ta
@@ -128,11 +130,18 @@ async fn require_attachment(
     .bind(attachment_id)
     .fetch_optional(&mut *conn)
     .await?;
+    Ok(row.as_ref().map(attachment_from_row))
+}
 
-    let Some(row) = row else {
+async fn require_attachment(
+    conn: &mut SqliteConnection,
+    workspace_id: &WorkspaceId,
+    attachment_id: &str,
+) -> Result<TaskAttachment> {
+    let Some(attachment) = find_attachment(conn, workspace_id, attachment_id).await? else {
         bail!("error attachment-not-found id={}", attachment_id);
     };
-    Ok(attachment_from_row(&row))
+    Ok(attachment)
 }
 
 async fn attachment_bytes_state(
@@ -157,7 +166,7 @@ pub fn local_object_missing(blob_dir: &Path, sha256: &str) -> Result<bool> {
     Ok(matches!(path.try_exists(), Ok(false)))
 }
 
-async fn existing_live_attachments_by_sha(
+pub(super) async fn existing_live_attachments_by_sha(
     conn: &mut SqliteConnection,
     workspace_id: &crate::ids::WorkspaceId,
     task_id: &TaskId,
@@ -214,19 +223,19 @@ pub async fn prepare_task_attachment(input: TaskAttachmentAddInput) -> Result<Pr
     })
 }
 
-struct AttachmentRecordDraft<'a> {
-    attachment_id: &'a str,
-    sha256: &'a str,
-    byte_size: i64,
-    media_type: &'a str,
-    filename: Option<&'a str>,
-    alt_text: Option<&'a str>,
-    width: i64,
-    height: i64,
-    created_at: &'a str,
+pub(super) struct AttachmentRecordDraft<'a> {
+    pub attachment_id: &'a str,
+    pub sha256: &'a str,
+    pub byte_size: i64,
+    pub media_type: &'a str,
+    pub filename: Option<&'a str>,
+    pub alt_text: Option<&'a str>,
+    pub width: i64,
+    pub height: i64,
+    pub created_at: &'a str,
 }
 
-async fn record_attachment_add(
+pub(super) async fn record_attachment_add(
     conn: &mut SqliteConnection,
     workspace: &Workspace,
     task_id: &TaskId,
@@ -297,6 +306,73 @@ pub(super) async fn insert_prepared_attachment(
     .await
 }
 
+/// Validates the source and applies the optimization policy. The flag reports
+/// whether the stored bytes differ from the source.
+pub(super) async fn prepare_stored_image(
+    bytes: Vec<u8>,
+    declared_media_type: Option<String>,
+    policy: ImageOptimizationPolicy,
+) -> Result<(ValidatedImage, bool)> {
+    let source = validate_image(bytes, declared_media_type).await?;
+    let source_facts = source.facts.clone();
+    let optimized = optimize_image_bytes(&source_facts.media_type, source.bytes, policy).await?;
+    if optimized.optimized {
+        let image = validate_image(optimized.bytes, Some(source_facts.media_type.clone())).await?;
+        Ok((image, true))
+    } else {
+        Ok((
+            ValidatedImage {
+                bytes: optimized.bytes,
+                facts: source_facts,
+            },
+            false,
+        ))
+    }
+}
+
+/// Reserves local capacity and writes the content-addressed object. The
+/// returned staging lease protects the blob until the caller releases it.
+pub(super) async fn store_image_with_capacity(
+    conn: &mut SqliteConnection,
+    blob_dir: &Path,
+    policy: crate::attachments::lifecycle::LifecyclePolicy,
+    image: ValidatedImage,
+) -> Result<(StoredBlob, String)> {
+    let sha256 = sha256_hex(&image.bytes);
+    let byte_size = i64::try_from(image.bytes.len())?;
+    let capacity_reservation = crate::attachments::lifecycle::ensure_local_capacity(
+        conn,
+        blob_dir,
+        &sha256,
+        byte_size,
+        policy,
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
+    let staging_lease = crate::attachments::lifecycle::acquire_lease(
+        conn,
+        &sha256,
+        "staging",
+        &crate::attachments::lifecycle::SystemClock,
+    )
+    .await?;
+    let stored = match store_validated_blob(conn, blob_dir, image).await {
+        Ok(stored) => stored,
+        Err(error) => {
+            let _ = crate::attachments::lifecycle::release_lease(conn, &staging_lease).await;
+            if let Some(reservation_id) = capacity_reservation.as_deref() {
+                let _ =
+                    crate::attachments::lifecycle::release_reservation(conn, reservation_id).await;
+            }
+            return Err(error);
+        }
+    };
+    if let Some(reservation_id) = capacity_reservation {
+        crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await?;
+    }
+    Ok((stored, staging_lease))
+}
+
 struct AttachmentCommitIdentity {
     attachment_id: Option<String>,
     created_at: Option<String>,
@@ -361,55 +437,14 @@ async fn add_task_attachment_inner(
     validate_filename(input.filename.as_deref())?;
     validate_alt_text(input.alt_text.as_deref())?;
 
-    let source = validate_image(input.bytes, input.declared_media_type).await?;
-    let source_facts = source.facts.clone();
-    let optimized = optimize_image_bytes(
-        &source_facts.media_type,
-        source.bytes,
+    let (stored_image, optimized_flag) = prepare_stored_image(
+        input.bytes,
+        input.declared_media_type,
         input.optimization_policy,
     )
     .await?;
-    let optimized_flag = optimized.optimized;
-    let stored_image = if optimized_flag {
-        validate_image(optimized.bytes, Some(source_facts.media_type.clone())).await?
-    } else {
-        ValidatedImage {
-            bytes: optimized.bytes,
-            facts: source_facts,
-        }
-    };
-    let sha256 = sha256_hex(&stored_image.bytes);
-    let byte_size = i64::try_from(stored_image.bytes.len())?;
-    let capacity_reservation = crate::attachments::lifecycle::ensure_local_capacity(
-        conn,
-        blob_dir,
-        &sha256,
-        byte_size,
-        policy,
-        &crate::attachments::lifecycle::SystemClock,
-    )
-    .await?;
-    let staging_lease = crate::attachments::lifecycle::acquire_lease(
-        conn,
-        &sha256,
-        "staging",
-        &crate::attachments::lifecycle::SystemClock,
-    )
-    .await?;
-    let stored = match store_validated_blob(conn, blob_dir, stored_image).await {
-        Ok(stored) => stored,
-        Err(error) => {
-            let _ = crate::attachments::lifecycle::release_lease(conn, &staging_lease).await;
-            if let Some(reservation_id) = capacity_reservation.as_deref() {
-                let _ =
-                    crate::attachments::lifecycle::release_reservation(conn, reservation_id).await;
-            }
-            return Err(error);
-        }
-    };
-    if let Some(reservation_id) = capacity_reservation {
-        crate::attachments::lifecycle::release_reservation(conn, &reservation_id).await?;
-    }
+    let (stored, staging_lease) =
+        store_image_with_capacity(conn, blob_dir, policy, stored_image).await?;
     let database_result = async {
         let mutation_at = now();
         let mut tx = begin_immediate(conn).await?;
@@ -545,29 +580,7 @@ pub async fn delete_task_attachment(
     )
     .await?;
 
-    let change_id = append_change(
-        &mut tx,
-        ChangeEntity::Task,
-        &task_id,
-        Some("attachments"),
-        op_type::ATTACHMENT_DELETE,
-        ChangePayload::workspace(workspace)
-            .set("attachment_id", attachment_id)
-            .set("filename", attachment.filename.as_deref())
-            .set("media_type", &attachment.media_type)
-            .set("deleted_at", &deleted_at),
-    )
-    .await?;
-
-    sqlx::query(
-        "UPDATE task_attachments SET deleted = 1, deleted_at = ?, deleted_by_change_id = ? WHERE workspace_id = ? AND attachment_id = ?",
-    )
-    .bind(&deleted_at)
-    .bind(&change_id)
-    .bind(&workspace.id)
-    .bind(attachment_id)
-    .execute(&mut *tx)
-    .await?;
+    soft_delete_attachment_in_transaction(&mut tx, workspace, &attachment, &deleted_at).await?;
 
     crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
         &mut tx,
@@ -578,6 +591,38 @@ pub async fn delete_task_attachment(
     tx.commit().await?;
 
     attachment_by_id(conn, workspace, attachment_id).await
+}
+
+/// Records the delete and marks the row deleted. Callers reconcile liveness.
+pub(crate) async fn soft_delete_attachment_in_transaction(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    attachment: &TaskAttachment,
+    deleted_at: &str,
+) -> Result<()> {
+    let change_id = append_change(
+        conn,
+        ChangeEntity::Task,
+        &attachment.task_id,
+        Some("attachments"),
+        op_type::ATTACHMENT_DELETE,
+        ChangePayload::workspace(workspace)
+            .set("attachment_id", &attachment.attachment_id)
+            .set("filename", attachment.filename.as_deref())
+            .set("media_type", &attachment.media_type)
+            .set("deleted_at", deleted_at),
+    )
+    .await?;
+    sqlx::query(
+        "UPDATE task_attachments SET deleted = 1, deleted_at = ?, deleted_by_change_id = ? WHERE workspace_id = ? AND attachment_id = ?",
+    )
+    .bind(deleted_at)
+    .bind(&change_id)
+    .bind(&workspace.id)
+    .bind(&attachment.attachment_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 pub async fn attachment_read_items_by_task(

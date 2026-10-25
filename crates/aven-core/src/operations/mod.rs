@@ -1,5 +1,8 @@
+mod agent_assets;
+pub(crate) use agent_assets::{add_pinned_attachment_in_transaction, require_available_pin};
 mod attachments;
 pub(crate) use attachments::AttachmentReadFailure;
+pub(crate) use attachments::{find_attachment, soft_delete_attachment_in_transaction};
 pub(crate) mod conflicts;
 mod dependencies;
 mod epics;
@@ -60,5 +63,7 @@ pub use tasks::{
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use tasks::{create_task, update_task};
 
+pub use tasks::{
+    AttachmentChange, AttachmentChangeKind, ChangeSetOutcome, ChangeTarget, CreatedTaskRef,
+};
 pub(crate) use tasks::{ChangeSetOperation, IndexedChangeSetError};
-pub use tasks::{ChangeSetOutcome, ChangeTarget, CreatedTaskRef};

@@ -23,6 +23,7 @@ pub(super) async fn replace_from_export(
         "DELETE FROM recurrence_series",
         "DELETE FROM task_metadata",
         "DELETE FROM task_attachments",
+        "DELETE FROM local_agent_asset_pins",
         "DELETE FROM blob_inventory",
         "DELETE FROM task_related_links",
         "DELETE FROM task_epic_links",

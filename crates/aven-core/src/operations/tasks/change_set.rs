@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::{Result, ensure};
 use sqlx::SqliteConnection;
@@ -10,11 +10,16 @@ use super::mutation::{
 };
 use super::notes::add_note_in_transaction;
 use super::{TaskDraft, TaskUpdate};
+use crate::attachments::{validate_alt_text, validate_attachment_id, validate_filename};
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::{Database, begin_immediate, conflict_exists};
 use crate::error::CoreError;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
 use crate::labels::resolve_labels_in_workspace;
+use crate::operations::{
+    RecurrenceStructuralMutation, RecurrenceTaskMutation, add_pinned_attachment_in_transaction,
+    find_attachment, require_available_pin, soft_delete_attachment_in_transaction,
+};
 use crate::projects::{find_project_by_id_in_workspace, resolve_existing_project_in_workspace};
 use crate::refs::{DisplayRefContext, get_task_in_workspace};
 use crate::task_fields::TaskField;
@@ -35,9 +40,28 @@ pub struct CreatedTaskRef {
     pub display_ref: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentChangeKind {
+    Added,
+    /// The task already had a live attachment with the same bytes; nothing was written.
+    AlreadyPresent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentChange {
+    /// Zero-based input operation that requested the attachment.
+    pub operation_index: usize,
+    pub task_id: TaskId,
+    /// The inserted row, or the existing row that already holds the image.
+    pub attachment_id: String,
+    pub kind: AttachmentChangeKind,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeSetOutcome {
     pub created: BTreeMap<String, CreatedTaskRef>,
+    /// One entry per attachment operation, in input order.
+    pub attachments: Vec<AttachmentChange>,
     pub undo_token: String,
 }
 
@@ -54,6 +78,13 @@ pub(crate) enum ChangeSetOperation {
     AddNote {
         target: ChangeTarget,
         body: String,
+    },
+    AddAttachment {
+        target: ChangeTarget,
+        attachment_id: String,
+        pin_id: String,
+        filename: Option<String>,
+        alt_text: Option<String>,
     },
 }
 
@@ -91,7 +122,16 @@ pub(crate) struct ChangeSetUndoToken {
     workspace_id: WorkspaceId,
     expected: BTreeMap<TaskId, TaskUndoSnapshot>,
     notes: Vec<NoteGuard>,
+    /// Attachment rows inserted by the set; deduplicated adds are not recorded.
+    #[serde(default)]
+    attachments: Vec<AttachmentGuard>,
     groups: Vec<InverseGroup>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AttachmentGuard {
+    task_id: TaskId,
+    attachment_id: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -126,12 +166,22 @@ impl Database {
             workspace_id: workspace_id.clone(),
             expected: BTreeMap::new(),
             notes: Vec::new(),
+            attachments: Vec::new(),
             groups: Vec::new(),
         };
+        let mut attachments = Vec::new();
         for (index, op) in ops.into_iter().enumerate() {
-            execute_operation(&mut tx, &workspace, op, &mut locals, &mut token)
+            let attachment = execute_operation(&mut tx, &workspace, op, &mut locals, &mut token)
                 .await
                 .map_err(|error| IndexedChangeSetError::at(index, error))?;
+            if let Some((task_id, attachment_id, kind)) = attachment {
+                attachments.push(AttachmentChange {
+                    operation_index: index,
+                    task_id,
+                    attachment_id,
+                    kind,
+                });
+            }
         }
         // Final guards are checked once, not against intermediate states of repeated edits.
         for group in &token.groups {
@@ -159,6 +209,7 @@ impl Database {
         Ok(AppliedChangeSet {
             outcome: ChangeSetOutcome {
                 created,
+                attachments,
                 undo_token,
             },
             note_ids,
@@ -168,7 +219,7 @@ impl Database {
     pub(crate) async fn undo_consumer_change_set(&self, token: ChangeSetUndoToken) -> Result<()> {
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        workspace_for_id(&mut tx, &token.workspace_id).await?;
+        let workspace = workspace_for_id(&mut tx, &token.workspace_id).await?;
         for (task_id, expected) in &token.expected {
             let current = task_snapshot(&mut tx, &token.workspace_id, task_id).await?;
             ensure!(
@@ -188,6 +239,31 @@ impl Database {
                 CoreError::generation_conflict("note changed after the change set")
             );
         }
+        // Attachments go first so a created task is deleted without live attachments.
+        let deleted_at = crate::ids::now();
+        let mut hashes = Vec::new();
+        for guard in token.attachments.iter().rev() {
+            // A row that is already deleted or gone needs no inverse.
+            let attachment = find_attachment(&mut tx, &workspace.id, &guard.attachment_id)
+                .await?
+                .filter(|attachment| !attachment.deleted && attachment.task_id == guard.task_id);
+            if let Some(attachment) = attachment {
+                soft_delete_attachment_in_transaction(
+                    &mut tx,
+                    &workspace,
+                    &attachment,
+                    &deleted_at,
+                )
+                .await?;
+                hashes.push(attachment.sha256);
+            }
+        }
+        crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+            &mut tx,
+            &hashes,
+            &crate::attachments::lifecycle::SystemClock,
+        )
+        .await?;
         for group in token.groups.into_iter().rev() {
             apply_consumer_undo_commands(&mut tx, &token.workspace_id, &group.commands).await?;
             if let Some(activity) = group.queue_activity_before {
@@ -212,6 +288,7 @@ async fn validate_operations(
     ops: &[ChangeSetOperation],
 ) -> std::result::Result<(), IndexedChangeSetError> {
     let mut tasks = HashMap::<ChangeTarget, Task>::new();
+    let mut attachment_ids = HashSet::new();
     let at = crate::ids::now_utc();
     for (index, op) in ops.iter().enumerate() {
         let result: Result<()> = async {
@@ -332,6 +409,54 @@ async fn validate_operations(
                         .await?;
                     }
                 }
+                ChangeSetOperation::AddAttachment {
+                    target,
+                    attachment_id,
+                    pin_id,
+                    filename,
+                    alt_text,
+                } => {
+                    validate_attachment_id(attachment_id)
+                        .and_then(|()| validate_filename(filename.as_deref()))
+                        .and_then(|()| validate_alt_text(alt_text.as_deref()))
+                        .map_err(|error| CoreError::validation(error.to_string()))?;
+                    ensure!(
+                        attachment_ids.insert(attachment_id.clone()),
+                        CoreError::validation("duplicate attachment ID")
+                    );
+                    let task = effective_task(conn, workspace, target, &mut tasks).await?;
+                    if matches!(target, ChangeTarget::Existing(_)) {
+                        crate::operations::recurrence::validate_consumer_recurrence_mutation(
+                            conn,
+                            workspace,
+                            &task.id,
+                            task.status,
+                            None,
+                            at,
+                        )
+                        .await?;
+                    }
+                    let pin = require_available_pin(conn, &workspace.id, pin_id).await?;
+                    // A retried set may find its own earlier row; execution dedupes it.
+                    let existing: Option<(TaskId, String, bool)> = sqlx::query_as(
+                        "SELECT task_id, sha256, deleted != 0 FROM task_attachments
+                         WHERE workspace_id = ? AND attachment_id = ?",
+                    )
+                    .bind(&workspace.id)
+                    .bind(attachment_id)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                    if let Some((task_id, sha256, deleted)) = existing {
+                        ensure!(
+                            matches!(target, ChangeTarget::Existing(id) if *id == task_id)
+                                && sha256 == pin.sha256
+                                && !deleted,
+                            CoreError::validation(format!(
+                                "error attachment-id-in-use id={attachment_id}"
+                            ))
+                        );
+                    }
+                }
             }
             Ok(())
         }
@@ -432,7 +557,7 @@ async fn execute_operation(
     op: ChangeSetOperation,
     locals: &mut BTreeMap<String, TaskId>,
     token: &mut ChangeSetUndoToken,
-) -> Result<()> {
+) -> Result<Option<(TaskId, String, AttachmentChangeKind)>> {
     let group = match op {
         ChangeSetOperation::Create { local_id, draft } => {
             let inserted = insert_task(conn, workspace, draft, false, true).await?;
@@ -492,9 +617,53 @@ async fn execute_operation(
                 }],
             }
         }
+        ChangeSetOperation::AddAttachment {
+            target,
+            attachment_id,
+            pin_id,
+            filename,
+            alt_text,
+        } => {
+            let task_id = resolve_target(target, locals);
+            crate::operations::route_recurrence_task_mutation(
+                conn,
+                workspace,
+                &task_id,
+                RecurrenceTaskMutation::Structural(RecurrenceStructuralMutation::Attachments),
+                &crate::ids::now(),
+            )
+            .await?;
+            let pin = require_available_pin(conn, &workspace.id, &pin_id).await?;
+            let added = add_pinned_attachment_in_transaction(
+                conn,
+                workspace,
+                &task_id,
+                &attachment_id,
+                &pin,
+                filename.as_deref(),
+                alt_text.as_deref(),
+            )
+            .await?;
+            crate::attachments::lifecycle::reconcile_liveness_for_hashes_in_transaction(
+                conn,
+                std::slice::from_ref(&pin.sha256),
+                &crate::attachments::lifecycle::SystemClock,
+            )
+            .await?;
+            let kind = if added.inserted {
+                token.attachments.push(AttachmentGuard {
+                    task_id: task_id.clone(),
+                    attachment_id: added.attachment_id.clone(),
+                });
+                AttachmentChangeKind::Added
+            } else {
+                AttachmentChangeKind::AlreadyPresent
+            };
+            return Ok(Some((task_id, added.attachment_id, kind)));
+        }
     };
     if !group.commands.is_empty() {
         token.groups.push(group);
     }
-    Ok(())
+    Ok(None)
 }

@@ -1,6 +1,9 @@
+mod agent_assets;
+pub use agent_assets::{AgentAssetInput, ImageOptimizationPolicy, StagedAgentAsset};
 mod change_sets;
 pub use change_sets::{
-    ChangeOp, ChangeSetError, ChangeSetOutcome, ChangeTarget, CreatedTaskRef, NoteReceipt,
+    AttachmentChange, AttachmentChangeKind, ChangeOp, ChangeSetError, ChangeSetOutcome,
+    ChangeTarget, CreatedTaskRef, NoteReceipt,
 };
 mod epics;
 pub use epics::{EpicProgress, EpicSummary};
