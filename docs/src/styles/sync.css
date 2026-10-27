@@ -17,12 +17,13 @@
 .sync-steps b { font-size: 18px; font-weight: 600; letter-spacing: -.3px; }
 .sync-steps span { color: var(--muted); font-size: 15px; line-height: 1.7; }
 .sync-steps code { padding: 1px 5px; border-radius: 4px; background: #ffffff0d; color: #dac4f3; font-size: .88em; }
+.sync-transports h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 0; font-size: 22px; font-weight: 500; letter-spacing: -.7px; }
+.transport-tag { padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font: 11px/1.5 var(--mono); letter-spacing: .02em; }
 
 .cloud-row { display: flex; align-items: center; gap: 24px; margin-top: 16px; padding: 24px 26px; border: 1px dashed #4a4436; border-radius: 12px; transition: border-color 150ms ease-out; }
 .cloud-row:hover { border-color: #706448; }
 .cloud-row-copy { display: grid; gap: 8px; flex: 1; }
-.cloud-row .feature-label { align-items: center; gap: 10px; }
-.cloud-row b { font-size: 20px; font-weight: 600; letter-spacing: -.5px; }
+.cloud-row b { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 20px; font-weight: 600; letter-spacing: -.5px; }
 .cloud-row small { color: #bfbcb4; font-size: 15px; line-height: 1.7; }
 .cloud-row small code { padding: 1px 5px; border-radius: 4px; background: #ffffff0d; color: #dac4f3; font-size: .88em; }
 .cloud-row-go { color: #c9b87c; font: 20px var(--mono); transition: transform 150ms ease-out; }

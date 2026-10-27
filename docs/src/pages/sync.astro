@@ -13,9 +13,9 @@ const features = [
   { title: 'Nothing silently overwritten.', description: 'When two devices edit the same field between syncs, Aven keeps both values and asks you to choose.' },
 ];
 const transports = [
-  { label: 'RECOMMENDED', title: 'Private network', description: "Tailscale or WireGuard. Devices connect to the server's VPN address and nothing is exposed to the internet.", color: 'green', href: '/sync/setup/#start-a-server' },
-  { label: 'PUBLIC', title: 'Behind a TLS proxy', description: 'Put it behind the reverse proxy you already run and give devices its HTTPS URL.', color: 'blue', href: '/sync/setup/#use-a-public-tls-proxy' },
-  { label: 'CONTAINER', title: 'Docker or Compose', description: 'The same server in a container, with a volume for storage and an invitation-only setup.', color: 'orange', href: '/sync/setup/#run-with-docker' },
+  { title: 'Private network', description: "Tailscale or WireGuard. Devices connect to the server's VPN address and nothing is exposed to the internet.", href: '/sync/setup/#start-a-server', recommended: true },
+  { title: 'Behind a TLS proxy', description: 'Put it behind the reverse proxy you already run and give devices its HTTPS URL.', href: '/sync/setup/#use-a-public-tls-proxy' },
+  { title: 'Docker or Compose', description: 'The same server in a container, with a volume for storage and an invitation-only setup.', href: '/sync/setup/#run-with-docker' },
 ];
 ---
 
@@ -96,16 +96,14 @@ const transports = [
           <div class="feature-grid sync-transports">
             {transports.map((transport) => (
               <a class="feature" href={transport.href}>
-                <p class:list={['feature-label', transport.color]}>{transport.label}</p>
-                <h3>{transport.title}</h3>
+                <h3>{transport.title}{transport.recommended && <span class="transport-tag">Recommended</span>}</h3>
                 <p class="feature-description">{transport.description}</p>
               </a>
             ))}
           </div>
           <a class="cloud-row" href="https://cloud.aventasks.dev/">
             <span class="cloud-row-copy">
-              <span class="feature-label yellow">HOSTED <span class="cloud-preview">free preview</span></span>
-              <b>Or don't run a server: Aven Cloud</b>
+              <b>Or don't run a server: Aven Cloud <span class="cloud-preview">free preview</span></b>
               <small>Same end-to-end encryption. Get a setup invitation from Aven Cloud and paste it into <code>aven sync setup</code>.</small>
             </span>
             <span class="cloud-row-go" aria-hidden="true">→</span>
