@@ -1,0 +1,52 @@
+---
+import '../styles/feature-specimen.css';
+
+interface Props {
+  kind: string;
+}
+
+const { kind } = Astro.props;
+---
+
+<div class:list={['specimen', `specimen-${kind}`]} aria-hidden="true">
+  {kind === 'queue' && (
+    <div class="specimen-lines">
+      <span class="specimen-line ink">▸ Needs action<span class="faint">          <span class="specimen-count">3</span></span></span>
+      <span class="specimen-line specimen-in" style="--step:1"><span class="faint">api </span> Fix token refresh</span>
+      <span class="specimen-line specimen-in" style="--step:2"><span class="faint">web </span> Ship pricing page</span>
+    </div>
+  )}
+  {kind === 'schedule' && (
+    <div class="specimen-lines">
+      <span class="specimen-line"><span class="faint">task  </span> <span class="ink">Refresh hero copy</span></span>
+      <span class="specimen-line"><span class="faint">defer </span> <span class="specimen-swap"><span class="specimen-from">today</span><span class="specimen-to">until Mon</span></span></span>
+      <span class="specimen-line specimen-in specimen-late"><span class="faint">queue </span> hidden until Monday</span>
+    </div>
+  )}
+  {kind === 'context' && (
+    <div class="specimen-lines">
+      <span class="specimen-line ink">## Notes</span>
+      <span class="specimen-line specimen-in" style="--step:1">- Repro only on staging</span>
+      <span class="specimen-line specimen-in" style="--step:3"><span class="faint">![</span>trace.png<span class="faint">]  blocked by WEB-4K2</span></span>
+    </div>
+  )}
+  {kind === 'keyboard' && (
+    <div class="specimen-keys">
+      <kbd style="--step:0">j</kbd><kbd style="--step:1">k</kbd><kbd style="--step:2">/</kbd><kbd style="--step:3">e</kbd><kbd style="--step:4">u</kbd><span></span><kbd style="--step:5">:</kbd>
+    </div>
+  )}
+  {kind === 'local' && (
+    <div class="specimen-lines">
+      <span class="specimen-line"><span class="ink">aven.db</span><span class="faint">          2.4 MB</span></span>
+      <span class="specimen-line"><span class="faint">network </span> <span class="specimen-swap"><span class="specimen-from">online</span><span class="specimen-to">offline</span></span></span>
+      <span class="specimen-line specimen-in specimen-late"><span class="faint">tasks   </span> all 40 still here</span>
+    </div>
+  )}
+  {kind === 'sync' && (
+    <div class="specimen-lines">
+      <span class="specimen-line specimen-track"><span class="ink">laptop</span> ─────── <span class="ink">pi.lan</span> ─────── <span class="ink">phone</span><span class="specimen-packet"></span></span>
+      <span class="specimen-line specimen-in" style="--step:3"><span class="faint">server sees </span> ciphertext</span>
+      <span class="specimen-line specimen-in" style="--step:5"><span class="faint">phone       </span> decrypted locally</span>
+    </div>
+  )}
+</div>

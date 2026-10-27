@@ -9,6 +9,7 @@ import ArrowRightIcon from '../components/ArrowRightIcon.astro';
 import SyncTopology from '../components/SyncTopology.astro';
 import AgentSessions from '../components/agent-sessions/AgentSessions.astro';
 import QuickCapture from '../components/QuickCapture.astro';
+import FeatureSpecimen from '../components/FeatureSpecimen.astro';
 
 const heroViews = [
   { id: 'queue', caption: 'See what needs attention across your projects.', label: 'Queue', src: '/tui.webp', alt: 'Aven terminal UI showing a shared task queue, project sidebar, priorities, and selected task context.' },
@@ -24,12 +25,12 @@ const playStoreUrl = 'https://play.google.com/store/apps/details?id=fi.zendit.av
 const pairingVideoLabel = 'Pairing an iPhone: open Add device in the Aven TUI, scan the QR code with the iPhone app, and the queue appears on the phone. A task opens and its Markdown description scrolls.';
 
 const features = [
-  { label: '▸ NEEDS ACTION · FOCUS · SOON', title: 'Separate projects. One queue.', description: 'See what needs attention across your projects, or narrow your scope. Use separate workspaces to keep independent task collections apart.', color: 'violet', href: '/organize-tasks/' },
-  { label: 'DUE DATES · RECURRING', title: 'Give work its own time.', description: 'Due dates, deferred tasks, and recurring schedules. Keep later work out of the way until it belongs in front of you.', color: 'orange', href: '/schedule-tasks/' },
-  { label: 'MARKDOWN · NOTES · IMAGES', title: 'Keep the context attached.', description: 'Markdown, notes, images, epics, and dependencies. Pick up where you left off, or copy a Markdown task report for handoffs.', color: 'pink', href: '/concepts/' },
-  { label: 'KEYS · COMMANDS · UNDO', title: 'Stay on the keyboard.', description: 'Move, filter, edit, and undo without reaching for the mouse. A command palette fills in the gaps.', color: 'blue', href: '/tui/' },
-  { label: 'SQLITE · OFFLINE', title: 'Local is the default.', description: 'Your tasks live in SQLite, outside your repositories. Work offline. Switch branches. Keep your data.', color: 'green', href: '/backups/' },
-  { label: 'SYNC · SELF-HOSTED · E2EE', title: 'Sync you control', description: 'Works fully offline. Need it on more machines? Run the sync server on a Raspberry Pi and connect over your own network. Sync is end-to-end encrypted, so the server cannot read your tasks.', color: 'yellow', href: '/sync/' },
+  { specimen: 'queue', title: 'Separate projects. One queue.', description: 'See what needs attention across your projects, or narrow your scope. Use separate workspaces to keep independent task collections apart.', href: '/organize-tasks/' },
+  { specimen: 'schedule', title: 'Give work its own time.', description: 'Due dates, deferred tasks, and recurring schedules. Keep later work out of the way until it belongs in front of you.', href: '/schedule-tasks/' },
+  { specimen: 'context', title: 'Keep the context attached.', description: 'Markdown, notes, images, epics, and dependencies. Pick up where you left off, or copy a Markdown task report for handoffs.', href: '/concepts/' },
+  { specimen: 'keyboard', title: 'Stay on the keyboard.', description: 'Move, filter, edit, and undo without reaching for the mouse. A command palette fills in the gaps.', href: '/tui/' },
+  { specimen: 'local', title: 'Local is the default.', description: 'Your tasks live in SQLite, outside your repositories. Work offline. Switch branches. Keep your data.', href: '/backups/' },
+  { specimen: 'sync', title: 'Sync you control.', description: 'Works fully offline. Need it on more machines? Run the sync server on a Raspberry Pi and connect over your own network. Sync is end-to-end encrypted, so the server cannot read your tasks.', href: '/sync/' },
 ];
 const testimonials = [
   { quote: "This is by far the best TUI application I've come across in months.", author: 'Edke', source: 'GitHub', href: 'https://github.com/raine/aven/issues/5#issuecomment-5048980472' },
@@ -158,14 +159,10 @@ const testimonials = [
         </section>
 
         <section class="section" id="features" aria-label="Features">
-          <div class="feature-grid">
+          <div class="feature-grid" data-specimens>
             {features.map((feature) => (
               <a class="feature" href={feature.href}>
-                <p class:list={['feature-label', feature.color]}>
-                  {feature.label.split(' · ').map((term, index) => (
-                    <span class="feature-label-term">{index > 0 && <span class="feature-label-separator">· </span>}{term}</span>
-                  ))}
-                </p>
+                <FeatureSpecimen kind={feature.specimen} />
                 <h3>{feature.title}</h3>
                 <p class="feature-description">{feature.description}</p>
               </a>
@@ -264,6 +261,19 @@ const testimonials = [
     }
   }, { threshold: 0.4 });
   document.querySelectorAll<HTMLVideoElement>('video[data-autoplay]').forEach((video) => videoObserver.observe(video));
+
+  // Feature specimens play their short demo once, the first time the grid is in view.
+  const specimenObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      (entry.target as HTMLElement).dataset.playing = '';
+      specimenObserver.unobserve(entry.target);
+    }
+  }, { threshold: 0.4 });
+  document.querySelectorAll<HTMLElement>('[data-specimens]').forEach((grid) => {
+    grid.dataset.specimens = 'armed';
+    specimenObserver.observe(grid);
+  });
 
   const commands = {
     brew: 'brew install raine/aven/aven',

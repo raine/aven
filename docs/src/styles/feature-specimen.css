@@ -1,0 +1,44 @@
+/* Small product slices above each landing feature card. The finished state is
+   the default; [data-specimens='armed'] hides the start state until the grid
+   scrolls into view and gains data-playing. */
+.specimen { height: 96px; display: flex; align-items: center; margin-bottom: 8px; padding: 0 16px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.feature:hover .specimen { border-color: #4a433d; }
+.specimen-lines { font: 12px/1.75 var(--mono); color: var(--aven-body); }
+.specimen-line { display: block; white-space: pre; }
+.specimen .ink { font-weight: 500; color: var(--ink); }
+.specimen .faint { color: var(--faint); }
+.specimen-swap { display: inline-grid; }
+.specimen-swap > * { grid-area: 1 / 1; }
+.specimen-from { opacity: 0; }
+.specimen-to { color: var(--ink); }
+.specimen-track { position: relative; }
+.specimen-packet { position: absolute; top: 50%; left: 0; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--violet); opacity: 0; }
+.specimen-keys { display: flex; align-items: center; gap: 6px; }
+.specimen-keys span { width: 10px; }
+.specimen-keys kbd { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border: 1px solid #45403b; border-bottom-width: 2px; border-radius: 5px; background: var(--page); color: var(--ink); font: 13px var(--mono); }
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-specimens='armed']:not([data-playing]) .specimen-in,
+  [data-specimens='armed']:not([data-playing]) .specimen-to { opacity: 0; }
+  [data-specimens='armed']:not([data-playing]) .specimen-from { opacity: 1; }
+
+  [data-playing] .specimen-in { animation: specimen-in 240ms ease-out both; animation-delay: calc(var(--step, 0) * 260ms + 200ms); }
+  [data-playing] .specimen-late { animation-delay: 1300ms; }
+  [data-playing] .specimen-from { animation: specimen-out 200ms ease-out both 900ms; }
+  [data-playing] .specimen-to { animation: specimen-in 220ms ease-out both 1000ms; }
+  [data-playing] .specimen-count { display: inline-block; animation: specimen-in 220ms ease-out both 700ms; }
+  [data-playing] .specimen-keys kbd { animation: specimen-press 260ms ease-out both; animation-delay: calc(var(--step) * 220ms + 200ms); }
+  [data-playing] .specimen-packet { animation: specimen-packet 1100ms cubic-bezier(0.45, 0, 0.55, 1) both 200ms; }
+}
+
+@keyframes specimen-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes specimen-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-4px); } }
+@keyframes specimen-press {
+  0%, 100% { transform: none; }
+  40% { transform: translateY(1px) scale(.94); border-color: var(--aven-violet-line); color: var(--aven-violet-bright); }
+}
+@keyframes specimen-packet {
+  0% { opacity: 0; transform: translateX(3ch); }
+  10%, 90% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(31ch); }
+}
