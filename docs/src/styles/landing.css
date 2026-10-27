@@ -4,7 +4,7 @@
 :root {
   /* Relative bounds honor the reader's font preference. The positive constant
      keeps browser zoom enlarging text throughout the fluid interval. */
-  font-size: clamp(100%, calc(55% + 0.5vw), 135%);
+  font-size: clamp(100%, calc(70% + 0.3333vw), 125%);
   color-scheme: dark;
   --page: var(--aven-page);
   --panel: var(--aven-panel);
