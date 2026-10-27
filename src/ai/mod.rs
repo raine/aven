@@ -1,6 +1,7 @@
 pub(crate) mod check;
 mod registry;
 mod streaming;
+mod transcription;
 mod transport;
 
 use std::collections::VecDeque;
@@ -54,6 +55,7 @@ pub(crate) struct CapabilitiesResponse {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) setup_hint: Option<String>,
+    pub(crate) transcription: transcription::TranscriptionCapability,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -340,6 +342,7 @@ enum BackendState {
         backend: Box<dyn CompletionBackend>,
         schema: SchemaStrategy,
         tools: bool,
+        transcriber: Option<Box<transcription::Transcriber>>,
     },
     Unavailable {
         status: AvailabilityStatus,
@@ -422,10 +425,11 @@ impl AiService {
         }
         match registry::build_backend(*info, model, ai.endpoint.as_deref(), private_dir.as_deref())
         {
-            Ok(backend) => BackendState::Ready {
+            Ok((backend, transcriber)) => BackendState::Ready {
                 backend,
                 schema: info.schema,
                 tools: info.tools,
+                transcriber,
             },
             Err(_) => BackendState::Unavailable {
                 status: AvailabilityStatus::TemporarilyUnavailable,
@@ -455,6 +459,7 @@ impl AiService {
             provider: self.provider.clone(),
             model: self.model.clone(),
             setup_hint,
+            transcription: transcription::TranscriptionCapability::new(self.transcription_status()),
         }
     }
 
@@ -866,6 +871,7 @@ pub(crate) async fn capabilities_handler(
 }
 
 pub(crate) use streaming::streaming_handler;
+pub(crate) use transcription::transcription_handler;
 
 pub(crate) fn providers() -> &'static [registry::ProviderInfo] {
     registry::PROVIDERS

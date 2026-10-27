@@ -448,6 +448,36 @@ async fn unconfigured_ai_is_authenticated_bounded_and_does_not_block_sync_server
     assert_eq!(body["status"], "unconfigured");
     assert_eq!(body["completion_contract"], 1);
     assert_eq!(body["limits"]["max_request_bytes"], 524_288);
+    assert_eq!(body["transcription"]["contract"], 1);
+    assert_eq!(body["transcription"]["status"], "unconfigured");
+    assert_eq!(body["transcription"]["audio_format"], "audio/mp4");
+
+    let audio = b"\0\0\0\x18ftypM4A \0\0\0\0".to_vec();
+    let transcription = client
+        .post(format!("{url}/ai/transcriptions"))
+        .header("content-type", "audio/mp4")
+        .body(audio.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(transcription.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let transcription = client
+        .post(format!("{url}/ai/transcriptions"))
+        .bearer_auth(&credential)
+        .header("content-type", "audio/mp4")
+        .body(audio)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        transcription.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(transcription.headers()["cache-control"], "no-store");
+    assert_eq!(
+        transcription.json::<serde_json::Value>().await.unwrap()["error"]["category"],
+        "unconfigured"
+    );
 
     let completion = client
         .post(format!("{url}/ai/completions/stream"))

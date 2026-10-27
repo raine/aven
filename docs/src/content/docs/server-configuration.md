@@ -323,10 +323,26 @@ provider. Some providers keep generating, and billing, after that.
 `aven server ai check` and `aven ai check` each make two billable calls.
 `aven server ai status`, `aven ai status`, and `aven doctor` make none.
 
+### Voice transcription
+
+When the server's provider is ChatGPT and its login is present, phones can
+send voice recordings to the server for transcription instead of transcribing
+on the device. Other providers don't offer this. It needs no extra setting.
+
+The server forwards each recording to ChatGPT's transcription service with the
+server's ChatGPT login and returns only the text. That service is an internal
+ChatGPT endpoint, not a documented API, so it can change or stop working
+without notice. Phones record at most five minutes of AAC audio in an M4A file,
+up to 4 MiB, and each recording counts against the same `ai.requests_per_minute`,
+`ai.max_concurrent_requests`, and `ai.timeout_seconds` as Ask Aven calls.
+
 ### Privacy
 
-Ask Aven turns speech into text on the phone; audio never leaves it. The phone
-sends your request, the conversation so far, and the task content the AI asks
+With on-device dictation, Ask Aven turns speech into text on the phone and
+audio never leaves it. With [voice transcription](#voice-transcription), the
+recording goes through your server to OpenAI. The server doesn't store the
+audio or the text, but OpenAI reports keeping each uploaded recording for 30
+days, and its own retention policy applies. The phone sends your request, the conversation so far, and the task content the AI asks
 for, such as titles, descriptions, notes, projects, and labels, to your server.
 The server forwards them to the configured provider, whose own retention
 policy applies. Encrypted sync does not protect this text from the server or
@@ -334,8 +350,8 @@ the provider.
 
 The server can't read your synced tasks, and doesn't run tools or keep
 conversations: it makes one provider call per request. Its logs record the
-provider, outcome, duration, and token counts, never prompts, task content, or
-responses.
+provider, outcome, duration, and token counts, never prompts, task content,
+responses, audio, or transcripts.
 
 Every device enrolled in sync can use the server's AI, with its sync credential.
 Removing a device from sync also removes its AI access, without a restart.

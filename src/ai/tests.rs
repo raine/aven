@@ -1,6 +1,6 @@
 use super::*;
 
-struct PendingBackend;
+pub(super) struct PendingBackend;
 
 impl CompletionBackend for PendingBackend {
     fn stream(&self, _request: RigRequest) -> registry::StreamingFuture<'_> {
@@ -8,12 +8,13 @@ impl CompletionBackend for PendingBackend {
     }
 }
 
-fn ready_service() -> AiService {
+pub(super) fn ready_service() -> AiService {
     AiService {
         state: BackendState::Ready {
             backend: Box::new(PendingBackend),
             schema: SchemaStrategy::NativeVerbatim,
             tools: true,
+            transcriber: None,
         },
         provider: Some("test".to_string()),
         model: Some("test-model".to_string()),
@@ -142,6 +143,7 @@ async fn responses_wire_sends_images_as_data_url_input_images() {
         backend: Box::new(client.completion_model("fixture-model")),
         schema: SchemaStrategy::Prompted,
         tools: true,
+        transcriber: None,
     };
     let data = STANDARD.encode(b"\xff\xd8\xff fixture");
     let _ = service
@@ -869,6 +871,7 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
             backend: Box::new(client.completion_model("fixture-model")),
             schema: SchemaStrategy::Prompted,
             tools: true,
+            transcriber: None,
         };
         let mut request = tool_request();
         request.tools[0].parameters = serde_json::json!({"type":"object", "properties":{"status":{"type":"string", "enum":null}}});

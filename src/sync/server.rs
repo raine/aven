@@ -231,6 +231,9 @@ async fn serve(bind: SocketAddr, unsafe_public_bind: bool, config: &ServerConfig
                 .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
         )
         .layer(RequestDecompressionLayer::new())
+        // Uploaded audio stays outside request decompression, so the handler
+        // owns every rejection.
+        .route("/ai/transcriptions", post(ai::transcription_handler))
         .layer(middleware::from_fn_with_state(
             database.clone(),
             verify_ai_auth,

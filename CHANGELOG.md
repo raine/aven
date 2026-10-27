@@ -5,7 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Set up AI on your self-hosted sync server for [Ask Aven](https://aventasks.dev/mobile-app/#ask-aven) on iPhone. `aven server ai setup` walks through choosing a provider and model, logging in, and checking that the model can call tools. The server logs its AI state at startup, and `aven ai status`, `aven ai check`, and `aven doctor` test the running server from any paired computer. See [Server configuration](https://aventasks.dev/server-configuration/#ai-for-ask-aven).
+- Set up AI on your self-hosted sync server for [Ask Aven](https://aventasks.dev/mobile-app/#ask-aven) on iPhone. `aven server ai setup` walks through choosing a provider and model, logging in, and checking that the model can call tools. The server logs its AI state at startup, and `aven ai status`, `aven ai check`, and `aven doctor` test the running server from any paired computer. When the provider is ChatGPT, the server can also transcribe voice recordings from the phone; see [Voice transcription](https://aventasks.dev/server-configuration/#voice-transcription). See [Server configuration](https://aventasks.dev/server-configuration/#ai-for-ask-aven).
 - Breaking: `aven server` reads its settings from an optional [`server.yaml`](https://aventasks.dev/server-configuration/) beside its storage and no longer reads `config.yaml`. Server image retention and quota move from `local.attachment_lifecycle.server_grace_days` and `server_workspace_quota_bytes` to `attachments.grace_days` and `attachments.workspace_quota_bytes` in `server.yaml`; the old keys are ignored.
 
 ## v0.1.51 (2026-10-21)

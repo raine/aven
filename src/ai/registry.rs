@@ -2,7 +2,7 @@ use std::env;
 use std::fmt::Debug;
 use std::future::Future;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -15,6 +15,7 @@ use rig_core::providers::{
     perplexity, together, venice, xai, xiaomimimo, zai,
 };
 
+use super::transcription::Transcriber;
 use super::transport::BoundedHttpClient;
 
 pub(crate) type StreamingFuture<'a> = Pin<
@@ -252,6 +253,10 @@ pub(crate) fn provider_info(id: &str) -> Option<&'static ProviderInfo> {
     PROVIDERS.iter().find(|provider| provider.id == id)
 }
 
+fn chatgpt_auth_file(private_dir: &Path) -> PathBuf {
+    private_dir.join("chatgpt/auth.json")
+}
+
 pub(crate) fn credentials_present(info: ProviderInfo, private_dir: Option<&Path>) -> bool {
     match info.auth {
         AuthKind::ApiKey(name) => name.split(" or ").any(|name| {
@@ -260,7 +265,7 @@ pub(crate) fn credentials_present(info: ProviderInfo, private_dir: Option<&Path>
                 .is_some_and(|value| !value.trim().is_empty())
         }),
         AuthKind::OAuth if info.id == "chatgpt" => {
-            private_dir.is_some_and(|dir| dir.join("chatgpt/auth.json").is_file())
+            private_dir.is_some_and(|dir| chatgpt_auth_file(dir).is_file())
         }
         AuthKind::OAuth if info.id == "copilot" => private_dir.is_some_and(|dir| {
             dir.join("copilot/access-token").is_file() || dir.join("copilot/api-key.json").is_file()
@@ -366,12 +371,16 @@ fn copilot_client(
     builder.build().map_err(Into::into)
 }
 
+/// The completion backend, plus a transcriber for ChatGPT that shares the
+/// backend's client and so its login refresh.
+pub(crate) type Backends = (Box<dyn CompletionBackend>, Option<Box<Transcriber>>);
+
 pub(crate) fn build_backend(
     info: ProviderInfo,
     model: &str,
     endpoint: Option<&str>,
     private_dir: Option<&Path>,
-) -> Result<Box<dyn CompletionBackend>> {
+) -> Result<Backends> {
     let backend = match info.id {
         "anthropic" => api_key_model!(anthropic, model, info.auth),
         "azure" => {
@@ -443,11 +452,13 @@ pub(crate) fn build_backend(
         }
         "chatgpt" => {
             let private_dir = private_dir.context("AI credential storage is unavailable")?;
-            Box::new(
-                chatgpt_client(private_dir, false)
-                    .context("construct ChatGPT provider")?
-                    .completion_model(model),
-            )
+            let client =
+                chatgpt_client(private_dir, false).context("construct ChatGPT provider")?;
+            let transcriber = Box::new(Transcriber::new(
+                client.clone(),
+                chatgpt_auth_file(private_dir),
+            ));
+            return Ok((Box::new(client.completion_model(model)), Some(transcriber)));
         }
         "copilot" => {
             let private_dir = private_dir.context("AI credential storage is unavailable")?;
@@ -459,7 +470,7 @@ pub(crate) fn build_backend(
         }
         _ => bail!("unsupported AI provider {}", info.id),
     };
-    Ok(backend)
+    Ok((backend, None))
 }
 
 pub(crate) async fn login(provider: &str, private_dir: &Path) -> Result<()> {
