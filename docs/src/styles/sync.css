@@ -7,9 +7,9 @@
 .sync-hero-copy > .cloud-footnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; max-width: 440px; margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font: 15px/1.7 var(--mono); }
 
 .sync-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.sync-card { padding: 30px 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.sync-card h3 { margin-top: 14px; font-size: 22px; font-weight: 600; letter-spacing: -.5px; }
-.sync-card > p:not(.feature-label) { margin-top: 12px; color: #bfbcb4; font-size: 15.5px; line-height: 1.7; }
+.sync-card { padding: 34px 28px 30px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.sync-card h3 { font-size: 25px; font-weight: 500; letter-spacing: -.9px; line-height: 1.2; text-wrap: balance; }
+.sync-card > p { max-width: 52ch; margin-top: 12px; color: #bfbcb4; font-size: 15.5px; line-height: 1.7; }
 
 .sync-steps { counter-reset: step; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
 .sync-steps li { counter-increment: step; display: grid; align-content: start; gap: 8px; padding: 24px; border-top: 1px solid var(--violet); background: linear-gradient(180deg, #171620, transparent); }
