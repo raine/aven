@@ -29,7 +29,7 @@ tokio = { version = "1.45", features = ["macros", "sync", "time"] }
 tracing = "0.1"
 url = "2.5"
 zeroize = "1.8"
-zstd = "0.13"
+zstd = "0.14.3"
 
 [package]
 name = "aven"
