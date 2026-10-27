@@ -44,7 +44,7 @@ const waveform = [3, 6, 9, 5, 11, 7, 4, 10, 12, 6, 3, 8, 11, 9, 5, 7, 12, 10, 4,
     <li class="capture-source">
       <p class="capture-source-label pink">Voice note</p>
       <div class="capture-sample capture-chat">
-        <span class="capture-voice"><span class="capture-play" aria-hidden="true">▶</span><span class="capture-wave" aria-hidden="true">{waveform.map((height) => <i style={`--h: ${height}px`}></i>)}</span><span class="capture-voice-time">0:12</span></span>
+        <span class="capture-voice"><span class="capture-play" aria-hidden="true">▶</span><span class="capture-wave" aria-hidden="true">{waveform.map((height) => <i style={`--h: ${height / 16}rem`}></i>)}</span><span class="capture-voice-time">0:12</span></span>
         <span class="capture-reply">Added to Aven: <b>AVN-01PD</b></span>
       </div>
       <p class="capture-source-note">Telegram via OpenClaw or similar</p>

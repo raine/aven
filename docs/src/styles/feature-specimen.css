@@ -1,9 +1,9 @@
 /* Small product slices above each landing feature card. The finished state is
    the default; [data-specimens='armed'] hides the start state until the grid
    scrolls into view and gains data-playing. */
-.specimen { height: 96px; display: flex; align-items: center; margin-bottom: 8px; padding: 0 16px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.specimen { height: 6rem; display: flex; align-items: center; margin-bottom: 0.5rem; padding: 0 1rem; overflow: hidden; border: 1px solid var(--line); border-radius: 0.5rem; background: var(--panel); }
 .feature:hover .specimen { border-color: #4a433d; }
-.specimen-lines { font: 12px/1.75 var(--mono); color: var(--aven-body); }
+.specimen-lines { font: 0.75rem/1.75 var(--mono); color: var(--aven-body); }
 .specimen-line { display: block; white-space: pre; }
 .specimen .ink { font-weight: 500; color: var(--ink); }
 .specimen .faint { color: var(--faint); }
@@ -12,10 +12,10 @@
 .specimen-from { opacity: 0; }
 .specimen-to { color: var(--ink); }
 .specimen-track { position: relative; }
-.specimen-packet { position: absolute; top: 50%; left: 0; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--violet); opacity: 0; }
-.specimen-keys { display: flex; align-items: center; gap: 6px; }
-.specimen-keys span { width: 10px; }
-.specimen-keys kbd { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border: 1px solid #45403b; border-bottom-width: 2px; border-radius: 5px; background: var(--page); color: var(--ink); font: 13px var(--mono); }
+.specimen-packet { position: absolute; top: 50%; left: 0; width: 0.375rem; height: 0.375rem; margin-top: -0.1875rem; border-radius: 50%; background: var(--violet); opacity: 0; }
+.specimen-keys { display: flex; align-items: center; gap: 0.375rem; }
+.specimen-keys span { width: 0.625rem; }
+.specimen-keys kbd { display: inline-grid; place-items: center; min-width: 1.75rem; height: 1.75rem; padding: 0 0.375rem; border: 1px solid #45403b; border-bottom-width: 2px; border-radius: 0.3125rem; background: var(--page); color: var(--ink); font: 0.8125rem var(--mono); }
 
 @media (prefers-reduced-motion: no-preference) {
   [data-specimens='armed']:not([data-playing]) .specimen-in,
@@ -31,11 +31,11 @@
   [data-playing] .specimen-packet { animation: specimen-packet 1100ms cubic-bezier(0.45, 0, 0.55, 1) both 200ms; }
 }
 
-@keyframes specimen-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@keyframes specimen-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-4px); } }
+@keyframes specimen-in { from { opacity: 0; transform: translateY(0.25rem); } to { opacity: 1; transform: none; } }
+@keyframes specimen-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-0.25rem); } }
 @keyframes specimen-press {
   0%, 100% { transform: none; }
-  40% { transform: translateY(1px) scale(.94); border-color: var(--aven-violet-line); color: var(--aven-violet-bright); }
+  40% { transform: translateY(0.0625rem) scale(.94); border-color: var(--aven-violet-line); color: var(--aven-violet-bright); }
 }
 @keyframes specimen-packet {
   0% { opacity: 0; transform: translateX(3ch); }

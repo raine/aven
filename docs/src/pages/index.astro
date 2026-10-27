@@ -211,7 +211,7 @@ const testimonials = [
     const tablist = showcase.querySelector<HTMLElement>('[role="tablist"]')!;
     const tabs = Array.from(tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
     const panels = Array.from(showcase.querySelectorAll<HTMLElement>('[role="tabpanel"]'));
-    const desktop = window.matchMedia('(min-width: 1001px)');
+    const desktop = window.matchMedia('(width > 62.5em)');
     const updateOrientation = () => tablist.setAttribute('aria-orientation', desktop.matches ? 'vertical' : 'horizontal');
     updateOrientation();
     desktop.addEventListener('change', updateOrientation);

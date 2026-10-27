@@ -226,7 +226,7 @@ function follow(node: HTMLElement) {
   const feed = node.closest<HTMLElement>('.feed')!;
   const vp = feed.parentElement!;
   const bottom = node.getBoundingClientRect().bottom - feed.getBoundingClientRect().top;
-  const shift = Math.max(0, Math.ceil(bottom + 24 - vp.clientHeight));
+  const shift = Math.max(0, Math.ceil(bottom + parseFloat(getComputedStyle(feed).paddingBottom) - vp.clientHeight));
   feed.style.transform = `translateY(${-shift}px)`;
   vp.classList.toggle('scrolled', shift > 0);
 }

@@ -1,6 +1,6 @@
 /* ---------- Playback ---------- */
 /* Without JS or motion, the server-rendered scene shows in full with its queue state. */
-.agent-section[data-motion] .step { opacity: 0; transform: translateY(6px); }
+.agent-section[data-motion] .step { opacity: 0; transform: translateY(0.375rem); }
 .agent-section[data-motion] .step.in {
   opacity: 1; transform: none;
   transition: opacity 300ms cubic-bezier(0.23, 1, 0.32, 1), transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
@@ -37,16 +37,16 @@
 
 /* ---------- Queue view ---------- */
 /* Colors and glyphs follow the aven TUI theme (src/tui/theme.rs, widgets.rs). */
-.agent-section .q { margin-top: 14px; background: #171620; border: 1px solid #4b3a66; border-radius: 10px; overflow: hidden; font: 13px/1.6 var(--mono); }
-.agent-section .q-bar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-bottom: 1px solid #332d40; color: var(--faint); font-size: 12px; }
+.agent-section .q { margin-top: 0.875rem; background: #171620; border: 1px solid #4b3a66; border-radius: 0.625rem; overflow: hidden; font: 0.8125rem/1.6 var(--mono); }
+.agent-section .q-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.875rem; padding: 0.625rem 1.25rem; border-bottom: 1px solid #332d40; color: var(--faint); font-size: 0.75rem; }
 .agent-section .q-bar > * { white-space: nowrap; }
 .agent-section .q-bar b { color: var(--ink); font-weight: 400; }
-.agent-section .q-count { margin-left: auto; padding: 0 8px; border-radius: 99px; background: #3a2d52; color: #d8b8ff; }
-.agent-section .q-head, .agent-section .q-row { display: grid; grid-template-columns: 8ch minmax(0, 1fr) 4ch 8ch 1ch; gap: 1.5ch; padding: 0 20px; white-space: nowrap; }
-.agent-section .q-head { padding-block: 2px; background: #221f2b; color: #93918a; font-weight: 600; }
+.agent-section .q-count { margin-left: auto; padding: 0 0.5rem; border-radius: 6.1875rem; background: #3a2d52; color: #d8b8ff; }
+.agent-section .q-head, .agent-section .q-row { display: grid; grid-template-columns: 8ch minmax(0, 1fr) 4ch 8ch 1ch; gap: 1.5ch; padding: 0 1.25rem; white-space: nowrap; }
+.agent-section .q-head { padding-block: 0.125rem; background: #221f2b; color: #93918a; font-weight: 600; }
 /* Room for the most rows the story shows at once, so the section never changes height. */
-.agent-section .q-list { position: relative; padding: 4px 0 10px; min-height: calc(11 * 1.6em + 14px); box-sizing: border-box; }
-.agent-section .q-sect { padding: 0 20px; background: #1d1a26; color: #a68bff; font-weight: 700; }
+.agent-section .q-list { position: relative; padding: 0.25rem 0 0.625rem; min-height: calc(11 * 1.6em + 0.875rem); box-sizing: border-box; }
+.agent-section .q-sect { padding: 0 1.25rem; background: #1d1a26; color: #a68bff; font-weight: 700; }
 /* Fixed row height: fallback-font glyphs like ● would otherwise grow the line box. */
 .agent-section .q-row, .agent-section .q-sect { position: relative; height: 1.6em; }
 .agent-section .q-row > * { position: relative; }
@@ -70,41 +70,41 @@
 .agent-section .q-row::before { content: ''; position: absolute; inset: 0; background: #2e2850; opacity: 0; }
 .agent-section .q-row.flash::before { animation: agent-row-flash 1400ms ease-out both; }
 /* Reads mark rows with a rail; writes fill them. */
-.agent-section .q-row.peek::before { background: linear-gradient(90deg, #a68bff 0 2px, #241f33 2px); animation: agent-row-flash 1600ms ease-out both; }
+.agent-section .q-row.peek::before { background: linear-gradient(90deg, #a68bff 0 0.125rem, #241f33 0.125rem); animation: agent-row-flash 1600ms ease-out both; }
 @keyframes agent-row-flash { 0% { opacity: 0; } 10%, 50% { opacity: 1; } 100% { opacity: 0; } }
 .agent-section .q .pop { display: inline-block; animation: agent-pop 260ms cubic-bezier(0.23, 1, 0.32, 1); }
 @keyframes agent-pop { 0% { transform: scale(1.25); } 100% { transform: none; } }
 .agent-section .q .entering { animation: agent-row-in 320ms cubic-bezier(0.23, 1, 0.32, 1) both; }
-@keyframes agent-row-in { from { opacity: 0; transform: translateX(-8px); } }
+@keyframes agent-row-in { from { opacity: 0; transform: translateX(-0.5rem); } }
 .agent-section .q .leaving { opacity: 0; transition: opacity 200ms ease-out; }
 
 /* ---------- Fixed-height terminal window ---------- */
-.agent-section .viewport { position: relative; height: 380px; overflow-y: auto; }
+.agent-section .viewport { position: relative; height: 23.75rem; overflow-y: auto; }
 .agent-section[data-motion]:not(.finished) .viewport { overflow: hidden; }
 .agent-section .feed { position: relative; transition: transform 450ms cubic-bezier(0.23, 1, 0.32, 1); }
-.agent-section .viewport.scrolled { -webkit-mask-image: linear-gradient(transparent, #000 36px); mask-image: linear-gradient(transparent, #000 36px); }
+.agent-section .viewport.scrolled { -webkit-mask-image: linear-gradient(transparent, #000 2.25rem); mask-image: linear-gradient(transparent, #000 2.25rem); }
 .agent-section .chapters { display: grid; }
 .agent-section .chapters > .chapter { grid-area: 1 / 1; transition: opacity 250ms ease-out; }
 .agent-section .chapters > .chapter:not(.on) { opacity: 0; visibility: hidden; transition: opacity 150ms ease-out, visibility 0s 150ms; }
 
 /* ---------- Scene list: follows playback, a click jumps to a scene ---------- */
-.agent-section .scene-list { display: grid; margin: 30px 0 0; padding: 0; list-style: none; border-left: 1px solid #332d40; }
-.agent-section .scene-list button { position: relative; display: grid; gap: 2px; width: 100%; padding: 9px 0 9px 20px; border: 0; background: none; color: var(--faint); font: inherit; text-align: left; cursor: pointer; }
+.agent-section .scene-list { display: grid; margin: 1.875rem 0 0; padding: 0; list-style: none; border-left: 1px solid #332d40; }
+.agent-section .scene-list button { position: relative; display: grid; gap: 0.125rem; width: 100%; padding: 0.5625rem 0 0.5625rem 1.25rem; border: 0; background: none; color: var(--faint); font: inherit; text-align: left; cursor: pointer; }
 /* The rail fills as the scene plays. */
-.agent-section .scene-list button::before { content: ''; position: absolute; left: -1px; top: 0; bottom: 0; width: 2px; background: var(--violet); transform: scaleY(var(--p, 0)); transform-origin: top; transition: transform 400ms cubic-bezier(0.23, 1, 0.32, 1); }
+.agent-section .scene-list button::before { content: ''; position: absolute; left: -1px; top: 0; bottom: 0; width: 0.125rem; background: var(--violet); transform: scaleY(var(--p, 0)); transform-origin: top; transition: transform 400ms cubic-bezier(0.23, 1, 0.32, 1); }
 .agent-section .scene-list button:not([aria-selected="true"])::before { transform: scaleY(0); }
-.agent-section .scene-list b { color: var(--muted); font: 500 16px/1.4 var(--aven-font), sans-serif; transition: color 200ms ease-out; }
-.agent-section .scene-list span { font-size: 14px; line-height: 1.5; }
+.agent-section .scene-list b { color: var(--muted); font: 500 1rem/1.4 var(--aven-font), sans-serif; transition: color 200ms ease-out; }
+.agent-section .scene-list span { font-size: 0.875rem; line-height: 1.5; }
 .agent-section .scene-list button:hover b, .agent-section .scene-list button[aria-selected="true"] b { color: var(--ink); }
-.agent-section .scene-list i { margin-right: 8px; color: var(--violet); font: 13px var(--mono); font-style: normal; }
+.agent-section .scene-list i { margin-right: 0.5rem; color: var(--violet); font: 0.8125rem var(--mono); font-style: normal; }
 
-@media (max-width: 760px) {
-  .agent-section .viewport { height: 320px; }
-  .agent-section .scene-list { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; border-left: 0; }
-  .agent-section .scene-list button { width: auto; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+@media (max-width: 47.5em) {
+  .agent-section .viewport { height: 20rem; }
+  .agent-section .scene-list { display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; border-left: 0; }
+  .agent-section .scene-list button { width: auto; padding: 0.25rem 0.625rem; border-radius: 0.375rem; white-space: nowrap; }
   .agent-section .scene-list button::before { content: none; }
   .agent-section .scene-list button[aria-selected="true"] { background: #241c2c; }
-  .agent-section .scene-list b { font: 12px/1.5 var(--mono); }
+  .agent-section .scene-list b { font: 0.75rem/1.5 var(--mono); }
   .agent-section .scene-list span { display: none; }
   .agent-section .q-head, .agent-section .q-row { grid-template-columns: 8ch minmax(0, 1fr) 4ch 8ch; }
   .agent-section .q-head > :nth-child(5), .agent-section .q-row > .pri { display: none; }
