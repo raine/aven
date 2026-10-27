@@ -1430,6 +1430,43 @@ async fn missing_installation_or_protected_coverage_refuses_before_preparation()
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn overlapping_credential_reads_and_rounds_run_in_turn() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+    let f = fixture().await;
+    converge(&f).await;
+    let held = f
+        .peer_store
+        .active_inputs(&f.peer, &f.origin)
+        .await
+        .unwrap();
+    let device = held.device();
+    let mut reader = Box::pin(f.peer_store.active_inputs(&f.peer, &f.origin));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(reader.as_mut().poll(&mut context).is_pending());
+    // Replacement still refuses at once instead of queueing behind readers.
+    assert!(
+        aven_core::db::restore_database_file(f.peer.path(), f.seed.path())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("installation-busy")
+    );
+    drop(held);
+    assert_eq!(reader.await.unwrap().device(), device);
+    // A sync round overlapping a credential read through an independent handle.
+    let independent = Database::open(f.peer.path()).await.unwrap();
+    let client = Client::new(&f.origin).unwrap();
+    let blobs = blobs(&f.peer);
+    let (round, inputs) = tokio::join!(
+        client.round(&f.peer_store, &f.peer, &blobs),
+        f.peer_store.active_inputs(&independent, &f.origin),
+    );
+    round.unwrap();
+    assert_eq!(inputs.unwrap().device(), device);
+}
+
 #[tokio::test]
 async fn note_and_relationship_removals_use_existing_domain_operations() {
     let f = fixture().await;

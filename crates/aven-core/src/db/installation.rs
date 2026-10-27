@@ -3,14 +3,26 @@
 //! A marker survives SQLite replacement. It never authorizes initialization or
 //! adoption. Locks serialize supported replacement with source preparation, not
 //! arbitrary database users. Ordinary operations share the lock; source setup
-//! and replacement acquire it exclusively. All acquisition is nonblocking.
+//! and replacement acquire it exclusively. Protected key store operations also
+//! acquire it exclusively, which keeps them out of backups and replacement and
+//! keeps one another from blocking a thread on the store lock. They wait briefly
+//! for another holder instead of failing, so overlapping sync rounds and
+//! credential reads run in turn. All other acquisition is nonblocking.
 //! Only a sync reset removes the marker, after the database's sync state and
 //! protected keys are gone. Live raw replacement is unsupported.
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
+use tokio::time::Instant;
+
+/// Longer than any key store operation that stays local, shorter than one that
+/// waits on the network.
+const KEY_STORE_WAIT: Duration = Duration::from_secs(10);
+const KEY_STORE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const BUSY: &str = "error installation-busy";
 
 pub struct InstallationGuard {
     _lock: File,
@@ -32,6 +44,24 @@ impl InstallationGuard {
         Self::acquire_mode(path, true)
     }
 
+    /// Exclusive, waiting up to [`KEY_STORE_WAIT`] while another holder
+    /// finishes before failing with `installation-busy`.
+    pub(crate) async fn acquire_waiting(path: &Path) -> Result<Self> {
+        Self::acquire_waiting_for(path, KEY_STORE_WAIT).await
+    }
+
+    async fn acquire_waiting_for(path: &Path, wait: Duration) -> Result<Self> {
+        let deadline = Instant::now() + wait;
+        loop {
+            if let Some(guard) = Self::try_acquire_mode(path, true)? {
+                return Ok(guard);
+            }
+            let now = Instant::now();
+            ensure!(now < deadline, BUSY);
+            tokio::time::sleep(KEY_STORE_POLL_INTERVAL.min(deadline - now)).await;
+        }
+    }
+
     /// Ordinary operations share exclusion against source setup and replacement.
     pub(crate) fn acquire_plaintext(path: &Path) -> Result<Self> {
         let guard = Self::acquire_mode(path, false)?;
@@ -45,6 +75,11 @@ impl InstallationGuard {
     }
 
     fn acquire_mode(path: &Path, exclusive: bool) -> Result<Self> {
+        Self::try_acquire_mode(path, exclusive)?.context(BUSY)
+    }
+
+    /// The guard, or `None` while a conflicting holder has the lock.
+    fn try_acquire_mode(path: &Path, exclusive: bool) -> Result<Option<Self>> {
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -81,18 +116,22 @@ impl InstallationGuard {
         }
         let lock = crate::private_fs::open_lock_file(&lock_path)
             .context("error installation-lock-unsafe")?;
-        if exclusive {
+        let locked = if exclusive {
             lock.try_lock()
         } else {
             lock.try_lock_shared()
+        };
+        match locked {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Error(error)) => return Err(error).context(BUSY),
         }
-        .context("error installation-busy")?;
-        Ok(Self {
+        Ok(Some(Self {
             _lock: lock,
             marker: sidecar(".aven-e2ee-bound"),
             identity,
             exclusive,
-        })
+        }))
     }
 
     pub fn identity(&self) -> &Path {
@@ -205,6 +244,54 @@ mod tests {
             drop(next);
             assert!(InstallationGuard::acquire(&path).is_ok());
         }
+    }
+
+    #[tokio::test]
+    async fn waiting_acquisition_runs_after_the_holder_releases() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("db.sqlite");
+        for exclusive in [true, false] {
+            let holder = InstallationGuard::acquire_mode(&path, exclusive).unwrap();
+            let waiting = tokio::spawn({
+                let path = path.clone();
+                async move { InstallationGuard::acquire_waiting(&path).await }
+            });
+            tokio::time::sleep(KEY_STORE_POLL_INTERVAL * 3).await;
+            assert!(!waiting.is_finished());
+            drop(holder);
+            let guard = waiting.await.unwrap().unwrap();
+            // A waiter holds the lock exclusively, and nonblocking callers
+            // still fail at once instead of queueing behind it.
+            assert!(
+                InstallationGuard::acquire_for_backup(&path)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("installation-busy")
+            );
+            assert!(InstallationGuard::acquire(&path).is_err());
+            drop(guard);
+        }
+    }
+
+    #[tokio::test]
+    async fn waiting_acquisition_gives_up_after_its_bound() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("db.sqlite");
+        let holder = InstallationGuard::acquire(&path).unwrap();
+        let started = Instant::now();
+        let error = InstallationGuard::acquire_waiting_for(&path, Duration::from_millis(100))
+            .await
+            .err()
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        assert_eq!(error.to_string(), BUSY);
+        drop(holder);
+        assert!(
+            InstallationGuard::acquire_waiting_for(&path, Duration::ZERO)
+                .await
+                .is_ok()
+        );
     }
 
     #[test]

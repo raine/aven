@@ -49,7 +49,7 @@ impl ProtectedLocalKeyStore {
         intent: &SeedPublicationIntent,
         proofs: &mut ProofCache,
     ) -> anyhow::Result<Option<crate::sync::shared_state::package::upload::FrozenUpload>> {
-        let _installation = InstallationGuard::acquire(database.path())?;
+        let _installation = InstallationGuard::acquire_waiting(database.path()).await?;
         self.validate_database(database).await?;
         let package = self.load_required()?;
         let _guard = self.lock()?;
@@ -167,7 +167,7 @@ impl ProtectedLocalKeyStore {
         &self,
         database: &Database,
     ) -> anyhow::Result<SeedSourceAuthority> {
-        let installation = InstallationGuard::acquire(database.path())?;
+        let installation = InstallationGuard::acquire_waiting(database.path()).await?;
         self.validate_database(database).await?;
         #[cfg(test)]
         wait_source_boundary(database.path()).await;
@@ -230,7 +230,7 @@ impl ProtectedLocalKeyStore {
         database: &Database,
         proofs: &mut ProofCache,
     ) -> anyhow::Result<SeedPublicationIntent> {
-        let _installation = InstallationGuard::acquire(database.path())?;
+        let _installation = InstallationGuard::acquire_waiting(database.path()).await?;
         self.validate_database(database).await?;
         let package = self.load_required()?;
         let _guard = self.lock()?;
@@ -309,7 +309,7 @@ impl ProtectedLocalKeyStore {
         outcome: &PublicationOutcome,
         proofs: &mut ProofCache,
     ) -> anyhow::Result<bool> {
-        let _installation = InstallationGuard::acquire(database.path())?;
+        let _installation = InstallationGuard::acquire_waiting(database.path()).await?;
         self.validate_database(database).await?;
         let package = self.load_required()?;
         let _guard = self.lock()?;

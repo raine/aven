@@ -143,8 +143,10 @@ pub struct ActiveInputs {
     pub membership: Membership,
     pub evidence: Evidence,
     coverage: VerifiedKeys,
-    _installation: InstallationGuard,
+    // Released in reverse acquisition order, so a waiter never blocks on the
+    // store lock after acquiring the installation.
     _lock: StoreLock,
+    _installation: InstallationGuard,
 }
 impl ActiveInputs {
     pub(super) fn authority(&self) -> Device<'_> {
@@ -351,7 +353,7 @@ impl ProtectedLocalKeyStore {
         Box::pin(self.load_active_inputs(db, locator)).await
     }
     async fn load_active_inputs(&self, db: &Database, locator: &str) -> Result<ActiveInputs> {
-        let installation = InstallationGuard::acquire(db.path())?;
+        let installation = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
         self.prepare()?;
@@ -1075,7 +1077,7 @@ impl ProtectedLocalKeyStore {
         invitation: Option<Invitation>,
         replace: bool,
     ) -> Result<Joiner> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         ensure!(locator.len() <= 2048, "error enrollment-locator-limit");
         self.prepare()?;
@@ -1148,7 +1150,7 @@ impl ProtectedLocalKeyStore {
     /// Every retained attempt, oldest first, or only the one a pinned
     /// response answers. Attempts are never removed.
     pub async fn peer_attempts(&self, db: &Database, locator: &str) -> Result<Vec<Joiner>> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
@@ -1245,7 +1247,7 @@ impl ProtectedLocalKeyStore {
         db: &Database,
         mail: &membership::Mailbox,
     ) -> Result<membership::ProvisionalGrant> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
@@ -1268,7 +1270,7 @@ impl ProtectedLocalKeyStore {
         mail: &membership::Mailbox,
         evidence: &Evidence,
     ) -> Result<()> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
@@ -1370,7 +1372,7 @@ impl ProtectedLocalKeyStore {
         locator: &str,
         downloaded: &(dyn Fn(u64, Option<u64>) + Sync),
     ) -> Result<crate::sync::SharedStateInstallReport> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         let _lock = self.lock()?;
         let id = self
@@ -1501,7 +1503,7 @@ impl ProtectedLocalKeyStore {
     /// Whether this installation joined as a peer, and the server locator its
     /// enrollment identity is bound to.
     pub async fn association(&self, db: &Database) -> Result<Option<(bool, String)>> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         self.prepare()?;
         let _lock = self.lock()?;
@@ -1512,7 +1514,7 @@ impl ProtectedLocalKeyStore {
     }
     #[cfg(any(test, feature = "test-support"))]
     pub async fn outbound_invitation(&self, db: &Database) -> Result<Option<OutboundInvitation>> {
-        let _guard = InstallationGuard::acquire(db.path())?;
+        let _guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         self.prepare()?;
         let _lock = self.lock()?;
@@ -1530,7 +1532,7 @@ impl ProtectedLocalKeyStore {
         Ok(None)
     }
     pub async fn enrollment_readiness(&self, db: &Database) -> Result<EnrollmentReadiness> {
-        let guard = InstallationGuard::acquire(db.path())?;
+        let guard = InstallationGuard::acquire_waiting(db.path()).await?;
         self.validate_database(db).await?;
         self.prepare()?;
         let _lock = self.lock()?;
