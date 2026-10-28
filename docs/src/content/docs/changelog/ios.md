@@ -5,6 +5,10 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
+## 1.0.3 (2026-10-28)
+
+- Fix: HTTP sync connections to self-hosted servers over a trusted VPN, including Netbird, are no longer blocked for VPN addresses such as `100.100.20.30`.
+
 ## 1.0.2 (2026-10-17)
 
 - Capture suggests labels as one-tap chips beside the Capture button. Labels matching words in the title come first, a chip reapplies the labels of the project's latest labelled task, and **…** opens the full label picker.
