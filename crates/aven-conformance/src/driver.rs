@@ -62,6 +62,8 @@ pub trait Driver: Sync {
         request: Request,
         delivery: Delivery,
     ) -> impl Future<Output = Result<Option<Response>>> + Send;
+    /// Reopens server resources against the same persisted storage.
+    /// This does not require a database-process restart or simulate a crash.
     fn restart(&mut self) -> impl Future<Output = Result<()>> + Send;
     fn set_time(&self, seconds: u64) -> Result<()>;
     fn arm_barrier(&self) -> Result<()>;

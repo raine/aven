@@ -2,9 +2,11 @@ use crate::{
     capability::Capability,
     driver::{Delivery, Driver, Request, exchange, required},
 };
-use aven_core::sync::seed_claim::membership::{Joiner, Membership};
 use aven_protocol::{
-    claim::Secret,
+    claim::{
+        Secret,
+        membership::{Joiner, Membership},
+    },
     wire::tail::{self, Context, Envelope, Operation, Reply},
 };
 

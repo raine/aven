@@ -2,12 +2,10 @@ use crate::{
     capability::Capability,
     driver::{Delivery, Driver, Request, exchange, required},
 };
-use aven_core::sync::{
-    bootstrap_format::Package,
-    client::bootstrap::components,
-    seed_claim::{Publication, SeedAuthority},
+use aven_protocol::{
+    claim::{SeedAuthority, publication::Publication},
+    wire::bootstrap::{self, Budget, Component, Envelope, Operation, Reply},
 };
-use aven_protocol::wire::bootstrap::{self, Budget, Envelope, Operation, Reply};
 
 fn control(seed: &SeedAuthority, operation: Operation) -> Request {
     Request::json(
@@ -21,15 +19,17 @@ fn control(seed: &SeedAuthority, operation: Operation) -> Request {
     )
 }
 
+/// Exercises publication using an authenticated descriptor and chunks in upload order.
+/// Callers construct and authenticate the package before supplying its wire parts.
 pub async fn completeness_and_retry(
     driver: &mut impl Driver,
     seed: &SeedAuthority,
-    package: &Package,
+    descriptor: &[u8],
+    parts: Vec<(Component, Vec<&[u8]>)>,
     publication: &Publication,
 ) {
     required(driver, &[Capability::LostReply, Capability::Restart]);
     let binding = publication.binding();
-    let parts = components(package);
     let budget = Budget {
         bytes: parts
             .iter()
@@ -44,7 +44,7 @@ pub async fn completeness_and_retry(
             control(
                 seed,
                 Operation::Declare {
-                    descriptor: package.descriptor.clone(),
+                    descriptor: descriptor.to_vec(),
                     budget,
                 },
             ),

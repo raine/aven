@@ -2,17 +2,18 @@ use crate::{
     capability::Capability,
     driver::{Delivery, Driver, Request, exchange, required},
 };
-use aven_core::sync::{
-    client::enrollment::{Context, Operation, Reply},
-    seed_claim::{
-        SeedAuthority,
-        membership::{Device, Joiner, Membership, VerifiedKeys},
-    },
-};
 use aven_protocol::{
-    claim::Secret,
-    wire::enrollment::{PATH, RegistrationStatus},
+    claim::{
+        Secret, SeedAuthority,
+        membership::{
+            Device, Evidence, Invitation, Joiner, Mailbox, ManagementPreparation, Membership,
+            VerifiedKeys,
+        },
+    },
+    wire::enrollment::{self, Context, Operation, PATH, RegistrationStatus},
 };
+
+type Reply = enrollment::Reply<Evidence, Mailbox, ManagementPreparation>;
 
 fn context(membership: &Membership, device: [u8; 32]) -> Context {
     Context {
@@ -105,10 +106,7 @@ pub async fn expiry_and_admission(
         Reply::Registered(RegistrationStatus::Open)
     ));
     let peer = Joiner::generate(
-        aven_core::sync::seed_claim::membership::Invitation::from_protected_storage(
-            &invitation.protected_storage_bytes(),
-        )
-        .unwrap(),
+        Invitation::from_protected_storage(&invitation.protected_storage_bytes()).unwrap(),
     )
     .unwrap();
     let post = || {

@@ -346,7 +346,6 @@ name = "aven-conformance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aven-core",
  "aven-protocol",
  "hex",
  "serde",

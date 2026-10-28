@@ -8,7 +8,6 @@ license = "MIT"
 
 [dependencies]
 aven-protocol = { path = "../aven-protocol", version = "=0.1.0" }
-aven-core = { path = "../aven-core", version = "=0.1.36", features = ["test-support"] }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -202,8 +202,14 @@ async fn claim_bootstrap_enrollment_tail() {
         seed.bearer(),
     )
     .await;
-    aven_conformance::bootstrap::completeness_and_retry(&mut driver, &seed, &package, &publication)
-        .await;
+    aven_conformance::bootstrap::completeness_and_retry(
+        &mut driver,
+        &seed,
+        &package.descriptor,
+        aven_core::sync::client::bootstrap::components(&package),
+        &publication,
+    )
+    .await;
     crate::seed_bootstrap_http::Client::new(&driver.origin)
         .unwrap()
         .resume(&store, &client)
