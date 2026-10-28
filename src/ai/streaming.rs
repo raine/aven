@@ -128,25 +128,26 @@ fn outputs(state: StreamState) -> impl Stream<Item = Result<StreamOutput, ErrorC
 fn events(state: StreamState) -> impl Stream<Item = Result<Event, Infallible>> + Send {
     let request_id = state.request_id.clone();
     outputs(state).map(move |output| {
-        Ok(match output {
-            Ok(StreamOutput::Text { request_id, text }) => Event::default()
-                .event("text_delta")
-                .json_data(serde_json::json!({"request_id":request_id,"text":text})),
-            Ok(StreamOutput::Completion(response)) => {
-                Event::default().event("completion").json_data(response)
+        let event = match output {
+            Ok(StreamOutput::Text { request_id, text }) => {
+                StreamEvent::TextDelta { request_id, text }
             }
-            Err(category) => Event::default().event("error").json_data(
-                serde_json::json!({"request_id":request_id,"error":{"category":category}}),
-            ),
-        }
-        .expect("completion event serializes"))
+            Ok(StreamOutput::Completion(response)) => StreamEvent::Completion(response),
+            Err(category) => StreamEvent::Error {
+                request_id: request_id.clone(),
+                error: StreamError { category },
+            },
+        };
+        Ok(Event::default()
+            .event(event.name())
+            .data(event.to_json().expect("completion event serializes")))
     })
 }
 
 pub(crate) async fn streaming_handler(
     State(service): State<Arc<AiService>>,
     request: Result<Json<CompletionRequest>, JsonRejection>,
-) -> Result<Response, ErrorCategory> {
+) -> Result<Response, HttpError> {
     let Json(request) = request.map_err(|_| ErrorCategory::InvalidRequest)?;
     let state = service.start_stream(request).await?;
     let mut response = Sse::new(events(state))
@@ -199,6 +200,22 @@ mod tests {
         .unwrap()
     }
 
+    fn assert_transcript(actual: &str, expected: &str) {
+        fn frames(wire: &str) -> Vec<(String, Value)> {
+            wire.trim()
+                .split("\n\n")
+                .map(|frame| {
+                    let (event, data) = frame.split_once('\n').unwrap();
+                    (
+                        event.to_string(),
+                        serde_json::from_str(data.strip_prefix("data: ").unwrap()).unwrap(),
+                    )
+                })
+                .collect()
+        }
+        assert_eq!(frames(actual), frames(expected));
+    }
+
     #[tokio::test]
     async fn deltas_precede_authoritative_completion_without_duplication() {
         let output = wire(
@@ -210,6 +227,10 @@ mod tests {
             .await,
         )
         .await;
+        assert_transcript(
+            &output,
+            include_str!("../../crates/aven-ai-contract/fixtures/text.sse"),
+        );
         assert_eq!(output.matches("event: text_delta").count(), 2);
         assert_eq!(output.matches("event: completion").count(), 1);
         assert!(output.find("text_delta").unwrap() < output.find("completion").unwrap());
@@ -220,11 +241,18 @@ mod tests {
 
     #[tokio::test]
     async fn eof_and_output_overflow_never_emit_completion() {
-        for items in [
-            vec![RawStreamingChoice::Message("partial".into())],
-            vec![RawStreamingChoice::Message("x".repeat(1025)), terminal()],
+        for (items, fixture) in [
+            (
+                vec![RawStreamingChoice::Message("partial".into())],
+                include_str!("../../crates/aven-ai-contract/fixtures/eof.sse"),
+            ),
+            (
+                vec![RawStreamingChoice::Message("x".repeat(1025)), terminal()],
+                include_str!("../../crates/aven-ai-contract/fixtures/overflow.sse"),
+            ),
         ] {
             let output = wire(state(items).await).await;
+            assert_transcript(&output, fixture);
             assert!(output.contains("event: error"));
             assert!(!output.contains("event: completion"));
         }
@@ -292,6 +320,10 @@ mod tests {
             Box::pin(futures::stream::pending()),
         ));
         let output = wire(state).await;
+        assert_transcript(
+            &output,
+            include_str!("../../crates/aven-ai-contract/fixtures/timeout.sse"),
+        );
         assert!(output.contains("timeout"));
         assert!(!output.contains("event: completion"));
     }

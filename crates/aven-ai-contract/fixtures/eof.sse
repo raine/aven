@@ -1,0 +1,6 @@
+event: text_delta
+data: {"request_id":"test","text":"partial"}
+
+event: error
+data: {"request_id":"test","error":{"category":"malformed_provider_response"}}
+

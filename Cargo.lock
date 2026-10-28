@@ -345,6 +345,7 @@ name = "aven"
 version = "0.1.51"
 dependencies = [
  "anyhow",
+ "aven-ai-contract",
  "aven-conformance",
  "aven-core",
  "aven-protocol",
@@ -400,6 +401,15 @@ dependencies = [
  "url",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "aven-ai-contract"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

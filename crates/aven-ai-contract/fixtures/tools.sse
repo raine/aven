@@ -1,0 +1,3 @@
+event: completion
+data: {"request_id":"round-1","message":{"role":"assistant","content":[{"type":"reasoning","opaque":"fixture.opaque-reasoning"},{"type":"tool_call","id":"fixture.opaque-call-token","name":"count_tasks","arguments":{}}]},"finish_reason":"tool_calls","usage":{"input_tokens":4,"output_tokens":2}}
+

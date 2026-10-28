@@ -650,6 +650,8 @@ async fn unsupported_tools_fail_before_rate_admission_and_are_advertised() {
     assert_eq!(capabilities["provider"], "test");
     assert_eq!(capabilities["model"], "test-model");
     assert!(service.capabilities().features.tools);
+    assert!(service.capabilities().features.images);
+    assert_eq!(service.capabilities().limits.max_images, MAX_IMAGES);
     if let BackendState::Ready { tools, .. } = &mut service.state {
         *tools = false;
     }
@@ -875,11 +877,7 @@ async fn chatgpt_sse_errors_project_safe_permanent_and_transient_envelopes() {
         };
         let mut request = tool_request();
         request.tools[0].parameters = serde_json::json!({"type":"object", "properties":{"status":{"type":"string", "enum":null}}});
-        let response = service
-            .collect_completion(request)
-            .await
-            .unwrap_err()
-            .into_response();
+        let response = error_response(service.collect_completion(request).await.unwrap_err());
         assert_eq!(response.status(), status);
         let bytes = axum::body::to_bytes(response.into_body(), 1024)
             .await

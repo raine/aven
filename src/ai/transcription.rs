@@ -20,24 +20,13 @@ const MAX_DURATION_SECONDS: u64 = 300;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 const UPSTREAM_URL: &str = "https://chatgpt.com/backend-api/transcribe";
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct TranscriptionCapability {
-    contract: u32,
-    status: AvailabilityStatus,
-    audio_format: &'static str,
-    max_audio_bytes: usize,
-    max_duration_seconds: u64,
-}
-
-impl TranscriptionCapability {
-    pub(crate) fn new(status: AvailabilityStatus) -> Self {
-        Self {
-            contract: 1,
-            status,
-            audio_format: AUDIO_FORMAT,
-            max_audio_bytes: MAX_AUDIO_BYTES,
-            max_duration_seconds: MAX_DURATION_SECONDS,
-        }
+pub(crate) fn capability(status: AvailabilityStatus) -> TranscriptionCapability {
+    TranscriptionCapability {
+        contract: 1,
+        status,
+        audio_format: AUDIO_FORMAT.into(),
+        max_audio_bytes: MAX_AUDIO_BYTES,
+        max_duration_seconds: MAX_DURATION_SECONDS,
     }
 }
 
@@ -243,9 +232,9 @@ pub(crate) async fn transcription_handler(
     let result = match read_audio(&headers, body).await {
         Ok(audio) => match service.transcribe(audio).await {
             Ok(transcript) => Json(transcript).into_response(),
-            Err(category) => category.into_response(),
+            Err(category) => error_response(category),
         },
-        Err(rejection) => rejection.into_response(),
+        Err((status, category)) => (status, error_response(category)).into_response(),
     };
     crate::http_admission::no_store(result)
 }

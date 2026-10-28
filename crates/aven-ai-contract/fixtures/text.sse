@@ -1,0 +1,9 @@
+event: text_delta
+data: {"request_id":"test","text":"Hello "}
+
+event: text_delta
+data: {"request_id":"test","text":"world"}
+
+event: completion
+data: {"request_id":"test","message":{"role":"assistant","content":[{"type":"text","text":"Hello world"}]},"finish_reason":"stop","usage":{"input_tokens":4,"output_tokens":2}}
+

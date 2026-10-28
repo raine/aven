@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
+members = ["crates/aven-ai-contract", ".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -44,6 +44,7 @@ license = "MIT"
 exclude = ["docs/", "macos/", "meta/"]
 
 [dependencies]
+aven-ai-contract = { path = "crates/aven-ai-contract", version = "=0.1.0" }
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
 aven-core = { path = "crates/aven-core", version = "=0.1.36" }
 axum = "0.8"

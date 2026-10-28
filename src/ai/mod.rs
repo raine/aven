@@ -15,10 +15,9 @@ use axum::Json;
 use axum::extract::{State, rejection::JsonRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-};
+#[cfg(test)]
+use base64::engine::general_purpose::STANDARD;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rig_core::completion::{CompletionRequest as RigRequest, FinishReason as RigFinishReason};
 use rig_core::message::{
     AssistantContent, DocumentSourceKind, Image, ImageMediaType, Message as RigMessage,
@@ -36,120 +35,20 @@ pub(crate) use registry::{
 use registry::{CompletionBackend, SchemaStrategy};
 
 pub(crate) const MAX_REQUEST_BYTES: usize = 512 * 1024;
+#[cfg(test)]
 const MAX_MESSAGES: usize = 64;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_IMAGES: usize = 4;
+#[cfg(test)]
 const MAX_IMAGE_BYTES: usize = 320 * 1024;
+#[cfg(test)]
 const MAX_TOOLS: usize = 16;
+#[cfg(test)]
 const MAX_TOOL_SCHEMA_BYTES: usize = 32 * 1024;
-const MAX_SCHEMA_BYTES: usize = 24 * 1024;
+#[cfg(test)]
 const MAX_SCHEMA_DEPTH: usize = 32;
-const MAX_REQUEST_ID_BYTES: usize = 128;
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct CapabilitiesResponse {
-    pub(crate) status: AvailabilityStatus,
-    pub(crate) completion_contract: u32,
-    pub(crate) features: Features,
-    pub(crate) limits: Limits,
-    pub(crate) provider: Option<String>,
-    pub(crate) model: Option<String>,
-    pub(crate) setup_hint: Option<String>,
-    pub(crate) transcription: transcription::TranscriptionCapability,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AvailabilityStatus {
-    Ready,
-    Unconfigured,
-    AuthenticationRequired,
-    TemporarilyUnavailable,
-}
-
-impl AvailabilityStatus {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Unconfigured => "unconfigured",
-            Self::AuthenticationRequired => "authentication_required",
-            Self::TemporarilyUnavailable => "temporarily_unavailable",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Features {
-    text: bool,
-    json_schema: bool,
-    tools: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Limits {
-    max_request_bytes: usize,
-    max_output_tokens: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CompletionRequest {
-    request_id: String,
-    messages: Vec<Message>,
-    output: OutputRequest,
-    #[serde(default)]
-    tools: Vec<ToolDefinition>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Message {
-    role: Role,
-    content: Vec<ContentBlock>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Role {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum ContentBlock {
-    Text {
-        text: String,
-    },
-    ToolCall {
-        id: String,
-        name: String,
-        arguments: Value,
-    },
-    Reasoning {
-        opaque: String,
-    },
-    /// Base64 (standard alphabet) image bytes, only in user messages.
-    Image {
-        media_type: String,
-        data: String,
-    },
-    ToolResult {
-        call_id: String,
-        name: String,
-        output: String,
-    },
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ToolDefinition {
-    name: String,
-    description: String,
-    parameters: Value,
-}
+pub(crate) use aven_ai_contract::*;
 
 // Provider replay metadata is part of the correlation token, not client controls.
 #[derive(Serialize, Deserialize)]
@@ -177,116 +76,23 @@ fn decode_opaque<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(&bytes).map_err(|_| ErrorCategory::InvalidRequest)
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum OutputRequest {
-    Text,
-    JsonSchema { schema: Value },
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct CompletionResponse {
-    request_id: String,
-    message: AssistantMessage,
-    finish_reason: FinishReason,
-    usage: Usage,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct AssistantMessage {
-    role: &'static str,
-    content: Vec<ContentBlock>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum FinishReason {
-    Stop,
-    Length,
-    Error,
-    ToolCalls,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct Usage {
-    input_tokens: u64,
-    output_tokens: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
-pub(crate) enum ErrorCategory {
-    InvalidRequest,
-    UnsupportedCapability,
-    Unconfigured,
-    AuthenticationFailure,
-    RateLimit,
-    Timeout,
-    MalformedProviderResponse,
-    CanceledRequest,
-    TemporaryProviderFailure,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ErrorEnvelope {
-    error: ErrorBody,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ErrorBody {
-    category: ErrorCategory,
-    retryable: bool,
-}
-
-impl ErrorCategory {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidRequest => "invalid_request",
-            Self::UnsupportedCapability => "unsupported_capability",
-            Self::Unconfigured => "unconfigured",
-            Self::AuthenticationFailure => "authentication_failure",
-            Self::RateLimit => "rate_limit",
-            Self::Timeout => "timeout",
-            Self::MalformedProviderResponse => "malformed_provider_response",
-            Self::CanceledRequest => "canceled_request",
-            Self::TemporaryProviderFailure => "temporary_provider_failure",
-        }
-    }
-
-    fn status(self) -> StatusCode {
-        match self {
-            Self::InvalidRequest | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
-            Self::AuthenticationFailure => StatusCode::SERVICE_UNAVAILABLE,
-            Self::RateLimit => StatusCode::TOO_MANY_REQUESTS,
-            Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            Self::MalformedProviderResponse => StatusCode::BAD_GATEWAY,
-            Self::CanceledRequest => StatusCode::REQUEST_TIMEOUT,
-            Self::Unconfigured | Self::TemporaryProviderFailure => StatusCode::SERVICE_UNAVAILABLE,
-        }
-    }
-
-    fn retryable(self) -> bool {
-        matches!(
-            self,
-            Self::RateLimit
-                | Self::Timeout
-                | Self::CanceledRequest
-                | Self::TemporaryProviderFailure
-        )
+pub(crate) struct HttpError(ErrorCategory);
+impl From<ErrorCategory> for HttpError {
+    fn from(category: ErrorCategory) -> Self {
+        Self(category)
     }
 }
-
-impl IntoResponse for ErrorCategory {
+impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
-        let envelope = ErrorEnvelope {
-            error: ErrorBody {
-                category: self,
-                retryable: self.retryable(),
-            },
-        };
-        (self.status(), Json(envelope)).into_response()
+        error_response(self.0)
     }
+}
+fn error_response(category: ErrorCategory) -> Response {
+    (
+        StatusCode::from_u16(category.status()).expect("contract HTTP status"),
+        Json(ErrorEnvelope::from(category)),
+    )
+        .into_response()
 }
 
 fn classify_provider_error(error: &rig_core::completion::CompletionError) -> ErrorCategory {
@@ -449,17 +255,19 @@ impl AiService {
             completion_contract: 1,
             features: Features {
                 text: true,
+                images: true,
                 json_schema: true,
                 tools: matches!(self.state, BackendState::Ready { tools: true, .. }),
             },
             limits: Limits {
                 max_request_bytes: MAX_REQUEST_BYTES,
+                max_images: MAX_IMAGES,
                 max_output_tokens: self.max_output_tokens,
             },
             provider: self.provider.clone(),
             model: self.model.clone(),
             setup_hint,
-            transcription: transcription::TranscriptionCapability::new(self.transcription_status()),
+            transcription: transcription::capability(self.transcription_status()),
         }
     }
 
@@ -497,95 +305,29 @@ impl AiService {
     }
 }
 
-impl CompletionRequest {
+trait ValidateRequest {
+    fn validate(self) -> std::result::Result<ValidatedRequest, ErrorCategory>;
+}
+impl ValidateRequest for CompletionRequest {
     fn validate(self) -> std::result::Result<ValidatedRequest, ErrorCategory> {
-        if self.request_id.is_empty()
-            || self.request_id.len() > MAX_REQUEST_ID_BYTES
-            || !self
-                .request_id
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
-        {
-            return Err(ErrorCategory::InvalidRequest);
-        }
-        if self.messages.is_empty() || self.messages.len() > MAX_MESSAGES {
-            return Err(ErrorCategory::InvalidRequest);
-        }
-        let mut text_bytes = 0usize;
-        let mut images = 0usize;
+        // HTTP admission bounds the original body, not its reserialized representation.
+        let mut policy = ValidationPolicy::default();
+        policy.limits.max_request_bytes = usize::MAX;
+        policy.limits.max_opaque_bytes = usize::MAX;
+        aven_ai_contract::validate(&self, &policy)?;
         for message in &self.messages {
-            if message.content.is_empty() && !matches!(message.role, Role::Assistant) {
-                return Err(ErrorCategory::InvalidRequest);
-            }
             for block in &message.content {
-                match (&message.role, block) {
-                    (Role::System | Role::User | Role::Assistant, ContentBlock::Text { text }) => {
-                        if text.is_empty() {
-                            return Err(ErrorCategory::InvalidRequest);
-                        }
-                        text_bytes += text.len();
-                    }
-                    (
-                        Role::Assistant,
-                        ContentBlock::ToolCall {
-                            id,
-                            name,
-                            arguments,
-                        },
-                    ) => {
+                match block {
+                    ContentBlock::ToolCall { id, .. }
+                    | ContentBlock::ToolResult { call_id: id, .. } => {
                         let _: CallToken = decode_opaque(id)?;
-                        if name.is_empty() {
-                            return Err(ErrorCategory::InvalidRequest);
-                        }
-                        text_bytes += json_size(arguments)?;
                     }
-                    (Role::Assistant, ContentBlock::Reasoning { opaque }) => {
+                    ContentBlock::Reasoning { opaque } => {
                         let _: Reasoning = decode_opaque(opaque)?;
                     }
-                    (Role::User, ContentBlock::Image { media_type, data }) => {
-                        image_media_type(media_type)?;
-                        let decoded = STANDARD
-                            .decode(data)
-                            .map_err(|_| ErrorCategory::InvalidRequest)?;
-                        images += 1;
-                        if decoded.is_empty() || decoded.len() > MAX_IMAGE_BYTES {
-                            return Err(ErrorCategory::InvalidRequest);
-                        }
-                    }
-                    (
-                        Role::Tool,
-                        ContentBlock::ToolResult {
-                            call_id,
-                            name,
-                            output,
-                        },
-                    ) => {
-                        let _: CallToken = decode_opaque(call_id)?;
-                        if name.is_empty() {
-                            return Err(ErrorCategory::InvalidRequest);
-                        }
-                        text_bytes += output.len();
-                    }
-                    _ => return Err(ErrorCategory::InvalidRequest),
+                    _ => {}
                 }
             }
-        }
-        if text_bytes > MAX_TEXT_BYTES || images > MAX_IMAGES || self.tools.len() > MAX_TOOLS {
-            return Err(ErrorCategory::InvalidRequest);
-        }
-        let mut schema_bytes = 0;
-        let mut names = std::collections::HashSet::new();
-        for tool in &self.tools {
-            if tool.name.is_empty() || !names.insert(&tool.name) {
-                return Err(ErrorCategory::InvalidRequest);
-            }
-            schema_bytes += validate_schema(&tool.parameters, MAX_TOOL_SCHEMA_BYTES)?;
-        }
-        if schema_bytes > MAX_TOOL_SCHEMA_BYTES {
-            return Err(ErrorCategory::InvalidRequest);
-        }
-        if let OutputRequest::JsonSchema { schema } = &self.output {
-            validate_schema(schema, MAX_SCHEMA_BYTES)?;
         }
         Ok(ValidatedRequest(self))
     }
@@ -603,17 +345,6 @@ fn json_size(value: &Value) -> std::result::Result<usize, ErrorCategory> {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .map_err(|_| ErrorCategory::InvalidRequest)
-}
-
-fn validate_schema(schema: &Value, max_bytes: usize) -> std::result::Result<usize, ErrorCategory> {
-    if !schema.is_object() || json_depth(schema) > MAX_SCHEMA_DEPTH {
-        return Err(ErrorCategory::InvalidRequest);
-    }
-    let bytes = json_size(schema)?;
-    if bytes > max_bytes {
-        return Err(ErrorCategory::InvalidRequest);
-    }
-    Ok(bytes)
 }
 
 struct ValidatedRequest(CompletionRequest);
@@ -818,7 +549,7 @@ fn project_response(
     Ok(CompletionResponse {
         request_id,
         message: AssistantMessage {
-            role: "assistant",
+            role: "assistant".into(),
             content,
         },
         finish_reason,
@@ -827,14 +558,6 @@ fn project_response(
             output_tokens: response.usage.output_tokens,
         },
     })
-}
-
-fn json_depth(value: &Value) -> usize {
-    match value {
-        Value::Array(values) => 1 + values.iter().map(json_depth).max().unwrap_or(0),
-        Value::Object(values) => 1 + values.values().map(json_depth).max().unwrap_or(0),
-        _ => 1,
-    }
 }
 
 pub(crate) fn ensure_private_dir(path: &Path) -> Result<PathBuf> {

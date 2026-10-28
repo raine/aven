@@ -1,0 +1,3 @@
+event: error
+data: {"request_id":"test","error":{"category":"malformed_provider_response"}}
+

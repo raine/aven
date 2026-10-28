@@ -1,0 +1,26 @@
+{
+  "request_id": "schema",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Return a color"
+        }
+      ]
+    }
+  ],
+  "output": {
+    "type": "json_schema",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "tools": []
+}
