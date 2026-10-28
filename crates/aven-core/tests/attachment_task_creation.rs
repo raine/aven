@@ -40,7 +40,7 @@ fn draft(title: &str) -> TaskDraft {
         title: title.to_string(),
         description: String::new(),
         project: Some("default".to_string()),
-        status: "todo".to_string(),
+        status: Some("todo".to_string()),
         priority: "none".to_string(),
         source: TaskSource::Unknown,
         labels: Vec::new(),

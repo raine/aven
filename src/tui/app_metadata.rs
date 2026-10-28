@@ -174,7 +174,7 @@ mod tests {
                     title: "Metadata construction".to_string(),
                     description: String::new(),
                     project: None,
-                    status: "inbox".to_string(),
+                    status: None,
                     priority: "none".to_string(),
                     source: crate::choices::TaskSource::Unknown,
                     labels: Vec::new(),

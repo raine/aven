@@ -411,10 +411,7 @@ pub(super) fn validate_task_update(update: &TaskUpdate) -> Result<()> {
 }
 
 pub(super) fn update_requests_inbox_promotion(update: &TaskUpdate) -> bool {
-    update
-        .status
-        .as_deref()
-        .is_none_or(|status| status == TaskStatus::Inbox.as_str())
+    update.status.is_none()
         && update.priority.as_deref().is_some_and(|priority| {
             TaskPriority::parse(priority).is_ok_and(TaskPriority::promotes_inbox_to_todo)
         })

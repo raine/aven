@@ -25,7 +25,7 @@ async fn fixture(
             title: "metadata limits".into(),
             description: String::new(),
             project: Some("app".into()),
-            status: "todo".into(),
+            status: Some("todo".into()),
             priority: "none".into(),
             source: crate::choices::TaskSource::Cli,
             labels: vec![],

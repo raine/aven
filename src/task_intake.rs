@@ -56,7 +56,7 @@ impl TaskIntakeResult {
             description: self.task.description,
             project: self.task.project.unwrap_or_default(),
             priority: self.task.priority,
-            initial_status: self.task.status,
+            initial_status: self.task.status.unwrap_or_else(|| "todo".to_string()),
             labels: self.task.labels,
             metadata: self.task.metadata,
             schedule,
@@ -355,17 +355,12 @@ pub(crate) async fn parsed_output_to_result_with_database(
             "error task-intake-recurrence-absolute-time-conflict hint=\"use repeat_at and repeat_due for recurring tasks, not available_at or due_on\""
         );
     }
-    let status = if recurrence.is_some() {
-        "todo"
-    } else {
-        "inbox"
-    };
     Ok(TaskIntakeResult {
         task: TaskDraft {
             title: title.to_string(),
             description,
             project,
-            status: status.to_string(),
+            status: recurrence.as_ref().map(|_| "todo".to_string()),
             priority,
             source,
             labels,

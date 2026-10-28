@@ -44,7 +44,7 @@ pub(crate) async fn source_with_history() -> (tempfile::TempDir, Database, Strin
                 title: "captured title".into(),
                 description: "captured description".into(),
                 project: Some("app".into()),
-                status: "todo".into(),
+                status: Some("todo".into()),
                 priority: "none".into(),
                 source: TaskSource::Cli,
                 labels: vec![],

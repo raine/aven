@@ -29,7 +29,7 @@ async fn task_full_report_renders_shareable_markdown() {
                 title: "Share task | safely".to_string(),
                 description: "Explain **why**.\n\n- Keep authored Markdown".to_string(),
                 project: None,
-                status: "active".to_string(),
+                status: Some("active".to_string()),
                 priority: "high".to_string(),
                 source: TaskSource::Tui,
                 labels: vec!["customer-facing".to_string()],

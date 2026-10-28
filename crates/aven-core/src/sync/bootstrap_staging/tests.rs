@@ -40,7 +40,7 @@ impl Fixture {
                     title: "PRIVATE-STAGING-TASK-TITLE".into(),
                     description: "PRIVATE-STAGING-DESCRIPTION".into(),
                     project: Some("app".into()),
-                    status: "todo".into(),
+                    status: Some("todo".into()),
                     priority: "none".into(),
                     source: crate::choices::TaskSource::Cli,
                     labels: vec![],

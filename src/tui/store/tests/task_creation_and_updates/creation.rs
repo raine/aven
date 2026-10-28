@@ -56,7 +56,7 @@ async fn create_task_preserves_previous_selection_when_hidden() {
     let mut store = test_store().await;
     for title in ["First todo", "Todo task", "Last todo"] {
         let mut draft = task_draft(title);
-        draft.status = "todo".to_string();
+        draft.status = Some("todo".to_string());
         store.create_task(draft, None).await.unwrap();
     }
     store.show_view(TaskQuery::Todo).await.unwrap();
@@ -207,7 +207,7 @@ async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
             TaskDraft {
                 metadata: Vec::new(),
                 title: "Next target".to_string(),
-                status: "todo".to_string(),
+                status: Some("todo".to_string()),
                 ..task_draft("")
             },
             None,
@@ -219,7 +219,7 @@ async fn update_status_preserving_task_keeps_done_item_in_filtered_view() {
             TaskDraft {
                 metadata: Vec::new(),
                 title: "Done target".to_string(),
-                status: "todo".to_string(),
+                status: Some("todo".to_string()),
                 ..task_draft("")
             },
             None,

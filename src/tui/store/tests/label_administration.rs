@@ -19,7 +19,7 @@ async fn label_administration_updates_task_and_series_references_and_undoes() {
                 title: "Labeled task".to_string(),
                 description: String::new(),
                 project: None,
-                status: "inbox".to_string(),
+                status: Some("inbox".to_string()),
                 priority: "none".to_string(),
                 source: TaskSource::Unknown,
                 labels: vec!["needs-review".to_string()],

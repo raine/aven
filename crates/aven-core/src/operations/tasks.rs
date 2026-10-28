@@ -20,7 +20,8 @@ pub struct TaskDraft {
     pub title: String,
     pub description: String,
     pub project: Option<String>,
-    pub status: String,
+    /// Missing status defaults to inbox, promoted to todo for medium+ priority.
+    pub status: Option<String>,
     pub priority: String,
     pub source: TaskSource,
     pub labels: Vec<String>,

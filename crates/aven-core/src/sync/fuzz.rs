@@ -148,7 +148,7 @@ pub(crate) fn with_history<T>(f: impl AsyncFnOnce(&crate::db::Database) -> T) ->
             title: title.into(),
             description: "body".into(),
             project: Some("app".into()),
-            status: "todo".into(),
+            status: Some("todo".into()),
             priority: "high".into(),
             source: crate::choices::TaskSource::Cli,
             labels: vec!["bug".into()],

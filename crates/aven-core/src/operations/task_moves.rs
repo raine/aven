@@ -379,7 +379,7 @@ mod tests {
             title: title.to_string(),
             description: "description".to_string(),
             project: Some(project.to_string()),
-            status: "todo".to_string(),
+            status: Some("todo".to_string()),
             priority: "none".to_string(),
             source: TaskSource::Cli,
             labels,

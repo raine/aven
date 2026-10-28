@@ -451,7 +451,7 @@ async fn detail_edit_chords_open_advertised_editors() {
             title: "Detail target".to_string(),
             description: "existing description".to_string(),
             project: None,
-            status: "inbox".to_string(),
+            status: Some("inbox".to_string()),
             priority: "none".to_string(),
             source: TaskSource::Unknown,
             labels: vec!["bug".to_string()],

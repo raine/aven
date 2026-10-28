@@ -113,7 +113,7 @@ async fn database_stats_opens_text_panel() {
             title: "Urgent task".to_string(),
             description: String::new(),
             project: None,
-            status: "inbox".to_string(),
+            status: Some("inbox".to_string()),
             priority: "urgent".to_string(),
             source: TaskSource::Unknown,
             labels: Vec::new(),

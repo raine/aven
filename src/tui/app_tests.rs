@@ -123,7 +123,7 @@ fn test_task_draft(title: &str) -> TaskDraft {
         title: title.to_string(),
         description: String::new(),
         project: None,
-        status: "inbox".to_string(),
+        status: Some("inbox".to_string()),
         priority: "none".to_string(),
         source: TaskSource::Unknown,
         labels: Vec::new(),

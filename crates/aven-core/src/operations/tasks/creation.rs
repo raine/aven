@@ -202,7 +202,9 @@ pub(super) fn append_created_label_undo_commands(
 }
 
 pub(super) fn validate_task_draft(draft: &TaskDraft) -> Result<()> {
-    TaskStatus::parse(&draft.status)?;
+    if let Some(status) = &draft.status {
+        TaskStatus::parse(status)?;
+    }
     TaskPriority::parse(&draft.priority)?;
     crate::metadata::validate_metadata_update(&draft.metadata, &[])?;
     if let Some(available_at) = draft.available_at.as_deref() {
@@ -215,13 +217,15 @@ pub(super) fn validate_task_draft(draft: &TaskDraft) -> Result<()> {
 }
 
 pub(super) fn initial_status(draft: &TaskDraft) -> Result<(TaskStatus, TaskPriority)> {
-    let status = TaskStatus::parse(&draft.status)?;
+    let status = draft.status.as_deref().map(TaskStatus::parse).transpose()?;
     let priority = TaskPriority::parse(&draft.priority)?;
-    let status = if status == TaskStatus::Inbox && priority.promotes_inbox_to_todo() {
-        TaskStatus::Todo
-    } else {
-        status
-    };
+    let status = status.unwrap_or_else(|| {
+        if priority.promotes_inbox_to_todo() {
+            TaskStatus::Todo
+        } else {
+            TaskStatus::Inbox
+        }
+    });
     Ok((status, priority))
 }
 

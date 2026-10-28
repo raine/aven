@@ -722,7 +722,7 @@ mod tests {
                     title: "protected package".into(),
                     description: String::new(),
                     project: "app".into(),
-                    status: TaskStatus::Todo,
+                    status: Some(TaskStatus::Todo),
                     priority: TaskPriority::None,
                     metadata: vec![],
                     available_at: None,

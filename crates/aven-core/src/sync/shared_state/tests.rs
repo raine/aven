@@ -46,7 +46,7 @@ fn draft(title: &str) -> TaskDraft {
         title: title.into(),
         description: "description".into(),
         project: Some("app".into()),
-        status: "todo".into(),
+        status: Some("todo".into()),
         priority: "none".into(),
         source: TaskSource::Cli,
         labels: vec![],

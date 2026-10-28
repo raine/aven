@@ -178,7 +178,7 @@ fn changes() -> Vec<ChangeWire> {
                     title: "Movable fuzz task".into(),
                     description: String::new(),
                     project: Some("Move source".into()),
-                    status: "todo".into(),
+                    status: Some("todo".into()),
                     priority: "none".into(),
                     source: crate::choices::TaskSource::Cli,
                     labels: Vec::new(),

@@ -199,7 +199,7 @@ pub(crate) async fn cmd_add(
             title: args.title,
             description,
             project: args.project,
-            status: args.status.unwrap_or_else(|| "inbox".to_string()),
+            status: args.status,
             priority: args.priority,
             source: TaskSource::Cli,
             labels: args.label,

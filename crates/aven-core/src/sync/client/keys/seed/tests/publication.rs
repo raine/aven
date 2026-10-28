@@ -19,7 +19,7 @@ async fn protected_seed_publishes_frozen_images_through_core_and_recovers_lost_r
                 title: "PRIVATE-PUBLICATION-TITLE".into(),
                 description: String::new(),
                 project: Some("app".into()),
-                status: "todo".into(),
+                status: Some("todo".into()),
                 priority: "none".into(),
                 source: crate::choices::TaskSource::Cli,
                 labels: vec![],

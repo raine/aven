@@ -470,7 +470,7 @@ async fn large_image_setup() {
                 title: "setup memory benchmark".into(),
                 description: String::new(),
                 project: Some("app".into()),
-                status: "todo".into(),
+                status: Some("todo".into()),
                 priority: "none".into(),
                 source: aven_core::choices::TaskSource::Cli,
                 labels: vec![],

@@ -649,7 +649,7 @@ async fn column_move_shortcut_advances_marked_tasks_from_their_own_lanes() {
     let inbox = create_and_select_task(&mut app, test_task_draft("inbox task")).await;
     let inbox_id = app.store.tasks[inbox].task.id.clone();
     let mut todo_draft = test_task_draft("ready task");
-    todo_draft.status = "todo".to_string();
+    todo_draft.status = Some("todo".to_string());
     let todo = create_and_select_task(&mut app, todo_draft).await;
     let todo_id = app.store.tasks[todo].task.id.clone();
     app.list.mark(inbox_id.clone());
@@ -719,7 +719,7 @@ async fn column_relative_move_keeps_marked_batch_unchanged_at_edge() {
     let inbox = create_and_select_task(&mut app, test_task_draft("inbox edge")).await;
     let inbox_id = app.store.tasks[inbox].task.id.clone();
     let mut backlog_draft = test_task_draft("backlog beside edge");
-    backlog_draft.status = "backlog".to_string();
+    backlog_draft.status = Some("backlog".to_string());
     let backlog = create_and_select_task(&mut app, backlog_draft).await;
     let backlog_id = app.store.tasks[backlog].task.id.clone();
     app.list.mark(inbox_id.clone());
@@ -918,7 +918,7 @@ async fn column_view_navigates_within_and_between_lanes() {
         ("todo", "todo"),
     ] {
         let mut draft = test_task_draft(title);
-        draft.status = status.to_string();
+        draft.status = Some(status.to_string());
         app.store.create_task(draft, None).await.unwrap();
     }
     app.store.show_view(TaskQuery::All).await.unwrap();
@@ -966,7 +966,7 @@ async fn column_view_navigates_within_and_between_lanes() {
 async fn column_view_keeps_task_selected_when_status_becomes_done() {
     let mut app = test_app().await;
     let mut draft = test_task_draft("finish me");
-    draft.status = "active".to_string();
+    draft.status = Some("active".to_string());
     create_and_select_task(&mut app, draft).await;
     app.show_view(TaskQuery::All).await.unwrap();
     app.set_layout(TaskLayout::Columns);

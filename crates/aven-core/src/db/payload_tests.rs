@@ -11,7 +11,7 @@ fn draft(description: String) -> TaskDraft {
         title: "payload test".into(),
         description,
         project: Some("payload-tests".into()),
-        status: "inbox".into(),
+        status: Some("inbox".into()),
         priority: "none".into(),
         source: TaskSource::Unknown,
         labels: Vec::new(),

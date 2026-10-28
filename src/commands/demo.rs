@@ -124,7 +124,7 @@ async fn seed_demo(
                     title: task.title.to_string(),
                     description: task.description.to_string(),
                     project: Some(task.project.to_string()),
-                    status: task.status.as_str().to_string(),
+                    status: Some(task.status.as_str().to_string()),
                     priority: task.priority.as_str().to_string(),
                     source: TaskSource::Unknown,
                     labels: task
@@ -466,7 +466,7 @@ mod tests {
                         title: "Temporary demo edit".to_string(),
                         description: String::new(),
                         project: Some("cli".to_string()),
-                        status: "inbox".to_string(),
+                        status: Some("inbox".to_string()),
                         priority: "none".to_string(),
                         source: TaskSource::Unknown,
                         labels: Vec::new(),

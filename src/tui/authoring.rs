@@ -20,6 +20,13 @@ pub(crate) enum AddTaskPriorityChoice {
 }
 
 impl AddTaskStatusChoice {
+    pub(crate) fn explicit_status(&self) -> Option<String> {
+        match self {
+            Self::Derived => None,
+            Self::Explicit(status) => Some(status.clone()),
+        }
+    }
+
     pub(crate) fn from_picker_value(value: &str) -> Option<Self> {
         if value == crate::tui::store::ADD_TASK_STATUS_AUTO_VALUE {
             Some(Self::Derived)
@@ -67,12 +74,6 @@ pub(crate) fn derived_add_task_status<'a>(
     recurring: bool,
 ) -> &'a str {
     match status {
-        AddTaskStatusChoice::Explicit(status)
-            if status == crate::choices::TaskStatus::Inbox.as_str()
-                && priority.drives_derived_status() =>
-        {
-            crate::choices::TaskStatus::Todo.as_str()
-        }
         AddTaskStatusChoice::Explicit(status) => status,
         AddTaskStatusChoice::Derived => automatic_add_task_status(priority, recurring),
     }
@@ -799,11 +800,9 @@ impl AuthoringState {
         draft.title = task.title;
         draft.description = task.description;
         draft.project = task.project;
-        draft.status = if task.status == "inbox" {
-            AddTaskStatusChoice::Derived
-        } else {
-            AddTaskStatusChoice::Explicit(task.status)
-        };
+        draft.status = task
+            .status
+            .map_or(AddTaskStatusChoice::Derived, AddTaskStatusChoice::Explicit);
         draft.priority = AddTaskPriorityChoice::Literal(task.priority);
         draft.labels = task.labels;
         draft.custom_metadata = task.metadata;
@@ -833,13 +832,7 @@ impl AuthoringState {
                 title: trimmed.to_string(),
                 description,
                 project: draft.project,
-                status: derived_add_task_status(
-                    &draft.status,
-                    &draft.priority,
-                    draft.template_schedule.is_some()
-                        || !matches!(draft.repeat_rule.trim(), "" | "none"),
-                )
-                .to_string(),
+                status: draft.status.explicit_status(),
                 priority: draft.priority.value().to_string(),
                 source: crate::choices::TaskSource::Tui,
                 labels: draft.labels,
@@ -879,7 +872,7 @@ mod tests {
     use crate::attachments::optimization::ImageOptimizationPolicy;
 
     #[test]
-    fn add_task_priority_promotes_only_inbox_action_priorities() {
+    fn add_task_priority_preserves_explicit_status() {
         for priority in ["medium", "high", "urgent"] {
             assert_eq!(
                 derived_add_task_status(
@@ -887,7 +880,7 @@ mod tests {
                     &AddTaskPriorityChoice::Literal(priority.to_string()),
                     false,
                 ),
-                "todo"
+                "inbox"
             );
         }
         assert_eq!(
@@ -1024,7 +1017,7 @@ mod tests {
                     title: "Review metrics".to_string(),
                     description: String::new(),
                     project: Some("app".to_string()),
-                    status: "todo".to_string(),
+                    status: Some("todo".to_string()),
                     priority: "high".to_string(),
                     labels: vec!["ops".to_string()],
                     available_at: None,
@@ -1059,7 +1052,7 @@ mod tests {
                     title: "Review release".to_string(),
                     description: String::new(),
                     project: None,
-                    status: "inbox".to_string(),
+                    status: None,
                     priority: "high".to_string(),
                     source: crate::choices::TaskSource::Tui,
                     labels: Vec::new(),
@@ -1074,7 +1067,7 @@ mod tests {
         let AddTaskTitleSubmit::Create(create) = state.submit_add_task() else {
             panic!("parsed task should be ready to create");
         };
-        assert_eq!(create.draft.status, "todo");
+        assert_eq!(create.draft.status, None);
         assert_eq!(create.draft.priority, "high");
     }
 
@@ -1099,7 +1092,7 @@ mod tests {
             title: "Parsed".to_string(),
             description: "User-authored details".to_string(),
             project: None,
-            status: "inbox".to_string(),
+            status: Some("inbox".to_string()),
             priority: "none".to_string(),
             source: crate::choices::TaskSource::Tui,
             labels: Vec::new(),

@@ -11,7 +11,7 @@ fn draft() -> TaskDraft {
         title: "Original title".to_string(),
         description: String::new(),
         project: Some("Source".to_string()),
-        status: "todo".to_string(),
+        status: Some("todo".to_string()),
         priority: "none".to_string(),
         source: TaskSource::Cli,
         labels: Vec::new(),

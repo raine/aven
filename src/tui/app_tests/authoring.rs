@@ -36,7 +36,7 @@ async fn add_task_from_columns_uses_active_lane_status() {
         ("canceled", TaskStatus::Done),
     ] {
         let mut draft = test_task_draft("Existing column task");
-        draft.status = selected_status.to_string();
+        draft.status = Some(selected_status.to_string());
         create_and_select_task(&mut app, draft).await;
         app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
         assert!(matches!(
@@ -2453,4 +2453,21 @@ async fn recurring_creation_inherits_metadata_and_committed_refresh_failure_clos
         .await
         .unwrap();
     assert_eq!(detail.metadata[0].value, "");
+}
+
+#[tokio::test]
+async fn add_task_explicit_inbox_survives_high_priority() {
+    let mut app = test_app().await;
+    app.handle_normal_key(KeyCode::Char('a')).await.unwrap();
+    let Some(OverlayState::AddTask(state)) = app.overlay.as_mut() else {
+        panic!("expected composer");
+    };
+    state.title = LineEdit::new("Explicit inbox".to_string());
+    state.apply_priority_choice("high");
+    state.apply_status_choice("inbox");
+    assert_eq!(state.effective_status(), "inbox");
+    app.handle_overlay_key(ctrl_s()).await.unwrap();
+    let task = app.store.selected_task(app.list.selected_task()).unwrap();
+    assert_eq!(task.task.status, TaskStatus::Inbox);
+    assert_eq!(task.task.priority, TaskPriority::High);
 }

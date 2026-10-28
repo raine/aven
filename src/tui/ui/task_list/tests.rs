@@ -208,7 +208,7 @@ pub(super) async fn test_store_with_tasks(tasks: Vec<TaskListItem>) -> TuiStore 
             title: item.task.title,
             description: item.task.description,
             project: Some("app".to_string()),
-            status: item.task.status.as_str().to_string(),
+            status: Some(item.task.status.as_str().to_string()),
             priority: item.task.priority.as_str().to_string(),
             source: crate::choices::TaskSource::Unknown,
             labels: item.labels,

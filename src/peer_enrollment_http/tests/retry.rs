@@ -269,7 +269,7 @@ async fn refused_replacements_keep_the_join_and_its_data_unchanged() {
             title: "LOCAL WHILE JOINING".into(),
             description: String::new(),
             project: Some("app".into()),
-            status: "todo".into(),
+            status: Some("todo".into()),
             priority: "none".into(),
             source: aven_core::choices::TaskSource::Cli,
             labels: vec![],

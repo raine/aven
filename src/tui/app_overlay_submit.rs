@@ -306,7 +306,7 @@ impl App {
             title: title.to_string(),
             description: state.description.buffer.lines.join("\n").trim().to_string(),
             project: state.selected_project.clone(),
-            status: state.effective_status().to_string(),
+            status: state.status.explicit_status(),
             priority: state.priority.value().to_string(),
             source: crate::choices::TaskSource::Tui,
             labels: state.labels.clone(),

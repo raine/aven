@@ -1521,7 +1521,7 @@ async fn typed_structural_requests_preserve_occurrence_write_policy() {
             title: "ordinary".to_string(),
             description: String::new(),
             project: Some("recurrence".to_string()),
-            status: "todo".to_string(),
+            status: Some("todo".to_string()),
             priority: "none".to_string(),
             source: crate::choices::TaskSource::Unknown,
             labels: Vec::new(),

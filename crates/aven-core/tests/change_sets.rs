@@ -33,7 +33,7 @@ impl Fixture {
                     title: "Original".into(),
                     description: "original body".into(),
                     project: "Core".into(),
-                    status: TaskStatus::Inbox,
+                    status: Some(TaskStatus::Inbox),
                     priority: TaskPriority::None,
                     metadata: vec![],
                     available_at: None,
@@ -150,7 +150,7 @@ fn capture(title: &str) -> TaskCapture {
         title: title.into(),
         description: "Captured".into(),
         project: Some("Core".into()),
-        status: TaskStatus::Inbox,
+        status: None,
         priority: TaskPriority::High,
         source: TaskSource::Ios,
         due_on: Some("2099-01-02".into()),
@@ -1595,4 +1595,63 @@ async fn staged_creation_reuses_intervening_labels_only_in_target_workspace() {
         f.db.list_labels(&foreign.id, None).await.unwrap(),
         ["foreign-only"]
     );
+}
+
+#[tokio::test]
+async fn change_sets_preserve_explicit_inbox_and_undo_implicit_promotion() {
+    let f = Fixture::new().await;
+    for (status, expected) in [(None, "todo"), (Some(TaskStatus::Inbox), "inbox")] {
+        let mut fields = capture("Status choice");
+        fields.status = status;
+        let created = f
+            .store
+            .apply_change_set(
+                &f.workspace,
+                vec![ChangeOp::Create {
+                    local_id: "created".into(),
+                    fields,
+                }],
+            )
+            .await
+            .unwrap();
+        let id = &created.created["created"].task_id;
+        assert_eq!(f.snapshot(id).await.status, expected);
+        let reset = f
+            .store
+            .apply_change_set(
+                &f.workspace,
+                vec![ChangeOp::Update {
+                    target: existing(id),
+                    fields: TaskEdit {
+                        status: Some(TaskStatus::Inbox),
+                        priority: Some(TaskPriority::High),
+                        ..Default::default()
+                    },
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(f.snapshot(id).await.status, "inbox");
+        let before = f.snapshot(id).await;
+        let promoted = f
+            .store
+            .apply_change_set(
+                &f.workspace,
+                vec![ChangeOp::Update {
+                    target: existing(id),
+                    fields: TaskEdit {
+                        priority: Some(TaskPriority::High),
+                        ..Default::default()
+                    },
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(f.snapshot(id).await.status, "todo");
+        f.store.undo_change_set(&promoted.undo_token).await.unwrap();
+        assert_eq!(f.snapshot(id).await, before);
+        f.store.undo_change_set(&reset.undo_token).await.unwrap();
+        assert_eq!(f.snapshot(id).await.status, expected);
+        f.store.undo_change_set(&created.undo_token).await.unwrap();
+    }
 }

@@ -171,7 +171,7 @@ fn draft(title: &str, labels: Vec<String>, metadata: Vec<TaskMetadataInput>) -> 
         title: title.into(),
         description: format!("{title} description"),
         project: Some("app".into()),
-        status: "todo".into(),
+        status: Some("todo".into()),
         priority: "none".into(),
         source: TaskSource::Cli,
         labels,

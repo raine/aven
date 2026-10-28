@@ -121,7 +121,7 @@ mod tests {
                     title: "Kept through reset".to_string(),
                     description: String::new(),
                     project: "app".to_string(),
-                    status: TaskStatus::Todo,
+                    status: Some(TaskStatus::Todo),
                     priority: TaskPriority::None,
                     metadata: Vec::new(),
                     available_at: None,

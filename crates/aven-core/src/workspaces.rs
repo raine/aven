@@ -497,7 +497,7 @@ mod tests {
             title: title.into(),
             description: String::new(),
             project: Some("app".into()),
-            status: status.into(),
+            status: Some(status.into()),
             priority: "none".into(),
             source: crate::choices::TaskSource::Cli,
             labels: vec![],

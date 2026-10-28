@@ -12,7 +12,7 @@ fn draft(keys: &[&str]) -> TaskDraft {
         title: "Preserve provenance".into(),
         description: String::new(),
         project: Some("Source".into()),
-        status: "todo".into(),
+        status: Some("todo".into()),
         priority: "none".into(),
         source: TaskSource::Cli,
         labels: Vec::new(),

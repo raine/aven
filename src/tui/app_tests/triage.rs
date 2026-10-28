@@ -93,7 +93,7 @@ async fn triage_priority_on_inbox_promotes_and_stays() {
 async fn triage_current_status_on_stale_todo_keeps_it_without_writing() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     let mut draft = test_task_draft("Stale todo");
-    draft.status = "todo".to_string();
+    draft.status = Some("todo".to_string());
     let selected = create_and_select_task(&mut app, draft).await;
     let task_id = app.store.tasks[selected].task.id.clone();
     sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE id = ?")
@@ -127,7 +127,7 @@ async fn triage_current_status_on_stale_todo_keeps_it_without_writing() {
 async fn triage_undo_of_keep_clears_the_review_mark() {
     let (_dir, pool, mut app) = test_app_with_pool().await;
     let mut draft = test_task_draft("Stale active");
-    draft.status = "active".to_string();
+    draft.status = Some("active".to_string());
     let selected = create_and_select_task(&mut app, draft).await;
     let task_id = app.store.tasks[selected].task.id.clone();
     sqlx::query("UPDATE tasks SET queue_activity_at = ? WHERE id = ?")

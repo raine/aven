@@ -36,7 +36,7 @@ async fn consumer_navigation_reads_project_and_search_rows_by_stable_identity() 
                 title: "Searchable navigation task".to_string(),
                 description: "distinct local search phrase".to_string(),
                 project: "iOS".to_string(),
-                status: TaskStatus::Active,
+                status: Some(TaskStatus::Active),
                 priority: TaskPriority::High,
                 metadata: Vec::new(),
                 available_at: None,
@@ -52,7 +52,7 @@ async fn consumer_navigation_reads_project_and_search_rows_by_stable_identity() 
                 title: "Other project task".to_string(),
                 description: String::new(),
                 project: "Docs".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -138,7 +138,7 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
                 title: "Seed project".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Done,
+                status: Some(TaskStatus::Done),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -172,7 +172,7 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
                 description: String::new(),
                 title: "Requires a selected project".to_string(),
                 project: None,
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 source: TaskSource::Ios,
                 due_on: None,
@@ -194,7 +194,7 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
                 description: "    code block\n\n- item\n".to_string(),
                 title: "  Captured offline  ".to_string(),
                 project: Some("ios".to_string()),
-                status: TaskStatus::Inbox,
+                status: None,
                 priority: TaskPriority::High,
                 source: TaskSource::Ios,
                 due_on: Some(due_on.clone()),
@@ -237,7 +237,7 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
             description: String::new(),
             title: "   ".to_string(),
             project: None,
-            status: TaskStatus::Inbox,
+            status: Some(TaskStatus::Inbox),
             priority: TaskPriority::None,
             source: TaskSource::Ios,
             due_on: None,
@@ -247,7 +247,7 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
             description: String::new(),
             title: "Stale project".to_string(),
             project: Some("missing".to_string()),
-            status: TaskStatus::Inbox,
+            status: Some(TaskStatus::Inbox),
             priority: TaskPriority::None,
             source: TaskSource::Ios,
             due_on: None,
@@ -269,7 +269,7 @@ async fn queue_capture_is_local_workspace_scoped_and_reversible() {
                 description: String::new(),
                 title: "New label".to_string(),
                 project: Some("ios".to_string()),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 source: TaskSource::Ios,
                 due_on: None,
@@ -336,7 +336,7 @@ async fn queue_capture_persists_selected_status_atomically_and_undoes_all_status
                     title: format!("Capture {status}"),
                     description: String::new(),
                     project: Some("capture".to_string()),
-                    status,
+                    status: Some(status),
                     priority: TaskPriority::None,
                     source: TaskSource::Ios,
                     due_on: None,
@@ -391,7 +391,7 @@ async fn queue_quick_actions_are_exact_local_and_state_checked() {
                 title: "Quick action target".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -407,7 +407,7 @@ async fn queue_quick_actions_are_exact_local_and_state_checked() {
                 title: "Stable neighbor".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::Low,
                 metadata: Vec::new(),
                 available_at: None,
@@ -576,7 +576,7 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
                 title: "consumer source".to_string(),
                 description: String::new(),
                 project: "Core".to_string(),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 available_at: None,
                 due_on: None,
@@ -591,7 +591,7 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
                 title: "iOS source".to_string(),
                 description: String::new(),
                 project: Some("Core".to_string()),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 source: TaskSource::Ios,
                 due_on: None,
@@ -611,7 +611,7 @@ async fn consumer_api_creation_sync_and_export_preserve_task_sources() {
                 title: "Android task".to_string(),
                 description: String::new(),
                 project: Some("Core".to_string()),
-                status: "inbox".to_string(),
+                status: Some("inbox".to_string()),
                 priority: "none".to_string(),
                 source: aven_core::choices::TaskSource::Android,
                 labels: Vec::new(),
@@ -728,7 +728,7 @@ async fn consumer_api_queue_report_ranks_open_tasks() {
                     title: title.to_string(),
                     description: String::new(),
                     project: "Core".to_string(),
-                    status,
+                    status: Some(status),
                     priority,
                     available_at: None,
                     due_on: None,
@@ -746,7 +746,7 @@ async fn consumer_api_queue_report_ranks_open_tasks() {
                 title: "deferred".to_string(),
                 description: String::new(),
                 project: "Core".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::High,
                 available_at: Some("2999-01-01T00:00:00Z".to_string()),
                 due_on: None,
@@ -804,7 +804,7 @@ async fn queue_state_lists_counts_restores_selection_and_falls_back() {
                     title: title.to_string(),
                     description: String::new(),
                     project: "Core".to_string(),
-                    status,
+                    status: Some(status),
                     priority: TaskPriority::None,
                     available_at: None,
                     due_on: None,
@@ -870,7 +870,7 @@ async fn consumer_api_queue_report_exposes_bounded_row_presentation_and_conflict
                 title: "presented".to_string(),
                 description: "must stay outside the summary".to_string(),
                 project: "Core".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::Urgent,
                 available_at: None,
                 due_on: Some("2099-01-02".to_string()),
@@ -886,7 +886,7 @@ async fn consumer_api_queue_report_exposes_bounded_row_presentation_and_conflict
                 title: "epic".to_string(),
                 description: String::new(),
                 project: "Core".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 available_at: None,
                 due_on: None,
@@ -992,7 +992,7 @@ async fn consumer_api_conflict_records_cover_every_typed_task_field() {
                 title: "typed".to_string(),
                 description: "description".to_string(),
                 project: "Core".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::High,
                 available_at: None,
                 due_on: None,
@@ -1154,7 +1154,7 @@ async fn consumer_api_completes_local_task_and_conflict_flows() {
                 title: "consumer task".to_string(),
                 description: "created through the narrow API".to_string(),
                 project: "Core".to_string(),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 available_at: None,
                 due_on: Some("2026-08-01".to_string()),
@@ -1708,7 +1708,7 @@ async fn consumer_conflict_list_tolerates_recurrence_series_conflicts() {
                 title: "contested task".to_string(),
                 description: String::new(),
                 project: "Core".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -1778,7 +1778,7 @@ async fn consumer_api_exposes_symmetric_related_links_on_detail_records() {
         title: title.to_string(),
         description: String::new(),
         project: "Core".to_string(),
-        status: TaskStatus::Inbox,
+        status: Some(TaskStatus::Inbox),
         priority: TaskPriority::None,
         available_at: None,
         due_on: None,
@@ -1818,7 +1818,7 @@ async fn related_links_converge_across_remove_and_offline_remove_add_race() {
         title: title.to_string(),
         description: String::new(),
         project: "Core".to_string(),
-        status: TaskStatus::Inbox,
+        status: Some(TaskStatus::Inbox),
         priority: TaskPriority::None,
         available_at: None,
         due_on: None,
@@ -1890,7 +1890,7 @@ async fn consumer_base_list_matches_detail_selection_without_detail_tables() {
                     title: title.to_string(),
                     description: "base description".to_string(),
                     project: "Core".to_string(),
-                    status: TaskStatus::Todo,
+                    status: Some(TaskStatus::Todo),
                     priority: TaskPriority::High,
                     available_at: None,
                     due_on: None,
@@ -1966,7 +1966,7 @@ async fn task_detail_is_exact_bounded_and_attachment_aware() {
                 title: "Seed API project".to_string(),
                 description: String::new(),
                 project: "api".to_string(),
-                status: TaskStatus::Done,
+                status: Some(TaskStatus::Done),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -1982,7 +1982,7 @@ async fn task_detail_is_exact_bounded_and_attachment_aware() {
                 title: "Blocking task".to_string(),
                 description: String::new(),
                 project: "api".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::High,
                 metadata: Vec::new(),
                 available_at: None,
@@ -1998,7 +1998,7 @@ async fn task_detail_is_exact_bounded_and_attachment_aware() {
                 description: String::new(),
                 title: "Detailed task".to_string(),
                 project: Some("api".to_string()),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::High,
                 source: TaskSource::Ios,
                 due_on: Some("2026-09-03".to_string()),
@@ -2145,7 +2145,7 @@ async fn queue_capture_undo_rejects_activity_changed_by_inverse_status_mutation(
         title: "State-checked capture".to_string(),
         description: String::new(),
         project: Some("capture".to_string()),
-        status: TaskStatus::Inbox,
+        status: Some(TaskStatus::Inbox),
         priority: TaskPriority::None,
         source: TaskSource::Ios,
         due_on: None,
@@ -2242,7 +2242,7 @@ async fn attachment_bytes_are_scoped_bounded_and_leased() {
                 title: "Images".into(),
                 description: String::new(),
                 project: Some("images".into()),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 source: TaskSource::Ios,
                 due_on: None,
@@ -2319,7 +2319,7 @@ async fn task_detail_activity_preserves_bounded_order_anchor_and_empty_history()
                 title: "Activity".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -2431,7 +2431,7 @@ async fn task_deletion_is_scoped_reversible_and_stale_safe() {
                 title: "Delete from detail".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -2558,7 +2558,7 @@ async fn task_deletion_syncs_delete_and_restore() {
                 title: "Synchronized deletion".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -2613,7 +2613,7 @@ async fn task_deletion_preserves_conflict_recurrence_and_attachment_guards() {
                 title: "Guarded deletion".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -2730,7 +2730,7 @@ async fn detail_status_receipts_use_authoritative_state_and_reject_stale_undo() 
                 title: "Detail status".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -2986,7 +2986,7 @@ async fn task_detail_reports_deleted_object_file_as_unavailable() {
                 title: "Images".into(),
                 description: String::new(),
                 project: Some("images".into()),
-                status: TaskStatus::Inbox,
+                status: Some(TaskStatus::Inbox),
                 priority: TaskPriority::None,
                 source: TaskSource::Ios,
                 due_on: None,
@@ -3061,7 +3061,7 @@ async fn task_detail_activity_reports_availability_as_structured_instant() {
                 title: "Deferred".to_string(),
                 description: String::new(),
                 project: "ios".to_string(),
-                status: TaskStatus::Todo,
+                status: Some(TaskStatus::Todo),
                 priority: TaskPriority::None,
                 metadata: Vec::new(),
                 available_at: None,
@@ -3108,4 +3108,84 @@ async fn task_detail_activity_reports_availability_as_structured_instant() {
             .filter(|action| action.kind != TaskActivityKind::Availability)
             .all(|action| action.available_at.is_none())
     );
+}
+
+#[tokio::test]
+async fn explicit_inbox_wins_over_priority_in_public_creation_capture_and_edit() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(&directory.path().join("status.sqlite"))
+        .await
+        .unwrap();
+    let workspace = store.resolve_workspace("default").await.unwrap().id;
+    for (status, expected) in [
+        (None, TaskStatus::Todo),
+        (Some(TaskStatus::Inbox), TaskStatus::Inbox),
+    ] {
+        let created = store
+            .create_task(
+                &workspace,
+                CreateTask {
+                    title: "Create".into(),
+                    description: String::new(),
+                    project: "Core".into(),
+                    status,
+                    priority: TaskPriority::High,
+                    metadata: vec![],
+                    available_at: None,
+                    due_on: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status, expected);
+        let captured = store
+            .capture_queue_task(
+                &workspace,
+                TaskCapture {
+                    title: "Capture".into(),
+                    description: String::new(),
+                    project: Some("Core".into()),
+                    status,
+                    priority: TaskPriority::High,
+                    source: TaskSource::Api,
+                    due_on: None,
+                    labels: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .task_detail(&workspace, &captured.task_id)
+                .await
+                .unwrap()
+                .status,
+            expected
+        );
+        let updated = store
+            .update_task(
+                &workspace,
+                &created.id,
+                UpdateTask {
+                    status: Some(TaskStatus::Inbox),
+                    priority: Some(TaskPriority::High),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.task.status, TaskStatus::Inbox);
+        let promoted = store
+            .update_task(
+                &workspace,
+                &created.id,
+                UpdateTask {
+                    priority: Some(TaskPriority::High),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(promoted.task.status, TaskStatus::Todo);
+    }
 }

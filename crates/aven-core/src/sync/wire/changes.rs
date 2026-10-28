@@ -519,7 +519,7 @@ mod tests {
             title: title.into(),
             description: "task body".into(),
             project: Some("app".into()),
-            status: "todo".into(),
+            status: Some("todo".into()),
             priority: "high".into(),
             source: crate::choices::TaskSource::Cli,
             labels: Vec::new(),

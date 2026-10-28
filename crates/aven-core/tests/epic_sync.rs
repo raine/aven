@@ -45,7 +45,7 @@ impl Replicas {
                             title: title.to_string(),
                             description: String::new(),
                             project: "Core".to_string(),
-                            status: TaskStatus::Inbox,
+                            status: Some(TaskStatus::Inbox),
                             priority: TaskPriority::None,
                             available_at: None,
                             due_on: None,

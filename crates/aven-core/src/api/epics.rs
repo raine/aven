@@ -126,7 +126,7 @@ impl Store {
                     title: input.title.trim().to_string(),
                     description: input.description,
                     project: Some(project),
-                    status: input.status.as_str().into(),
+                    status: input.status.map(|status| status.as_str().into()),
                     priority: input.priority.as_str().into(),
                     source: input.source,
                     labels: input.labels,

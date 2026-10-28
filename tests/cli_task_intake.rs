@@ -101,6 +101,7 @@ agent:
             "title=\"fix slack dispatch\"",
             "project=app",
             "priority=high",
+            "status=todo",
             "available_at=",
             "due_on=",
             "description<<EOF",

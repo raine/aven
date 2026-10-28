@@ -380,7 +380,7 @@ async fn server_setup_refuses_historyless_domain_data_without_modifying_it() {
                             title: "private historyless task".into(),
                             description: "private description".into(),
                             project: Some("app".into()),
-                            status: "todo".into(),
+                            status: Some("todo".into()),
                             priority: "none".into(),
                             source: crate::choices::TaskSource::Cli,
                             labels: vec![],

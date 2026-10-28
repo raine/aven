@@ -672,7 +672,7 @@ async fn local_edit_after_enrollment_blocks_install_and_protected_loss_blocks_re
                 title: "KEEP LOCAL".into(),
                 description: "".into(),
                 project: Some("local".into()),
-                status: "todo".into(),
+                status: Some("todo".into()),
                 priority: "none".into(),
                 source: aven_core::choices::TaskSource::Cli,
                 labels: vec![],

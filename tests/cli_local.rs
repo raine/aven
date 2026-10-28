@@ -1904,3 +1904,42 @@ fn project_custom_prefix_creation_restore_and_rename() {
     );
     contains_all(&ok(env.aven(&db, ["show", &task])), &["NEW-"]);
 }
+
+#[test]
+fn explicit_inbox_wins_over_priority_promotion() {
+    let env = TestEnv::new();
+    let db = env.db("explicit-status.sqlite");
+    let explicit = ok(env.aven(
+        &db,
+        [
+            "add",
+            "Explicit inbox",
+            "--status",
+            "inbox",
+            "--priority",
+            "high",
+        ],
+    ));
+    contains_all(&explicit, &["status=inbox", "priority=high"]);
+    let implicit = ok(env.aven(&db, ["add", "Implicit status", "--priority", "high"]));
+    contains_all(&implicit, &["status=todo", "priority=high"]);
+    let task = extract_ref(&explicit);
+    contains_all(
+        &ok(env.aven(
+            &db,
+            ["edit", &task, "--status", "inbox", "--priority", "high"],
+        )),
+        &["status=inbox"],
+    );
+    contains_all(
+        &ok(env.aven(&db, ["edit", &task, "--priority", "high"])),
+        &["status=todo"],
+    );
+    contains_all(
+        &ok(env.aven(
+            &db,
+            ["edit", &task, "--status", "inbox", "--priority", "high"],
+        )),
+        &["status=inbox"],
+    );
+}
