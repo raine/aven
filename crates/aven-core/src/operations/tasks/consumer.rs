@@ -101,7 +101,8 @@ impl Database {
             .ok_or_else(|| crate::error::CoreError::not_found("selected project is unavailable"))?;
             changed |= set_task_project(&mut tx, workspace, task_id, &project).await?;
         }
-        let (fields_changed, _) =
+        // Consumer edits retain shared workspace labels and have no undo receipt.
+        let (fields_changed, _created_labels) =
             apply_task_update(&mut tx, workspace, task_id, &update, &mut BTreeSet::new()).await?;
         tx.commit().await?;
         Ok(changed || fields_changed)

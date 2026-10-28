@@ -15,7 +15,7 @@ use crate::choices::{TaskPriority, TaskStatus};
 use crate::db::{Database, begin_immediate, conflict_exists};
 use crate::error::CoreError;
 use crate::ids::{ProjectId, TaskId, WorkspaceId};
-use crate::labels::resolve_labels_in_workspace;
+use crate::labels::{ensure_label_exists_in_workspace, normalize_label};
 use crate::operations::{
     RecurrenceStructuralMutation, RecurrenceTaskMutation, add_pinned_attachment_in_transaction,
     find_attachment, require_available_pin, soft_delete_attachment_in_transaction,
@@ -289,6 +289,7 @@ async fn validate_operations(
 ) -> std::result::Result<(), IndexedChangeSetError> {
     let mut tasks = HashMap::<ChangeTarget, Task>::new();
     let mut attachment_ids = HashSet::new();
+    let mut introduced_labels = HashSet::new();
     let at = crate::ids::now_utc();
     for (index, op) in ops.iter().enumerate() {
         let result: Result<()> = async {
@@ -313,7 +314,8 @@ async fn validate_operations(
                             .expect("capture requires a project"),
                     )
                     .await?;
-                    resolve_labels_in_workspace(conn, &workspace.id, &draft.labels).await?;
+                    validate_labels(conn, workspace, &draft.labels, true, &mut introduced_labels)
+                        .await?;
                     let (status, priority) = initial_status(draft)?;
                     tasks.insert(
                         target,
@@ -382,8 +384,22 @@ async fn validate_operations(
                         }
                         set_effective_field(task, field, value)?;
                     }
-                    resolve_labels_in_workspace(conn, &workspace.id, &update.add_labels).await?;
-                    resolve_labels_in_workspace(conn, &workspace.id, &update.remove_labels).await?;
+                    validate_labels(
+                        conn,
+                        workspace,
+                        &update.add_labels,
+                        update.create_missing_labels,
+                        &mut introduced_labels,
+                    )
+                    .await?;
+                    validate_labels(
+                        conn,
+                        workspace,
+                        &update.remove_labels,
+                        false,
+                        &mut introduced_labels,
+                    )
+                    .await?;
                     if matches!(target, ChangeTarget::Existing(_)) {
                         crate::metadata::validate_task_metadata_result(
                             conn,
@@ -462,6 +478,30 @@ async fn validate_operations(
         }
         .await;
         result.map_err(|error| IndexedChangeSetError::at(index, error))?;
+    }
+    Ok(())
+}
+
+// Track names, not database rows: preflight must not persist staged labels.
+// Adds precede removals, matching apply_task_update, even within one operation.
+async fn validate_labels(
+    conn: &mut SqliteConnection,
+    workspace: &Workspace,
+    labels: &[String],
+    create_missing: bool,
+    introduced: &mut HashSet<String>,
+) -> Result<()> {
+    for label in labels {
+        let name = normalize_label(label);
+        if create_missing {
+            ensure!(
+                !name.is_empty(),
+                CoreError::validation("error invalid-label")
+            );
+            introduced.insert(name);
+        } else if !introduced.contains(&name) {
+            ensure_label_exists_in_workspace(conn, &workspace.id, label).await?;
+        }
     }
     Ok(())
 }
@@ -560,7 +600,8 @@ async fn execute_operation(
 ) -> Result<Option<(TaskId, String, AttachmentChangeKind)>> {
     let group = match op {
         ChangeSetOperation::Create { local_id, draft } => {
-            let inserted = insert_task(conn, workspace, draft, false, true).await?;
+            // Consumer capture undo retains workspace labels, which other tasks may reuse.
+            let inserted = insert_task(conn, workspace, draft, true, true).await?;
             let expected = task_snapshot(conn, &workspace.id, &inserted.id).await?;
             locals.insert(local_id, inserted.id.clone());
             InverseGroup {
@@ -586,7 +627,9 @@ async fn execute_operation(
                 let project = require_project(conn, workspace, &id).await?;
                 crate::mutation::set_task_project(conn, workspace, &task_id, &project).await?;
             }
-            apply_task_update(conn, workspace, &task_id, &update, &mut BTreeSet::new()).await?;
+            // Undo owns task label membership, not shared workspace label definitions.
+            let (_changed, _created_labels) =
+                apply_task_update(conn, workspace, &task_id, &update, &mut BTreeSet::new()).await?;
             let after = task_snapshot(conn, &workspace.id, &task_id).await?;
             let mut commands = Vec::new();
             append_task_undo_commands(&task_id, &before, &after, &mut commands);

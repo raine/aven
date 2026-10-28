@@ -69,6 +69,7 @@ impl Fixture {
             "changes" => "SELECT count(*) FROM changes",
             "field_versions" => "SELECT count(*) FROM field_versions",
             "task_labels" => "SELECT count(*) FROM task_labels",
+            "labels" => "SELECT count(*) FROM labels",
             "task_workspace_history" => "SELECT count(*) FROM task_workspace_history",
             "tui_undo_entries" => "SELECT count(*) FROM tui_undo_entries",
             "recurrence_occurrences" => "SELECT count(*) FROM recurrence_occurrences",
@@ -87,6 +88,7 @@ impl Fixture {
             "changes",
             "field_versions",
             "task_labels",
+            "labels",
             "task_workspace_history",
             "tui_undo_entries",
             "recurrence_occurrences",
@@ -397,7 +399,7 @@ async fn every_operation_is_preflighted_before_even_the_first_write() {
                 ChangeOp::Create {
                     local_id: "b".into(),
                     fields: TaskCapture {
-                        labels: vec!["missing".into()],
+                        labels: vec![" !!! ".into()],
                         ..capture("x")
                     },
                 },
@@ -503,8 +505,8 @@ async fn late_storage_failure_rolls_back_tasks_notes_versions_and_sync_history()
         .apply_change_set(
             &f.workspace,
             vec![
-                create("a"),
-                edit(existing(&f.task), "changed"),
+                create_with_labels("a", &["Created label"]),
+                label_edit(existing(&f.task), &["Edited label"], &[], true),
                 note(local("a"), "fail"),
             ],
         )
@@ -1162,4 +1164,435 @@ async fn failed_apply_leaves_the_pin_intact_for_retry() {
     let result = f.store.apply_change_set(&f.workspace, ops).await.unwrap();
     assert_eq!(result.attachments[0].kind, AttachmentChangeKind::Added);
     assert_eq!(f.attachments(&task).await, [(id, false)]);
+}
+
+fn create_with_labels(local_id: &str, labels: &[&str]) -> ChangeOp {
+    ChangeOp::Create {
+        local_id: local_id.into(),
+        fields: TaskCapture {
+            labels: labels.iter().map(|name| (*name).into()).collect(),
+            ..capture("Labelled")
+        },
+    }
+}
+
+fn label_fields(add: &[&str], remove: &[&str], create_missing_labels: bool) -> TaskEdit {
+    TaskEdit {
+        add_labels: add.iter().map(|name| (*name).into()).collect(),
+        remove_labels: remove.iter().map(|name| (*name).into()).collect(),
+        create_missing_labels,
+        ..Default::default()
+    }
+}
+
+fn label_edit(target: ChangeTarget, add: &[&str], remove: &[&str], create: bool) -> ChangeOp {
+    ChangeOp::Update {
+        target,
+        fields: label_fields(add, remove, create),
+    }
+}
+
+#[tokio::test]
+async fn consumer_edit_label_creation_is_opt_in_normalized_scoped_and_atomic() {
+    let mut f = Fixture::new().await;
+    let foreign = f.db.create_workspace("foreign").await.unwrap();
+    f.db.create_label(&foreign, "Fresh Idea").await.unwrap();
+    let before = f.counts().await;
+    let original = f.snapshot(&f.task).await;
+    assert!(!TaskEdit::default().create_missing_labels);
+    assert!(
+        f.store
+            .edit_task(
+                &f.workspace,
+                &f.task,
+                TaskEdit {
+                    add_labels: vec!["Fresh Idea".into()],
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(f.counts().await, before);
+    // A foreign task must not create labels in the caller's workspace.
+    assert!(
+        f.store
+            .edit_task(
+                &foreign.id,
+                &f.task,
+                label_fields(&["Wrong workspace"], &[], true)
+            )
+            .await
+            .is_err()
+    );
+    for fields in [
+        label_fields(&["Fresh Idea", "!!!"], &[], true),
+        label_fields(&["Fresh Idea"], &["Unknown removal"], true),
+    ] {
+        assert!(
+            f.store
+                .edit_task(&f.workspace, &f.task, fields)
+                .await
+                .is_err()
+        );
+        assert_eq!(f.counts().await, before);
+        assert_eq!(f.snapshot(&f.task).await, original);
+    }
+    assert!(
+        f.store
+            .edit_task(
+                &f.workspace,
+                &f.task,
+                label_fields(&[" Fresh IDEA ", "fresh--idea", "FRESH_IDEA"], &[], true)
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(f.snapshot(&f.task).await.labels, ["fresh-idea"]);
+    assert_eq!(
+        f.db.list_labels(&f.workspace, None).await.unwrap(),
+        ["fresh-idea"]
+    );
+    assert_eq!(
+        f.db.list_labels(&foreign.id, None).await.unwrap(),
+        ["fresh-idea"]
+    );
+    let after = f.counts().await;
+    assert!(
+        !f.store
+            .edit_task(
+                &f.workspace,
+                &f.task,
+                label_fields(&["Fresh Idea"], &[], true)
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(f.counts().await, after);
+    assert!(
+        f.store
+            .edit_task(
+                &f.workspace,
+                &f.task,
+                label_fields(&[], &["FRESH IDEA"], false)
+            )
+            .await
+            .unwrap()
+    );
+    assert!(f.snapshot(&f.task).await.labels.is_empty());
+    assert_eq!(
+        f.db.list_labels(&f.workspace, None).await.unwrap(),
+        ["fresh-idea"]
+    );
+}
+
+#[tokio::test]
+async fn staged_labels_resolve_in_order_and_undo_retains_shared_definitions() {
+    let mut f = Fixture::new().await;
+    let original = f.snapshot(&f.task).await;
+    let ops = vec![
+        create_with_labels("a", &["Fresh Idea", "fresh--idea"]),
+        label_edit(local("a"), &["Second Label"], &["FRESH IDEA"], true),
+        // Default edits can use labels introduced by either earlier operation.
+        label_edit(
+            existing(&f.task),
+            &["fresh_idea", "SECOND LABEL"],
+            &[],
+            false,
+        ),
+        label_edit(local("a"), &["Ephemeral"], &["ephemeral"], true),
+    ];
+    // Staging and discarding are plain data, not mutations.
+    let before = f.counts().await;
+    drop(ops.clone());
+    assert_eq!(f.counts().await, before);
+    assert!(
+        f.db.list_labels(&f.workspace, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let result = f.store.apply_change_set(&f.workspace, ops).await.unwrap();
+    let created = &result.created["a"].task_id;
+    assert_eq!(f.snapshot(created).await.labels, ["second-label"]);
+    assert_eq!(
+        f.snapshot(&f.task).await.labels,
+        ["fresh-idea", "second-label"]
+    );
+    // A separate consumer can reuse the shared label without invalidating undo.
+    let reused = f
+        .store
+        .capture_queue_task(
+            &f.workspace,
+            TaskCapture {
+                labels: vec!["Fresh Idea".into()],
+                ..capture("Reuses label")
+            },
+        )
+        .await
+        .unwrap();
+    f.store.undo_change_set(&result.undo_token).await.unwrap();
+    assert_eq!(f.snapshot(&f.task).await, original);
+    assert!(f.snapshot(created).await.deleted);
+    assert_eq!(f.snapshot(&reused.task_id).await.labels, ["fresh-idea"]);
+    assert_eq!(
+        f.db.list_labels(&f.workspace, None).await.unwrap(),
+        ["ephemeral", "fresh-idea", "second-label"]
+    );
+    f.store
+        .undo_queue_capture(&reused.undo_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.db.list_labels(&f.workspace, None).await.unwrap(),
+        ["ephemeral", "fresh-idea", "second-label"]
+    );
+}
+
+#[tokio::test]
+async fn label_preflight_rejects_forward_references_removals_and_invalid_names_without_writes() {
+    let mut f = Fixture::new().await;
+    let before = f.counts().await;
+    f.exec("CREATE TRIGGER reject_label_write BEFORE INSERT ON labels BEGIN SELECT RAISE(ABORT, 'label write reached'); END;").await;
+    for (ops, index) in [
+        (
+            vec![
+                label_edit(existing(&f.task), &["Future"], &[], false),
+                create_with_labels("a", &["Future"]),
+            ],
+            0,
+        ),
+        (
+            vec![
+                create_with_labels("a", &["Valid"]),
+                label_edit(local("a"), &["Another"], &["Missing"], true),
+            ],
+            1,
+        ),
+        (
+            vec![
+                create_with_labels("a", &["Valid"]),
+                label_edit(local("a"), &["!!!"], &[], true),
+            ],
+            1,
+        ),
+    ] {
+        let error = f
+            .store
+            .apply_change_set(&f.workspace, ops)
+            .await
+            .unwrap_err();
+        assert_eq!(error.operation_index, Some(index));
+        assert!(!error.error.message.contains("write reached"), "{error}");
+        assert_eq!(f.counts().await, before);
+    }
+}
+
+#[tokio::test]
+async fn label_creation_rolls_back_on_edit_conflict_and_set_preflight_conflict() {
+    let mut f = Fixture::new().await;
+    sqlx::query("INSERT INTO conflicts(workspace_id, entity_type, entity_id, task_id, field, local_value, remote_value, remote_change_id, variant_a, variant_b, created_at) VALUES (?, 'task', ?, ?, 'title', 'Original', 'remote', 'remote-change', 'a', 'b', '2026-01-01T00:00:00Z')")
+        .bind(&f.workspace).bind(&f.task).bind(&f.task).execute(&mut f.conn).await.unwrap();
+    let before = f.counts().await;
+    let fields = TaskEdit {
+        title: Some("conflicted".into()),
+        ..label_fields(&["Must roll back"], &[], true)
+    };
+    assert_eq!(
+        f.store
+            .edit_task(&f.workspace, &f.task, fields.clone())
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::OpenConflict
+    );
+    assert_eq!(f.counts().await, before);
+    let error = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![
+                create_with_labels("a", &["Also roll back"]),
+                ChangeOp::Update {
+                    target: existing(&f.task),
+                    fields,
+                },
+            ],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.operation_index, Some(1));
+    assert_eq!(error.error.code, ErrorCode::OpenConflict);
+    assert_eq!(f.counts().await, before);
+}
+
+#[tokio::test]
+async fn concurrent_task_label_edit_blocks_entire_change_set_undo() {
+    let mut f = Fixture::new().await;
+    let result = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![
+                create_with_labels("a", &["Shared"]),
+                label_edit(existing(&f.task), &["Shared"], &[], false),
+            ],
+        )
+        .await
+        .unwrap();
+    f.store
+        .edit_task(
+            &f.workspace,
+            &f.task,
+            label_fields(&["Concurrent"], &[], true),
+        )
+        .await
+        .unwrap();
+    let before = f.counts().await;
+    assert_eq!(
+        f.store
+            .undo_change_set(&result.undo_token)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::GenerationConflict
+    );
+    assert_eq!(f.counts().await, before);
+    assert!(!f.snapshot(&result.created["a"].task_id).await.deleted);
+    assert_eq!(f.snapshot(&f.task).await.labels, ["concurrent", "shared"]);
+}
+
+#[tokio::test]
+async fn consumer_created_labels_and_undo_converge_through_encrypted_sync() {
+    let f = Fixture::new().await;
+    let server = EncryptedSyncServer::new().await;
+    server.sync(&f.db).await.unwrap();
+    let other = open_blank_database(&f._dir.path().join("labels-other.sqlite"))
+        .await
+        .unwrap();
+    server.sync(&other).await.unwrap();
+    f.store
+        .edit_task(
+            &f.workspace,
+            &f.task,
+            label_fields(&["Ordinary Edit"], &[], true),
+        )
+        .await
+        .unwrap();
+    let result = f
+        .store
+        .apply_change_set(
+            &f.workspace,
+            vec![
+                create_with_labels("a", &["Created label"]),
+                label_edit(existing(&f.task), &["Updated label"], &[], true),
+            ],
+        )
+        .await
+        .unwrap();
+    server.sync(&f.db).await.unwrap();
+    server.sync(&other).await.unwrap();
+    assert_eq!(
+        other.list_labels(&f.workspace, None).await.unwrap(),
+        ["created-label", "ordinary-edit", "updated-label"]
+    );
+    assert_eq!(
+        other
+            .task_undo_snapshot(&f.workspace, &f.task)
+            .await
+            .unwrap()
+            .labels,
+        ["ordinary-edit", "updated-label"]
+    );
+    assert_eq!(
+        other
+            .task_undo_snapshot(&f.workspace, &result.created["a"].task_id)
+            .await
+            .unwrap()
+            .labels,
+        ["created-label"]
+    );
+    f.store.undo_change_set(&result.undo_token).await.unwrap();
+    server.sync(&f.db).await.unwrap();
+    server.sync(&other).await.unwrap();
+    let fresh = open_blank_database(&f._dir.path().join("labels-fresh.sqlite"))
+        .await
+        .unwrap();
+    server.sync(&fresh).await.unwrap();
+    for db in [&other, &fresh] {
+        assert_eq!(
+            db.list_labels(&f.workspace, None).await.unwrap(),
+            ["created-label", "ordinary-edit", "updated-label"]
+        );
+        assert_eq!(
+            db.task_undo_snapshot(&f.workspace, &f.task)
+                .await
+                .unwrap()
+                .labels,
+            ["ordinary-edit"]
+        );
+        assert!(
+            db.task_undo_snapshot(&f.workspace, &result.created["a"].task_id)
+                .await
+                .unwrap()
+                .deleted
+        );
+    }
+}
+
+#[tokio::test]
+async fn staged_creation_reuses_intervening_labels_only_in_target_workspace() {
+    let mut f = Fixture::new().await;
+    let foreign = f.db.create_workspace("foreign").await.unwrap();
+    f.db.create_label(&foreign, "Foreign Only").await.unwrap();
+    let before = f.counts().await;
+    assert!(
+        f.store
+            .apply_change_set(
+                &f.workspace,
+                vec![label_edit(existing(&f.task), &["Foreign Only"], &[], false),]
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(f.counts().await, before);
+    let ops = vec![
+        create_with_labels("a", &["Shared Name", "Foreign Only"]),
+        label_edit(
+            existing(&f.task),
+            &["SHARED_NAME", "foreign-only"],
+            &[],
+            true,
+        ),
+    ];
+    // Another writer creates a staged name before Apply; reuse its definition.
+    let workspace = f.db.resolve_workspace("default").await.unwrap();
+    let shared = f.db.create_label(&workspace, "shared--name").await.unwrap();
+    let result = f.store.apply_change_set(&f.workspace, ops).await.unwrap();
+    let creations: Vec<(String, String)> = sqlx::query_as(
+        "SELECT entity_id, change_id FROM changes WHERE json_extract(payload, '$.workspace_id') = ? AND op_type = 'create_label' ORDER BY entity_id",
+    ).bind(&f.workspace).fetch_all(&mut f.conn).await.unwrap();
+    assert_eq!(creations.len(), 2);
+    assert_eq!(creations[0].0, "foreign-only");
+    assert_eq!(
+        creations[1],
+        ("shared-name".into(), shared.change_id.unwrap())
+    );
+    let additions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM changes WHERE json_extract(payload, '$.workspace_id') = ? AND entity_id = ? AND op_type = 'label_add'",
+    ).bind(&f.workspace).bind(&f.task).fetch_one(&mut f.conn).await.unwrap();
+    assert_eq!(additions, 2);
+    assert_eq!(
+        f.snapshot(&f.task).await.labels,
+        ["foreign-only", "shared-name"]
+    );
+    f.store.undo_change_set(&result.undo_token).await.unwrap();
+    assert_eq!(
+        f.db.list_labels(&f.workspace, None).await.unwrap(),
+        ["foreign-only", "shared-name"]
+    );
+    assert_eq!(
+        f.db.list_labels(&foreign.id, None).await.unwrap(),
+        ["foreign-only"]
+    );
 }

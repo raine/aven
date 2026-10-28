@@ -9,6 +9,8 @@ pub use crate::operations::{
 /// A staged consumer mutation. Fields use the same rules as capture and edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChangeOp {
+    /// Like ordinary capture, creates missing normalized labels on Apply.
+    /// Constructing a staged operation does not persist labels or tasks.
     Create {
         local_id: String,
         fields: TaskCapture,
@@ -73,6 +75,9 @@ pub struct NoteReceipt {
 impl Store {
     /// Validates the complete ordered set before writing, then commits it atomically.
     /// Local IDs must be unique and refer only to earlier creates. Empty sets succeed.
+    /// Labels introduced by earlier operations are available to later edits, even
+    /// without creation enabled. Removals require an existing or already introduced
+    /// name; they never create a label. Validation itself writes nothing.
     /// The receipt needs no read-model refresh; created references reflect final projects.
     pub async fn apply_change_set(
         &self,
@@ -128,7 +133,9 @@ impl Store {
 
     /// Reverses the entire set in one transaction. Subsequent edits can invalidate
     /// the receipt; recurrence undo also retains its unsynced/untouched-successor rules.
-    /// Created tasks are soft-deleted, as with undo_queue_capture. Only attachments the
+    /// Created tasks are soft-deleted, as with undo_queue_capture. Workspace labels
+    /// are retained, including newly created labels; updates reverse label membership
+    /// without claiming ownership of shared labels. Only image attachments the
     /// set inserted are deleted; one already deleted by the user is left as it is.
     pub async fn undo_change_set(&self, undo_token: &str) -> Result<(), Error> {
         let token = serde_json::from_str(undo_token).map_err(|_| {

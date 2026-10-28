@@ -681,6 +681,8 @@ impl Store {
         })
     }
 
+    /// Edits atomically; missing labels require `TaskEdit::create_missing_labels`.
+    /// This method returns no undo receipt. Created workspace labels persist.
     pub async fn edit_task(
         &self,
         workspace_id: &WorkspaceId,
@@ -1675,6 +1677,8 @@ pub struct TaskCapture {
     pub priority: TaskPriority,
     pub source: TaskSource,
     pub due_on: Option<String>,
+    /// Normalized labels to attach. Capture (including change-set Create) creates
+    /// missing names atomically in the target workspace. Undo retains the labels.
     pub labels: Vec<String>,
 }
 
@@ -1892,6 +1896,10 @@ pub struct TaskEdit {
     pub priority: Option<TaskPriority>,
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
+    /// Create normalized missing `add_labels` in the target workspace atomically.
+    /// Defaults to false (existing labels only). Removals never create labels.
+    /// Consumer change-set undo reverses task changes but retains workspace labels.
+    pub create_missing_labels: bool,
     pub available_at: OptionalDateUpdate,
     pub due_on: OptionalDateUpdate,
 }
@@ -2769,6 +2777,7 @@ impl TaskEdit {
                 due_on: self.due_on.into_internal(),
                 add_labels: self.add_labels,
                 remove_labels: self.remove_labels,
+                create_missing_labels: self.create_missing_labels,
                 ..InternalTaskUpdate::default()
             },
         ))
