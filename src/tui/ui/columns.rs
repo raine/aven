@@ -555,7 +555,7 @@ fn card_heading_line(
     max_width: usize,
 ) -> Line<'static> {
     let priority = if item.task.priority.as_str() == "none" {
-        ""
+        String::new()
     } else {
         priority_short(item.task.priority.as_str())
     };
@@ -563,7 +563,7 @@ fn card_heading_line(
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
-    let priority_width = UnicodeWidthStr::width(priority);
+    let priority_width = UnicodeWidthStr::width(priority.as_str());
     let ref_width = max_width.saturating_sub(priority_width + markers_width + 1);
     let display_ref = truncate_width(&item.display_ref, ref_width);
     let used_width = UnicodeWidthStr::width(display_ref.as_str()) + priority_width + markers_width;

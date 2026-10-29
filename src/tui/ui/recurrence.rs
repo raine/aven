@@ -9,6 +9,7 @@ use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::Theme;
+use crate::tui::widgets::priority_short;
 
 use super::dialog::{Dialog, dialog_hint_line};
 use super::scroll::render_vertical_scrollbar;
@@ -298,7 +299,7 @@ fn recurrence_preview_lines(
         fields.extend([
             Span::styled("  priority ", theme.dim()),
             Span::styled(
-                item.series.priority.as_str().to_string(),
+                priority_short(item.series.priority.as_str()),
                 theme
                     .priority(item.series.priority.as_str())
                     .add_modifier(Modifier::BOLD),
@@ -467,7 +468,7 @@ fn recurrence_detail_lines(theme: &Theme, detail: &RecurrenceSeriesDetail) -> Ve
             theme,
             "Priority",
             Span::styled(
-                detail.series.priority.as_str().to_string(),
+                priority_short(detail.series.priority.as_str()),
                 theme
                     .priority(detail.series.priority.as_str())
                     .add_modifier(Modifier::BOLD),
@@ -691,7 +692,7 @@ mod tests {
         let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(text.contains("RCR-6OGN  Publish weekly project update"));
-        assert!(text.contains("project docs  state active  priority high"));
+        assert!(text.contains("project docs  state active  priority \u{f08be} high"));
         assert!(text.contains("repeat Every Friday  available 09:00  due same day"));
         assert!(text.contains("current task 2026-07-31 DCS-F5ZB"));
         assert!(text.contains("Summarize progress and open decisions."));

@@ -337,7 +337,7 @@ fn priority_pickers_share_icons_colors_highlight_and_typing_hint() {
             visible_indices: vec![0],
             ..picker_view()
         }));
-        assert!(rendered.contains("▲ urgent"));
+        assert!(rendered.contains("\u{f0027} urgent"));
         assert!(rendered.contains("type filter"));
         assert!(!rendered.contains("/ filter"));
     }

@@ -7,24 +7,33 @@ use crate::queue::unix_seconds;
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
 
-pub(crate) fn priority_icon(priority: &str) -> &'static str {
+/// Icon and short label for each priority.
+///
+/// Low, medium, and high share an ascending three-bar silhouette with one, two,
+/// or three bars filled, so the level reads at a glance. Urgent uses a filled
+/// exclamation box rather than a fourth bar. The bar and box glyphs are Nerd
+/// Font Material Design icons and occupy one cell.
+fn priority_parts(priority: &str) -> (&'static str, &'static str) {
     match priority {
-        "urgent" => "▲",
-        "high" => "●",
-        "medium" => "◐",
-        "low" => "◌",
-        _ => "─",
+        // md-alert_box
+        "urgent" => ("\u{f0027}", "urgent"),
+        // md-signal_cellular_3
+        "high" => ("\u{f08be}", "high"),
+        // md-signal_cellular_2
+        "medium" => ("\u{f08bd}", "med"),
+        // md-signal_cellular_1
+        "low" => ("\u{f08bc}", "low"),
+        _ => ("─", "none"),
     }
 }
 
-pub(crate) fn priority_short(priority: &str) -> &'static str {
-    match priority {
-        "urgent" => "▲ urgent",
-        "high" => "● high",
-        "medium" => "◐ med",
-        "low" => "◌ low",
-        _ => "─ none",
-    }
+pub(crate) fn priority_icon(priority: &str) -> &'static str {
+    priority_parts(priority).0
+}
+
+pub(crate) fn priority_short(priority: &str) -> String {
+    let (icon, label) = priority_parts(priority);
+    format!("{icon} {label}")
 }
 
 /// Icon and label for each status.
@@ -198,6 +207,43 @@ mod tests {
         }
 
         assert_eq!(icons.len(), crate::choices::STATUSES.len());
+    }
+
+    #[test]
+    fn priority_icons_use_signal_bars_and_urgent_box() {
+        assert_eq!(priority_icon("none"), "─");
+        assert_eq!(priority_icon("low"), "\u{f08bc}");
+        assert_eq!(priority_icon("medium"), "\u{f08bd}");
+        assert_eq!(priority_icon("high"), "\u{f08be}");
+        assert_eq!(priority_icon("urgent"), "\u{f0027}");
+
+        let mut icons = std::collections::BTreeSet::new();
+        for priority in crate::choices::PRIORITIES {
+            let icon = priority_icon(priority);
+            assert_eq!(icon.width(), 1, "{priority}");
+            assert!(icons.insert(icon), "{priority} reuses {icon}");
+            assert!(
+                status_parts_icons().all(|status_icon| status_icon != icon),
+                "{priority} reuses a status icon"
+            );
+            assert_eq!(
+                priority_short(priority),
+                format!(
+                    "{icon} {}",
+                    if *priority == "medium" {
+                        "med"
+                    } else {
+                        priority
+                    }
+                )
+            );
+        }
+    }
+
+    fn status_parts_icons() -> impl Iterator<Item = &'static str> {
+        crate::choices::STATUSES
+            .iter()
+            .filter_map(|status| status_parts(status).map(|(icon, _)| icon))
     }
 
     #[test]
