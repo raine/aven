@@ -13,7 +13,7 @@ import '../styles/privacy.css';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#121110" />
     <title>Privacy policy | aven</title>
-    <meta name="description" content="How Aven handles local task data, self-hosted sync, remote images, crash reports, and support correspondence." />
+    <meta name="description" content="How Aven handles local task data, sync, Tell Aven and voice input, remote images, crash reports, and support correspondence." />
     <link rel="canonical" href="https://aventasks.dev/privacy/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
@@ -40,8 +40,8 @@ import '../styles/privacy.css';
         <header class="privacy-heading">
           <p class="eyebrow">Your data</p>
           <h1>Privacy policy</h1>
-          <p class="privacy-updated">Last updated: <time datetime="2026-10-03">October 3, 2026</time></p>
-          <p class="privacy-intro">Your tasks stay on your devices and, if you choose to sync, on a server you control. We cannot see your tasks or activity, and Aven includes no analytics, advertising, or automatic crash-reporting SDK.</p>
+          <p class="privacy-updated">Last updated: <time datetime="2026-10-29">October 29, 2026</time></p>
+          <p class="privacy-intro">Your tasks stay on your devices and, if you choose to sync, are encrypted before they reach a server. Task content leaves your device readable only when you use Tell Aven or a cloud voice input provider, and only after you agree. Aven includes no analytics, advertising, or automatic crash-reporting SDK.</p>
         </header>
 
         <div class="privacy-content">
@@ -56,12 +56,30 @@ import '../styles/privacy.css';
           </section>
 
           <section aria-labelledby="sync">
-            <h2 id="sync">Sync to your own server</h2>
-            <p>Desktop sync is optional. The iPhone and Android apps connect to a user-operated sync server. What that server can read depends on the sync protocol used by your version of Aven.</p>
+            <h2 id="sync">Sync</h2>
+            <p>Desktop sync is optional. The iPhone and Android apps connect to a sync server: one you or someone you choose operates, or Aven Cloud, a hosted sync service. What a server can read depends on the sync protocol used by your version of Aven.</p>
             <p>Aven's encrypted sync protocol encrypts tasks, history, and images on each device before upload. The server cannot read task titles, notes, or images. It still sees device identities; random IDs for tasks, workspaces, and images; whether a change creates or deletes something; sizes, counts, and timing; and HTTP request metadata, including authentication information.</p>
             <p>Older releases use plaintext sync with a shared server credential (<code>sync.auth_token</code>). With that protocol, the server can read task content, attachments, and changes. HTTPS protects the connection but does not make plaintext sync end-to-end encrypted.</p>
-            <p>We and our partners have no access to your sync server. Its operator controls access, logs, retention, and backups.</p>
+            <p>We and our partners have no access to a sync server you operate. Its operator controls access, logs, retention, and backups.</p>
+            <p>Aven Cloud uses only the encrypted protocol and cannot decrypt your vault. Its account, sign-in email, storage, and retention practices are described in the <a href="https://cloud.aventasks.dev/privacy">Aven Cloud privacy notice</a>.</p>
             <p>Use HTTPS or a trusted private network such as a VPN. Over plain HTTP, metadata and credentials are visible to network observers; with plaintext sync, task content is visible too. End-to-end encrypted task content remains encrypted even over HTTP. Keep pairing invitations and tokens private.</p>
+          </section>
+
+          <section aria-labelledby="tell-aven">
+            <h2 id="tell-aven">Tell Aven</h2>
+            <p>Tell Aven, the iPhone assistant, sends readable task content to an AI provider. End-to-end encrypted sync does not protect these requests. Nothing is sent until you agree on Tell Aven's first page, and nothing is sent while you do not use it. Pairing a different server, or a change to the provider or its disclosed retention, asks again. Declining leaves the rest of the app working.</p>
+            <p>A request contains what you type or dictate, the conversation so far, photos you add, and the task content the assistant reads to answer: titles, descriptions, notes, labels, and project and workspace names. Photos are sent as a downscaled copy without metadata such as location. Text and photos that have been sent cannot be recalled.</p>
+            <p><strong>On Aven Cloud</strong>, requests go to Aven Cloud and then to OpenAI. Aven Cloud passes requests to OpenAI without storing their content, photos, or responses, and its logs do not record them. To enforce a monthly usage allowance, it records each request's ID, time, token counts, and cost against your account; these records are deleted with your account. OpenAI receives no account identifier. OpenAI does not use API data to train models by default, and keeps API data under its standard retention, which includes abuse-monitoring logs kept for up to 30 days, subject to exceptions described in <a href="https://openai.com/policies/privacy-policy/">OpenAI's policies</a>.</p>
+            <p><strong>On a server you operate</strong>, requests go to that server and on to the AI provider its administrator configures. The server forwards requests without storing them; the provider's own policy applies.</p>
+            <p>Conversations are kept on your iPhone, excluded from device backups, limited to recent chats, and deleted when you pair a different server.</p>
+          </section>
+
+          <section aria-labelledby="voice">
+            <h2 id="voice">Voice input</h2>
+            <p>The iPhone app transcribes voice input with one provider at a time, chosen in Settings. Apple transcription runs on the device and sends no audio. The other providers receive your recording, and each asks once before any audio is sent:</p>
+            <p><strong>ChatGPT through your Aven server</strong> uploads each finished recording to the paired server, which forwards it to OpenAI using the server's ChatGPT login. OpenAI reports keeping uploaded audio for up to 30 days; neither Aven nor the server can delete it.</p>
+            <p><strong>Soniox, Deepgram, and OpenAI</strong> receive audio streamed directly from your iPhone using an API key you enter. The key stays in this device's Keychain and is sent only to that provider. The provider's own policy applies.</p>
+            <p>Recordings are kept only while you can retry a transcription and are deleted afterwards. Keyboard dictation is provided by Apple under Apple's policies.</p>
           </section>
 
           <section aria-labelledby="images">
@@ -78,7 +96,7 @@ import '../styles/privacy.css';
 
           <section aria-labelledby="integrations">
             <h2 id="integrations">Desktop integrations and updates</h2>
-            <p>If you configure a coding agent or a natural-language task intake command, that tool can receive the input and task context you give it. Tools that use a remote AI service handle that information under their own provider's policy. These integrations are your choice, not an Aven-operated AI service.</p>
+            <p>If you configure a coding agent or a natural-language task intake command, that tool can receive the input and task context you give it. Tools that use a remote AI service handle that information under their own provider's policy. These desktop integrations are your choice and do not use Aven Cloud.</p>
             <p>The desktop app can contact GitHub to check for updates and download releases. GitHub receives ordinary network request information, such as your IP address. These requests do not upload your task database.</p>
           </section>
 
@@ -98,7 +116,7 @@ import '../styles/privacy.css';
 
           <section aria-labelledby="deletion">
             <h2 id="deletion">Deleting your data</h2>
-            <p>On iPhone and Android, <strong>Disconnect and erase</strong> removes the local pairing profile and task replica and may discard unsynced work. It does not delete server data or revoke access. With end-to-end encrypted sync, remove the device from another device that still syncs using <code>aven sync device remove &lt;device-id&gt;</code>. With older plaintext sync, the server operator must revoke or replace the shared server credential. To delete server copies, manage your server or contact its operator.</p>
+            <p>On iPhone and Android, <strong>Disconnect and erase</strong> removes the local pairing profile and task replica and may discard unsynced work. It does not delete server data or revoke access. With end-to-end encrypted sync, remove the device from another device that still syncs using <code>aven sync device remove &lt;device-id&gt;</code>. With older plaintext sync, the server operator must revoke or replace the shared server credential. To delete server copies, manage your server or contact its operator. Aven Cloud accounts can be deleted as described in the Aven Cloud privacy notice.</p>
             <p>Deleting a task is not a guarantee of immediate permanent erasure: copies may remain in sync history, other devices, or backups. Local deletion does not erase independently retained backups or diagnostics Apple or Google may have collected under their policies. We cannot delete data from a server we do not control.</p>
           </section>
 
