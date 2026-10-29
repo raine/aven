@@ -5,7 +5,7 @@ description: Find, capture, and manage work in the terminal interface.
 
 The TUI is aven's keyboard-driven interface for managing tasks locally.
 
-Most sidebar icons require a Nerd Font selected in your terminal profile. If you see
+Sidebar and priority icons require a Nerd Font selected in your terminal profile. If you see
 blanks or boxes, follow the [terminal font setup](/getting-started/#terminal-font).
 
 ```sh
