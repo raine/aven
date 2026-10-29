@@ -89,7 +89,10 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
     println!("==================================================");
     println!("Keep this invitation private. It expires in one hour.");
     println!("Anyone with it can claim this server.");
-    println!("Run `aven sync setup` on the device whose data should start the sync.");
+    println!(
+        "Run {sync_setup} on the device whose data should start the sync.",
+        sync_setup = crate::render::stdout_command("aven sync setup")
+    );
     println!("Server storage: {}", data.display());
     let same_data = if explicit_data {
         " Pass the same --data path to aven server."

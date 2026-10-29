@@ -185,3 +185,37 @@ async fn reset_waits_for_an_open_invitation() {
     a.ok(&["sync", "reset", "--yes"]).await;
     assert_eq!(status(&a).await["state"], "not-set-up");
 }
+
+#[tokio::test]
+async fn local_reset_guidance_is_readable_and_kept_out_of_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let installation = Installation::new(temp.path(), "local");
+    let output = installation.run(&["sync", "reset", "--yes"]).await;
+    let stdout = success(&output, &["sync", "reset", "--yes"]);
+    assert!(stdout.contains("It is local only."), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let guidance = "To start a new sync, run aven sync setup.\n\
+                    Get a setup invitation from Aven Cloud or your hosting provider.\n\
+                    If you self-host, create one with aven server setup.";
+    assert!(stderr.contains(guidance), "{stderr}");
+    assert!(!stderr.contains('`'), "{stderr}");
+    assert!(!stderr.contains('\x1b'), "{stderr}");
+
+    let status = installation.ok(&["sync", "status"]).await;
+    assert!(status.contains(guidance), "{status}");
+    assert!(status.contains("To join an existing sync, run aven sync join on a new database."));
+    assert!(!status.contains('`'), "{status}");
+    assert!(!status.contains('\x1b'), "{status}");
+
+    let output = installation
+        .run(&["sync", "reset", "--yes", "--json"])
+        .await;
+    let stdout = success(&output, &["sync", "reset", "--yes", "--json"]);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        report,
+        serde_json::json!({"version": 1, "state": "not-set-up"})
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("To start a new sync"), "{stderr}");
+}

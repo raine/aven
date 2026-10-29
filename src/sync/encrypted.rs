@@ -662,7 +662,11 @@ pub(crate) async fn reset(database: &Database, config: &AppConfig, args: ResetAr
     }
     println!("{message}");
     eprintln!(
-        "Start a new sync with `aven sync setup`, using an invitation from Aven Cloud, your hosting provider or `aven server setup`."
+        "To start a new sync, run {sync_setup}.\n\
+         Get a setup invitation from Aven Cloud or your hosting provider.\n\
+         If you self-host, create one with {server_setup}.",
+        sync_setup = crate::render::stderr_command("aven sync setup"),
+        server_setup = crate::render::stderr_command("aven server setup")
     );
     Ok(())
 }
@@ -873,7 +877,9 @@ pub(crate) async fn sync(database: &Database, config: &AppConfig, json: bool) ->
 fn print_automatic_sync_hint(config: &AppConfig) {
     if !config.sync.enabled {
         println!(
-            "To sync automatically, run `aven config set sync.enabled true` and `aven daemon install`."
+            "To sync automatically, run {enable_sync} and {daemon_install}.",
+            enable_sync = crate::render::stdout_command("aven config set sync.enabled true"),
+            daemon_install = crate::render::stdout_command("aven daemon install")
         );
     }
 }
@@ -881,8 +887,11 @@ fn print_automatic_sync_hint(config: &AppConfig) {
 fn print_outcome(outcome: &Outcome) {
     if !outcome.metadata_caught_up {
         println!(
-            "Sync incomplete: sent {}, received {}; stopped after {} rounds. Run `aven sync` again.",
-            outcome.sent_changes, outcome.received_changes, outcome.rounds
+            "Sync incomplete: sent {}, received {}; stopped after {} rounds. Run {sync} again.",
+            outcome.sent_changes,
+            outcome.received_changes,
+            outcome.rounds,
+            sync = crate::render::stdout_command("aven sync")
         );
         print_conflict_outcome(outcome);
         if outcome.images == ImageTransfer::Failed {
@@ -906,9 +915,15 @@ fn print_outcome(outcome: &Outcome) {
         ImageTransfer::Complete => println!("Images are up to date"),
         ImageTransfer::Unavailable => println!("Some images are unavailable on the server"),
         ImageTransfer::Failed => {
-            println!("Some image transfers failed. Run `aven sync` again to retry.")
+            println!(
+                "Some image transfers failed. Run {sync} again to retry.",
+                sync = crate::render::stdout_command("aven sync")
+            )
         }
-        ImageTransfer::Pending => println!("Images are still transferring. Run `aven sync` again."),
+        ImageTransfer::Pending => println!(
+            "Images are still transferring. Run {sync} again.",
+            sync = crate::render::stdout_command("aven sync")
+        ),
     }
 }
 
@@ -922,10 +937,11 @@ fn print_conflict_outcome(outcome: &Outcome) {
         String::new()
     };
     println!(
-        "{} conflict{} need{} a decision{qualifier}. Run `aven conflict list`.",
+        "{} conflict{} need{} a decision{qualifier}. Run {conflict_list}.",
         outcome.conflicts,
         if outcome.conflicts == 1 { "" } else { "s" },
         if outcome.conflicts == 1 { "s" } else { "" },
+        conflict_list = crate::render::stdout_command("aven conflict list")
     );
 }
 
@@ -949,8 +965,13 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     if report.state == SyncState::NotSetUp {
         println!("Sync: not set up; this database is local only");
         println!(
-            "Run `aven sync setup` with an invitation from Aven Cloud, your hosting provider or `aven server setup`, or \
-             `aven sync join` on a new database."
+            "To start a new sync, run {sync_setup}.\n\
+             Get a setup invitation from Aven Cloud or your hosting provider.\n\
+             If you self-host, create one with {server_setup}.\n\
+             To join an existing sync, run {sync_join} on a new database.",
+            sync_setup = crate::render::stdout_command("aven sync setup"),
+            server_setup = crate::render::stdout_command("aven server setup"),
+            sync_join = crate::render::stdout_command("aven sync join")
         );
         return Ok(());
     }
@@ -965,15 +986,21 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
         println!("{SINGLE_DEVICE_HINT}");
     }
     match report.state {
-        SyncState::SetupIncomplete => println!("State: setup incomplete. Rerun `aven sync setup`."),
+        SyncState::SetupIncomplete => println!(
+            "State: setup incomplete. Rerun {sync_setup}.",
+            sync_setup = crate::render::stdout_command("aven sync setup")
+        ),
         SyncState::JoinIncomplete => println!(
-            "State: joining incomplete. Rerun `aven sync join`; if its invitation expired, \
-             pass a new one from the same device with `aven sync join --new-invitation`."
+            "State: joining incomplete. Rerun {sync_join}; if its invitation expired, \
+             pass a new one from the same device with {new_invitation}.",
+            sync_join = crate::render::stdout_command("aven sync join"),
+            new_invitation = crate::render::stdout_command("aven sync join --new-invitation")
         ),
         SyncState::KeyChangePending => println!(
             "State: an invitation expired after keys may have been sent to a device that \
-             never joined. The next `aven sync` changes keys before uploading new changes; \
-             data that device may already hold stays readable to it."
+             never joined. The next {sync} changes keys before uploading new changes; \
+             data that device may already hold stays readable to it.",
+            sync = crate::render::stdout_command("aven sync")
         ),
         SyncState::AccessRefused => println!(
             "State: access unconfirmed. The server refused this device. It may have been \
@@ -981,8 +1008,10 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
         ),
         SyncState::VaultDeleted => println!(
             "State: vault deleted. This sync's vault was deleted on the server, so automatic \
-             sync stopped. Local tasks and unsynced changes stay here. Run `aven sync reset`, \
-             then `aven sync setup` with a new setup code."
+             sync stopped. Local tasks and unsynced changes stay here. Run {sync_reset}, \
+             then {sync_setup} with a new setup code.",
+            sync_reset = crate::render::stdout_command("aven sync reset"),
+            sync_setup = crate::render::stdout_command("aven sync setup")
         ),
         SyncState::Ready | SyncState::NotSetUp => println!("State: ready"),
     }
@@ -993,8 +1022,9 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
     }
     if report.conflicts > 0 {
         println!(
-            "Conflicts: {} need a decision. Run `aven conflict list`.",
-            report.conflicts
+            "Conflicts: {} need a decision. Run {conflict_list}.",
+            report.conflicts,
+            conflict_list = crate::render::stdout_command("aven conflict list")
         );
     } else {
         println!("Conflicts: none");
@@ -1025,7 +1055,10 @@ pub(crate) async fn status(database: &Database, config: &AppConfig, json: bool) 
             images.push("nothing waiting");
         }
         println!("Images: {}", images.join(", "));
-        println!("Status is local. Run `aven sync` to exchange changes with the server.");
+        println!(
+            "Status is local. Run {sync} to exchange changes with the server.",
+            sync = crate::render::stdout_command("aven sync")
+        );
     }
     Ok(())
 }

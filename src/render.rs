@@ -1,4 +1,7 @@
+use std::io::IsTerminal;
+
 use anyhow::Context;
+use clap::builder::styling::AnsiColor;
 use similar::TextDiff;
 
 pub fn quote(input: &str) -> String {
@@ -99,5 +102,57 @@ pub(crate) fn format_bytes(bytes: impl Into<i128>) -> String {
         format!("{:.1} KiB", bytes as f64 / KIB as f64)
     } else {
         format!("{bytes} B")
+    }
+}
+
+/// Inline command suggestions use the CLI help's magenta accent.
+pub(crate) fn stdout_command(command: &str) -> String {
+    command_suggestion(
+        command,
+        command_color_enabled(std::io::stdout().is_terminal()),
+    )
+}
+
+pub(crate) fn stderr_command(command: &str) -> String {
+    command_suggestion(
+        command,
+        command_color_enabled(std::io::stderr().is_terminal()),
+    )
+}
+
+fn command_color_enabled(terminal: bool) -> bool {
+    terminal
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
+}
+
+fn command_suggestion(command: &str, color: bool) -> String {
+    if color {
+        let style = AnsiColor::Magenta.on_default();
+        format!("{}{command}{}", style.render(), style.render_reset())
+    } else {
+        command.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn suggestions_are_plain_without_color() {
+        assert_eq!(
+            command_suggestion("aven sync setup", false),
+            "aven sync setup"
+        );
+        assert!(!command_color_enabled(false));
+    }
+
+    #[test]
+    fn accent_is_limited_to_the_command() {
+        assert_eq!(
+            format!("Run {} again.", command_suggestion("aven sync", true)),
+            "Run \x1b[35maven sync\x1b[0m again."
+        );
     }
 }

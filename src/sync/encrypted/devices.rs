@@ -230,7 +230,8 @@ pub(crate) async fn remove(
     if report.state == "pending" {
         eprintln!(
             "Keys for future changes are not rotated yet. Rerun this command, or run \
-             `aven sync` on any remaining device, to finish."
+             {sync} on any remaining device, to finish.",
+            sync = crate::render::stderr_command("aven sync")
         );
     } else {
         eprintln!(
