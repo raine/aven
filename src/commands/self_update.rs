@@ -55,7 +55,10 @@ async fn install_release(
             target.display(),
             cached_suffix(cached)
         );
-        println!("Run `aven update --yes` to install it.");
+        println!(
+            "Run {} to install it.",
+            crate::render::stdout_command("aven update --yes")
+        );
         return Ok(());
     }
 

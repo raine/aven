@@ -11,7 +11,9 @@ pub(in crate::commands) struct DoctorRenderer {
 impl DoctorRenderer {
     pub(super) fn auto() -> Self {
         Self {
-            styled: io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+            styled: io::stdout().is_terminal()
+                && std::env::var_os("NO_COLOR").is_none()
+                && std::env::var_os("TERM").is_none_or(|term| term != "dumb"),
         }
     }
 
@@ -62,6 +64,7 @@ impl DoctorRenderer {
             .as_ref()
             .map(|reason| format!("skipped: {reason}"))
             .unwrap_or_else(|| row.value.clone());
+        let value = crate::render::inline_code(&value, self.styled);
         if self.styled {
             let label = format!("{:<label_width$}", row.label);
             println!(

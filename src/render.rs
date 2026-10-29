@@ -120,6 +120,34 @@ pub(crate) fn stderr_command(command: &str) -> String {
     )
 }
 
+/// Render paired backtick spans in application-authored terminal prose.
+/// User-authored Markdown and structured output must bypass this formatter.
+pub(crate) fn inline_code(text: &str, color: bool) -> String {
+    let mut output = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        let Some(close) = rest[open + 1..].find('`') else {
+            break;
+        };
+        output.push_str(&rest[..open]);
+        output.push_str(&command_suggestion(
+            &rest[open + 1..open + 1 + close],
+            color,
+        ));
+        rest = &rest[open + close + 2..];
+    }
+    output.push_str(rest);
+    output
+}
+
+pub(crate) fn stdout_inline_code(text: &str) -> String {
+    inline_code(text, command_color_enabled(std::io::stdout().is_terminal()))
+}
+
+pub(crate) fn stderr_inline_code(text: &str) -> String {
+    inline_code(text, command_color_enabled(std::io::stderr().is_terminal()))
+}
+
 fn command_color_enabled(terminal: bool) -> bool {
     terminal
         && std::env::var_os("NO_COLOR").is_none()
@@ -138,6 +166,28 @@ fn command_suggestion(command: &str, color: bool) -> String {
 #[cfg(test)]
 mod command_tests {
     use super::*;
+
+    #[test]
+    fn inline_prose_preserves_text_and_styles_only_paired_spans() {
+        let text = "Run `aven sync` or `aven doctor`. Unmatched ` stays.";
+        assert_eq!(
+            inline_code(text, false),
+            "Run aven sync or aven doctor. Unmatched ` stays."
+        );
+        assert_eq!(
+            inline_code(text, true),
+            format!(
+                "Run {} or {}. Unmatched ` stays.",
+                command_suggestion("aven sync", true),
+                command_suggestion("aven doctor", true),
+            )
+        );
+        assert_eq!(
+            inline_code("Use `aven sync\nsetup`.", false),
+            "Use aven sync\nsetup."
+        );
+        assert_eq!(inline_code("No markup: 日本語", true), "No markup: 日本語");
+    }
 
     #[test]
     fn suggestions_are_plain_without_color() {

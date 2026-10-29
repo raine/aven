@@ -147,7 +147,7 @@ pub(crate) struct DaemonRepairArgs {
 #[command(
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
-    override_help = SERVER_COMMAND_HELP
+    override_help = crate::render::inline_code(SERVER_COMMAND_HELP, true)
 )]
 pub(crate) struct ServerArgs {
     #[command(subcommand)]

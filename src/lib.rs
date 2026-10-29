@@ -93,8 +93,18 @@ fn launched_as_bare_app() -> bool {
 
 pub fn report_cli_error(error: &anyhow::Error) {
     logging::record_command_error(error);
+    let explained = sync::error_explanations::explain(
+        sync::error_explanations::ErrorAction::General,
+        sync::error_explanations::ErrorSurface::Cli,
+        error,
+    )
+    .is_some();
     for line in cli_error_lines(error) {
-        eprintln!("{line}");
+        if explained {
+            eprintln!("{}", render::stderr_inline_code(&line));
+        } else {
+            eprintln!("{line}");
+        }
     }
 }
 

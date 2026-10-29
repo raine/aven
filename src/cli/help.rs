@@ -90,11 +90,52 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let mut command = Cli::command();
+    let mut command = style_help(Cli::command());
     let help = render_top_level_help(&command);
     command = command.override_help(help);
     let matches = command.get_matches_from(args);
     Cli::from_arg_matches(&matches).expect("clap validates matches")
+}
+
+// StyledStr preserves ANSI spans until clap applies its output color policy.
+fn style_help(mut command: clap::Command) -> clap::Command {
+    if let Some(text) = command.get_about() {
+        let text = crate::render::inline_code(&text.to_string(), true);
+        command = command.about(text);
+    }
+    if let Some(text) = command.get_long_about() {
+        let text = crate::render::inline_code(&text.to_string(), true);
+        command = command.long_about(text);
+    }
+    if let Some(text) = command.get_before_help() {
+        let text = crate::render::inline_code(&text.to_string(), true);
+        command = command.before_help(text);
+    }
+    if let Some(text) = command.get_before_long_help() {
+        let text = crate::render::inline_code(&text.to_string(), true);
+        command = command.before_long_help(text);
+    }
+    if let Some(text) = command.get_after_help() {
+        let text = crate::render::inline_code(&text.to_string(), true);
+        command = command.after_help(text);
+    }
+    if let Some(text) = command.get_after_long_help() {
+        let text = crate::render::inline_code(&text.to_string(), true);
+        command = command.after_long_help(text);
+    }
+    command
+        .mut_args(|mut arg| {
+            if let Some(text) = arg.get_help() {
+                let text = crate::render::inline_code(&text.to_string(), true);
+                arg = arg.help(text);
+            }
+            if let Some(text) = arg.get_long_help() {
+                let text = crate::render::inline_code(&text.to_string(), true);
+                arg = arg.long_help(text);
+            }
+            arg
+        })
+        .mut_subcommands(style_help)
 }
 
 fn render_top_level_help(command: &clap::Command) -> String {
@@ -256,6 +297,34 @@ fn paint(text: &str, style: Style) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_command_help_renders_without_backticks() {
+        fn check(mut command: clap::Command) {
+            for help in [command.render_help(), command.render_long_help()] {
+                let plain = help.to_string();
+                assert!(!plain.contains('`'), "{}: {plain}", command.get_name());
+                assert!(!plain.contains('\u{1b}'), "{}: {plain}", command.get_name());
+            }
+            for child in command.get_subcommands() {
+                check(child.clone());
+            }
+        }
+        check(style_help(Cli::command()));
+    }
+
+    #[test]
+    fn help_code_uses_accent_and_preserves_command_text() {
+        let mut command = style_help(Cli::command());
+        let sync = command.find_subcommand_mut("sync").unwrap();
+        let help = sync.render_long_help();
+        assert!(help.to_string().contains("aven sync setup"));
+        assert!(
+            help.ansi()
+                .to_string()
+                .contains("\u{1b}[35maven sync setup\u{1b}[0m")
+        );
+    }
 
     #[test]
     fn help_rows_align_to_each_section_longest_command() {

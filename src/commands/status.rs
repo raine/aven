@@ -76,10 +76,13 @@ fn print_daemon_status(report: &DaemonStatusReport) {
             chrono::DateTime::from_timestamp(error.since, 0)
                 .map_or_else(|| error.since.to_string(), |at| at.to_rfc3339())
         );
-        println!("Next: {}", error.message);
+        println!(
+            "Next: {}",
+            crate::render::stdout_inline_code(&error.message)
+        );
     }
     for guidance in &report.guidance {
-        println!("Next: {guidance}");
+        println!("Next: {}", crate::render::stdout_inline_code(guidance));
     }
 }
 
