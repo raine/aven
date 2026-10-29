@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/aven-ai-contract", ".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
+members = [".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance", "crates/aven-ai-contract"]
 resolver = "3"
 
 [workspace.dependencies]
