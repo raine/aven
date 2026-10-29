@@ -13,7 +13,7 @@ use crate::tui::store::TuiStore;
 use crate::tui::text::str_cells;
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::priority_short;
+use crate::tui::widgets::{priority_short, priority_short_spans};
 use unicode_width::UnicodeWidthStr;
 
 use super::task_list::{EPIC_MARKER, TaskListHit, render_task_preview};
@@ -581,8 +581,8 @@ fn card_heading_line(
     };
     spans.push(Span::raw(" ".repeat(max_width.saturating_sub(used_width))));
     if !priority.is_empty() {
-        spans.push(Span::styled(
-            priority,
+        spans.extend(priority_short_spans(
+            item.task.priority.as_str(),
             theme
                 .priority(item.task.priority.as_str())
                 .add_modifier(Modifier::BOLD),

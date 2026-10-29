@@ -36,6 +36,24 @@ pub(crate) fn priority_short(priority: &str) -> String {
     format!("{icon} {label}")
 }
 
+/// Style for a priority icon drawn in `style`.
+///
+/// Icons never render bold. Terminals often map bold to a separate face, such
+/// as a Nerd Font Mono variant that shrinks icons to fit one cell, while the
+/// regular face draws them at full size.
+pub(crate) fn priority_icon_style(style: Style) -> Style {
+    style.remove_modifier(Modifier::BOLD)
+}
+
+/// Icon and short label spans, with the label drawn in `style`.
+pub(crate) fn priority_short_spans(priority: &str, style: Style) -> [Span<'static>; 2] {
+    let (icon, label) = priority_parts(priority);
+    [
+        Span::styled(icon, priority_icon_style(style)),
+        Span::styled(format!(" {label}"), style),
+    ]
+}
+
 /// Icon and label for each status.
 ///
 /// The icon is the compact rendering of the status and must stay distinct for
@@ -238,6 +256,28 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn priority_icons_stay_regular_weight_inside_bold_rows() {
+        let bold = THEME.priority("high").add_modifier(Modifier::BOLD);
+        let [icon, label] = priority_short_spans("high", bold);
+
+        assert_eq!(icon.content, priority_icon("high"));
+        assert_eq!(icon.style.fg, bold.fg);
+        assert_eq!(label.content, " high");
+        assert_eq!(label.style, bold);
+
+        let selected_row = THEME.selected();
+        assert!(selected_row.add_modifier.contains(Modifier::BOLD));
+        let patched = selected_row.patch(icon.style);
+        assert!(!patched.add_modifier.contains(Modifier::BOLD));
+        assert!(
+            selected_row
+                .patch(label.style)
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     fn status_parts_icons() -> impl Iterator<Item = &'static str> {

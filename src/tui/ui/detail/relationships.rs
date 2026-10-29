@@ -11,7 +11,7 @@ use crate::query::TaskListItem;
 use crate::tui::app::{DetailSection, DetailTargetId};
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::{priority_short, status_span, status_text};
+use crate::tui::widgets::{priority_short, priority_short_spans, status_span, status_text};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum DependencyDirection {
@@ -660,8 +660,8 @@ pub(super) fn dependency_node_lines_with_title_style(
         spans.push(Span::styled("  ", theme.dim()));
         spans.push(status_span(theme, status));
         spans.push(Span::styled("  ", theme.dim()));
-        spans.push(Span::styled(
-            priority_short(priority),
+        spans.extend(priority_short_spans(
+            priority,
             theme.priority(priority).add_modifier(Modifier::BOLD),
         ));
         return vec![Line::from(spans)];
@@ -676,15 +676,16 @@ pub(super) fn dependency_node_lines_with_title_style(
             title_style,
         ),
     ]));
-    lines.push(Line::from(vec![
+    let mut status_spans = vec![
         Span::styled(continuation_prefix.clone(), Style::new().fg(theme.border)),
         status_span(theme, status),
         Span::styled("  ", theme.dim()),
-        Span::styled(
-            priority_short(priority),
-            theme.priority(priority).add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    ];
+    status_spans.extend(priority_short_spans(
+        priority,
+        theme.priority(priority).add_modifier(Modifier::BOLD),
+    ));
+    lines.push(Line::from(status_spans));
     lines
 }
 

@@ -13,7 +13,7 @@ use crate::tui::markdown::render_markdown;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::Theme;
 use crate::tui::triage::{TriageEntry, TriageOutcome, TriageSession};
-use crate::tui::widgets::{priority_short, status_span};
+use crate::tui::widgets::{priority_short_spans, status_span};
 use aven_core::queue::{TriageReason, untouched_since_creation};
 
 const CARD_MAX_WIDTH: u16 = 88;
@@ -321,6 +321,10 @@ fn reason_line(theme: &Theme, entry: &TriageEntry) -> Line<'static> {
 fn meta_line(theme: &Theme, entry: &TriageEntry) -> Line<'static> {
     let task = &entry.item.task;
     let separator = || Span::raw("  ");
+    let [priority_icon, priority_label] = priority_short_spans(
+        task.priority.as_str(),
+        theme.priority(task.priority.as_str()),
+    );
     let mut spans = vec![
         Span::styled(
             entry.item.display_ref.clone(),
@@ -334,10 +338,8 @@ fn meta_line(theme: &Theme, entry: &TriageEntry) -> Line<'static> {
         separator(),
         status_span(theme, task.status.as_str()),
         separator(),
-        Span::styled(
-            priority_short(task.priority.as_str()),
-            theme.priority(task.priority.as_str()),
-        ),
+        priority_icon,
+        priority_label,
     ];
     if let Some(due) = &task.due_on {
         spans.push(separator());

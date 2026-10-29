@@ -10,7 +10,7 @@ use crate::tui::markdown::render_markdown_preview;
 use crate::tui::store::TuiStore;
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::{priority_short, status_span};
+use crate::tui::widgets::{priority_short_spans, status_span};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -36,6 +36,12 @@ fn task_heading_line(theme: &Theme, item: &TaskListItem) -> Line<'static> {
 }
 
 pub(super) fn task_preview_fields_line(theme: &Theme, item: &TaskListItem) -> Line<'static> {
+    let [priority_icon, priority_label] = priority_short_spans(
+        item.task.priority.as_str(),
+        theme
+            .priority(item.task.priority.as_str())
+            .add_modifier(Modifier::BOLD),
+    );
     let mut fields = vec![
         Span::styled("project ", theme.dim()),
         Span::styled(
@@ -47,12 +53,8 @@ pub(super) fn task_preview_fields_line(theme: &Theme, item: &TaskListItem) -> Li
         Span::styled("  status ", theme.dim()),
         status_span(theme, item.task.status.as_str()),
         Span::styled("  priority ", theme.dim()),
-        Span::styled(
-            priority_short(item.task.priority.as_str()),
-            theme
-                .priority(item.task.priority.as_str())
-                .add_modifier(Modifier::BOLD),
-        ),
+        priority_icon,
+        priority_label,
         Span::styled("  created ", theme.dim()),
         Span::styled(
             local_timestamp_display(&item.task.created_at),
