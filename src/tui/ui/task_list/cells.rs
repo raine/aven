@@ -8,7 +8,8 @@ use crate::tui::store::TaskListRenderMode;
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
 use crate::tui::widgets::{
-    age_style, label_cell, priority_icon, status_chip, status_icon_cell, title_cell,
+    age_style, label_cell, priority_icon, priority_icon_style, status_chip, status_icon_cell,
+    title_cell,
 };
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -161,9 +162,7 @@ pub(super) fn build_task_row_cells_for_columns(
                 }
                 TableColumn::Priority => Line::from(Span::styled(
                     priority_icon(item.task.priority.as_str()),
-                    theme
-                        .priority(item.task.priority.as_str())
-                        .add_modifier(Modifier::BOLD),
+                    priority_icon_style(theme.priority(item.task.priority.as_str())),
                 )),
                 TableColumn::Time => time.clone(),
                 TableColumn::Due => due_cell(theme, item, time_context.now_seconds),
@@ -446,9 +445,7 @@ pub(super) fn build_epic_parent_row_cells_for_columns(
                 }
                 TableColumn::Priority => Line::from(Span::styled(
                     priority_icon(item.task.priority.as_str()),
-                    theme
-                        .priority(item.task.priority.as_str())
-                        .add_modifier(Modifier::BOLD),
+                    priority_icon_style(theme.priority(item.task.priority.as_str())),
                 )),
                 TableColumn::Time => {
                     epic_activity_cell(theme, item, time.now_seconds, time.due_order, time.show_due)
@@ -541,9 +538,7 @@ pub(super) fn build_epic_child_row_cells_for_columns(
                 }
                 TableColumn::Priority => Line::from(Span::styled(
                     priority_icon(item.task.priority.as_str()),
-                    theme
-                        .priority(item.task.priority.as_str())
-                        .add_modifier(Modifier::BOLD),
+                    priority_icon_style(theme.priority(item.task.priority.as_str())),
                 )),
                 TableColumn::Time => {
                     if time.due_order && time.show_due {

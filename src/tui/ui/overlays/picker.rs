@@ -9,7 +9,7 @@ use super::super::task_display::linked_task_ref_spans;
 use crate::tui::overlay::{PickerItem, PickerKind, PickerMode, PickerView, picker_layout};
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::priority_icon;
+use crate::tui::widgets::{priority_icon, priority_icon_style};
 
 pub(in crate::tui::ui) fn render_picker(frame: &mut Frame, theme: &Theme, state: &PickerView) {
     if state.kind == PickerKind::LabelAdministration {
@@ -142,7 +142,7 @@ pub(in crate::tui::ui) fn priority_picker_line(
         Span::raw(marker),
         Span::styled(
             format!("{} ", priority_icon(&item.value)),
-            theme.priority(&item.value).add_modifier(Modifier::BOLD),
+            priority_icon_style(theme.priority(&item.value)),
         ),
         Span::styled(
             item.label.clone(),

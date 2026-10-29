@@ -9,7 +9,7 @@ use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;
 use crate::tui::store::TuiStore;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::priority_short;
+use crate::tui::widgets::priority_short_spans;
 
 use super::dialog::{Dialog, dialog_hint_line};
 use super::scroll::render_vertical_scrollbar;
@@ -296,15 +296,13 @@ fn recurrence_preview_lines(
         ),
     ];
     if item.series.priority.as_str() != "none" {
-        fields.extend([
-            Span::styled("  priority ", theme.dim()),
-            Span::styled(
-                priority_short(item.series.priority.as_str()),
-                theme
-                    .priority(item.series.priority.as_str())
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        fields.push(Span::styled("  priority ", theme.dim()));
+        fields.extend(priority_short_spans(
+            item.series.priority.as_str(),
+            theme
+                .priority(item.series.priority.as_str())
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     let available = item
@@ -464,16 +462,15 @@ fn recurrence_detail_lines(theme: &Theme, detail: &RecurrenceSeriesDetail) -> Ve
         recurrence_detail_field(theme, "Starts", Span::styled(starts, theme.muted())),
     ];
     if detail.series.priority.as_str() != "none" {
-        lines.push(recurrence_detail_field(
-            theme,
-            "Priority",
-            Span::styled(
-                priority_short(detail.series.priority.as_str()),
-                theme
-                    .priority(detail.series.priority.as_str())
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ));
+        let [icon, label] = priority_short_spans(
+            detail.series.priority.as_str(),
+            theme
+                .priority(detail.series.priority.as_str())
+                .add_modifier(Modifier::BOLD),
+        );
+        let mut priority = recurrence_detail_field(theme, "Priority", icon);
+        priority.spans.push(label);
+        lines.push(priority);
     }
     if !detail.labels.is_empty() {
         lines.push(recurrence_detail_field(

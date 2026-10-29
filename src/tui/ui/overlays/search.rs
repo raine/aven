@@ -15,7 +15,7 @@ use crate::queue::{now_seconds, unix_seconds};
 use crate::tui::overlay::{SearchKind, SearchResultItem};
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::{priority_icon, status_span};
+use crate::tui::widgets::{priority_icon, priority_icon_style, status_span};
 
 const RESULT_ROWS: usize = 8;
 
@@ -455,15 +455,13 @@ fn result_meta_line(
     }
     let labels = labels_display(&result.labels, ", ");
     let priority = result.priority.as_str();
-    let priority_label = format!("{} {priority}", priority_icon(priority));
+    let priority_style = theme.priority(priority).bg(bg).add_modifier(Modifier::BOLD);
     let mut spans = vec![
         Span::styled("  ", muted),
         apply_bg(status_span(theme, &result.status), bg),
         Span::styled(" · ", muted),
-        Span::styled(
-            priority_label,
-            theme.priority(priority).bg(bg).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(priority_icon(priority), priority_icon_style(priority_style)),
+        Span::styled(format!(" {priority}"), priority_style),
         Span::styled(" · ", muted),
         Span::styled(labels, muted),
         Span::styled(format!(" · age={}", task_age(result)), muted),

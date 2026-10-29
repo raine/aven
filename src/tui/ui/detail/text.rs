@@ -15,7 +15,7 @@ use crate::tui::markdown::{
 };
 use crate::tui::text::title_line_ranges;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::{priority_short, status_span};
+use crate::tui::widgets::{priority_short_spans, status_span};
 
 #[derive(Debug, Clone)]
 pub(super) struct SelectableLine {
@@ -195,13 +195,13 @@ pub(super) fn detail_header_options(
         Span::styled("   ", theme.dim()),
         status_span(theme, item.task.status.as_str()),
         Span::styled("   ", theme.dim()),
-        Span::styled(
-            priority_short(item.task.priority.as_str()),
-            theme
-                .priority(item.task.priority.as_str())
-                .add_modifier(Modifier::BOLD),
-        ),
     ]);
+    summary_spans.extend(priority_short_spans(
+        item.task.priority.as_str(),
+        theme
+            .priority(item.task.priority.as_str())
+            .add_modifier(Modifier::BOLD),
+    ));
     let mut lines = detail_title_lines(theme, item, width, inline_title_editor);
     lines.extend([
         Line::from(Span::styled(

@@ -24,7 +24,7 @@ use crate::tui::overlay::{
 };
 use crate::tui::text::{cell_width_ranges, truncate_width};
 use crate::tui::theme::Theme;
-use crate::tui::widgets::{priority_short, status_span};
+use crate::tui::widgets::{priority_short_spans, status_span};
 
 #[derive(Clone, Copy)]
 pub(crate) struct AddTaskLayout<'a> {
@@ -551,10 +551,9 @@ fn metadata_value_spans(theme: &Theme, field: AddTaskStep, value: &str) -> Vec<S
             ),
         ],
         AddTaskStep::Status => vec![status_span(theme, value)],
-        AddTaskStep::Priority => vec![Span::styled(
-            priority_short(value),
-            theme.priority(value).add_modifier(Modifier::BOLD),
-        )],
+        AddTaskStep::Priority => {
+            priority_short_spans(value, theme.priority(value).add_modifier(Modifier::BOLD)).into()
+        }
         AddTaskStep::Labels if value == "none" => {
             vec![Span::styled("none", theme.dim())]
         }

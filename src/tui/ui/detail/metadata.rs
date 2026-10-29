@@ -9,7 +9,7 @@ use super::super::timestamps::local_timestamp_display;
 use crate::query::TaskListItem;
 use crate::tui::text::truncate_width;
 use crate::tui::theme::Theme;
-use crate::tui::widgets::{priority_short, status_chip};
+use crate::tui::widgets::{priority_short_spans, status_chip};
 
 use super::DetailCopyHit;
 use super::document::{detail_body_area, detail_content_layout};
@@ -89,12 +89,12 @@ pub(super) fn detail_metadata_lines_with_children(
         status_chip(theme, item.task.status.as_str()),
         Line::from(""),
         metadata_label(theme, "PRIORITY"),
-        Line::from(Span::styled(
-            priority_short(item.task.priority.as_str()),
+        Line::from(Vec::from(priority_short_spans(
+            item.task.priority.as_str(),
             theme
                 .priority(item.task.priority.as_str())
                 .add_modifier(Modifier::BOLD),
-        )),
+        ))),
         Line::from(""),
         metadata_label(theme, "LABELS"),
         Line::from(labels_display(&item.labels, ", ")),
