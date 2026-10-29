@@ -61,7 +61,7 @@ fn add_task_overlay_renders_metadata_fields_and_footer() {
     assert!(rendered.contains("Add task"));
     assert!(rendered.contains("Project: ● aven"));
     assert!(rendered.contains("Status: ▣ inbox"));
-    assert!(rendered.contains("Priority: ● high"));
+    assert!(rendered.contains("Priority: \u{f08be} high"));
     assert!(rendered.contains("Labels: none"));
     assert!(rendered.contains("Epic: no"));
     assert!(!rendered.contains("Create more"));
@@ -383,7 +383,7 @@ fn add_task_metadata_values_use_shared_styles() {
         "medium",
         AddTaskStep::Title,
     );
-    assert_eq!(priority.to_string(), "  ^R Priority: ◐ med");
+    assert_eq!(priority.to_string(), "  ^R Priority: \u{f08bd} med");
     assert_eq!(
         priority.spans[3].style.fg,
         Theme::dark().priority("medium").fg

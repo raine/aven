@@ -264,7 +264,7 @@ fn detail_dependency_tree_stacks_when_narrow() {
 
     assert!(rendered_text.contains("└─ ← APP-7KQ1"));
     assert!(rendered_text.contains("A very long tit…"));
-    assert!(rendered_text.contains("□ todo  ● high"));
+    assert!(rendered_text.contains("□ todo  \u{f08be} high"));
     for line in rendered.into_iter().filter(|line| {
         let text = line.to_string();
         text.contains("APP-") || text.contains("todo")

@@ -552,7 +552,7 @@ fn metadata_value_spans(theme: &Theme, field: AddTaskStep, value: &str) -> Vec<S
         ],
         AddTaskStep::Status => vec![status_span(theme, value)],
         AddTaskStep::Priority => vec![Span::styled(
-            priority_short(value).to_string(),
+            priority_short(value),
             theme.priority(value).add_modifier(Modifier::BOLD),
         )],
         AddTaskStep::Labels if value == "none" => {

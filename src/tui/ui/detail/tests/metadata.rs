@@ -54,7 +54,7 @@ fn detail_metadata_includes_operational_fields() {
 
     assert!(rendered.contains("PROJECT\n● app"));
     assert!(rendered.contains("STATUS\n● active"));
-    assert!(rendered.contains("PRIORITY\n▲ urgent"));
+    assert!(rendered.contains("PRIORITY\n\u{f0027} urgent"));
     assert!(rendered.contains("LABELS\nbug, mobile"));
     assert!(rendered.contains("AVAILABILITY\nnone\n\nDUE\nnone\n\nREF"));
     assert!(rendered.contains("CONFLICTS\ntitle"));
