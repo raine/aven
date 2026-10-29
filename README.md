@@ -81,6 +81,9 @@ Inspired by Taskwarrior. See [aven and Taskwarrior](https://aventasks.dev/taskwa
   [sudoremo on GitHub](https://github.com/raine/aven/issues/3)
 - *"I use it daily and it has been great."* -
   [seungjuchoi on GitHub](https://github.com/raine/aven/pull/11)
+- *"This is the best task manager for developers! I've been using the iOS app
+  since it released and it's been fantastic!"* -
+  [nohi54u on the App Store](https://apps.apple.com/app/aven-tasks/id6811171767?see-all=reviews)
 
 ## Quick start
 
