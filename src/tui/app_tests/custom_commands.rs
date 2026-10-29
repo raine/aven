@@ -329,10 +329,12 @@ async fn refresh_policy_updates_projection_and_preserves_navigation_identity() {
     let mut app = test_app().await;
     let mut first_draft = test_task_draft("Alpha");
     first_draft.priority = "high".to_string();
+    first_draft.status = Some("todo".to_string());
     let first = create_and_select_task(&mut app, first_draft).await;
     let first_id = app.store.tasks[first].task.id.clone();
     let mut selected_draft = test_task_draft("Zulu");
     selected_draft.priority = "high".to_string();
+    selected_draft.status = Some("todo".to_string());
     let selected = create_and_select_task(&mut app, selected_draft).await;
     let selected_id = app.store.tasks[selected].task.id.clone();
     app.store.view_state.query = TaskQuery::Todo;

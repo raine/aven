@@ -359,7 +359,7 @@ fn doctor_distinguishes_repairable_recurrence_gap_from_identity_corruption() {
         &repairable,
         &[
             "!! recurrence projection gaps",
-            "repair by running `aven recur list`",
+            "repair by running aven recur list,",
         ],
     );
     contains_none(&repairable, &["!! result"]);

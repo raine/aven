@@ -191,7 +191,7 @@ fn unprepared_server_logs_storage_before_readable_error() {
         &[
             &format!("storage={}", data.display()),
             "Error: Server storage isn't prepared. [server-storage-unprepared]",
-            "Next: Run `aven server setup --url URL` first.",
+            "Next: Run aven server setup --url URL first.",
         ],
     );
     assert!(stderr.find("storage=").unwrap() < stderr.find("Error:").unwrap());
