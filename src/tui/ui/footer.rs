@@ -7,6 +7,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::tui::event::{Action, CommandContext};
 
 use crate::tui::theme::Theme;
+use crate::tui::widgets::{priority_icon, priority_icon_style};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FooterMode {
@@ -55,7 +56,7 @@ pub(super) fn footer_bar(
         let indicator_width = spans_width(&spans);
         for (keys, label) in footer_hints(mode, width.saturating_sub(indicator_width)) {
             spans.extend(key(theme, keys));
-            spans.push(cmd(theme, mode, label));
+            spans.extend(cmd(theme, mode, label));
         }
         spans
     };
@@ -517,7 +518,7 @@ fn key_on(
     spans
 }
 
-fn cmd(theme: &Theme, mode: FooterMode, label: &str) -> Span<'static> {
+fn cmd(theme: &Theme, mode: FooterMode, label: &str) -> Vec<Span<'static>> {
     let style = match mode {
         FooterMode::StatusChoice => theme.status(label),
         FooterMode::PriorityChoice => theme.priority(label),
@@ -538,7 +539,16 @@ fn cmd(theme: &Theme, mode: FooterMode, label: &str) -> Span<'static> {
         | FooterMode::AttachmentPreview
         | FooterMode::DetailSelection => theme.dim(),
     };
-    Span::styled(format!(" {label}  "), style)
+    if mode == FooterMode::PriorityChoice && crate::choices::PRIORITIES.contains(&label) {
+        // The extra space leaves room for icons wider than their cell.
+        vec![
+            Span::raw(" "),
+            Span::styled(priority_icon(label), priority_icon_style(style)),
+            Span::styled(format!("  {label}  "), style),
+        ]
+    } else {
+        vec![Span::styled(format!(" {label}  "), style)]
+    }
 }
 
 #[cfg(test)]
@@ -598,6 +608,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn priority_choice_footer_shows_priority_icons() {
+        let theme = Theme::dark();
+        for priority in crate::choices::PRIORITIES {
+            let spans = cmd(&theme, FooterMode::PriorityChoice, priority);
+            assert_eq!(spans[1].content, priority_icon(priority));
+            assert_eq!(spans[1].style.fg, theme.priority(priority).fg);
+            assert_eq!(spans[2].content, format!("  {priority}  "));
+        }
+        assert_eq!(
+            cmd(&theme, FooterMode::PriorityChoice, "cancel").len(),
+            1,
+            "cancel has no priority icon"
+        );
+        assert_eq!(cmd(&theme, FooterMode::StatusChoice, "todo").len(), 1);
     }
 
     #[test]
