@@ -124,6 +124,7 @@ export default defineConfig({
             { label: 'Scheduling tasks', slug: 'schedule-tasks' },
             { label: 'Recurring tasks', slug: 'recurring-tasks' },
             { label: 'Work with agents', slug: 'agents' },
+            { label: 'MCP server', slug: 'mcp' },
             { label: 'Sync across devices', slug: 'sync/setup' },
             { label: 'Mobile app', slug: 'mobile-app' },
             { label: 'Back up and restore', slug: 'backups' },

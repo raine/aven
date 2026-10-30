@@ -187,16 +187,16 @@ async fn resolve_task_ref_scoped(
         return Ok(matches[0].clone());
     }
     let display_refs = DisplayRefContext::for_workspace(conn, workspace_id).await?;
-    println!("error ambiguous-ref input={}", input);
+    let mut message = format!("error ambiguous-ref input={input}");
     for task in matches {
-        println!(
-            "match {} title={}",
+        message.push_str(&format!(
+            "\nmatch {} title={}",
             display_refs.display_ref(&task),
             quote(&task.title)
-        );
+        ));
     }
-    println!("hint \"retry with longer ref\"");
-    bail!("ambiguous ref");
+    message.push_str("\nhint \"retry with longer ref\"");
+    bail!(message);
 }
 
 fn split_ref(input: &str) -> (Option<String>, String) {

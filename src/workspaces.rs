@@ -48,6 +48,14 @@ async fn resolve_inferred_workspace(
             .resolve_required_workspace(&route.workspace, "workspace route")
             .await;
     }
+    resolve_default_workspace(database, config).await
+}
+
+/// The workspace used when neither a command nor a directory route selects one.
+pub(crate) async fn resolve_default_workspace(
+    database: &Database,
+    config: &AppConfig,
+) -> Result<Workspace> {
     if let Some(default) = config
         .workspace
         .default
@@ -123,4 +131,29 @@ fn longest_matching_route(
         }
     }
     Ok(best.map(|(_, route)| route))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn default_workspace_prefers_config_then_the_built_in_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let (database, pool) = crate::test_support::open_database(&temp.path().join("test.sqlite"))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_default_workspace(&mut conn).await.unwrap();
+        let configured = create_workspace(&mut conn, "work").await.unwrap();
+        drop(conn);
+
+        let mut config = AppConfig::default();
+        let built_in = resolve_default_workspace(&database, &config).await.unwrap();
+        assert_eq!(built_in.id.as_str(), DEFAULT_WORKSPACE_ID);
+
+        config.workspace.default = Some("work".to_string());
+        let selected = resolve_default_workspace(&database, &config).await.unwrap();
+        assert_eq!(selected.id, configured.id);
+    }
 }

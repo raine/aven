@@ -240,6 +240,11 @@ The separate command is useful for debugging or custom agent integrations.
 
 The source guidance lives in [`src/skill.md`](https://github.com/raine/aven/blob/main/src/skill.md).
 
+## Connect MCP clients
+
+Claude Desktop, ChatGPT, and other MCP clients can work with your tasks through
+`aven mcp`. See [MCP server](/mcp/).
+
 ## Connect chat integrations
 
 OpenClaw and similar AI assistants can turn chat messages or voice notes into

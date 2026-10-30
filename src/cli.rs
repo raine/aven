@@ -156,6 +156,8 @@ pub(crate) enum Commands {
     /// Import portable JSON data
     #[command(after_long_help = IMPORT_HELP)]
     Import(ImportArgs),
+    /// Run a stdio MCP server for AI assistants
+    Mcp,
     /// Print or install the coding-agent skill
     #[command(after_long_help = AGENT_HELP)]
     Skill(SkillCommand),

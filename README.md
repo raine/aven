@@ -125,6 +125,7 @@ See [Getting started](https://aventasks.dev/getting-started/) for first-run usag
 - [Scheduling tasks](https://aventasks.dev/schedule-tasks/)
 - [Recurring tasks](https://aventasks.dev/recurring-tasks/)
 - [Work with agents](https://aventasks.dev/agents/)
+- [MCP server](https://aventasks.dev/mcp/)
 - [Sync across devices](https://aventasks.dev/sync/setup/)
 - [Back up and restore](https://aventasks.dev/backups/)
 - [Command reference](https://aventasks.dev/command-reference/)

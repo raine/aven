@@ -84,6 +84,8 @@ qrcode = { version = "0.14.1", default-features = false }
 terminal-colorsaurus = "1.0.3"
 clap_complete = "4.6"
 linkify = "0.11.0"
+rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = "1.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

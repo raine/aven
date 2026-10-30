@@ -18,6 +18,7 @@ pub mod encrypted_tail_http;
 mod http_admission;
 mod input;
 mod logging;
+mod mcp;
 mod notification;
 mod operations;
 mod pairing;
@@ -178,6 +179,7 @@ enum StandaloneCommand {
     Demo,
     Doctor(cli::DoctorArgs),
     Internal(cli::InternalCommand),
+    Mcp,
     Server(cli::ServerArgs),
     Skill(cli::SkillCommand),
     Update(cli::SelfUpdateArgs),
@@ -268,6 +270,7 @@ impl From<Commands> for CliDispatch {
             Commands::Doctor(args) => Self::Standalone(StandaloneCommand::Doctor(args)),
             Commands::Daemon(args) => Self::Standalone(StandaloneCommand::Daemon(args)),
             Commands::Demo => Self::Standalone(StandaloneCommand::Demo),
+            Commands::Mcp => Self::Standalone(StandaloneCommand::Mcp),
             Commands::Server(args) => Self::Standalone(StandaloneCommand::Server(args)),
             Commands::Sync(args) => Self::database(DatabaseCommand::Sync(args)),
             Commands::Tui(args) => Self::Tui(args),
@@ -291,6 +294,13 @@ async fn dispatch_standalone(
             let config = config::AppConfig::load()?;
             let db_path = config::resolve_db_path(db, &config)?;
             commands::cmd_backup_restore(&config, &db_path, args).await
+        }
+        StandaloneCommand::Mcp => {
+            let config = config::AppConfig::load()?;
+            let db_path = config::resolve_db_path(db, &config)?;
+            let blob_dir = config::resolve_blob_dir(&db_path, &config)?;
+            let database = db::Database::open(&db_path).await?;
+            mcp::run(database, config, workspace, blob_dir).await
         }
         StandaloneCommand::Server(args) => run_server(args).await,
         StandaloneCommand::Skill(args) => match args.command {

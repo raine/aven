@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- New: `aven mcp` serves your tasks to Claude Code, Codex, Claude Desktop, and other MCP clients over stdio, and to ChatGPT through OpenAI's tunnel. It can list, search, count, create, update, note, and delete tasks and manage recurring series. See [MCP server](https://aventasks.dev/mcp/).
+- Fix: Print ambiguous task ref matches to standard error with the rest of the error, instead of to standard output.
 - UX: Bare HTTP(S) URLs in TUI task descriptions and notes are clickable without Markdown link syntax.
 - Breaking: `aven server` uses a separate `server.yaml` instead of the client configuration. See the [migration guide](https://aventasks.dev/migration-guide/#move-server-settings-to-serveryaml).
 - UX: Browse long TUI sidebars with page and half-page keys or the mouse wheel without changing the active view until you press `Enter`. Scrolling focuses the pane under the pointer, and clicking blank task-pane space returns focus to tasks. Thanks [@pnaaberi](https://github.com/pnaaberi). ([#38](https://github.com/raine/aven/pull/38))

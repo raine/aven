@@ -147,14 +147,19 @@ daemon:
         child.wait_with_output().expect("wait for aven")
     }
 
+    /// A command for `db` with this environment's isolated config and state.
+    pub fn command(&self, db: &Path) -> Command {
+        let mut command = command_with_db(db);
+        self.configure_command(&mut command);
+        command
+    }
+
     pub fn aven<I, S>(&self, db: &Path, args: I) -> Output
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut command = command_with_db(db);
-        self.configure_command(&mut command);
-        command.args(args).output().expect("run aven")
+        self.command(db).args(args).output().expect("run aven")
     }
 
     pub fn aven_in<I, S>(&self, db: &Path, cwd: &Path, args: I) -> Output
@@ -162,9 +167,7 @@ daemon:
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut command = command_with_db(db);
-        self.configure_command(&mut command);
-        command
+        self.command(db)
             .current_dir(cwd)
             .args(args)
             .output()

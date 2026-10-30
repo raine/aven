@@ -1,11 +1,13 @@
 use anyhow::{Context, Result};
 use aven_core::db::Database;
-use aven_core::operations::{RecurrenceTemplateUpdate, UpdateRecurrenceTemplateParams};
+use aven_core::operations::{
+    RecurrenceResolveOutcome, RecurrenceTemplateUpdate, UpdateRecurrenceTemplateParams,
+};
 use aven_core::query::{
     RecurrenceCounts, RecurrenceHistoryEntry, RecurrenceHistoryKind, RecurrenceHistoryPage,
     RecurrenceSeriesDetail, RecurrenceSeriesSummary,
 };
-use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceOutcome};
+use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceOutcome, RecurrenceSeriesId};
 use aven_core::types::RecurrenceSeries;
 use chrono::NaiveTime;
 use serde::Serialize;
@@ -211,12 +213,14 @@ async fn edit(database: &Database, workspace: &Workspace, args: RecurEditArgs) -
     Ok(())
 }
 
-async fn skip(database: &Database, workspace: &Workspace, args: RecurRefArgs) -> Result<()> {
-    let series = database
-        .resolve_recurrence_ref(workspace, &args.series_ref)
-        .await?;
+/// Skips the series' current occurrence and creates its successor.
+pub(crate) async fn skip_current_occurrence(
+    database: &Database,
+    workspace: &Workspace,
+    series_id: &RecurrenceSeriesId,
+) -> Result<RecurrenceResolveOutcome> {
     let detail = database
-        .recurrence_series_detail(&workspace.id, &series.id)
+        .recurrence_series_detail(&workspace.id, series_id)
         .await?;
     let occurrence = detail
         .current_occurrence
@@ -224,9 +228,16 @@ async fn skip(database: &Database, workspace: &Workspace, args: RecurRefArgs) ->
     let task_id = occurrence
         .task_id
         .context("error recurrence-current-occurrence-taskless")?;
-    let outcome = database
+    database
         .resolve_recurrence_occurrence(workspace, &task_id, RecurrenceOutcome::Skipped)
+        .await
+}
+
+async fn skip(database: &Database, workspace: &Workspace, args: RecurRefArgs) -> Result<()> {
+    let series = database
+        .resolve_recurrence_ref(workspace, &args.series_ref)
         .await?;
+    let outcome = skip_current_occurrence(database, workspace, &series.id).await?;
     let series_ref = database
         .recurrence_series_ref(&workspace.id, &outcome.series.id)
         .await?;

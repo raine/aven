@@ -1269,6 +1269,18 @@ aven skill install --agent pi
 
 Pi receives the bundled skill at `~/.pi/agent/skills/aven/SKILL.md`. The other user locations are `~/.claude/skills/aven/SKILL.md` for Claude Code, `~/.config/opencode/skills/aven/SKILL.md` for OpenCode, and `~/.codex/skills/aven/SKILL.md` for Codex.
 
+### `aven mcp`
+
+Run a [Model Context Protocol](/mcp/) server over standard input and output.
+
+```sh
+aven mcp
+aven --workspace work mcp
+aven mcp --workspace work
+```
+
+The server runs until the client closes its input. `--workspace` sets the default workspace, and clients can still reach others. Logs go to standard error.
+
 ## Setup commands
 
 ### `aven config`

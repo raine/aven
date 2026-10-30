@@ -1,0 +1,200 @@
+---
+title: MCP server
+description: Give MCP clients such as Claude Code, Codex, Claude Desktop, and ChatGPT access to your Aven tasks.
+---
+
+`aven mcp` lets AI assistants read and change your tasks through the
+[Model Context Protocol](https://modelcontextprotocol.io). It runs as a local
+process, talks to the client over standard input and output, and works on your
+device's local database.
+
+For coding agents working in a repository, [the aven skill](/agents/) is
+usually a better fit. It also covers project inference and handoff notes. Use
+MCP for assistants that combine your tasks with their other tools.
+
+## What you can ask
+
+Once connected, ask for what you need in plain language:
+
+- "What's due this week?"
+- "File a high priority bug: login fails after token refresh."
+- "The token rotation docs are merged. Mark that done and note the PR."
+- "Add a weekly task to review dependency updates every Monday."
+
+The assistant can read, create, change, and delete tasks. There is no read-only
+mode. Tools are marked as read-only or destructive, but each client decides
+whether to ask you before running them. Some clients don't ask.
+
+## Local clients
+
+If the client doesn't inherit your shell's `PATH`, use the full path to `aven`.
+Run `which aven` to find it. To use another database, add `--db <path>` before
+`mcp`.
+
+### Claude Code
+
+```sh
+claude mcp add aven -- aven mcp
+```
+
+### Codex
+
+Add this to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.aven]
+command = "aven"
+args = ["mcp"]
+```
+
+### Claude Desktop
+
+Open **Settings**, then **Developer**, then **Edit Config**. Add the server to
+`claude_desktop_config.json`, using the full path to `aven`:
+
+```json
+{
+  "mcpServers": {
+    "aven": {
+      "command": "/full/path/to/aven",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Then restart Claude Desktop.
+
+## ChatGPT through a tunnel
+
+ChatGPT can't start a local process. OpenAI's
+[`tunnel-client`](https://github.com/openai/tunnel-client) runs `aven mcp` on
+your machine and connects it to ChatGPT over an outbound connection, so you
+don't need to open a public port.
+
+:::caution[Before you start]
+OpenAI receives any task content ChatGPT reads, and Aven's
+[end-to-end encrypted sync](/sync/setup/) does not protect it there. The host
+running the tunnel also holds your workspace keys and your tasks in plaintext.
+
+ChatGPT may change tasks without asking. The connector has no authentication of
+its own, so anyone with access to it in your ChatGPT workspace can read and
+change your tasks.
+:::
+
+### Use an always-on host
+
+ChatGPT can reach your tasks only while the tunnel runs. To keep them available
+when your laptop is closed, use a VPS or home server. Give it its own Aven
+database, join your existing sync, and run the daemon there:
+
+```sh
+aven sync join
+aven config set sync.enabled true
+aven daemon install
+```
+
+Without the daemon, changes made through ChatGPT stay on that host. On Linux,
+run `loginctl enable-linger` so the daemon keeps running after you log out.
+
+### Set up the OpenAI Platform
+
+You need an [OpenAI Platform](https://platform.openai.com) organization.
+
+1. Create a tunnel in
+   [Tunnels](https://platform.openai.com/settings/organization/tunnels), scoped
+   to your organization and ChatGPT workspace, and copy its ID.
+2. Create a restricted key in
+   [API keys](https://platform.openai.com/settings/organization/api-keys) with
+   the Tunnels Read and Use permissions.
+
+### Run the tunnel
+
+Install `tunnel-client` and create a profile that runs Aven. This example uses
+Homebrew on macOS. For other platforms, see the `tunnel-client`
+[README](https://github.com/openai/tunnel-client).
+
+```sh
+brew install openai/tools/tunnel-client
+read -rs CONTROL_PLANE_API_KEY && export CONTROL_PLANE_API_KEY
+tunnel-client init --sample sample_mcp_stdio_local --profile aven \
+  --tunnel-id <tunnel id> --mcp-command "/full/path/to/aven mcp"
+tunnel-client doctor --profile aven --explain
+tunnel-client run --profile aven
+```
+
+`read` waits for you to paste the restricted key and doesn't show it, which
+keeps it out of your shell history. Don't put the key in configuration files.
+
+### Connect ChatGPT
+
+In ChatGPT, open **Plugins**, choose **Add**, then **Add custom MCP server**.
+Select **Tunnel**, choose your tunnel, and set authentication to none.
+
+This setup has been tested on the Pro plan, including task changes. Other plans
+are untested, and OpenAI's plan limits may change.
+
+### Keep the tunnel running
+
+Run `tunnel-client` under a service manager such as systemd or launchd. Set
+`mcp.stdio_failure_policy: exit` in the profile so the manager also restarts it
+if `aven mcp` stops.
+
+If the tunnel is down, ChatGPT may wait on a tool call for minutes without
+finishing or reporting an error. When a chat hangs on an Aven tool, check the
+tunnel first.
+
+Run only one `tunnel-client` per tunnel at a time, including during restarts.
+Stop the old process before starting a new one, or requests can reach different
+server processes.
+
+## Workspaces and projects
+
+Tools pick the default workspace in this order:
+
+1. `workspace.default` from your configuration
+2. The built-in default workspace
+3. The only workspace
+
+An assistant can pass `workspace` to use another one. To change the default for
+one client, start the server with `aven mcp --workspace <name>`. Clients can
+still reach other workspaces.
+
+The working directory has no effect, so `workspace.routes` and project path
+mappings don't apply. Searches and lists cover every project in the workspace
+unless the assistant names one. New tasks go to the `default` project unless
+the assistant names an existing one. The server doesn't create other projects.
+
+The server reads its configuration when it starts. Restart it after changing
+`workspace.default` or sync settings.
+
+## Dates and time zones
+
+The server's clock may differ from yours, especially on a remote host, so
+assistants work out phrases like "tomorrow" themselves. They pass concrete
+dates, the current date for overdue checks, and an IANA time zone for recurring
+tasks.
+
+## Sync
+
+`aven mcp` does not sync. Each write tells the [background
+daemon](/sync/setup/#automate-sync-with-the-daemon) to sync, so changes reach
+your other devices only while the daemon is running. Check it with
+`aven daemon status`.
+
+## Available tools
+
+| Tool | Purpose |
+| --- | --- |
+| `list_tasks` | List tasks as compact rows, with filters |
+| `search_tasks` | Find tasks by text across the workspace |
+| `count_tasks` | Count tasks with the same filters as `list_tasks` |
+| `show_task` | Read one task in full, including notes |
+| `create_task` | Create a task, or a recurring series with `repeat` |
+| `update_task` | Change fields or status, including completing a recurring occurrence |
+| `add_note` | Append a note |
+| `delete_task` | Soft-delete a task; restore it with `aven restore` |
+| `list_projects` | List projects in a workspace |
+| `list_workspaces` | List workspaces and show which is the default |
+| `list_recurring` | List recurring series |
+| `edit_recurring` | Edit a series, or skip, pause, resume, or stop it |

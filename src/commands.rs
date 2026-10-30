@@ -35,7 +35,7 @@ pub(crate) use self::metadata::cmd_metadata;
 pub(crate) use self::notes::{cmd_note, cmd_note_delete, cmd_note_show};
 pub(crate) use self::prime::run as cmd_prime;
 pub(crate) use self::projects::cmd_project;
-pub(crate) use self::recurrence::cmd_recur;
+pub(crate) use self::recurrence::{cmd_recur, skip_current_occurrence};
 pub(crate) use self::relations::{cmd_dep, cmd_epic, cmd_related};
 pub(crate) use self::self_update::run as cmd_self_update;
 pub(crate) use self::skill::{install as cmd_skill_install, print as cmd_skill};

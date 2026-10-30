@@ -378,7 +378,8 @@ async fn select_tasks(
     if filters.overdue_only {
         push_filter_prefix(&mut query, &mut filters_added);
         query.push(fragments::overdue_task_prefix("t"));
-        query.push_bind(Local::now().date_naive().format("%Y-%m-%d").to_string());
+        let today = filters.today.unwrap_or_else(|| Local::now().date_naive());
+        query.push_bind(today.format("%Y-%m-%d").to_string());
     }
     if filters.conflicts_only {
         push_filter_prefix(&mut query, &mut filters_added);

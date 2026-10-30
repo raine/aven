@@ -13,6 +13,7 @@ aven is a local-first task manager for power users and coding agents. It keeps w
 - Add tasks from the TUI, CLI, natural-language intake, a tmux popup, or an agent workflow.
 - Organize and schedule work with priorities, labels, epics, dependencies, due dates, deferred availability, and recurring tasks.
 - Let coding agents work the same queue as you: they can pick up ready work, capture follow-ups, and leave notes that outlive the chat session.
+- Connect assistants through the [MCP server](/mcp/) to read and change tasks from a chat.
 - Move quickly through task management in a polished, keyboard-first TUI.
 - Add tasks and work your queue from your phone with Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and [Android](https://play.google.com/store/apps/details?id=fi.zendit.aven), synced end-to-end encrypted with your computer.
 - Work offline with tasks stored in SQLite. Optional self-hosted sync, end-to-end encrypted, shares them across machines.
@@ -44,4 +45,5 @@ Workspaces keep personal and work tasks in the same database while separating th
 - [Concepts](/concepts/) to understand workspaces, projects, statuses, refs, and the queue.
 - [Using the TUI](/tui/) to learn navigation, views, filters, and shortcuts.
 - [Work with agents](/agents/) to connect coding agents and other AI integrations.
+- [MCP server](/mcp/) to connect assistants such as Claude Desktop and ChatGPT.
 - [Sync across devices](/sync/setup/) to configure optional self-hosted sync.

@@ -130,12 +130,12 @@ pub(crate) async fn ensure_label_exists_in_workspace(
         Ok(label)
     } else {
         let choices = near_labels(conn, workspace_id, &label).await?;
-        eprintln!("error unknown-label input={}", label);
+        let mut message = format!("error unknown-label input={label}");
         for choice in choices {
-            eprintln!("choice {choice}");
+            message.push_str(&format!("\nchoice {choice}"));
         }
-        eprintln!("hint \"create the label explicitly\"");
-        bail!("unknown label");
+        message.push_str("\nhint \"create the label explicitly\"");
+        bail!(message);
     }
 }
 

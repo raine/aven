@@ -419,7 +419,11 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(error.to_string(), "unknown label");
+        assert!(
+            error
+                .to_string()
+                .starts_with("error unknown-label input=missing")
+        );
     }
 
     #[tokio::test]

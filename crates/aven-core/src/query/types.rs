@@ -6,6 +6,7 @@ use crate::recurrence::{
     RecurrenceOutcome, RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
 };
 use crate::types::{RecurrenceOccurrence, RecurrenceSeries, Task};
+use chrono::NaiveDate;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -89,6 +90,8 @@ pub struct TaskFilters {
     pub without_epic_link: bool,
     pub availability: TaskAvailabilityFilter,
     pub overdue_only: bool,
+    /// The date `overdue_only` compares against. `None` uses the host's date.
+    pub today: Option<NaiveDate>,
     pub search: Option<String>,
     pub task_ids: TaskIdFilter,
     pub expand_recurring: bool,
