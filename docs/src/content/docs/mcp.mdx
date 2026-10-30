@@ -3,6 +3,8 @@ title: MCP server
 description: Give MCP clients such as Claude Code, Codex, Claude Desktop, and ChatGPT access to your Aven tasks.
 ---
 
+import McpChat from '../../components/mcp-section/McpChat.astro';
+
 `aven mcp` lets AI assistants read and change your tasks through the
 [Model Context Protocol](https://modelcontextprotocol.io). It runs as a local
 process, talks to the client over standard input and output, and works on your
@@ -20,6 +22,8 @@ Once connected, ask for what you need in plain language:
 - "File a high priority bug: login fails after token refresh."
 - "The token rotation docs are merged. Mark that done and note the PR."
 - "Add a weekly task to review dependency updates every Monday."
+
+<McpChat scene={2} />
 
 The assistant can read, create, change, and delete tasks. There is no read-only
 mode. Tools are marked as read-only or destructive, but each client decides

@@ -1,0 +1,34 @@
+/* The chat panel follows ChatGPT's dark theme rather than Aven's tokens. */
+.mcp-chat { position: relative; -webkit-user-select: none; user-select: none; margin-block: 1.5rem; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #2c2c2c; border-radius: 0.625rem; background: #0f0f0f; color: #ececec; font: 0.875rem/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+.mcp-chat svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mcp-gpt-example { position: absolute; top: 0.5rem; left: 0.875rem; color: #6f6f6f; font-size: 0.6875rem; }
+.mcp-feed { display: flex; flex: 1; flex-direction: column; gap: 0.75rem; padding: 1.125rem 1.125rem 0.75rem; }
+.mcp-user { align-self: flex-end; max-width: 85%; padding: 0.5625rem 0.9375rem; border-radius: 1.25rem; background: #2a2a2a; }
+.mcp-status { color: #8e8e8e; font-size: 0.8125rem; }
+.mcp-status:not([data-done]) { animation: mcp-pulse 1.2s ease-in-out infinite; }
+.mcp-status[data-ruled] { padding-bottom: 0.375rem; border-bottom: 1px solid #2c2c2c; }
+@keyframes mcp-pulse { 50% { opacity: 0.5; } }
+.mcp-result { display: flex; flex-direction: column; gap: 0.625rem; }
+.mcp-result strong { font-weight: 600; }
+.mcp-heading { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.mcp-heading svg { flex: none; width: 1.0625rem; height: 1.0625rem; color: #5fd38a; }
+.mcp-change { display: grid; grid-template-columns: 0.875rem minmax(0, 1fr); gap: 0.5rem; }
+.mcp-change > svg { width: 0.875rem; height: 0.875rem; margin-top: 0.1875rem; color: #5fd38a; }
+.mcp-change b, .mcp-task b { display: block; font-weight: 600; }
+.mcp-change span, .mcp-task span { display: block; color: #b4b4b4; font-size: 0.8125rem; line-height: 1.55; }
+.mcp-task { display: grid; grid-template-columns: 0.75rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: start; }
+.mcp-task i { width: 0.75rem; height: 0.75rem; margin-top: 0.25rem; border-radius: 50%; background: #a8a8a8; }
+.mcp-task u { color: #e5706b; text-decoration: none; }
+.mcp-task em { padding: 0.125rem 0.625rem; border: 1px solid #3f3f3f; border-radius: 1rem; color: #d0d0d0; font-size: 0.75rem; font-style: normal; }
+.mcp-reply { display: flex; flex-direction: column; gap: 0.625rem; }
+.mcp-actions { display: flex; gap: 0.75rem; color: #afafaf; }
+.mcp-actions svg { width: 1rem; height: 1rem; }
+.mcp-composer { display: flex; align-items: center; gap: 0.625rem; margin: 0 0.75rem 0.75rem; padding: 0.375rem 0.4375rem 0.375rem 0.875rem; border: 1px solid #333; border-radius: 1.5rem; background: #1f1f1f; color: #d0d0d0; }
+.mcp-composer > svg { width: 1.0625rem; height: 1.0625rem; }
+.mcp-composer-plus { font-size: 1.25rem; font-weight: 300; line-height: 1; }
+.mcp-composer-text { flex: 1; color: #afafaf; }
+.mcp-composer-model { display: inline-flex; align-items: center; gap: 0.1875rem; color: #afafaf; font-size: 0.75rem; }
+.mcp-composer-model svg { width: 0.75rem; height: 0.75rem; stroke-width: 2; }
+.mcp-composer-voice { display: grid; place-items: center; width: 1.875rem; height: 1.875rem; border-radius: 50%; background: #ececec; color: #0f0f0f; }
+.mcp-composer-voice svg { width: 1rem; height: 1rem; stroke-width: 2.4; }
+@media (prefers-reduced-motion: reduce) { .mcp-status:not([data-done]) { animation: none; } }

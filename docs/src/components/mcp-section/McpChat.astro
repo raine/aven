@@ -1,0 +1,27 @@
+---
+import '../../styles/mcp-chat.css';
+import { replyHTML, scenes, statusText, userHTML } from './story';
+
+interface Props {
+  scene: number;
+}
+
+const scene = scenes[Astro.props.scene];
+---
+
+<div class="mcp-chat not-content">
+  <span class="mcp-gpt-example">example</span>
+  <div class="mcp-feed" data-feed aria-live="polite">
+    <div class="mcp-user" set:html={userHTML(scene)} />
+    <div class="mcp-status" data-done data-ruled={scene.expandable ? '' : undefined}>{statusText(scene)}</div>
+    <div class="mcp-result" set:html={scene.result} />
+    <div class="mcp-reply" set:html={replyHTML(scene)} />
+  </div>
+  <div class="mcp-composer" aria-hidden="true">
+    <span class="mcp-composer-plus">+</span>
+    <span class="mcp-composer-text">Ask ChatGPT</span>
+    <span class="mcp-composer-model">Medium <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg></span>
+    <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+    <span class="mcp-composer-voice"><svg viewBox="0 0 24 24"><path d="M5 10v4M9 7v10M13 4v16M17 8v8M21 11v2" /></svg></span>
+  </div>
+</div>

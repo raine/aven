@@ -1,0 +1,40 @@
+---
+import '../../styles/mcp-section.css';
+import ArrowRightIcon from '../ArrowRightIcon.astro';
+import McpChat from './McpChat.astro';
+import { base, openCount, queueHTML, scenes, STATIC_SCENE } from './story';
+
+const scene = scenes[STATIC_SCENE];
+const rows = scene.apply(base());
+const labels = ["What's due this week?", 'File a bug', 'Close out work', 'Add a weekly chore'];
+---
+
+<section class="section mcp-section" aria-labelledby="mcp-heading" data-mcp-section>
+  <div class="mcp-head">
+    <div class="detail-copy">
+      <p class="eyebrow">MCP server</p>
+      <h2 id="mcp-heading">Your assistant can use your task list.</h2>
+    </div>
+    <p class="mcp-lede">Ask what's due, add a task, or finish one from the assistant you already use. Changes land in the same queue you see in the terminal.</p>
+  </div>
+  <div class="mcp-tabs" role="group" aria-label="Example requests">
+    {labels.map((label, i) => <button type="button" data-scene={i} aria-pressed={String(i === STATIC_SCENE)}>{label}</button>)}
+  </div>
+  <div class="mcp-stage">
+    <McpChat scene={STATIC_SCENE} />
+    <div class="mcp-queue">
+      <div class="mcp-bar"><span>aven</span><span class="mcp-example" data-count>{openCount(rows)}</span></div>
+      <ul data-queue set:html={queueHTML(rows)} />
+    </div>
+  </div>
+  <div class="mcp-foot">
+    <p>Works with Claude Code, Codex, Claude Desktop, and ChatGPT.</p>
+    <a class="text-link" href="/mcp/">Connect an assistant <ArrowRightIcon /></a>
+  </div>
+</section>
+
+<script>
+  import { arm } from './player';
+
+  document.querySelectorAll<HTMLElement>('[data-mcp-section]').forEach((section) => arm(section));
+</script>

@@ -9,6 +9,7 @@ import ArrowRightIcon from '../components/ArrowRightIcon.astro';
 import SyncTopology from '../components/SyncTopology.astro';
 import AgentSessions from '../components/agent-sessions/AgentSessions.astro';
 import QuickCapture from '../components/QuickCapture.astro';
+import McpSection from '../components/mcp-section/McpSection.astro';
 import FeatureSpecimen from '../components/FeatureSpecimen.astro';
 
 const heroViews = [
@@ -48,7 +49,7 @@ const testimonials = [
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#121110" />
     <title>aven | Your tasks, everywhere. Agent-ready.</title>
-    <meta name="description" content="A local-first task manager for power users and coding agents. A keyboard-first terminal UI, a compact CLI, and one shared queue. Your tasks live in SQLite. Sync is optional." />
+    <meta name="description" content="A local-first task manager for power users and coding agents. A keyboard-first terminal UI, a compact CLI, an MCP server, and one shared queue. Your tasks live in SQLite. Sync is optional." />
     <link rel="canonical" href="https://aventasks.dev/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
@@ -134,6 +135,8 @@ const testimonials = [
         </section>
 
         <AgentSessions />
+
+        <McpSection />
 
         <section class="section sync-section" aria-labelledby="sync-heading">
           <div class="section-copy">
