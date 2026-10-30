@@ -101,22 +101,37 @@ aven daemon install
 Without the daemon, changes made through ChatGPT stay on that host. On Linux,
 run `loginctl enable-linger` so the daemon keeps running after you log out.
 
-### Set up the OpenAI Platform
+### Create the tunnel
 
-You need an [OpenAI Platform](https://platform.openai.com) organization.
+You need an [OpenAI Platform](https://platform.openai.com) organization, and
+your role needs the Tunnels Manage permission.
 
-1. Create a tunnel in
-   [Tunnels](https://platform.openai.com/settings/organization/tunnels), scoped
-   to your organization and ChatGPT workspace, and copy its ID.
-2. Create a restricted key in
-   [API keys](https://platform.openai.com/settings/organization/api-keys) with
-   the Tunnels Read and Use permissions.
+1. Open [Tunnels](https://platform.openai.com/settings/organization/tunnels)
+   and choose **Create tunnel**.
+2. Enter a name and description, such as `aven-mcp`.
+3. Select your organization and your ChatGPT workspace.
+4. Leave **Restrict client network access** off.
+5. Save the tunnel and copy its ID, which starts with `tunnel_`.
+
+`tunnel-client` finds the tunnel by ID, so you can rename it later without
+changing anything else.
+
+### Create the API key
+
+`tunnel-client` uses this key to connect. It should be able to do nothing else.
+
+1. Open [API keys](https://platform.openai.com/settings/organization/api-keys)
+   and create a new secret key in any project.
+2. Set the expiry. The tunnel stops working when the key expires, so pick a
+   date far enough out and note it.
+3. Choose **Restricted** permissions.
+4. Find **Tunnels** near the end of the list and allow Read and Use. Leave
+   everything else off.
+5. Create the key and copy it. OpenAI shows it only once.
 
 ### Run the tunnel
 
-Install `tunnel-client` and create a profile that runs Aven. This example uses
-Homebrew on macOS. For other platforms, see the `tunnel-client`
-[README](https://github.com/openai/tunnel-client).
+Install `tunnel-client` and create a profile that runs Aven:
 
 ```sh
 brew install openai/tools/tunnel-client
@@ -127,22 +142,49 @@ tunnel-client doctor --profile aven --explain
 tunnel-client run --profile aven
 ```
 
-`read` waits for you to paste the restricted key and doesn't show it, which
-keeps it out of your shell history. Don't put the key in configuration files.
+`read` waits for you to paste the API key and doesn't show it, which keeps it
+out of your shell history.
+
+On Linux, skip the `brew` line. Download the zip for your architecture from the
+[`tunnel-client` releases](https://github.com/openai/tunnel-client/releases),
+check it against `SHA256SUMS.txt`, and put the `tunnel-client` binary on your
+`PATH`.
 
 ### Connect ChatGPT
 
 In ChatGPT, open **Plugins**, choose **Add**, then **Add custom MCP server**.
-Select **Tunnel**, choose your tunnel, and set authentication to none.
+Name it `Aven`, because ChatGPT shows this name in chats. Select **Tunnel**,
+choose your tunnel, and set authentication to none.
 
 This setup has been tested on the Pro plan, including task changes. Other plans
 are untested, and OpenAI's plan limits may change.
 
 ### Keep the tunnel running
 
-Run `tunnel-client` under a service manager such as systemd or launchd. Set
-`mcp.stdio_failure_policy: exit` in the profile so the manager also restarts it
-if `aven mcp` stops.
+Run `tunnel-client` under a service manager such as systemd or launchd. A
+service doesn't load your shell, so it can't see `CONTROL_PLANE_API_KEY`. Save
+the API key in a private file instead:
+
+```sh
+install -m 600 /dev/null ~/.config/tunnel-client/aven.key
+read -rs key && printf '%s\n' "$key" > ~/.config/tunnel-client/aven.key
+```
+
+Then edit `~/.config/tunnel-client/aven.yaml` to read the key from that file,
+using its absolute path, and to exit if `aven mcp` stops so the service manager
+restarts both:
+
+```yaml
+control_plane:
+  api_key: file:/home/you/.config/tunnel-client/aven.key
+mcp:
+  stdio_failure_policy: exit
+```
+
+Don't paste the key itself into the profile. Run
+`tunnel-client doctor --profile aven` to check the result, and have the service
+start `tunnel-client run --profile aven`. To replace an expiring key, overwrite
+the file and restart the service.
 
 If the tunnel is down, ChatGPT may wait on a tool call for minutes without
 finishing or reporting an error. When a chat hangs on an Aven tool, check the
