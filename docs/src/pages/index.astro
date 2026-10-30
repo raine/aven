@@ -138,10 +138,10 @@ const testimonials = [
 
         <McpSection />
 
-        <section class="section sync-section" aria-labelledby="sync-heading">
+        <section class="section sync-section" id="sync" aria-labelledby="sync-heading">
           <div class="section-copy">
             <p class="eyebrow">Encrypted sync</p>
-            <h2 id="sync-heading">Sync through a server you run.</h2>
+            <h2 id="sync-heading">Sync through a server you run.<a class="section-anchor" href="#sync" aria-label="Link to this section">#</a></h2>
             <p>Host it on a home server or VPS and connect over your own network. Devices encrypt tasks before upload, so the server can't read them. Every change lands locally first, and sync catches up when the server is reachable.</p>
             <a class="text-link" href="/sync/">How sync works <ArrowRightIcon /></a>
             <p class="cloud-footnote">No server to run? <a href="https://cloud.aventasks.dev/">Aven Cloud</a> <span class="cloud-preview">free preview</span></p>
@@ -149,10 +149,10 @@ const testimonials = [
           <SyncTopology />
         </section>
 
-        <section class="section pair-band" aria-labelledby="iphone-heading">
+        <section class="section pair-band" id="mobile" aria-labelledby="iphone-heading">
           <div class="band-copy">
             <p class="eyebrow">Aven for mobile</p>
-            <h2 id="iphone-heading">Your queue, in your pocket.</h2>
+            <h2 id="iphone-heading">Your queue, in your pocket.<a class="section-anchor" href="#mobile" aria-label="Link to this section">#</a></h2>
             <p>Jot a task down on your phone and it's in your terminal queue, not a separate notes app you forget to check. Priorities, projects, and full task details stay in sync, end-to-end encrypted through your server or Aven Cloud. Setup is one QR scan.</p>
           </div>
           <video class="band-video" data-autoplay src="/iphone-pairing.mp4" width="1600" height="900" muted loop playsinline preload="metadata" aria-label={pairingVideoLabel}></video>
@@ -176,10 +176,10 @@ const testimonials = [
 
         <QuickCapture />
 
-        <section class="section testimonials-section" aria-labelledby="testimonials-heading">
+        <section class="section testimonials-section" id="testimonials" aria-labelledby="testimonials-heading">
           <div class="detail-copy">
             <p class="eyebrow">What people say</p>
-            <h2 id="testimonials-heading">Kind words from early users.</h2>
+            <h2 id="testimonials-heading">Kind words from early users.<a class="section-anchor" href="#testimonials" aria-label="Link to this section">#</a></h2>
           </div>
           <div class="testimonial-grid">
             {testimonials.map((testimonial) => (

@@ -74,6 +74,13 @@ h1 > span { color: #a49c95; }
 .window-dots i:nth-child(3) { background: #28c840; }
 .screenshot-frame img { width: 100%; }
 .section { padding-top: 7rem; scroll-margin-top: 1.875rem; }
+/* Offsets most of the section's top padding so a linked heading lands near the top. */
+.section:has(.section-anchor) { scroll-margin-top: -4.5rem; }
+/* Zero width keeps the anchor out of the heading's wrapping and centering. */
+.section-anchor { display: inline-block; width: 0; color: var(--faint); font-weight: 400; white-space: nowrap; opacity: 0; transform: translateX(0.35em); transition: opacity 150ms ease-out, color 150ms ease-out; }
+h2:hover .section-anchor, .section-anchor:focus-visible { opacity: 1; }
+.section-anchor:hover { color: var(--violet); }
+@media (hover: none) { .section-anchor { display: none; } }
 h2 { font-size: 2.6875rem; font-weight: 500; line-height: 1.14; letter-spacing: -0.125rem; margin-top: 1.125rem; text-wrap: balance; }
 .section-copy > p:not(.eyebrow) { color: var(--muted); font-size: 0.9375rem; line-height: 1.8; letter-spacing: -0.009375rem; }
 .feature-grid { --grid-radius: 0.75rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--grid-radius); overflow: hidden; }
