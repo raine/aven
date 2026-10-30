@@ -5,6 +5,18 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
+## 1.0.4 — in review
+
+- **Tell Aven** turns a typed or spoken request into task drafts you review before anything changes. It can search and answer questions about your tasks, take a photo or screenshot as context, and open from task detail with that task attached. Chats stay on your iPhone.
+- Voice input in Tell Aven offers on-device and alternative transcription providers, with a choice in Settings.
+- Add notes to a task from task detail.
+- Create new labels from the Add Task label picker and while editing a task.
+- Task priority is drawn as signal bars.
+- Aven runs on iOS 18 again.
+- Sync retries brief failures before showing them.
+- Fix: Switching tabs no longer flashes the screen.
+- Fix: The add image tile lays out correctly in the task form.
+
 ## 1.0.3 (2026-10-28)
 
 - Fix: HTTP sync connections to self-hosted servers over a trusted VPN, including Netbird, are no longer blocked for VPN addresses such as `100.100.20.30`.
