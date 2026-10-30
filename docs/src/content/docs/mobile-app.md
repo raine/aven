@@ -1,6 +1,6 @@
 ---
 title: Mobile app
-description: Pair Aven for iPhone or Android with your sync, and use Ask Aven to manage tasks by voice.
+description: Pair Aven for iPhone or Android with your sync, and use Tell Aven to manage tasks by voice.
 ---
 
 Aven for [iPhone](https://apps.apple.com/app/aven-tasks/id6811171767) and
@@ -16,14 +16,14 @@ first, as in [Sync across devices](/sync/setup/). Then, on that computer, run
 the QR code with the app. See [Add a device](/sync/setup/#add-a-device) for
 details.
 
-## Ask Aven
+## Tell Aven
 
-Ask Aven, on iPhone, manages tasks from a spoken or typed request, such as
+Tell Aven, on iPhone, manages tasks from a spoken or typed request, such as
 "move the dentist thing to next Monday" or "add tasks for the trip". It needs a
-self-hosted sync server with [AI set up](/server-configuration/#ai-for-ask-aven);
+self-hosted sync server with [AI set up](/server-configuration/#ai-for-tell-aven);
 it isn't available on Aven Cloud yet.
 
-Speak or type a request. Ask Aven reads the tasks it needs and proposes
+Speak or type a request. Tell Aven reads the tasks it needs and proposes
 changes. Nothing is saved until you review the proposed changes and apply them.
 You can edit or leave out individual changes before applying, or discard them
 all. After applying, you can undo the last applied set of changes.
@@ -36,7 +36,7 @@ along with any changes you haven't applied.
 - **Audio stays on the phone.** Speech is transcribed on the iPhone. If
   on-device recognition isn't available, you type instead.
 - **Your request and task context go to your server.** The phone sends the
-  transcript, the conversation so far, and the task content Ask Aven reads to
+  transcript, the conversation so far, and the task content Tell Aven reads to
   answer, such as titles, descriptions, notes, projects, and labels.
 - **Your server forwards them to its AI provider.** The provider is the one
   configured on the server: a local model such as Ollama, or a cloud service.
@@ -44,19 +44,19 @@ along with any changes you haven't applied.
 
 Encrypted sync does not protect this text from the server or the provider. The
 developer of Aven receives none of it. Before the first request, the app asks
-for your consent, once per paired server. Settings › Ask Aven lists what's sent.
+for your consent, once per paired server. Settings › Tell Aven lists what's sent.
 
-## Ask Aven status messages
+## Tell Aven status messages
 
-Settings › Ask Aven shows whether your server is ready, with a message for each
+Settings › Tell Aven shows whether your server is ready, with a message for each
 state. When the server offers a setup hint, the app shows it as text you can
 copy. After changing the server, restart it; the app checks again whenever you
 return to it, or when you tap **Check again**.
 
 | Status | Message | What to do |
 | --- | --- | --- |
-| Ready | Ask Aven is ready. | Nothing. |
-| AI not set up | Set up AI on your server: | Run `aven server ai setup` on the server host, then restart the server. See [AI for Ask Aven](/server-configuration/#ai-for-ask-aven). |
+| Ready | Tell Aven is ready. | Nothing. |
+| AI not set up | Set up AI on your server: | Run `aven server ai setup` on the server host, then restart the server. See [AI for Tell Aven](/server-configuration/#ai-for-tell-aven). |
 | Provider login needed | Your server needs a provider login. | Follow the setup hint: log in with `aven server ai login`, or set the provider's API key in the server's environment, then restart the server. |
 | Provider can't use tools | Your server's AI provider can't use tools. Choose another provider. | Pick a provider with `tools=true` in `aven server ai providers`. |
 | Version mismatch | Update Aven on your server or on this iPhone. | Update whichever is older. |

@@ -1,6 +1,6 @@
 ---
 title: Server configuration
-description: Configure the self-hosted sync server with server.yaml, and set up AI for Ask Aven.
+description: Configure the self-hosted sync server with server.yaml, and set up AI for Tell Aven.
 ---
 
 The [sync server](/sync/setup/#start-a-server) reads its settings from an
@@ -118,14 +118,14 @@ Error: could not parse /data/server.yaml: error: line 2 column 3: unknown field 
 Missing AI credentials are not a configuration error: the server starts, serves
 sync, and reports AI as `authentication_required`.
 
-## AI for Ask Aven
+## AI for Tell Aven
 
-[Ask Aven](/mobile-app/#ask-aven) on iPhone sends requests through your sync
+[Tell Aven](/mobile-app/#tell-aven) on iPhone sends requests through your sync
 server to an AI provider that you configure on the server. The server holds the
 provider credentials; phones need only their sync pairing. AI is optional, and
-sync works without it. Ask Aven isn't available on Aven Cloud yet.
+sync works without it. Tell Aven isn't available on Aven Cloud yet.
 
-Ask Aven needs a model that can call tools. `aven server ai providers` marks
+Tell Aven needs a model that can call tools. `aven server ai providers` marks
 each provider with `tools=true` or `tools=false`. ChatGPT with `gpt-6-astra`
 and the OpenAI API with `gpt-4.1-mini` are tested; other tool-capable providers
 are allowed but untested.
@@ -306,7 +306,7 @@ that.
 
 ### Limits and billing
 
-Each Ask Aven round is one provider call. All devices share the server's
+Each Tell Aven round is one provider call. All devices share the server's
 `ai.requests_per_minute` and `ai.max_concurrent_requests`; a call over either
 limit is refused with `rate_limit` rather than queued. The counters reset when
 the server restarts. A request body may be up to 512 KiB, and each call is
@@ -334,11 +334,11 @@ server's ChatGPT login and returns only the text. That service is an internal
 ChatGPT endpoint, not a documented API, so it can change or stop working
 without notice. Phones record at most five minutes of AAC audio in an M4A file,
 up to 4 MiB, and each recording counts against the same `ai.requests_per_minute`,
-`ai.max_concurrent_requests`, and `ai.timeout_seconds` as Ask Aven calls.
+`ai.max_concurrent_requests`, and `ai.timeout_seconds` as Tell Aven calls.
 
 ### Privacy
 
-With on-device dictation, Ask Aven turns speech into text on the phone and
+With on-device dictation, Tell Aven turns speech into text on the phone and
 audio never leaves it. With [voice transcription](#voice-transcription), the
 recording goes through your server to OpenAI. The server doesn't store the
 audio or the text, but OpenAI reports keeping each uploaded recording for 30

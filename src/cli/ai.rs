@@ -65,7 +65,7 @@ ai.model in server.yaml, restart the server, then run `aven server ai check`."#;
 const CHECK_HELP: &str = r#"The check sends two requests from this process using server.yaml and this
 environment, not through the running server: one that offers an inert tool and
 expects a call to it, then one that replays that call with a tool result and
-expects a text answer. The Ask Aven agent needs both to work. To run the same
+expects a text answer. The Tell Aven agent needs both to work. To run the same
 exchange through the running server from a paired device, use `aven ai check`."#;
 
 #[derive(Args)]
@@ -125,7 +125,7 @@ pub(crate) struct AiSetupArgs {
 const AI_CLIENT_CHECK_HELP: &str = r#"The check sends two billable completion requests through the running sync
 server, from this device and with its sync credential: one that offers an inert
 tool and expects a call to it, then one that replays that call with a tool
-result and expects a text answer. The Ask Aven agent needs both to work.
+result and expects a text answer. The Tell Aven agent needs both to work.
 
 Unlike `aven server ai check`, which runs on the server host from server.yaml
 and that shell's environment, this exercises the server process that devices

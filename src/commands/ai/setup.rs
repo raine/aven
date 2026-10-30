@@ -137,7 +137,7 @@ pub(super) async fn setup(paths: ServerPaths, args: AiSetupArgs) -> Result<()> {
     let info = choice.info();
     if !info.tools {
         bail!(
-            "{} cannot carry tool calls, which the Ask Aven agent needs; choose another provider",
+            "{} cannot carry tool calls, which the Tell Aven agent needs; choose another provider",
             info.id
         );
     }

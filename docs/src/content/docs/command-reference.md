@@ -1146,7 +1146,7 @@ failure. `status` and `check` read the configuration from the current process,
 not the running server; use [`aven ai`](#aven-ai) to test the running server
 from a paired device.
 
-See [Server configuration](/server-configuration/#ai-for-ask-aven) for
+See [Server configuration](/server-configuration/#ai-for-tell-aven) for
 `server.yaml`, credential storage, limits, and troubleshooting.
 
 ### `aven ai`

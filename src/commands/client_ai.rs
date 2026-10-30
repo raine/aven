@@ -307,7 +307,7 @@ fn classify_capabilities(server: String, body: &[u8]) -> AiStatusReport {
             "ready" => (
                 AiState::ToolsUnsupported,
                 restart(
-                    "The configured provider can't make tool calls, which Ask Aven needs. On the \
+                    "The configured provider can't make tool calls, which Tell Aven needs. On the \
                      server host, pick a provider with tools=true from `aven server ai providers`.",
                 ),
             ),

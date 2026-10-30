@@ -67,7 +67,7 @@ For nginx, allow encrypted image chunks and bootstrap batches up to 4 MiB plus
 framing. Keep the send timeout longer than Aven's 35-second request deadline.
 Keep the read timeout longer than both that deadline and the server's AI
 timeout, `ai.timeout_seconds` (45 seconds by default), so slow
-[Ask Aven](/mobile-app/#ask-aven) requests are not cut off. The connection
+[Tell Aven](/mobile-app/#tell-aven) requests are not cut off. The connection
 timeout can stay shorter:
 
 ```nginx
@@ -160,7 +160,7 @@ is `aven-sync_aven-data` with the example's project name. `docker compose down`
 keeps it; **`docker compose down --volumes` deletes server storage**.
 
 The server keeps its settings in `/data/server.yaml` on the same volume. To
-set up AI for [Ask Aven](/mobile-app/#ask-aven), uncomment `env_file:` if your
+set up AI for [Tell Aven](/mobile-app/#tell-aven), uncomment `env_file:` if your
 provider needs an API key, and follow
 [Quick start: Docker Compose](/server-configuration/#quick-start-docker-compose).
 Inside the container, `127.0.0.1` is the container itself, so a local model
@@ -297,11 +297,11 @@ journalctl --user -u aven-server -f
 Binding to a VPN address such as a Tailscale IP requires the VPN interface to
 be up; if the server fails at boot, systemd retries it every five seconds.
 
-### Set up AI for Ask Aven
+### Set up AI for Tell Aven
 
-[Ask Aven](/mobile-app/#ask-aven) on iPhone needs an AI provider configured on
+[Tell Aven](/mobile-app/#tell-aven) on iPhone needs an AI provider configured on
 the server. Run `aven server ai setup` on the server host and restart the
-server; see [AI for Ask Aven](/server-configuration/#ai-for-ask-aven) for the
+server; see [AI for Tell Aven](/server-configuration/#ai-for-tell-aven) for the
 systemd, Compose, and Ollama quick starts.
 
 ## Set up sync from one device
