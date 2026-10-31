@@ -26,8 +26,9 @@ bundle=$("$desktop_repo/scripts/desktop/bundle")
 executable="$bundle/Contents/MacOS/aven-desktop"
 
 # The guard runs before anything is written below the root.
-run_isolated "$root" "$executable" --check-isolation
+run_isolated "$root" "$executable" --check-paths
 write_isolated_config "$root"
+run_isolated "$root" "$executable" --check-isolation
 if ((seed)); then
   "$desktop_repo/scripts/desktop/cargo" build --features capture --bin aven-desktop-capture >&2
   run_isolated "$root" "$desktop_bin/aven-desktop-capture" seed >&2
@@ -38,6 +39,7 @@ environment=()
 while IFS= read -r line; do environment+=(--env "$line"); done < <(isolated_environment "$root")
 # open passes its own environment to the app, so it must be clean too.
 errors="$root/launch.stderr"
+rm -f "$root/launch.json"
 env -i PATH="$PATH" open "${open_flags[@]}" --stderr "$errors" "${environment[@]}" "$bundle"
 for _ in {1..100}; do
   if [[ -e "$root/launch.json" ]]; then

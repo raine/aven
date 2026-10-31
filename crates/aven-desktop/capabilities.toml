@@ -1,6 +1,6 @@
 # Every prototype user action. Phase owners build the action, its acceptance
 # and its scenes. `aven-desktop-capture check-capabilities` compares this file
-# with the frozen prototype. Scenes named here are added by the owning phase.
+# with the frozen prototype. Scene names may be absent from the manifest.
 
 [[capability]]
 id = "act:aboutLink"
@@ -1759,3 +1759,1404 @@ operation = "action registry dispatching the same action as its key or button"
 phase = "core-screens"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
+[[capability]]
+id = "attribute:i"
+action = "Pick a result or menu item by index"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["palette"]
+
+[[capability]]
+id = "attribute:k"
+action = "Pick a metadata or menu key"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-metadata"]
+
+[[capability]]
+id = "attribute:lane"
+action = "Target column for a drop"
+operation = "Store::update_detail_status"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["views-columns"]
+
+[[capability]]
+id = "attribute:rec"
+action = "Open a recurring occurrence"
+operation = "Store::show_recurrence_series"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["recurring-list"]
+
+[[capability]]
+id = "attribute:s"
+action = "Pick search scope"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "attribute:scroll"
+action = "Keep scroll position across renders"
+operation = "session state"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "attribute:split"
+action = "Panel split handle"
+operation = "desktop-local preferences"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "attribute:task"
+action = "Identify a task row or card"
+operation = "session state"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "dialog:ACT.b"
+action = "Choose blocker direction"
+operation = "dependency operations in aven_core::operations"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-blockers"]
+
+[[capability]]
+id = "dialog:ACT.c"
+action = "Cancel confirmation"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "dialog:ACT.ok"
+action = "Confirm action"
+operation = "the action being confirmed"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "dialog:ACT.u"
+action = "Unblock choice"
+operation = "dependency operations in aven_core::operations"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-blockers"]
+
+[[capability]]
+id = "dialog:addDevice.c"
+action = "Cancel adding device"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
+
+[[capability]]
+id = "dialog:addDevice.copy"
+action = "Copy invitation"
+operation = "host: clipboard"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
+
+[[capability]]
+id = "dialog:addDevice.ok"
+action = "Finish adding device"
+operation = "sync client: engine::create_invitation"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
+
+[[capability]]
+id = "dialog:askInvitation.back"
+action = "Back from invitation"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:askInvitation.cloud"
+action = "Open hosted sync site"
+operation = "host: NSWorkspace open URL"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:askInvitation.ok"
+action = "Continue with invitation"
+operation = "aven_core::sync::invitation_text"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:askInvitation.sample"
+action = "Paste sample invitation"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:confirmDialog.c"
+action = "Cancel confirmation"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "dialog:confirmDialog.ok"
+action = "Confirm action"
+operation = "the action being confirmed"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "dialog:confirmSync.back"
+action = "Back from sync confirmation"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:confirmSync.ok"
+action = "Start setup or join"
+operation = "sync client through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:drawSyncOp.x"
+action = "Close sync progress"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:editMeta.cancel"
+action = "Cancel metadata edit"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-metadata"]
+
+[[capability]]
+id = "dialog:editMeta.ok"
+action = "Save metadata value"
+operation = "Store::update_task set_metadata"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-metadata"]
+
+[[capability]]
+id = "dialog:editProject.c"
+action = "Cancel project edit"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-projects"]
+
+[[capability]]
+id = "dialog:editProject.ok"
+action = "Save project"
+operation = "project operations in aven_core::operations"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-projects"]
+
+[[capability]]
+id = "dialog:joinSync.c"
+action = "Cancel join"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:joinSync.ok"
+action = "Back up, then join"
+operation = "aven_core::data_safety, sync client"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:openAbout.x"
+action = "Close About"
+operation = "session state"
+phase = "desktop-finish"
+acceptance = "Follows macOS behaviour on the real window, with a real-input check."
+scenes = ["about"]
+
+[[capability]]
+id = "dialog:openDemo.bad"
+action = "Demo: damaged database"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.cleared"
+action = "Demo: cleared database"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.err"
+action = "Demo: sync error"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.fresh"
+action = "Demo: fresh install"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.ijoin"
+action = "Demo: interrupted join"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.inc"
+action = "Demo: incoming edit"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.isetup"
+action = "Demo: interrupted setup"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.local"
+action = "Demo: local-only state"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.newer"
+action = "Demo: newer database"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.off"
+action = "Demo: offline toggle"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.phone"
+action = "Demo: conflict from another device"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.reset"
+action = "Demo: reset data"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.unread"
+action = "Demo: unreadable database"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openDemo.x"
+action = "Demo: close demo menu"
+operation = "prototype demo"
+test_only = true
+
+[[capability]]
+id = "dialog:openHelp.x"
+action = "Close shortcuts"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["help"]
+
+[[capability]]
+id = "dialog:openResolve.later"
+action = "Resolve later"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "dialog:openResolve.next"
+action = "Resolve and go to next"
+operation = "Store::resolve_conflict"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "dialog:openResolve.ok"
+action = "Resolve conflict"
+operation = "Store::resolve_conflict"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "dialog:openSchedule.cancel"
+action = "Cancel schedule"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "dialog:openSchedule.ok"
+action = "Save schedule"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "dialog:openSchedule.qa"
+action = "Quick availability choice"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "dialog:openSchedule.qd"
+action = "Quick due date choice"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "dialog:openSync.add"
+action = "Add device"
+operation = "sync client: engine::create_invitation"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
+
+[[capability]]
+id = "dialog:openSync.conf"
+action = "Review conflicts"
+operation = "aven_core::query conflicts view"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "dialog:openSync.dev"
+action = "Manage devices"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
+
+[[capability]]
+id = "dialog:openSync.drop"
+action = "Remove unfinished sync"
+operation = "sync client reset through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["data-recovery"]
+
+[[capability]]
+id = "dialog:openSync.go"
+action = "Resume interrupted sync"
+operation = "sync client through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:openSync.join"
+action = "Join existing sync"
+operation = "sync client through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:openSync.now"
+action = "Sync now"
+operation = "sync scheduler through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-status"]
+
+[[capability]]
+id = "dialog:openSync.repair"
+action = "Repair sync"
+operation = "sync client through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["data-recovery"]
+
+[[capability]]
+id = "dialog:openSync.start"
+action = "Set up sync"
+operation = "sync client through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:openSync.x"
+action = "Close sync"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-status"]
+
+[[capability]]
+id = "dialog:promptDialog.cancel"
+action = "Cancel prompt"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "dialog:promptDialog.ok"
+action = "Save prompt value"
+operation = "the operation that opened the prompt"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "dialog:stopSeries.c"
+action = "Cancel stopping series"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["recurring-list"]
+
+[[capability]]
+id = "dialog:stopSeries.k"
+action = "Stop and keep next task"
+operation = "Store::stop_recurrence_series"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["recurring-list"]
+
+[[capability]]
+id = "dialog:stopSeries.s"
+action = "Stop and skip next task"
+operation = "Store::stop_recurrence_series"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["recurring-list"]
+
+[[capability]]
+id = "dialog:syncDone.add"
+action = "Add device after setup"
+operation = "sync client: engine::create_invitation"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:syncDone.x"
+action = "Close sync result"
+operation = "session state"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "dialog:viewImage.ok"
+action = "Save image alt text"
+operation = "Store attachment update through aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "dialog:viewImage.rm"
+action = "Remove image"
+operation = "aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "dialog:viewImage.sv"
+action = "Save a copy of image"
+operation = "host: save panel, Store::attachment_bytes"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "dialog:viewImage.x"
+action = "Close image"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "field:alt"
+action = "Image alt text"
+operation = "aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "field:body-editor"
+action = "Description editor"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "field:c-body"
+action = "Composer description"
+operation = "Store::create_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "field:c-sch"
+action = "Composer schedule"
+operation = "Store::create_task available_at, due_on"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "field:c-title"
+action = "Composer title"
+operation = "Store::create_task"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "field:digest"
+action = "Digest time"
+operation = "shared config through host crate"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-reminders"]
+
+[[capability]]
+id = "field:inv"
+action = "Invitation text"
+operation = "aven_core::sync::invitation_text"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "field:kid-in"
+action = "Add task to epic"
+operation = "Store::create_epic_child"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["epic-detail"]
+
+[[capability]]
+id = "field:meta-v"
+action = "Metadata value"
+operation = "Store::update_task set_metadata"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-metadata"]
+
+[[capability]]
+id = "field:new-label"
+action = "New label name"
+operation = "Database::create_label"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-labels"]
+
+[[capability]]
+id = "field:note-in"
+action = "Note text"
+operation = "Database::add_note"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-notes"]
+
+[[capability]]
+id = "field:p-v"
+action = "Prompt value"
+operation = "the operation that opened the prompt"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "field:pc"
+action = "Project color"
+operation = "project operations in aven_core::operations"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-projects"]
+
+[[capability]]
+id = "field:pn"
+action = "Project name"
+operation = "project operations in aven_core::operations"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-projects"]
+
+[[capability]]
+id = "field:pp"
+action = "Project prefix"
+operation = "project operations in aven_core::operations"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-projects"]
+
+[[capability]]
+id = "field:q"
+action = "Search text"
+operation = "Store::search_tasks"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "field:r-v"
+action = "Final conflict value"
+operation = "Store::resolve_conflict"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "field:s-a"
+action = "Available date"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "field:s-d"
+action = "Due date"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "field:s-text"
+action = "Typed schedule"
+operation = "aven_core schedule parsing"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "gesture:row-meta-click"
+action = "Toggle mark on a row"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["bulk-marks"]
+
+[[capability]]
+id = "handler-key:askInvitation.enter"
+action = "Continue with invitation"
+operation = "aven_core::sync::invitation_text"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "handler-key:openComposer.cmd+enter"
+action = "Create task"
+operation = "Store::create_task"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "handler-key:openComposer.ctrl+g"
+action = "Create and add another"
+operation = "Store::create_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "handler-key:openComposer.ctrl+n"
+action = "Natural language add"
+operation = "task intake through the host crate"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer-ai"]
+
+[[capability]]
+id = "handler-key:openComposer.ctrl+s"
+action = "Create task"
+operation = "Store::create_task"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "handler-key:openComposer.enter"
+action = "Create task from title"
+operation = "Store::create_task"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "handler-key:openMenu.arrowdown"
+action = "Next menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "handler-key:openMenu.arrowup"
+action = "Previous menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "handler-key:openMenu.ctrl+n"
+action = "Next menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "handler-key:openMenu.ctrl+p"
+action = "Previous menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "handler-key:openMenu.enter"
+action = "Pick menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "handler-key:openMenu.escape"
+action = "Close menu"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "handler-key:openSearch.arrowdown"
+action = "Next result"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "handler-key:openSearch.arrowup"
+action = "Previous result"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "handler-key:openSearch.ctrl+s"
+action = "Toggle search scope"
+operation = "Store::search_tasks"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "handler-key:openSearch.enter"
+action = "Open result"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "handler-key:openSearch.shift+enter"
+action = "Open full task from search"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["task-expanded"]
+
+[[capability]]
+id = "handler-key:promptDialog.enter"
+action = "Save prompt value"
+operation = "the operation that opened the prompt"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "handler-key:stage.enter"
+action = "Commit inline edit"
+operation = "Store::edit_task, Database::add_note"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "handler-key:stage.escape"
+action = "Cancel inline edit"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "handler-key:triageKeys.enter"
+action = "Next review batch"
+operation = "aven_core::queue"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["triage"]
+
+[[capability]]
+id = "handler-key:triageKeys.escape"
+action = "Exit review"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["triage"]
+
+[[capability]]
+id = "handler-key:triageKeys.k"
+action = "Keep in review"
+operation = "Store::edit_task"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["triage"]
+
+[[capability]]
+id = "handler-key:triageKeys.p"
+action = "Previous review card"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["triage"]
+
+[[capability]]
+id = "handler-key:triageKeys.u"
+action = "Undo in review"
+operation = "aven_core::undo"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["triage"]
+
+[[capability]]
+id = "listener:addEventListener.window.pointerdown"
+action = "Track pointer state"
+operation = "session state"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:addEventListener.window.pointerup"
+action = "Track pointer state"
+operation = "session state"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:askInvitation.cloud.click"
+action = "Open hosted sync site"
+operation = "host: NSWorkspace open URL"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "listener:askInvitation.input.input"
+action = "Validate invitation"
+operation = "aven_core::sync::invitation_text"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "listener:askInvitation.input.keydown"
+action = "Continue with invitation"
+operation = "aven_core::sync::invitation_text"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "listener:askInvitation.ok.click"
+action = "Continue with invitation"
+operation = "aven_core::sync::invitation_text"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "listener:document.document.keydown"
+action = "Main keymap"
+operation = "action registry"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:editProject.pp.input"
+action = "Uppercase prefix as typed"
+operation = "project operations in aven_core::operations"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-projects"]
+
+[[capability]]
+id = "listener:layer.layer.keydown"
+action = "Trap focus in dialogs"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "listener:matchMedia.window.change"
+action = "Follow system theme"
+operation = "host: appearance change"
+phase = "desktop-finish"
+acceptance = "Follows macOS behaviour on the real window, with a real-input check."
+scenes = ["queue-light"]
+
+[[capability]]
+id = "listener:narrow.narrow.change"
+action = "Hide details at narrow width"
+operation = "session state"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-narrow"]
+
+[[capability]]
+id = "listener:openComposer.box.click"
+action = "Composer buttons"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openComposer.box.dragover"
+action = "Accept image drag"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openComposer.box.drop"
+action = "Drop image on composer"
+operation = "aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openComposer.box.input"
+action = "Live token preview"
+operation = "task intake through the host crate"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openComposer.box.keydown"
+action = "Composer keys"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openComposer.box.paste"
+action = "Paste image in composer"
+operation = "host: clipboard, aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openMenu.input.input"
+action = "Filter menu"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "listener:openMenu.input.keydown"
+action = "Menu keys"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "listener:openMenu.ul.click"
+action = "Pick menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "listener:openMenu.ul.mousemove"
+action = "Highlight menu item"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]
+
+[[capability]]
+id = "listener:openResolve.next.click"
+action = "Resolve and go to next"
+operation = "Store::resolve_conflict"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "listener:openResolve.ok.click"
+action = "Resolve conflict"
+operation = "Store::resolve_conflict"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "listener:openResolve.pair-button.click"
+action = "Pick conflict side"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "listener:openResolve.r-v.input"
+action = "Write final value"
+operation = "session state"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "listener:openSchedule.ai.input"
+action = "Edit available date"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "listener:openSchedule.di.input"
+action = "Edit due date"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "listener:openSchedule.layer.click"
+action = "Quick schedule choices"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "listener:openSchedule.s-text.input"
+action = "Parse typed schedule"
+operation = "aven_core schedule parsing"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["schedule"]
+
+[[capability]]
+id = "listener:openSearch.input.input"
+action = "Search as typed"
+operation = "Store::search_tasks"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "listener:openSearch.input.keydown"
+action = "Search keys"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "listener:openSearch.more.click"
+action = "Show more results"
+operation = "Store::search_tasks"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "listener:openSearch.q-all.click"
+action = "Search scope"
+operation = "Store::search_tasks"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "listener:openSearch.q-del.click"
+action = "Include deleted in search"
+operation = "Store::search_tasks"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "listener:openSearch.q-full.click"
+action = "Open full task from search"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["task-expanded"]
+
+[[capability]]
+id = "listener:openSearch.q-r.click"
+action = "Open result"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["search-results"]
+
+[[capability]]
+id = "listener:openSync.cf.click"
+action = "Review conflicts"
+operation = "aven_core::query conflicts view"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["conflict-resolve"]
+
+[[capability]]
+id = "listener:openSync.fix.click"
+action = "Fix sync error"
+operation = "sync client through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-status"]
+
+[[capability]]
+id = "listener:openSync.now.click"
+action = "Sync now"
+operation = "sync scheduler through Keychain host mode"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-status"]
+
+[[capability]]
+id = "listener:pickFiles.f.change"
+action = "Picked image files"
+operation = "host: file picker, aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "listener:promptDialog.input.keydown"
+action = "Save prompt on Enter"
+operation = "the operation that opened the prompt"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "listener:stage.stage.click"
+action = "Click dispatch"
+operation = "action registry"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:stage.stage.contextmenu"
+action = "Row context menu"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "listener:stage.stage.dblclick"
+action = "Expand task"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["task-expanded"]
+
+[[capability]]
+id = "listener:stage.stage.dragend"
+action = "End column drag"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["views-columns"]
+
+[[capability]]
+id = "listener:stage.stage.dragover"
+action = "Column drag highlight"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["views-columns"]
+
+[[capability]]
+id = "listener:stage.stage.dragstart"
+action = "Start column drag"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["views-columns"]
+
+[[capability]]
+id = "listener:stage.stage.drop"
+action = "Drop on column"
+operation = "Store::update_detail_status"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["views-columns"]
+
+[[capability]]
+id = "listener:stage.stage.focusout"
+action = "Commit edit on blur"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "listener:stage.stage.input"
+action = "Field input dispatch"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "listener:stage.stage.keydown"
+action = "Inline edit keys"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "listener:stage.stage.mousedown"
+action = "Keep editor focus"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]
+
+[[capability]]
+id = "listener:stage.stage.pointerdown"
+action = "Start panel resize"
+operation = "desktop-local preferences"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:stage.window.pointermove"
+action = "Resize panel"
+operation = "desktop-local preferences"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:stage.window.pointerup"
+action = "End panel resize"
+operation = "desktop-local preferences"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:syncDone.add.click"
+action = "Add device after setup"
+operation = "sync client: engine::create_invitation"
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["sync-join"]
+
+[[capability]]
+id = "listener:toast.t-go.click"
+action = "Toast action"
+operation = "the action the toast offers"
+phase = "foundation"
+acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
+scenes = ["queue-dark"]
+
+[[capability]]
+id = "listener:toast.t-undo.click"
+action = "Toast undo"
+operation = "aven_core::undo"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["undo"]
+
+[[capability]]
+id = "handler-key:stage.cmd+enter"
+action = "Save description"
+operation = "Store::edit_task"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-edit"]

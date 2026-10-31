@@ -30,10 +30,18 @@ so concurrent worktrees wait for each other.
 `src/isolation.rs` is the guard. The app runs it before anything else, so it also
 refuses when started without the launcher. Everything sits under
 `AVEN_DESKTOP_ROOT`: state, config, database, blobs, logs, server storage and
-file-backed keys. A launch has its own wake port. The guard exits with status 78
-when a resolved path overlaps the owner's directories, which it derives from the
-password database rather than `$HOME`, when a path contains `.aven`, or when the
-environment points outside the root.
+file-backed keys. The guard exits with status 78 when a resolved path overlaps the
+owner's directories, when a path contains `.aven`, when the root contains `..`, when
+the environment points outside the root, or when the root's config lacks a private
+loopback wake port and `sync.enabled: false`.
+
+Owner directories come from the password database rather than `$HOME`. Paths are
+compared by device and inode of each resolved component, following every symlink,
+so links, firmlinks and case cannot respell owner data. Components that do not
+exist yet compare by name, ignoring case.
+
+`--check-paths` runs the path checks alone, and `--check-isolation` adds the config.
+Neither writes anything.
 
 Never run the desktop against the owner's database, Keychain, daemon, `Aven.app` or
 `fi.zendit.Aven`.
@@ -47,7 +55,8 @@ Never run the desktop against the owner's database, Keychain, daemon, `Aven.app`
 2. shifts `scenes/fixture.json` to it, seeds a disposable database through
    `aven-core`, and backdates activity through `test_support::pool`,
 3. renders the prototype in headless Chrome with `Date` frozen at the anchor and
-   the same data in `localStorage`,
+   the same data in `localStorage`, using one DevTools session for the exact
+   viewport, the page's result and the screenshot, so they show one page state,
 4. renders the GPUI shell offscreen with the same anchor, then writes
    `<scene>.prototype.png`, `<scene>.gpui.png`, `<scene>.measure.json` and
    `report.json`.
@@ -71,7 +80,8 @@ changes.
 ## Measurement
 
 Each scene compares the left, top, width and height of its elements. A box missing
-from either side fails.
+from either side fails, and elements under `absent` fail if either side draws them.
+Scenes measure their last visible row, where drift down the list is largest.
 
 **Tolerance.** `default_px` is 1.0 logical pixel, which absorbs pixel snapping at
 2x and no more. An element may set its own `tolerance_px` only with an entry in
@@ -85,10 +95,20 @@ application binary, which has no `capture` feature.
 ## Capability map
 
 `capabilities.toml` links each prototype action to its core or host operation,
-owning phase, acceptance and scenes. `check-capabilities` extracts action ids from
-the frozen prototype and fails on missing or stale entries. Gestures have no id in
-the prototype, so they use `gesture:` entries. Demo controls are `test_only`. Scene
-names are plans until the owning phase adds them to the manifest.
+owning phase, acceptance and scenes. `check-capabilities` fails on missing or stale
+entries, comparing the map with an inventory of the frozen prototype:
+
+- `act:` and `chord:`, from the running page's tables,
+- `key:`, `composer:` and `palette:`, from the keymap, composer and palette source,
+- `dialog:`, `field:`, `listener:`, `handler-key:` and `attribute:`, from every
+  `data-d` control, input with an id, assigned or added handler, key read outside
+  the main keymap, and other data attribute. Ids name the owning function, because
+  names such as `ok` repeat across dialogs.
+
+Typed text, browser defaults and handlers built from computed names are not
+inventoried, and the check says so in its output. Pointer gestures have no id in the
+prototype, so they use hand-written `gesture:` entries. Demo controls are `test_only`.
+Scene names may be absent from the manifest.
 
 ## Exceptions
 

@@ -12,7 +12,7 @@ trap 'rm -rf "$root"' EXIT
 cargo_script="$desktop_repo/scripts/desktop/cargo"
 
 echo "== crate tests"
-"$cargo_script" test --features capture
+"$cargo_script" test --locked --features capture
 "$cargo_script" build --features capture
 
 echo "== guard refusal"
@@ -32,6 +32,23 @@ if [[ $status -ne 78 ]]; then
   exit 1
 fi
 
+status=0
+mkdir "$root/no-config"
+run_isolated "$root/no-config" "$desktop_bin/aven-desktop" --check-isolation || status=$?
+if [[ $status -ne 78 ]]; then
+  echo "guard accepted a root without its config (status $status)" >&2
+  exit 1
+fi
+
+echo "== build lock"
+mkdir "$root/lock-cache"
+ln -s 99999999 "$root/lock-cache/build.pid"
+AVEN_DESKTOP_CACHE="$root/lock-cache" perl -e 'alarm 20; exec @ARGV' "$cargo_script" --version
+if [[ -e "$root/lock-cache/build.pid" || -L "$root/lock-cache/build.pid" ]]; then
+  echo "build lock was left behind" >&2
+  exit 1
+fi
+
 echo "== launcher"
 mkdir "$root/launch"
 AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --seed --background
@@ -47,6 +64,15 @@ for name, path in launch["paths"].items():
     assert os.path.realpath(path).startswith(root), f"{name} escapes the root: {path}"
 print(f"launched with {launch['queue_rows']} rows, all paths under the root")
 PY
+
+kill "$launched_pid"
+sleep 1
+rm -rf "$root/launch/state/aven/db.sqlite"
+mkdir "$root/launch/state/aven/db.sqlite"
+if AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --background; then
+  echo "launcher reported success for an app that could not start" >&2
+  exit 1
+fi
 
 echo "== capture"
 "$desktop_repo/scripts/desktop/capture" "$output"

@@ -10,12 +10,20 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 crate="$repo/crates/aven-desktop"
 cache="${AVEN_DESKTOP_CACHE:-$HOME/Library/Caches/aven-desktop}"
-lock="$cache/build.lock"
+lock="$cache/build.pid"
 mkdir -p "$cache"
 
-release_lock() { rmdir "$lock" 2>/dev/null || true; }
+# The lock is a symlink naming its holder, created atomically. A killed holder
+# cannot release it, so a lock whose process is gone is cleared.
+release_lock() { rm -f "$lock"; }
 waited=0
-until mkdir "$lock" 2>/dev/null; do
+until ln -s "$$" "$lock" 2>/dev/null; do
+  holder=$(readlink "$lock" 2>/dev/null || true)
+  if [[ -n $holder ]] && ! kill -0 "$holder" 2>/dev/null; then
+    echo "clearing desktop build lock of exited process $holder" >&2
+    mv -f "$lock" "$lock.stale.$$" 2>/dev/null && rm -f "$lock.stale.$$"
+    continue
+  fi
   if ((waited % 60 == 0)); then echo "waiting for desktop build lock: $lock" >&2; fi
   sleep 1
   waited=$((waited + 1))

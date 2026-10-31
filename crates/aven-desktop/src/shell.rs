@@ -145,6 +145,15 @@ pub struct Shell {
     pub groups: Vec<Group>,
 }
 
+/// A section heading, whose 16.8px line GPUI cannot place exactly.
+const SECTION_HEIGHT: f32 = 32.8;
+
+/// GPUI snaps lengths to device pixels. Headings carry the remainder from one
+/// to the next, so the rows below them do not drift down the list.
+fn snapped_height(height: f32) -> f32 {
+    (height * 2.).round() / 2.
+}
+
 /// A border drawn as an element. A real border insets the measurement probe,
 /// so measured elements draw theirs this way.
 fn hairline(palette: Palette) -> Div {
@@ -164,13 +173,17 @@ impl Shell {
             .px(px(8.))
             .pb(px(40.));
         let mut row_index = 0;
+        let mut carried = 0.;
         for (group_index, group) in self.groups.iter().enumerate() {
+            let height = snapped_height(SECTION_HEIGHT + carried);
+            carried += SECTION_HEIGHT - height;
             list = list.child(
                 measured(div(), format!("section-{group_index}"))
                     .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(8.))
+                    .h(px(height))
                     .pt(px(12.))
                     .pb(px(4.))
                     .px(px(8.))

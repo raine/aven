@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
-use aven_desktop::capabilities::CapabilityMap;
+use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
 use aven_desktop::isolation::Isolation;
 use aven_desktop::measure::{self, MeasuredBounds, NamedBounds};
@@ -69,8 +69,8 @@ fn export_fixture() -> Result<()> {
         .with_ymd_and_hms(year, month, day, hour, 0, 0)
         .single()
         .context("fixture instant")?;
-    let work = tempfile_dir()?;
-    let prototype = Prototype::new(&repository_dir().join(manifest()?.target), &work)?;
+    let work = tempfile::tempdir()?;
+    let prototype = Prototype::new(&repository_dir().join(manifest()?.target), work.path())?;
     let data = prototype.render(&Render {
         name: "export",
         now_ms: frozen.timestamp_millis(),
@@ -96,8 +96,8 @@ fn export_fixture() -> Result<()> {
 fn prototype_inventory() -> Result<BTreeSet<String>> {
     let target = repository_dir().join(manifest()?.target);
     let html = std::fs::read_to_string(&target)?;
-    let work = tempfile_dir()?;
-    let tables = Prototype::new(&target, &work)?.render(&Render {
+    let work = tempfile::tempdir()?;
+    let tables = Prototype::new(&target, work.path())?.render(&Render {
         name: "inventory",
         now_ms: Local::now().timestamp_millis(),
         width: 1440,
@@ -133,6 +133,12 @@ fn prototype_inventory() -> Result<BTreeSet<String>> {
             }
         }
     }
+    let script = &html[html.find("<script>").context("find the script")?..];
+    inventory.extend(source_surfaces(
+        script,
+        "document.addEventListener('keydown'",
+        "const narrow",
+    ));
     Ok(inventory)
 }
 
@@ -140,14 +146,13 @@ fn check_capabilities() -> Result<()> {
     let text = std::fs::read_to_string(crate_dir().join("capabilities.toml"))?;
     let map = CapabilityMap::parse(&text)?;
     map.check_coverage(&prototype_inventory()?)?;
-    println!("{} capabilities cover the prototype", map.capability.len());
+    println!(
+        "{} capabilities cover the prototype's action tables, keys, palette, dialog \
+         controls, fields, handlers and data attributes; not inventoried: {}",
+        map.capability.len(),
+        capabilities::NOT_INVENTORIED
+    );
     Ok(())
-}
-
-fn tempfile_dir() -> Result<PathBuf> {
-    let path = std::env::temp_dir().join(format!("aven-desktop-capture-{}", std::process::id()));
-    std::fs::create_dir_all(&path)?;
-    Ok(path)
 }
 
 fn seed_database(isolation: &Isolation, anchor: DateTime<Local>) -> Result<Seeded> {
@@ -213,9 +218,12 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         let page = render_prototype(&prototype, &manifest, scene, &seeded, anchor, output)?;
         let boxes: NamedBounds = serde_json::from_value(strip_missing(&page["boxes"]))?;
         let gpui_boxes = render_gpui(&mut cx, scene, &groups, output)?;
+        let present = unexpectedly_present(scene, &boxes, &gpui_boxes);
         let comparisons = measure::compare(&manifest.expectations(scene)?, &boxes, &gpui_boxes);
         let parity = data_parity(&page["queue"], &groups);
-        let scene_passed = comparisons.iter().all(|result| result.passed) && parity.is_empty();
+        let scene_passed = comparisons.iter().all(|result| result.passed)
+            && parity.is_empty()
+            && present.is_empty();
         passed &= scene_passed;
         for result in comparisons.iter().filter(|result| !result.passed) {
             println!(
@@ -231,6 +239,9 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         for difference in &parity {
             println!("FAIL {} data: {difference}", scene.name);
         }
+        for element in &present {
+            println!("FAIL {} {element}", scene.name);
+        }
         println!(
             "{} {}: {} boxes",
             if scene_passed { "ok  " } else { "FAIL" },
@@ -243,6 +254,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
             "boxes": comparisons,
             "styles": page["styles"],
             "data_differences": parity,
+            "unexpectedly_present": present,
         });
         std::fs::write(
             output.join(format!("{}.measure.json", scene.name)),
@@ -259,6 +271,29 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         }))?,
     )?;
     Ok(passed)
+}
+
+/// Elements the scene expects to be gone that either side still draws.
+fn unexpectedly_present(scene: &Scene, prototype: &NamedBounds, gpui: &NamedBounds) -> Vec<String> {
+    let drawn = |boxes: &NamedBounds, name: &String| {
+        boxes
+            .get(name)
+            .is_some_and(|bounds| bounds.width > 0. && bounds.height > 0.)
+    };
+    scene
+        .absent
+        .iter()
+        .flat_map(|name| {
+            let mut sides = Vec::new();
+            if drawn(prototype, name) {
+                sides.push(format!("{name}: present in prototype"));
+            }
+            if drawn(gpui, name) {
+                sides.push(format!("{name}: present in gpui"));
+            }
+            sides
+        })
+        .collect()
 }
 
 /// The page's boxes, without the `null`s of elements it did not render.
@@ -281,6 +316,7 @@ fn render_prototype(
     let selectors: BTreeMap<_, _> = scene
         .measure
         .iter()
+        .chain(&scene.absent)
         .map(|name| {
             let element = manifest.element(name)?;
             Ok((name.clone(), (element.selector.clone(), element.index)))

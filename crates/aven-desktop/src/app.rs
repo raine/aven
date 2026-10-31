@@ -23,7 +23,7 @@ fn write_launch_record(isolation: &Isolation, queue_rows: usize) -> Result<()> {
         "queue_rows": queue_rows,
     });
     std::fs::write(
-        isolation.root.join("launch.json"),
+        &isolation.launch_record,
         serde_json::to_vec_pretty(&record)?,
     )
     .context("write launch record")
@@ -33,10 +33,7 @@ pub fn run(isolation: Isolation) -> Result<()> {
     isolation.create_directories()?;
     let runtime = tokio::runtime::Runtime::new()?;
     let groups = runtime.block_on(load_groups(&isolation.database, None, Local::now()))?;
-    write_launch_record(
-        &isolation,
-        groups.iter().map(|group| group.rows.len()).sum(),
-    )?;
+    let queue_rows = groups.iter().map(|group| group.rows.len()).sum();
     application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         cx.open_window(
@@ -59,6 +56,11 @@ pub fn run(isolation: Isolation) -> Result<()> {
         )
         .expect("the window opens");
         cx.activate(true);
+        // Launchers read this as proof the window opened.
+        if let Err(error) = write_launch_record(&isolation, queue_rows) {
+            eprintln!("aven-desktop failed: {error:#}");
+            cx.quit();
+        }
         cx.on_window_closed(|cx, _| cx.quit()).detach();
     });
     Ok(())

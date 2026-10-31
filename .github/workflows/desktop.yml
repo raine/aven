@@ -3,12 +3,16 @@ name: desktop
 on:
   pull_request:
     paths:
+      - Cargo.toml
+      - Cargo.lock
       - crates/aven-desktop/**
       - crates/aven-core/**
       - scripts/desktop/**
       - .github/workflows/desktop.yml
   push:
     paths:
+      - Cargo.toml
+      - Cargo.lock
       - crates/aven-desktop/**
       - crates/aven-core/**
       - scripts/desktop/**
@@ -21,7 +25,14 @@ jobs:
   test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/aven-desktop
+          cache-directories: ~/Library/Caches/aven-desktop/target
       # Capture needs the prototype in history/, which is not in the repository.
       - name: Test
-        run: scripts/desktop/cargo test --features capture
+        run: scripts/desktop/cargo test --locked --features capture

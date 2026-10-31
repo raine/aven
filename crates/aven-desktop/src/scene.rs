@@ -43,6 +43,9 @@ pub struct Scene {
     pub gpui_keys: Vec<String>,
     /// Element names, which must all exist on both sides.
     pub measure: Vec<String>,
+    /// Element names that must be missing or empty on both sides.
+    #[serde(default)]
+    pub absent: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -66,7 +69,7 @@ impl Manifest {
             if scene.measure.is_empty() {
                 bail!("scene {} measures nothing", scene.name);
             }
-            for name in &scene.measure {
+            for name in scene.measure.iter().chain(&scene.absent) {
                 self.element(name)
                     .with_context(|| format!("scene {}", scene.name))?;
             }
