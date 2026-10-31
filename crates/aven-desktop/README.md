@@ -18,6 +18,7 @@ needs a worktree with that directory.
 | `scripts/desktop/launch [--seed] [--check-only] [--background]` | Start it on a new disposable root |
 | `scripts/desktop/capture OUTPUT [SCENE]` | Paired screenshots and box reports |
 | `scripts/desktop/sync-proof` | Two clients through a disposable server |
+| `scripts/desktop/app-proof start` | Disposable server and two clients to run the app against by hand; its docstring lists the other subcommands |
 | `crates/aven-desktop/target/bin/aven-desktop-capture check-capabilities` | Compare the capability map with the prototype |
 
 `scripts/desktop/cargo` keeps build artifacts in

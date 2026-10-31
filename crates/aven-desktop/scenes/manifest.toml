@@ -64,23 +64,23 @@ selector = ".list .row"
 index = 11
 
 [[element]]
-name = "row-23"
+name = "row-18"
 selector = ".list .row"
-index = 23
+index = 18
 
 [[scene]]
 name = "queue-dark"
 theme = "dark"
 width = 1440
 height = 900
-measure = ["app", "nav", "main", "main-header", "list", "detail", "section-0", "section-1", "row-0", "row-1", "row-2", "row-8", "row-11", "row-23"]
+measure = ["app", "nav", "main", "main-header", "list", "detail", "section-0", "section-1", "row-0", "row-1", "row-2", "row-8", "row-11", "row-18"]
 
 [[scene]]
 name = "queue-light"
 theme = "light"
 width = 1440
 height = 900
-measure = ["app", "nav", "main", "main-header", "list", "detail", "section-0", "section-1", "row-0", "row-1", "row-2", "row-8", "row-11", "row-23"]
+measure = ["app", "nav", "main", "main-header", "list", "detail", "section-0", "section-1", "row-0", "row-1", "row-2", "row-8", "row-11", "row-18"]
 
 [[scene]]
 name = "queue-narrow"

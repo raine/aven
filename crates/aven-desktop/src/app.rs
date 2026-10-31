@@ -1,13 +1,17 @@
 //! Application start, after isolation has passed.
 use anyhow::{Context as _, Result};
-use chrono::Local;
+use aven_host::config::AppConfig;
 use gpui::{
     App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 
+use crate::adapter::{self, Launch, Prefs};
+use crate::assets::{Assets, load_fonts};
 use crate::isolation::Isolation;
-use crate::shell::{Palette, Shell, load_groups};
+use crate::shell::Root;
+use crate::theme::Theme;
+use crate::{actions, input};
 
 /// Records what this launch resolved, for launchers and reviewers.
 fn write_launch_record(isolation: &Isolation, queue_rows: usize) -> Result<()> {
@@ -32,9 +36,21 @@ fn write_launch_record(isolation: &Isolation, queue_rows: usize) -> Result<()> {
 pub fn run(isolation: Isolation) -> Result<()> {
     isolation.create_directories()?;
     let runtime = tokio::runtime::Runtime::new()?;
-    let groups = runtime.block_on(load_groups(&isolation.database, None, Local::now()))?;
-    let queue_rows = groups.iter().map(|group| group.rows.len()).sum();
-    application().run(move |cx: &mut App| {
+    let launch = Launch {
+        database: isolation.database.clone(),
+        config: AppConfig::load()?,
+        storage: isolation.protected_storage(),
+    };
+    let (session, replies) = adapter::start(runtime.handle().clone(), launch)?;
+    let queue_rows = session.snapshot.ordered().count();
+    let prefs = Prefs::path(&isolation.database);
+    application().with_assets(Assets).run(move |cx: &mut App| {
+        load_fonts(cx);
+        cx.set_global(Theme::dark());
+        cx.bind_keys(actions::key_bindings());
+        cx.bind_keys(input::key_bindings());
+        cx.on_action(|_: &actions::Quit, cx| cx.quit());
+        cx.set_menus(actions::menus());
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         cx.open_window(
             WindowOptions {
@@ -47,10 +63,11 @@ pub fn run(isolation: Isolation) -> Result<()> {
                 window_min_size: Some(size(px(960.), px(600.))),
                 ..Default::default()
             },
-            |_, cx| {
-                cx.new(|_| Shell {
-                    palette: Palette::dark(),
-                    groups,
+            |window, cx| {
+                cx.new(|cx| {
+                    let mut root = Root::new(session, replies, prefs, window, cx);
+                    root.follow_system(window, cx);
+                    root
                 })
             },
         )

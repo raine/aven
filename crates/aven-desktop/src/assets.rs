@@ -1,0 +1,58 @@
+//! Assets compiled into the binary: icons, logo and the ref font.
+
+use std::borrow::Cow;
+
+use gpui::{App, AssetSource, Result, SharedString};
+
+pub struct Assets;
+
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        let bytes: &'static [u8] = match path {
+            "logo-dark.svg" => include_bytes!("../assets/logo-dark.svg"),
+            "logo-light.svg" => include_bytes!("../assets/logo-light.svg"),
+            "icons/cloud.svg" => include_bytes!("../assets/icons/cloud.svg"),
+            "icons/ic-blocked.svg" => include_bytes!("../assets/icons/ic-blocked.svg"),
+            "icons/ic-conflicts.svg" => include_bytes!("../assets/icons/ic-conflicts.svg"),
+            "icons/ic-details.svg" => include_bytes!("../assets/icons/ic-details.svg"),
+            "icons/ic-done.svg" => include_bytes!("../assets/icons/ic-done.svg"),
+            "icons/ic-epics.svg" => include_bytes!("../assets/icons/ic-epics.svg"),
+            "icons/ic-inbox.svg" => include_bytes!("../assets/icons/ic-inbox.svg"),
+            "icons/ic-overdue.svg" => include_bytes!("../assets/icons/ic-overdue.svg"),
+            "icons/ic-projects.svg" => include_bytes!("../assets/icons/ic-projects.svg"),
+            "icons/ic-queue.svg" => include_bytes!("../assets/icons/ic-queue.svg"),
+            "icons/ic-ready.svg" => include_bytes!("../assets/icons/ic-ready.svg"),
+            "icons/ic-recurring.svg" => include_bytes!("../assets/icons/ic-recurring.svg"),
+            "icons/ic-settings.svg" => include_bytes!("../assets/icons/ic-settings.svg"),
+            "icons/ic-upcoming.svg" => include_bytes!("../assets/icons/ic-upcoming.svg"),
+            "icons/nav-toggle.svg" => include_bytes!("../assets/icons/nav-toggle.svg"),
+            "icons/pri-0.svg" => include_bytes!("../assets/icons/pri-0.svg"),
+            "icons/pri-1-off.svg" => include_bytes!("../assets/icons/pri-1-off.svg"),
+            "icons/pri-1-on.svg" => include_bytes!("../assets/icons/pri-1-on.svg"),
+            "icons/pri-2-off.svg" => include_bytes!("../assets/icons/pri-2-off.svg"),
+            "icons/pri-2-on.svg" => include_bytes!("../assets/icons/pri-2-on.svg"),
+            "icons/pri-3-on.svg" => include_bytes!("../assets/icons/pri-3-on.svg"),
+            "icons/pri-4.svg" => include_bytes!("../assets/icons/pri-4.svg"),
+            "icons/st-active.svg" => include_bytes!("../assets/icons/st-active.svg"),
+            "icons/st-canceled.svg" => include_bytes!("../assets/icons/st-canceled.svg"),
+            "icons/st-done.svg" => include_bytes!("../assets/icons/st-done.svg"),
+            "icons/st-inbox.svg" => include_bytes!("../assets/icons/st-inbox.svg"),
+            "icons/st-ring.svg" => include_bytes!("../assets/icons/st-ring.svg"),
+            _ => return Ok(None),
+        };
+        Ok(Some(Cow::Borrowed(bytes)))
+    }
+
+    fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
+        Ok(Vec::new())
+    }
+}
+
+pub fn load_fonts(cx: &App) {
+    cx.text_system()
+        .add_fonts(vec![
+            Cow::Borrowed(include_bytes!("../assets/JetBrainsMono-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/JetBrainsMono-Medium.ttf").as_slice()),
+        ])
+        .expect("bundled fonts load");
+}

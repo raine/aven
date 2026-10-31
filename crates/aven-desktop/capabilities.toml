@@ -464,7 +464,7 @@ scenes = ["data-recovery"]
 id = "act:reviewIncoming"
 action = "Review incoming edit"
 operation = "session state over Store::task_detail"
-phase = "foundation"
+phase = "core-screens"
 acceptance = "Works through the adapter on a disposable database, survives restart, and has a behaviour test and a real-input check."
 scenes = ["detail-incoming"]
 

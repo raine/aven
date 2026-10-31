@@ -11,7 +11,7 @@ pub use aven_core::sync::client::keys::{
 
 #[cfg(any(test, feature = "test-support"))]
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use aven_core::sync::client::keys::{FileProtectedStorage, ProtectedStorage, StoreResult};
 
@@ -20,6 +20,8 @@ const STORE_DIRECTORY: &str = "protected-keys";
 #[cfg(target_os = "macos")]
 #[cfg(not(any(test, feature = "test-support")))]
 const KEYCHAIN_SERVICE: &str = "fi.zendit.Aven.local-package-keyring";
+
+static PROCESS_STORAGE: OnceLock<Arc<dyn ProtectedStorage>> = OnceLock::new();
 
 /// Whether protected storage may ask an attended macOS user for Keychain access.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,8 +32,17 @@ pub enum KeychainInteraction {
     Deny,
 }
 
+/// Replaces the installation's protected key storage for this whole process, so
+/// no path through the host reaches the Keychain. The first call wins.
+pub fn use_process_storage(storage: Arc<dyn ProtectedStorage>) {
+    let _ = PROCESS_STORAGE.set(storage);
+}
+
 /// This installation's protected key storage.
 pub fn storage(interaction: KeychainInteraction) -> StoreResult<Arc<dyn ProtectedStorage>> {
+    if let Some(storage) = PROCESS_STORAGE.get() {
+        return Ok(storage.clone());
+    }
     #[cfg(not(any(test, feature = "test-support")))]
     return production_storage(protected_store_directory()?, interaction);
     #[cfg(any(test, feature = "test-support"))]

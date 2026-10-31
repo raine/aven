@@ -1,0 +1,245 @@
+//! Small elements shared across the app's surfaces.
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use accesskit::Role;
+use aven_core::choices::{TaskPriority, TaskStatus};
+use gpui::{
+    Animation, AnimationExt, App, Bounds, BoxShadow, Div, ElementId, Hsla, IntoElement,
+    MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, Svg, Transformation, Window,
+    canvas, div, point, prelude::*, px, size, svg,
+};
+
+use crate::session::POP_DURATION;
+use crate::theme::Theme;
+
+pub const MONO: &str = "JetBrains Mono";
+pub const UI_LINE_HEIGHT: f32 = 18.2;
+
+pub const STATUSES: [(TaskStatus, &str); 6] = [
+    (TaskStatus::Active, "Active"),
+    (TaskStatus::Todo, "Todo"),
+    (TaskStatus::Inbox, "Inbox"),
+    (TaskStatus::Backlog, "Backlog"),
+    (TaskStatus::Done, "Done"),
+    (TaskStatus::Canceled, "Canceled"),
+];
+
+pub const PRIORITIES: [(TaskPriority, &str); 5] = [
+    (TaskPriority::Urgent, "Urgent"),
+    (TaskPriority::High, "High"),
+    (TaskPriority::Medium, "Medium"),
+    (TaskPriority::Low, "Low"),
+    (TaskPriority::None, "None"),
+];
+
+pub fn status_name(status: TaskStatus) -> &'static str {
+    STATUSES
+        .iter()
+        .find(|(value, _)| *value == status)
+        .map_or("", |(_, name)| name)
+}
+
+pub fn priority_name(priority: TaskPriority) -> &'static str {
+    PRIORITIES
+        .iter()
+        .find(|(value, _)| *value == priority)
+        .map_or("", |(_, name)| name)
+}
+
+pub type Anchors = Rc<RefCell<HashMap<&'static str, Bounds<Pixels>>>>;
+
+pub fn drag_window(event: &MouseDownEvent, window: &mut Window, _: &mut App) {
+    if event.click_count == 2 {
+        window.titlebar_double_click();
+    } else {
+        window.start_window_move();
+    }
+}
+
+pub fn spread(color: Hsla, radius: f32) -> BoxShadow {
+    BoxShadow {
+        color,
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(radius),
+        inset: false,
+    }
+}
+
+pub fn small(size: f32) -> Div {
+    div().text_size(px(size)).line_height(px(size * 1.4))
+}
+
+pub fn icon(path: &'static str, color: Hsla) -> Svg {
+    svg().path(path).size(px(16.)).flex_none().text_color(color)
+}
+
+pub fn nav_item(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
+    let raised = t.raised;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(9.))
+        .w_full()
+        .h(px(27.))
+        .mb(px(2.))
+        .px(px(8.))
+        .rounded(px(6.))
+        .text_color(t.body)
+        .hover(move |style| style.bg(raised))
+}
+
+pub fn nav_count(text: impl Into<SharedString>, hot: bool, t: &Theme) -> impl IntoElement {
+    small(12.)
+        .ml_auto()
+        .font_weight(if hot {
+            gpui::FontWeight::SEMIBOLD
+        } else {
+            gpui::FontWeight::NORMAL
+        })
+        .text_color(if hot { t.bad } else { t.faint })
+        .child(text.into())
+}
+
+pub fn btn(id: impl Into<ElementId>, label: &'static str, t: &Theme) -> Stateful<Div> {
+    let raised = t.raised;
+    bare_btn(id, label, t).hover(move |style| style.bg(raised))
+}
+
+/// A button that sets its own hover colour.
+pub fn bare_btn(id: impl Into<ElementId>, label: &'static str, t: &Theme) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .h(px(28.))
+        .px(px(10.))
+        .rounded(px(6.))
+        .text_color(t.body)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+/// Reports where a control is, so a menu can open from it.
+pub fn anchor_probe(key: &'static str, anchors: &Anchors) -> impl IntoElement + use<> {
+    let anchors = anchors.clone();
+    canvas(
+        move |bounds, _, _| {
+            anchors.borrow_mut().insert(key, bounds);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+fn status_look(status: TaskStatus, t: &Theme) -> (&'static str, Hsla) {
+    match status {
+        TaskStatus::Active => ("icons/st-active.svg", t.st_active),
+        TaskStatus::Todo => ("icons/st-ring.svg", t.st_todo),
+        TaskStatus::Inbox => ("icons/st-inbox.svg", t.faint),
+        TaskStatus::Backlog => ("icons/st-ring.svg", t.faint),
+        TaskStatus::Done => ("icons/st-done.svg", t.good),
+        TaskStatus::Canceled => ("icons/st-canceled.svg", t.faint),
+    }
+}
+
+pub fn status_glyph(status: TaskStatus, t: &Theme) -> impl IntoElement + use<> {
+    let (path, color) = status_look(status, t);
+    svg().path(path).size(px(14.)).flex_none().text_color(color)
+}
+
+/// The old mark fades while the done mark scales up past its size and settles.
+pub fn pop_glyph(previous: TaskStatus, run: usize, t: &Theme) -> impl IntoElement + use<> {
+    let (old_path, old_color) = status_look(previous, t);
+    let (path, color) = status_look(TaskStatus::Done, t);
+    let layer = move |path: &'static str, color: Hsla| {
+        svg()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size(px(14.))
+            .path(path)
+            .text_color(color)
+    };
+    let animation = Animation::new(POP_DURATION);
+    div()
+        .relative()
+        .flex_none()
+        .size(px(14.))
+        .child(layer(old_path, old_color).with_animation(
+            ("pop-old", run),
+            animation.clone(),
+            move |old, delta| old.text_color(old_color.opacity(1. - (delta / 0.4).min(1.))),
+        ))
+        .child(layer(path, color).with_animation(
+            ("pop-done", run),
+            animation,
+            move |done, delta| {
+                let bent = delta - 1.;
+                let eased = 1. + 3.7 * bent.powi(3) + 2.7 * bent.powi(2);
+                let scale = 0.4 + 0.6 * eased;
+                done.text_color(color.opacity((delta / 0.3).min(1.)))
+                    .with_transformation(Transformation::scale(size(scale, scale)))
+            },
+        ))
+}
+
+pub fn priority_icon(priority: TaskPriority, t: &Theme) -> impl IntoElement + use<> {
+    let color = match priority {
+        TaskPriority::None => t.faint,
+        TaskPriority::High => t.pr_high,
+        TaskPriority::Urgent => t.pr_urgent,
+        TaskPriority::Low | TaskPriority::Medium => t.pr_low,
+    };
+    let (on, off): (&'static str, Option<&'static str>) = match priority {
+        TaskPriority::None => ("icons/pri-0.svg", None),
+        TaskPriority::Low => ("icons/pri-1-on.svg", Some("icons/pri-1-off.svg")),
+        TaskPriority::Medium => ("icons/pri-2-on.svg", Some("icons/pri-2-off.svg")),
+        TaskPriority::High => ("icons/pri-3-on.svg", None),
+        TaskPriority::Urgent => ("icons/pri-4.svg", None),
+    };
+    div()
+        .relative()
+        .flex_none()
+        .size(px(16.))
+        .child(svg().absolute().path(on).size(px(16.)).text_color(color))
+        .when_some(off, |el, off| {
+            el.child(
+                svg()
+                    .absolute()
+                    .path(off)
+                    .size(px(16.))
+                    .text_color(color.opacity(0.3)),
+            )
+        })
+}
+
+pub fn ref_label(
+    reference: &str,
+    project: &str,
+    width: Option<f32>,
+    t: &Theme,
+) -> impl IntoElement + use<> {
+    let (prefix, rest) = reference.split_at(project.len().min(reference.len()));
+    div()
+        .flex()
+        .flex_none()
+        .when_some(width, |el, width| el.w(px(width)))
+        .overflow_hidden()
+        .font_family(MONO)
+        .text_size(px(12.))
+        .text_color(t.faint)
+        .child(
+            div()
+                .text_color(t.project(project))
+                .child(prefix.to_string()),
+        )
+        .child(rest.to_string())
+}

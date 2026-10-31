@@ -346,10 +346,12 @@ impl Isolation {
         ]
     }
 
-    /// Validates this process's environment and the launch's config.
+    /// Validates this process's environment and the launch's config, and moves
+    /// the process's protected keys into the root.
     pub fn from_process() -> Result<Self> {
         let isolation = Self::paths_from_process()?;
         isolation.require_isolated_config(&Owner::read(&owner_home()?)?)?;
+        aven_host::protected_local_keys::use_process_storage(isolation.protected_storage());
         Ok(isolation)
     }
 

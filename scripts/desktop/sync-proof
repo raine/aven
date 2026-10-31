@@ -162,4 +162,5 @@ def main():
         shutil.rmtree(root)
 
 
-main()
+if __name__ == "__main__":
+    main()

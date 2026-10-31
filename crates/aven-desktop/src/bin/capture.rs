@@ -3,17 +3,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
+use aven_desktop::adapter::{self, Snapshot};
+use aven_desktop::assets::{Assets, load_fonts};
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
 use aven_desktop::isolation::{self, Isolation};
 use aven_desktop::measure::{self, MeasuredBounds, NamedBounds};
 use aven_desktop::prototype::{Prototype, Render};
 use aven_desktop::scene::{Manifest, Scene, Theme};
-use aven_desktop::shell::{Group, Palette, Shell, load_groups};
+use aven_desktop::session::Session;
+use aven_desktop::shell::Root;
+use aven_desktop::{actions, input};
+use aven_host::config::AppConfig;
 use chrono::{DateTime, Local, TimeZone};
 use gpui::{AnyWindowHandle, AppContext as _, VisualTestAppContext, px, size};
 use serde_json::{Value, json};
@@ -62,10 +68,11 @@ fn dispatch(args: &[String]) -> Result<bool> {
         }
         ["check-capabilities"] => check_capabilities().map(|()| true),
         ["keychain-probe"] => keychain_probe().map(|()| true),
+        ["list-bench", tasks] => list_bench(tasks.parse()?).map(|()| true),
         ["run", output] => run(Path::new(output), None),
         ["run", output, scene] => run(Path::new(output), Some(scene)),
         _ => bail!(
-            "usage: aven-desktop-capture export-fixture | seed | inventory | check-capabilities | keychain-probe | run OUTPUT [SCENE]"
+            "usage: aven-desktop-capture export-fixture | seed | inventory | check-capabilities | keychain-probe | list-bench TASKS | run OUTPUT [SCENE]"
         ),
     }
 }
@@ -176,9 +183,7 @@ fn seed_database(isolation: &Isolation, anchor: DateTime<Local>) -> Result<Seede
     })
 }
 
-fn seed_only() -> Result<()> {
-    let isolation = Isolation::from_process()?;
-    let seeded = seed_database(&isolation, fixture::anchor_now()?)?;
+fn select_seeded_workspace(isolation: &Isolation, seeded: &Seeded) -> Result<()> {
     tokio::runtime::Runtime::new()?.block_on(async {
         let store = aven_core::api::Store::open(&isolation.database)
             .await
@@ -189,8 +194,108 @@ fn seed_only() -> Result<()> {
             .map_err(anyhow::Error::msg)?;
         store.close().await;
         anyhow::Ok(())
-    })?;
+    })
+}
+
+fn seed_only() -> Result<()> {
+    let isolation = Isolation::from_process()?;
+    let seeded = seed_database(&isolation, fixture::anchor_now()?)?;
+    select_seeded_workspace(&isolation, &seeded)?;
     println!("seeded {} tasks", seeded.ids.len());
+    Ok(())
+}
+
+/// What the window shows at launch, read the way the app reads it.
+fn load_state(
+    isolation: &Isolation,
+    now: DateTime<Local>,
+) -> Result<(Snapshot, Option<adapter::Detail>)> {
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let config = AppConfig::default();
+        let store = adapter::open_store(&isolation.database, &config).await?;
+        let snapshot = adapter::snapshot(&store, now);
+        let first = snapshot.ordered().next();
+        let id = first.map(|task| snapshot.tasks[task].id.clone());
+        let detail = match id {
+            Some(id) => store.load_task_item(&id).await?,
+            None => None,
+        };
+        Ok((snapshot, detail.as_ref().map(adapter::detail)))
+    })
+}
+
+/// A view with no store behind it: requests go nowhere and no replies come.
+fn open_root(
+    cx: &mut VisualTestAppContext,
+    state: &(Snapshot, Option<adapter::Detail>),
+    prefs: PathBuf,
+    width: f32,
+    height: f32,
+) -> Result<gpui::WindowHandle<Root>> {
+    let (snapshot, detail) = state.clone();
+    cx.open_offscreen_window(size(px(width), px(height)), move |window, cx| {
+        let (requests, _) = tokio::sync::mpsc::unbounded_channel();
+        let (_, replies) = tokio::sync::mpsc::unbounded_channel();
+        let mut session = Session::new(snapshot, requests);
+        session.detail = detail;
+        cx.new(|cx| {
+            let mut root = Root::new(session, replies, prefs, window, cx);
+            root.always_active = true;
+            root
+        })
+    })
+}
+
+/// Times layout of a generated queue, and checks its extent matches its entries.
+fn list_bench(tasks: usize) -> Result<()> {
+    let work = scratch()?;
+    let mut groups = Vec::new();
+    let rows: Vec<_> = (0..tasks).collect();
+    for (index, chunk) in rows.chunks(tasks.div_ceil(4).max(1)).enumerate() {
+        groups.push(adapter::Group {
+            name: format!("Group {index}"),
+            hint: String::new(),
+            rows: chunk.to_vec(),
+        });
+    }
+    let state = (adapter::bench_snapshot(tasks, groups), None);
+    let mut cx = capture_context();
+    let started = Instant::now();
+    let window = open_root(&mut cx, &state, work.path().join("prefs.json"), 1440., 900.)?;
+    let any: AnyWindowHandle = window.into();
+    cx.run_until_parked();
+    cx.update_window(any, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    let first = started.elapsed();
+    let frames = 20;
+    let started = Instant::now();
+    for _ in 0..frames {
+        cx.update_window(any, |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+    }
+    let frame = started.elapsed() / frames;
+    let started = Instant::now();
+    window.update(&mut cx, |root, _, cx| {
+        root.session_mut().snapshot.groups[0].rows.remove(0);
+        root.reload_list(cx);
+    })?;
+    cx.update_window(any, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    let changed = started.elapsed();
+    let started = Instant::now();
+    cx.simulate_keystrokes(any, "g d");
+    cx.update_window(any, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    let resized = started.elapsed();
+    let scroll_max = cx.update(|cx| window.read(cx).map(|root| root.scroll_max()))?;
+    let viewport = 900. - 6. * 2. - 44.;
+    let sections: f32 = 4.;
+    let expected = (tasks as f32 - 1.) * 31. + sections * 32.8 + 44. - viewport;
+    println!(
+        "{tasks} tasks: first {first:?}, frame {frame:?}, list change {changed:?}, \
+         width change {resized:?}, max scroll {} expected {expected}",
+        scroll_max
+    );
     Ok(())
 }
 
@@ -218,12 +323,8 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
     let output = &isolation::prepare_output(output)?;
     let anchor = fixture::anchor_now()?;
     let seeded = seed_database(&isolation, anchor)?;
-    let runtime = tokio::runtime::Runtime::new()?;
-    let groups = runtime.block_on(load_groups(
-        &isolation.database,
-        Some(&seeded.workspace.id),
-        anchor,
-    ))?;
+    select_seeded_workspace(&isolation, &seeded)?;
+    let state = load_state(&isolation, anchor)?;
 
     let prototype = Prototype::new(
         &repository_dir().join(&manifest.target),
@@ -235,10 +336,10 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
     for scene in scenes {
         let page = render_prototype(&prototype, &manifest, scene, &seeded, anchor, output)?;
         let boxes: NamedBounds = serde_json::from_value(strip_missing(&page["boxes"]))?;
-        let gpui_boxes = render_gpui(&mut cx, scene, &groups, output)?;
+        let gpui_boxes = render_gpui(&mut cx, scene, &state, output)?;
         let present = unexpectedly_present(scene, &boxes, &gpui_boxes);
         let comparisons = measure::compare(&manifest.expectations(scene)?, &boxes, &gpui_boxes);
-        let parity = data_parity(&page["queue"], &groups);
+        let parity = data_parity(&page["queue"], &state.0);
         let scene_passed = comparisons.iter().all(|result| result.passed)
             && parity.is_empty()
             && present.is_empty();
@@ -378,7 +479,7 @@ fn render_prototype(
 
 /// Differences in which tasks each group holds. Order within a group is left to
 /// core, since data behaviour follows core rather than the simulated prototype.
-fn data_parity(queue: &Value, groups: &[Group]) -> Vec<String> {
+fn data_parity(queue: &Value, snapshot: &Snapshot) -> Vec<String> {
     let mut page: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
     let mut section = String::new();
     for item in queue.as_array().into_iter().flatten() {
@@ -391,15 +492,17 @@ fn data_parity(queue: &Value, groups: &[Group]) -> Vec<String> {
             ));
         }
     }
-    let core: BTreeMap<String, BTreeSet<(String, String)>> = groups
+    let core: BTreeMap<String, BTreeSet<(String, String)>> = snapshot
+        .groups
         .iter()
         .map(|group| {
             let rows = group
                 .rows
                 .iter()
-                .map(|row| (row.reference.to_string(), row.title.to_string()))
+                .map(|row| &snapshot.tasks[*row])
+                .map(|row| (row.reference.clone(), row.title.clone()))
                 .collect();
-            (group.name.to_string(), rows)
+            (group.name.clone(), rows)
         })
         .collect();
     let names: BTreeSet<_> = page.keys().chain(core.keys()).cloned().collect();
@@ -420,24 +523,36 @@ fn data_parity(queue: &Value, groups: &[Group]) -> Vec<String> {
 
 fn capture_context() -> VisualTestAppContext {
     let platform = gpui_platform::current_platform(false);
-    VisualTestAppContext::new(platform)
+    let mut cx = VisualTestAppContext::with_asset_source(platform, Arc::new(Assets));
+    cx.update(|cx| {
+        load_fonts(cx);
+        cx.set_global(aven_desktop::theme::Theme::dark());
+        cx.bind_keys(actions::key_bindings());
+        cx.bind_keys(input::key_bindings());
+    });
+    cx
 }
 
 fn render_gpui(
     cx: &mut VisualTestAppContext,
     scene: &Scene,
-    groups: &[Group],
+    state: &(Snapshot, Option<adapter::Detail>),
     output: &Path,
 ) -> Result<NamedBounds> {
-    let palette = match scene.theme {
-        Theme::Dark => Palette::dark(),
-        Theme::Light => Palette::light(),
+    let theme = match scene.theme {
+        Theme::Dark => aven_desktop::theme::Theme::dark(),
+        Theme::Light => aven_desktop::theme::Theme::light(),
     };
-    let groups = groups.to_vec();
-    cx.update(|cx| cx.set_global(MeasuredBounds::default()));
-    let window = cx.open_offscreen_window(
-        size(px(scene.width as f32), px(scene.height as f32)),
-        move |_, cx| cx.new(|_| Shell { palette, groups }),
+    cx.update(|cx| {
+        cx.set_global(theme);
+        cx.set_global(MeasuredBounds::default());
+    });
+    let window = open_root(
+        cx,
+        state,
+        output.join("capture-prefs.json"),
+        scene.width as f32,
+        scene.height as f32,
     )?;
     let any: AnyWindowHandle = window.into();
     for keys in &scene.gpui_keys {
@@ -449,6 +564,7 @@ fn render_gpui(
         cx.update_window(any, |_, window, _| window.refresh())?;
     }
     std::thread::sleep(Duration::from_millis(200));
+    cx.update_window(any, |_, window, _| window.refresh())?;
     cx.run_until_parked();
     let image = cx
         .capture_screenshot(any)
