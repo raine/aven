@@ -1,11 +1,11 @@
 use anyhow::Result;
 
-use crate::tui::store::{ConflictTarget, MutationMessage};
+use crate::store::{ConflictTarget, MutationMessage};
 
 use super::{TuiProjection, TuiStore};
 
 impl TuiStore {
-    pub(crate) async fn conflict_targets(
+    pub async fn conflict_targets(
         &self,
         index: Option<usize>,
     ) -> Result<Option<Vec<ConflictTarget>>> {
@@ -15,7 +15,7 @@ impl TuiStore {
         self.conflict_targets_for(item).await.map(Some)
     }
 
-    pub(crate) async fn conflict_targets_for(
+    pub async fn conflict_targets_for(
         &self,
         item: &crate::query::TaskListItem,
     ) -> Result<Vec<ConflictTarget>> {
@@ -61,7 +61,7 @@ impl TuiStore {
         Ok(targets)
     }
 
-    pub(crate) async fn resolve_conflict_value(
+    pub async fn resolve_conflict_value(
         &mut self,
         target: ConflictTarget,
         value: String,
@@ -101,7 +101,7 @@ impl TuiStore {
         .await
     }
 
-    pub(crate) fn next_conflict_flag_index(
+    pub fn next_conflict_flag_index(
         flags: &[bool],
         selected: Option<usize>,
         delta: isize,
@@ -120,11 +120,7 @@ impl TuiStore {
         None
     }
 
-    pub(crate) fn next_conflict_index(
-        &self,
-        selected: Option<usize>,
-        delta: isize,
-    ) -> Option<usize> {
+    pub fn next_conflict_index(&self, selected: Option<usize>, delta: isize) -> Option<usize> {
         let flags = self
             .tasks
             .iter()

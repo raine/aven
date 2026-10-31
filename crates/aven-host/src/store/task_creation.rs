@@ -14,14 +14,14 @@ use crate::operations::{
 use super::TuiStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PendingTaskAttachment {
-    pub(crate) attachment_id: String,
-    pub(crate) sha256: String,
-    pub(crate) input: AttachmentAddInput,
+pub struct PendingTaskAttachment {
+    pub attachment_id: String,
+    pub sha256: String,
+    pub input: AttachmentAddInput,
 }
 
 impl PendingTaskAttachment {
-    pub(crate) fn new(attachment_id: String, input: AttachmentAddInput) -> Self {
+    pub fn new(attachment_id: String, input: AttachmentAddInput) -> Self {
         let sha256 = sha256_hex(&input.bytes);
         Self {
             attachment_id,
@@ -36,10 +36,10 @@ struct CreatedTaskMessage {
     selected: Option<usize>,
 }
 
-pub(crate) struct TaskCreationCompletion {
-    pub(crate) message: String,
-    pub(crate) selected: Option<usize>,
-    pub(crate) refresh_error: Option<anyhow::Error>,
+pub struct TaskCreationCompletion {
+    pub message: String,
+    pub selected: Option<usize>,
+    pub refresh_error: Option<anyhow::Error>,
 }
 
 impl TaskCreationCompletion {
@@ -52,7 +52,7 @@ impl TaskCreationCompletion {
 }
 
 #[derive(Debug)]
-pub(crate) struct TaskCreationCommittedError {
+pub struct TaskCreationCommittedError {
     source: anyhow::Error,
 }
 
@@ -72,7 +72,7 @@ impl std::error::Error for TaskCreationCommittedError {
     }
 }
 
-pub(crate) fn task_creation_committed(error: &anyhow::Error) -> bool {
+pub fn task_creation_committed(error: &anyhow::Error) -> bool {
     error.downcast_ref::<TaskCreationCommittedError>().is_some()
 }
 
@@ -81,7 +81,7 @@ fn committed_error(source: anyhow::Error) -> anyhow::Error {
 }
 
 impl TuiStore {
-    pub(crate) fn spawn_task_intake(
+    pub fn spawn_task_intake(
         &self,
         config: TaskIntakeConfig,
         input: String,
@@ -108,7 +108,7 @@ impl TuiStore {
         })
     }
 
-    pub(crate) async fn create_task(
+    pub async fn create_task(
         &mut self,
         draft: TaskDraft,
         current_selected_index: Option<usize>,
@@ -118,7 +118,7 @@ impl TuiStore {
             .into_legacy()
     }
 
-    pub(crate) async fn create_task_completion(
+    pub async fn create_task_completion(
         &mut self,
         mut draft: TaskDraft,
         current_selected_index: Option<usize>,
@@ -152,7 +152,7 @@ impl TuiStore {
             .await)
     }
 
-    pub(crate) async fn create_task_for_epic(
+    pub async fn create_task_for_epic(
         &mut self,
         mut draft: TaskDraft,
         current_selected_index: Option<usize>,
@@ -194,7 +194,7 @@ impl TuiStore {
         Ok((created.message, created.selected, task_id))
     }
 
-    pub(crate) async fn create_task_with_attachments(
+    pub async fn create_task_with_attachments(
         &mut self,
         draft: TaskDraft,
         current_selected_index: Option<usize>,
@@ -213,7 +213,7 @@ impl TuiStore {
         .into_legacy()
     }
 
-    pub(crate) async fn create_task_with_attachments_completion(
+    pub async fn create_task_with_attachments_completion(
         &mut self,
         mut draft: TaskDraft,
         current_selected_index: Option<usize>,
@@ -264,7 +264,7 @@ impl TuiStore {
             .await)
     }
 
-    pub(crate) async fn create_task_with_attachments_for_epic(
+    pub async fn create_task_with_attachments_for_epic(
         &mut self,
         mut draft: TaskDraft,
         current_selected_index: Option<usize>,
@@ -380,7 +380,7 @@ impl TuiStore {
         }
     }
 
-    pub(crate) async fn edit_note(
+    pub async fn edit_note(
         &mut self,
         task_id: &crate::ids::TaskId,
         note_id: &str,
@@ -393,7 +393,7 @@ impl TuiStore {
         Ok(outcome.found.then_some(outcome.changed))
     }
 
-    pub(crate) async fn delete_note(
+    pub async fn delete_note(
         &mut self,
         task_id: &crate::ids::TaskId,
         note_id: &str,
@@ -405,7 +405,7 @@ impl TuiStore {
             .changed)
     }
 
-    pub(crate) async fn add_note_to_task(
+    pub async fn add_note_to_task(
         &mut self,
         task_id: &crate::ids::TaskId,
         body: String,

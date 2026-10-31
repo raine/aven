@@ -5,21 +5,18 @@ use crate::config::TaskColumnConfig;
 use crate::query::TaskListItem;
 
 #[derive(Debug)]
-pub(crate) struct TaskColumn {
-    pub(crate) config: TaskColumnConfig,
-    pub(crate) task_indices: Vec<usize>,
+pub struct TaskColumn {
+    pub config: TaskColumnConfig,
+    pub task_indices: Vec<usize>,
 }
 
 #[derive(Debug)]
-pub(crate) struct ColumnBoard {
-    pub(crate) columns: Vec<TaskColumn>,
+pub struct ColumnBoard {
+    pub columns: Vec<TaskColumn>,
     positions: Vec<Option<(usize, usize)>>,
 }
 
-pub(crate) fn lane_index_for_status(
-    columns: &[TaskColumnConfig],
-    status: TaskStatus,
-) -> Option<usize> {
+pub fn lane_index_for_status(columns: &[TaskColumnConfig], status: TaskStatus) -> Option<usize> {
     columns.iter().position(|column| {
         column
             .statuses
@@ -28,10 +25,7 @@ pub(crate) fn lane_index_for_status(
     })
 }
 
-pub(crate) fn lane_entry_status(
-    columns: &[TaskColumnConfig],
-    column_index: usize,
-) -> Option<TaskStatus> {
+pub fn lane_entry_status(columns: &[TaskColumnConfig], column_index: usize) -> Option<TaskStatus> {
     columns
         .get(column_index)?
         .statuses
@@ -39,7 +33,7 @@ pub(crate) fn lane_entry_status(
         .and_then(|status| TaskStatus::parse(status).ok())
 }
 
-pub(crate) fn adjacent_lane_entry_status(
+pub fn adjacent_lane_entry_status(
     columns: &[TaskColumnConfig],
     status: TaskStatus,
     delta: isize,
@@ -53,7 +47,7 @@ pub(crate) fn adjacent_lane_entry_status(
 }
 
 impl ColumnBoard {
-    pub(crate) fn new(columns: &[TaskColumnConfig], tasks: &[TaskListItem]) -> Self {
+    pub fn new(columns: &[TaskColumnConfig], tasks: &[TaskListItem]) -> Self {
         let mut lanes_by_status = HashMap::<&str, Vec<usize>>::new();
         for (column_index, config) in columns.iter().enumerate() {
             for status in &config.statuses {
@@ -88,11 +82,11 @@ impl ColumnBoard {
         Self { columns, positions }
     }
 
-    pub(crate) fn position(&self, task_index: usize) -> Option<(usize, usize)> {
+    pub fn position(&self, task_index: usize) -> Option<(usize, usize)> {
         self.positions.get(task_index).copied().flatten()
     }
 
-    pub(crate) fn lane_entry_status(&self, column_index: usize) -> Option<TaskStatus> {
+    pub fn lane_entry_status(&self, column_index: usize) -> Option<TaskStatus> {
         self.columns
             .get(column_index)?
             .config
@@ -101,7 +95,7 @@ impl ColumnBoard {
             .and_then(|status| TaskStatus::parse(status).ok())
     }
 
-    pub(crate) fn move_vertical(&self, selected: Option<usize>, delta: isize) -> Option<usize> {
+    pub fn move_vertical(&self, selected: Option<usize>, delta: isize) -> Option<usize> {
         let Some(selected) = selected else {
             return if delta < 0 { self.last() } else { self.first() };
         };
@@ -117,11 +111,7 @@ impl ColumnBoard {
         tasks.get(next).copied()
     }
 
-    pub(crate) fn move_vertical_bounded(
-        &self,
-        selected: Option<usize>,
-        delta: isize,
-    ) -> Option<usize> {
+    pub fn move_vertical_bounded(&self, selected: Option<usize>, delta: isize) -> Option<usize> {
         let Some(selected) = selected else {
             return if delta < 0 { self.last() } else { self.first() };
         };
@@ -136,7 +126,7 @@ impl ColumnBoard {
         tasks.get(next).copied()
     }
 
-    pub(crate) fn move_horizontal(&self, selected: Option<usize>, delta: isize) -> Option<usize> {
+    pub fn move_horizontal(&self, selected: Option<usize>, delta: isize) -> Option<usize> {
         let selected = selected.or_else(|| self.first())?;
         let (column, row) = self.position(selected)?;
         let mut target = column as isize + delta.signum();
@@ -150,7 +140,7 @@ impl ColumnBoard {
         None
     }
 
-    pub(crate) fn edge(&self, selected: Option<usize>, last: bool) -> Option<usize> {
+    pub fn edge(&self, selected: Option<usize>, last: bool) -> Option<usize> {
         let Some(selected) = selected else {
             return if last { self.last() } else { self.first() };
         };
@@ -162,7 +152,7 @@ impl ColumnBoard {
         }
     }
 
-    pub(crate) fn selection_at_or_near(&self, column: usize, row: usize) -> Option<usize> {
+    pub fn selection_at_or_near(&self, column: usize, row: usize) -> Option<usize> {
         if let Some(tasks) = self.columns.get(column).map(|lane| &lane.task_indices)
             && !tasks.is_empty()
         {
@@ -177,13 +167,13 @@ impl ColumnBoard {
             .copied()
     }
 
-    pub(crate) fn first(&self) -> Option<usize> {
+    pub fn first(&self) -> Option<usize> {
         self.columns
             .iter()
             .find_map(|column| column.task_indices.first().copied())
     }
 
-    pub(crate) fn last(&self) -> Option<usize> {
+    pub fn last(&self) -> Option<usize> {
         self.columns
             .iter()
             .rev()

@@ -1,23 +1,23 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UndoPresentation {
-    pub(crate) entry_id: String,
-    pub(crate) phrase: String,
+pub struct UndoPresentation {
+    pub entry_id: String,
+    pub phrase: String,
 }
 
 impl UndoPresentation {
-    pub(crate) fn undo_label(&self) -> String {
+    pub fn undo_label(&self) -> String {
         format!("undo {}", self.phrase)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MutationMessage {
-    pub(crate) message: String,
-    pub(crate) selected: Option<usize>,
+pub struct MutationMessage {
+    pub message: String,
+    pub selected: Option<usize>,
 }
 
 impl MutationMessage {
-    pub(crate) fn new(message: impl Into<String>, selected: Option<usize>) -> Self {
+    pub fn new(message: impl Into<String>, selected: Option<usize>) -> Self {
         Self {
             message: message.into(),
             selected,
@@ -26,7 +26,7 @@ impl MutationMessage {
 }
 
 #[derive(Debug)]
-pub(crate) struct MutationCommittedError {
+pub struct MutationCommittedError {
     source: anyhow::Error,
 }
 
@@ -46,7 +46,7 @@ impl std::error::Error for MutationCommittedError {
     }
 }
 
-pub(crate) fn mutation_committed(error: &anyhow::Error) -> bool {
+pub fn mutation_committed(error: &anyhow::Error) -> bool {
     error.downcast_ref::<MutationCommittedError>().is_some()
 }
 
@@ -55,15 +55,15 @@ pub(super) fn committed_mutation_error(source: anyhow::Error) -> anyhow::Error {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConflictTarget {
-    pub(crate) task_id: crate::ids::TaskId,
-    pub(crate) recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
-    pub(crate) display_ref: String,
-    pub(crate) field: String,
-    pub(crate) variant_a: String,
-    pub(crate) local_value: String,
-    pub(crate) variant_b: String,
-    pub(crate) remote_value: String,
+pub struct ConflictTarget {
+    pub task_id: crate::ids::TaskId,
+    pub recurrence_series_id: Option<aven_core::recurrence::RecurrenceSeriesId>,
+    pub display_ref: String,
+    pub field: String,
+    pub variant_a: String,
+    pub local_value: String,
+    pub variant_b: String,
+    pub remote_value: String,
 }
 
 use std::collections::BTreeSet;
@@ -76,19 +76,19 @@ use crate::query::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DetailRevision(u64);
+pub struct DetailRevision(u64);
 
 impl DetailRevision {
-    pub(crate) const UNCACHED: Self = Self(0);
+    pub const UNCACHED: Self = Self(0);
 
-    pub(crate) fn next() -> Self {
+    pub fn next() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TaskProjection {
+pub struct TaskProjection {
     items: Vec<TaskListItem>,
     revision: DetailRevision,
 }
@@ -127,24 +127,24 @@ impl DerefMut for TaskProjection {
 }
 
 impl TaskProjection {
-    pub(crate) fn revision(&self) -> DetailRevision {
+    pub fn revision(&self) -> DetailRevision {
         self.revision
     }
 }
 
-pub(crate) struct SearchPreview {
-    pub(crate) results: crate::query::TaskSearchPreviewResultSet,
-    pub(crate) other_project_matches: Option<usize>,
+pub struct SearchPreview {
+    pub results: crate::query::TaskSearchPreviewResultSet,
+    pub other_project_matches: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TaskScope {
+pub enum TaskScope {
     Workspace,
     Project(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskQuery {
+pub enum TaskQuery {
     Queue,
     All,
     Open,
@@ -165,11 +165,11 @@ pub(crate) enum TaskQuery {
 }
 
 impl TaskQuery {
-    pub(crate) fn supports_closed_filter(self) -> bool {
+    pub fn supports_closed_filter(self) -> bool {
         matches!(self, Self::Queue | Self::Open | Self::Epics)
     }
 
-    pub(crate) fn supports_layout(self, layout: TaskLayout) -> bool {
+    pub fn supports_layout(self, layout: TaskLayout) -> bool {
         layout == TaskLayout::List
             || matches!(
                 self,
@@ -190,14 +190,14 @@ impl TaskQuery {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum TaskLayout {
+pub enum TaskLayout {
     #[default]
     List,
     Columns,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum ClosedTaskVisibility {
+pub enum ClosedTaskVisibility {
     #[default]
     Default,
     Included,
@@ -205,35 +205,35 @@ pub(crate) enum ClosedTaskVisibility {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct RecurringSeriesViewState {
-    pub(crate) lifecycle: RecurrenceSeriesLifecycleFilter,
-    pub(crate) search: Option<String>,
+pub struct RecurringSeriesViewState {
+    pub lifecycle: RecurrenceSeriesLifecycleFilter,
+    pub search: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MainRowIdentity {
+pub enum MainRowIdentity {
     Task(crate::ids::TaskId),
     RecurrenceSeries(aven_core::recurrence::RecurrenceSeriesId),
     RecentAction(String),
 }
 
-pub(crate) type MainRowSelection = MainRowIdentity;
+pub type MainRowSelection = MainRowIdentity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MainRowPosition {
+pub enum MainRowPosition {
     Flat(usize),
     Column { column: usize, row: usize },
     EpicVisualRow(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MainRowAnchor {
-    pub(crate) identity: MainRowIdentity,
-    pub(crate) position: MainRowPosition,
+pub struct MainRowAnchor {
+    pub identity: MainRowIdentity,
+    pub position: MainRowPosition,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SelectionRestore {
+pub enum SelectionRestore {
     Default,
     Identity(MainRowIdentity),
     Anchor(MainRowAnchor),
@@ -241,7 +241,7 @@ pub(crate) enum SelectionRestore {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) enum TaskProjectionOrigin {
+pub enum TaskProjectionOrigin {
     #[default]
     NamedView,
     SearchPrompt,
@@ -253,7 +253,7 @@ pub(crate) enum TaskProjectionOrigin {
 }
 
 impl TaskProjectionOrigin {
-    pub(crate) fn task_id_filter(&self) -> TaskIdFilter {
+    pub fn task_id_filter(&self) -> TaskIdFilter {
         match self {
             Self::NamedView => TaskIdFilter::Unrestricted,
             Self::SearchPrompt => TaskIdFilter::Only(Vec::new()),
@@ -263,7 +263,7 @@ impl TaskProjectionOrigin {
         }
     }
 
-    pub(crate) fn match_count(&self) -> Option<usize> {
+    pub fn match_count(&self) -> Option<usize> {
         match self {
             Self::NamedView | Self::SearchPrompt => None,
             Self::Search { task_ids, .. } | Self::ExactTasks(task_ids) => Some(task_ids.len()),
@@ -272,16 +272,16 @@ impl TaskProjectionOrigin {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct TaskFilterModifiers {
-    pub(crate) label: Option<String>,
-    pub(crate) priority: Option<String>,
-    pub(crate) closed: ClosedTaskVisibility,
-    pub(crate) include_deleted: bool,
-    pub(crate) deleted_only: bool,
+pub struct TaskFilterModifiers {
+    pub label: Option<String>,
+    pub priority: Option<String>,
+    pub closed: ClosedTaskVisibility,
+    pub include_deleted: bool,
+    pub deleted_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskOrder {
+pub enum TaskOrder {
     Created,
     Updated,
     Priority,
@@ -291,7 +291,7 @@ pub(crate) enum TaskOrder {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskListRenderMode {
+pub enum TaskListRenderMode {
     Flat,
     Queue,
     Upcoming,
@@ -299,17 +299,17 @@ pub(crate) enum TaskListRenderMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskViewState {
-    pub(crate) scope: TaskScope,
-    pub(crate) query: TaskQuery,
-    pub(crate) layout: TaskLayout,
-    pub(crate) projection_origin: TaskProjectionOrigin,
-    pub(crate) filter_modifiers: TaskFilterModifiers,
-    pub(crate) order: TaskOrder,
-    pub(crate) direction: SortDirection,
-    pub(crate) recurring: RecurringSeriesViewState,
-    pub(crate) expanded_epic_ids: BTreeSet<crate::ids::TaskId>,
-    pub(crate) collapsed_epic_ids: BTreeSet<crate::ids::TaskId>,
+pub struct TaskViewState {
+    pub scope: TaskScope,
+    pub query: TaskQuery,
+    pub layout: TaskLayout,
+    pub projection_origin: TaskProjectionOrigin,
+    pub filter_modifiers: TaskFilterModifiers,
+    pub order: TaskOrder,
+    pub direction: SortDirection,
+    pub recurring: RecurringSeriesViewState,
+    pub expanded_epic_ids: BTreeSet<crate::ids::TaskId>,
+    pub collapsed_epic_ids: BTreeSet<crate::ids::TaskId>,
 }
 
 impl Default for TaskViewState {
@@ -330,11 +330,11 @@ impl Default for TaskViewState {
 }
 
 impl TaskViewState {
-    pub(crate) fn is_columns(&self) -> bool {
+    pub fn is_columns(&self) -> bool {
         self.layout == TaskLayout::Columns
     }
 
-    pub(crate) fn set_layout(&mut self, layout: TaskLayout) -> Result<(), &'static str> {
+    pub fn set_layout(&mut self, layout: TaskLayout) -> Result<(), &'static str> {
         if !self.query.supports_layout(layout) {
             return Err("active query does not support columns layout");
         }
@@ -342,14 +342,14 @@ impl TaskViewState {
         Ok(())
     }
 
-    pub(crate) fn set_query(&mut self, query: TaskQuery) {
+    pub fn set_query(&mut self, query: TaskQuery) {
         self.query = query;
         if !query.supports_layout(self.layout) {
             self.layout = TaskLayout::List;
         }
     }
 
-    pub(crate) fn reset_projection_origin(&mut self) {
+    pub fn reset_projection_origin(&mut self) {
         self.projection_origin = if self.query == TaskQuery::Search {
             TaskProjectionOrigin::SearchPrompt
         } else {
@@ -357,7 +357,7 @@ impl TaskViewState {
         };
     }
 
-    pub(crate) fn for_exact_task(task_id: crate::ids::TaskId) -> Self {
+    pub fn for_exact_task(task_id: crate::ids::TaskId) -> Self {
         Self {
             query: TaskQuery::Search,
             projection_origin: TaskProjectionOrigin::ExactTasks(vec![task_id]),
@@ -365,7 +365,7 @@ impl TaskViewState {
         }
     }
 
-    pub(crate) fn filters(&self) -> TaskFilters {
+    pub fn filters(&self) -> TaskFilters {
         let mut filters = TaskFilters {
             label: self.filter_modifiers.label.clone(),
             priority: self.filter_modifiers.priority.clone(),
@@ -442,7 +442,7 @@ impl TaskViewState {
         filters
     }
 
-    pub(crate) fn recurrence_query(&self) -> RecurrenceSeriesListQuery {
+    pub fn recurrence_query(&self) -> RecurrenceSeriesListQuery {
         RecurrenceSeriesListQuery {
             lifecycle: self.recurring.lifecycle,
             project: match &self.scope {
@@ -453,7 +453,7 @@ impl TaskViewState {
         }
     }
 
-    pub(crate) fn query_mode(&self) -> TaskQueryMode {
+    pub fn query_mode(&self) -> TaskQueryMode {
         match self.query {
             TaskQuery::Queue => TaskQueryMode::RankedQueue,
             TaskQuery::Recurring | TaskQuery::RecentActions => TaskQueryMode::Flat,
@@ -461,7 +461,7 @@ impl TaskViewState {
         }
     }
 
-    pub(crate) fn sort(&self) -> TaskSort {
+    pub fn sort(&self) -> TaskSort {
         match self.query {
             TaskQuery::Upcoming => TaskSort::AvailableAt,
             TaskQuery::Overdue => TaskSort::DueOn,
@@ -469,7 +469,7 @@ impl TaskViewState {
         }
     }
 
-    pub(crate) fn sort_direction(&self) -> SortDirection {
+    pub fn sort_direction(&self) -> SortDirection {
         if matches!(self.query, TaskQuery::Upcoming | TaskQuery::Overdue) {
             SortDirection::Asc
         } else {
@@ -477,7 +477,7 @@ impl TaskViewState {
         }
     }
 
-    pub(crate) fn render_mode(&self) -> TaskListRenderMode {
+    pub fn render_mode(&self) -> TaskListRenderMode {
         match self.query {
             TaskQuery::Queue => TaskListRenderMode::Queue,
             TaskQuery::Upcoming => TaskListRenderMode::Upcoming,
@@ -585,15 +585,15 @@ impl From<TaskOrder> for TaskSort {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TaskScopeTarget {
+pub enum TaskScopeTarget {
     Workspace,
     Project(String),
 }
 
-pub(crate) use aven_core::local_state::SidebarSection;
+pub use aven_core::local_state::SidebarSection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SidebarEntryTarget {
+pub enum SidebarEntryTarget {
     Section(SidebarSection),
     View(TaskQuery),
     Scope(TaskScopeTarget),
@@ -601,21 +601,21 @@ pub(crate) enum SidebarEntryTarget {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SidebarEntry {
-    pub(crate) label: String,
-    pub(crate) count: i64,
-    pub(crate) target: Option<SidebarEntryTarget>,
-    pub(crate) section: bool,
+pub struct SidebarEntry {
+    pub label: String,
+    pub count: i64,
+    pub target: Option<SidebarEntryTarget>,
+    pub section: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyncStatusCheck {
-    pub(crate) ok: bool,
-    pub(crate) value: String,
+pub struct SyncStatusCheck {
+    pub ok: bool,
+    pub value: String,
 }
 
 impl SyncStatusCheck {
-    pub(crate) fn new(ok: bool, value: impl Into<String>) -> Self {
+    pub fn new(ok: bool, value: impl Into<String>) -> Self {
         Self {
             ok,
             value: value.into(),
@@ -624,74 +624,74 @@ impl SyncStatusCheck {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct DatabaseStatsStatusCounts {
-    pub(crate) inbox: i64,
-    pub(crate) backlog: i64,
-    pub(crate) todo: i64,
-    pub(crate) active: i64,
-    pub(crate) done: i64,
-    pub(crate) canceled: i64,
+pub struct DatabaseStatsStatusCounts {
+    pub inbox: i64,
+    pub backlog: i64,
+    pub todo: i64,
+    pub active: i64,
+    pub done: i64,
+    pub canceled: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct DatabaseStatsPriorityCounts {
-    pub(crate) none: i64,
-    pub(crate) low: i64,
-    pub(crate) medium: i64,
-    pub(crate) high: i64,
-    pub(crate) urgent: i64,
+pub struct DatabaseStatsPriorityCounts {
+    pub none: i64,
+    pub low: i64,
+    pub medium: i64,
+    pub high: i64,
+    pub urgent: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct TuiDatabaseStats {
-    pub(crate) workspace_name: String,
-    pub(crate) workspace_key: String,
-    pub(crate) total_tasks: i64,
-    pub(crate) open_tasks: i64,
-    pub(crate) deleted_tasks: i64,
-    pub(crate) statuses: DatabaseStatsStatusCounts,
-    pub(crate) priorities: DatabaseStatsPriorityCounts,
-    pub(crate) projects: i64,
-    pub(crate) labels: i64,
-    pub(crate) notes: i64,
-    pub(crate) task_labels: i64,
-    pub(crate) sync_history: SyncHistoryStats,
-    pub(crate) conflicts: i64,
-    pub(crate) sqlite_page_size: i64,
-    pub(crate) sqlite_page_count: i64,
-    pub(crate) sqlite_freelist_count: i64,
-    pub(crate) latest_created_at: Option<String>,
-    pub(crate) latest_updated_at: Option<String>,
+pub struct TuiDatabaseStats {
+    pub workspace_name: String,
+    pub workspace_key: String,
+    pub total_tasks: i64,
+    pub open_tasks: i64,
+    pub deleted_tasks: i64,
+    pub statuses: DatabaseStatsStatusCounts,
+    pub priorities: DatabaseStatsPriorityCounts,
+    pub projects: i64,
+    pub labels: i64,
+    pub notes: i64,
+    pub task_labels: i64,
+    pub sync_history: SyncHistoryStats,
+    pub conflicts: i64,
+    pub sqlite_page_size: i64,
+    pub sqlite_page_count: i64,
+    pub sqlite_freelist_count: i64,
+    pub latest_created_at: Option<String>,
+    pub latest_updated_at: Option<String>,
 }
 
 /// Local sync state read from the database, configuration, and protected
 /// membership; contacts no server.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TuiSyncStatus {
-    pub(crate) devices: Option<usize>,
+pub struct TuiSyncStatus {
+    pub devices: Option<usize>,
     /// Automatic sync by the daemon is configured.
-    pub(crate) enabled: bool,
-    pub(crate) runtime_allowed: bool,
+    pub enabled: bool,
+    pub runtime_allowed: bool,
     /// The database was set up or joined, including an unfinished attempt.
-    pub(crate) set_up: bool,
-    pub(crate) phase: crate::sync::encrypted::LocalPhase,
-    pub(crate) interval_seconds: u64,
-    pub(crate) daemon_wake: SyncStatusCheck,
-    pub(crate) daemon_sync: aven_core::local_state::DaemonSyncState,
-    pub(crate) daemon_service: Option<crate::status::DaemonStatusReport>,
-    pub(crate) protected_storage: SyncStatusCheck,
-    pub(crate) pending_changes: i64,
-    pub(crate) conflicts: i64,
-    pub(crate) sync_cursor: Option<String>,
-    pub(crate) local_sequence: Option<String>,
+    pub set_up: bool,
+    pub phase: crate::sync::encrypted::LocalPhase,
+    pub interval_seconds: u64,
+    pub daemon_wake: SyncStatusCheck,
+    pub daemon_sync: aven_core::local_state::DaemonSyncState,
+    pub daemon_service: Option<crate::status::DaemonStatusReport>,
+    pub protected_storage: SyncStatusCheck,
+    pub pending_changes: i64,
+    pub conflicts: i64,
+    pub sync_cursor: Option<String>,
+    pub local_sequence: Option<String>,
     /// The associated sync server, once setup or joining has recorded it.
-    pub(crate) server: Option<String>,
-    pub(crate) invitation: Option<crate::sync::encrypted::InvitationStatus>,
+    pub server: Option<String>,
+    pub invitation: Option<crate::sync::encrypted::InvitationStatus>,
     /// Time of the latest server authentication refusal, cleared by a successful sync.
-    pub(crate) access_refused_at: Option<String>,
+    pub access_refused_at: Option<String>,
     /// Time the server reported this sync's vault deleted, cleared by reset or
     /// a successful `Sync now`.
-    pub(crate) vault_deleted_at: Option<String>,
+    pub vault_deleted_at: Option<String>,
 }
 
 impl Default for TuiSyncStatus {

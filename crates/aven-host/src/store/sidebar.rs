@@ -5,13 +5,13 @@ use super::{
 use crate::config::AppConfig;
 
 impl TuiStore {
-    pub(crate) async fn collapsed_sidebar_sections(
+    pub async fn collapsed_sidebar_sections(
         &self,
     ) -> anyhow::Result<std::collections::BTreeSet<SidebarSection>> {
         self.database.collapsed_sidebar_sections().await
     }
 
-    pub(crate) async fn set_sidebar_section_collapsed(
+    pub async fn set_sidebar_section_collapsed(
         &self,
         section: SidebarSection,
         collapsed: bool,

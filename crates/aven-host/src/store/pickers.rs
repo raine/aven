@@ -4,23 +4,23 @@ use crate::workspaces::Workspace;
 
 use super::TuiStore;
 
-pub(crate) const CREATE_PROJECT_PICKER_VALUE_PREFIX: &str = "\0create-project:";
+pub const CREATE_PROJECT_PICKER_VALUE_PREFIX: &str = "\0create-project:";
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PickerItem {
-    pub(crate) label: String,
-    pub(crate) value: String,
-    pub(crate) selected: bool,
+pub struct PickerItem {
+    pub label: String,
+    pub value: String,
+    pub selected: bool,
 }
 
-pub(crate) const ADD_TASK_STATUS_AUTO_VALUE: &str = "\0auto-status";
+pub const ADD_TASK_STATUS_AUTO_VALUE: &str = "\0auto-status";
 
-pub(crate) fn create_project_picker_name(value: &str) -> Option<&str> {
+pub fn create_project_picker_name(value: &str) -> Option<&str> {
     value
         .strip_prefix(CREATE_PROJECT_PICKER_VALUE_PREFIX)
         .filter(|name| !name.is_empty())
 }
 
-pub(crate) fn epic_picker_items(selected: Option<bool>) -> Vec<PickerItem> {
+pub fn epic_picker_items(selected: Option<bool>) -> Vec<PickerItem> {
     [(true, "Yes"), (false, "No")]
         .into_iter()
         .map(|(is_epic, label)| PickerItem {
@@ -32,7 +32,7 @@ pub(crate) fn epic_picker_items(selected: Option<bool>) -> Vec<PickerItem> {
 }
 
 impl TuiStore {
-    pub(crate) fn status_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
+    pub fn status_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
         let selected = selected.unwrap_or_default();
         STATUSES
             .iter()
@@ -44,7 +44,7 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) fn add_task_status_picker_items(
+    pub fn add_task_status_picker_items(
         &self,
         effective_status: &str,
         automatic_status: &str,
@@ -63,7 +63,7 @@ impl TuiStore {
         items
     }
 
-    pub(crate) fn label_picker_items(&self) -> Vec<PickerItem> {
+    pub fn label_picker_items(&self) -> Vec<PickerItem> {
         self.labels
             .iter()
             .map(|label| PickerItem {
@@ -74,20 +74,20 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) fn existing_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
+    pub fn existing_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
         self.projects
             .iter()
             .map(|project| project_picker_item(project, selected))
             .collect()
     }
 
-    pub(crate) fn edit_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
+    pub fn edit_project_picker_items(&self, selected: &str) -> Vec<PickerItem> {
         let mut items = self.existing_project_picker_items(selected);
         items.push(create_project_picker_item());
         items
     }
 
-    pub(crate) fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
+    pub fn project_picker_items(&self, selected: Option<&str>) -> Vec<PickerItem> {
         let selected = selected.unwrap_or_default();
         let inferred_label = self
             .projects
@@ -109,7 +109,7 @@ impl TuiStore {
         items
     }
 
-    pub(crate) fn priority_picker_items(&self, selected: &str) -> Vec<PickerItem> {
+    pub fn priority_picker_items(&self, selected: &str) -> Vec<PickerItem> {
         PRIORITIES
             .iter()
             .map(|priority| PickerItem {
@@ -120,7 +120,7 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) fn workspace_picker_items(&self) -> Vec<PickerItem> {
+    pub fn workspace_picker_items(&self) -> Vec<PickerItem> {
         let selected_key = self
             .workspaces
             .iter()
@@ -132,7 +132,7 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) fn workspace_rename_picker_items(&self) -> Vec<PickerItem> {
+    pub fn workspace_rename_picker_items(&self) -> Vec<PickerItem> {
         let selected_key = Some(self.active_workspace.key.as_str());
         self.workspaces
             .iter()
@@ -146,7 +146,7 @@ impl TuiStore {
             .collect()
     }
 
-    pub(crate) fn workspace_delete_picker_items(&self) -> Vec<PickerItem> {
+    pub fn workspace_delete_picker_items(&self) -> Vec<PickerItem> {
         let mut items = self.workspace_rename_picker_items();
         if let Some(default) = self
             .workspaces
@@ -158,14 +158,14 @@ impl TuiStore {
         items
     }
 
-    pub(crate) fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
+    pub fn selected_dependency_picker_items(&self, index: Option<usize>) -> Vec<PickerItem> {
         self.selected_task(index)
             .map(dependency_picker_items)
             .unwrap_or_default()
     }
 }
 
-pub(crate) fn dependency_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
+pub fn dependency_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
     item.depends_on
         .iter()
         .map(|link| PickerItem {
@@ -176,7 +176,7 @@ pub(crate) fn dependency_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
         .collect()
 }
 
-pub(crate) fn blocker_navigation_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
+pub fn blocker_navigation_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
     item.depends_on
         .iter()
         .map(|link| PickerItem {
@@ -203,7 +203,7 @@ fn project_picker_item(project: &ProjectListItem, selected: &str) -> PickerItem 
     }
 }
 
-pub(crate) fn related_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
+pub fn related_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
     item.related
         .iter()
         .map(|link| PickerItem {
@@ -218,7 +218,7 @@ pub(crate) fn related_picker_items(item: &TaskListItem) -> Vec<PickerItem> {
         .collect()
 }
 
-pub(crate) fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
+pub fn deleted_picker_items(selected: &str) -> Vec<PickerItem> {
     ["0", "1"]
         .into_iter()
         .map(|value| PickerItem {

@@ -3,7 +3,7 @@ use anyhow::Result;
 use super::{SelectionRestore, TaskOrder, TaskQuery, TuiStore};
 
 impl TuiStore {
-    pub(crate) fn sort_label(&self) -> &'static str {
+    pub fn sort_label(&self) -> &'static str {
         if self.view_state.query == TaskQuery::Queue {
             return "ranked";
         }
@@ -23,20 +23,20 @@ impl TuiStore {
         }
     }
 
-    pub(crate) fn sort_direction_label(&self) -> &'static str {
+    pub fn sort_direction_label(&self) -> &'static str {
         match self.view_state.sort_direction() {
             crate::query::SortDirection::Asc => "asc",
             crate::query::SortDirection::Desc => "desc",
         }
     }
 
-    #[cfg(test)]
-    pub(crate) async fn set_order(&mut self, order: TaskOrder) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn set_order(&mut self, order: TaskOrder) -> Result<Option<usize>> {
         self.set_order_restoring(order, &SelectionRestore::Default)
             .await
     }
 
-    pub(crate) async fn set_order_restoring(
+    pub async fn set_order_restoring(
         &mut self,
         order: TaskOrder,
         restore: &SelectionRestore,
@@ -49,13 +49,13 @@ impl TuiStore {
             .selected)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn reverse_sort(&mut self) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn reverse_sort(&mut self) -> Result<Option<usize>> {
         self.reverse_sort_restoring(&SelectionRestore::Default)
             .await
     }
 
-    pub(crate) async fn reverse_sort_restoring(
+    pub async fn reverse_sort_restoring(
         &mut self,
         restore: &SelectionRestore,
     ) -> Result<Option<usize>> {

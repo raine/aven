@@ -233,7 +233,7 @@ async fn text_mutation_rejects_multiple_targets() {
     let mut store = test_store().await;
     let (first_id, _) = create_selected_task(&mut store, "First").await;
     let (second_id, second) = create_selected_task(&mut store, "Second").await;
-    let selection = crate::tui::task_selection::TaskSelection::from_ids(
+    let selection = crate::store::task_selection::TaskSelection::from_ids(
         &store.tasks,
         &[first_id, second_id],
         Some(second),
@@ -252,7 +252,7 @@ async fn text_mutation_rejects_multiple_targets() {
 async fn priority_cycle_uses_authoritative_value_after_selection_capture() {
     let mut store = test_store().await;
     let (task_id, selected) = create_selected_task(&mut store, "Priority race").await;
-    let selection = crate::tui::task_selection::TaskSelection::from_ids(
+    let selection = crate::store::task_selection::TaskSelection::from_ids(
         &store.tasks,
         std::slice::from_ref(&task_id),
         Some(selected),
@@ -299,7 +299,7 @@ async fn label_selection_uses_authoritative_labels_after_capture() {
         .unwrap();
     let selected = selected.unwrap();
     let task_id = store.tasks[selected].task.id.clone();
-    let selection = crate::tui::task_selection::TaskSelection::from_ids(
+    let selection = crate::store::task_selection::TaskSelection::from_ids(
         &store.tasks,
         std::slice::from_ref(&task_id),
         Some(selected),
@@ -368,7 +368,8 @@ async fn metadata_empty_remove_noop_and_undo_use_core_transactions() {
     });
     let (_, selected) = store.create_task(draft, None).await.unwrap();
     let selection =
-        crate::tui::task_selection::TaskSelection::resolve_single(&store.tasks, selected).unwrap();
+        crate::store::task_selection::TaskSelection::resolve_single(&store.tasks, selected)
+            .unwrap();
     let id = selection.single_id().unwrap().clone();
     let field = store.metadata_fields().await.unwrap().remove(0);
     let before = pending_undo_count(&pool, &store.active_workspace.id).await;

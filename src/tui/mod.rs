@@ -58,11 +58,13 @@ mod overlay;
 mod platform;
 mod preview_controller;
 mod shortcut_buffer;
-mod store;
+pub(crate) use aven_host::store;
 mod sync_controller;
 mod sync_errors;
 mod sync_operations;
 use store::task_selection;
+#[cfg(test)]
+mod task_selection_tests;
 mod terminal_command;
 #[cfg(test)]
 pub(crate) mod test_support;

@@ -80,7 +80,7 @@ async fn seed_title_conflict(pool: &SqlitePool, task_id: &TaskId) {
     drop(conn);
 }
 
-async fn seed_title_conflict_database(database: &crate::db::Database, task_id: &TaskId) {
+async fn seed_title_conflict_database(database: &aven_core::db::Database, task_id: &TaskId) {
     let mut conn = aven_core::test_support::acquire(database).await.unwrap();
     sqlx::query(
         "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
@@ -96,7 +96,7 @@ async fn seed_title_conflict_database(database: &crate::db::Database, task_id: &
 }
 
 async fn seed_field_conflict_database(
-    database: &crate::db::Database,
+    database: &aven_core::db::Database,
     task_id: &TaskId,
     field: &str,
 ) {

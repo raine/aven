@@ -42,7 +42,7 @@ async fn search_preview_with_database(
 }
 
 impl TuiStore {
-    pub(crate) fn sidebar_selection(&self) -> Option<usize> {
+    pub fn sidebar_selection(&self) -> Option<usize> {
         if let Some(index) = self.sidebar_entries.iter().position(|entry| {
             matches!(
                 (&entry.target, &self.view_state.scope),
@@ -67,13 +67,13 @@ impl TuiStore {
             })
     }
 
-    #[cfg(test)]
-    pub(crate) async fn show_view(&mut self, query: TaskQuery) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn show_view(&mut self, query: TaskQuery) -> Result<Option<usize>> {
         self.show_view_restoring(query, &SelectionRestore::Default)
             .await
     }
 
-    pub(crate) async fn show_view_restoring(
+    pub async fn show_view_restoring(
         &mut self,
         query: TaskQuery,
         restore: &SelectionRestore,
@@ -102,7 +102,7 @@ impl TuiStore {
             .selected)
     }
 
-    pub(crate) async fn restore_view_state(
+    pub async fn restore_view_state(
         &mut self,
         view_state: super::TaskViewState,
         selected: Option<&MainRowSelection>,
@@ -115,7 +115,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn restore_view_state_with_restore(
+    pub async fn restore_view_state_with_restore(
         &mut self,
         view_state: super::TaskViewState,
         restore: &SelectionRestore,
@@ -124,13 +124,13 @@ impl TuiStore {
             .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn show_scope(&mut self, target: TaskScopeTarget) -> Result<Option<usize>> {
         self.show_scope_restoring(target, &SelectionRestore::Default)
             .await
     }
 
-    pub(crate) async fn show_scope_restoring(
+    pub async fn show_scope_restoring(
         &mut self,
         target: TaskScopeTarget,
         restore: &SelectionRestore,
@@ -147,21 +147,21 @@ impl TuiStore {
             .selected)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn clear_filters(&mut self) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn clear_filters(&mut self) -> Result<Option<usize>> {
         self.clear_filters_restoring(&SelectionRestore::Default)
             .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn clear_filters_restoring(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn clear_filters_restoring(
         &mut self,
         restore: &SelectionRestore,
     ) -> Result<Option<usize>> {
         self.clear_filters_restoring_history(restore, &[]).await
     }
 
-    pub(crate) async fn clear_filters_restoring_history(
+    pub async fn clear_filters_restoring_history(
         &mut self,
         restore: &SelectionRestore,
         historical_identities: &[MainRowIdentity],
@@ -179,7 +179,7 @@ impl TuiStore {
             .or(result.selected))
     }
 
-    pub(crate) async fn filter_label_restoring(
+    pub async fn filter_label_restoring(
         &mut self,
         label: String,
         restore: &SelectionRestore,
@@ -192,7 +192,7 @@ impl TuiStore {
             .selected)
     }
 
-    pub(crate) async fn filter_priority_restoring(
+    pub async fn filter_priority_restoring(
         &mut self,
         priority: String,
         restore: &SelectionRestore,
@@ -205,13 +205,13 @@ impl TuiStore {
             .selected)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn toggle_closed_filter(&mut self) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn toggle_closed_filter(&mut self) -> Result<Option<usize>> {
         self.toggle_closed_filter_restoring(&SelectionRestore::Default)
             .await
     }
 
-    pub(crate) async fn toggle_closed_filter_restoring(
+    pub async fn toggle_closed_filter_restoring(
         &mut self,
         restore: &SelectionRestore,
     ) -> Result<Option<usize>> {
@@ -227,13 +227,13 @@ impl TuiStore {
             .selected)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn toggle_deleted_filter(&mut self) -> Result<Option<usize>> {
         self.toggle_deleted_filter_restoring(&SelectionRestore::Default)
             .await
     }
 
-    pub(crate) async fn toggle_deleted_filter_restoring(
+    pub async fn toggle_deleted_filter_restoring(
         &mut self,
         restore: &SelectionRestore,
     ) -> Result<Option<usize>> {
@@ -253,8 +253,8 @@ impl TuiStore {
             .selected)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn search_preview(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn search_preview(
         &self,
         input: &str,
         limit: usize,
@@ -269,7 +269,7 @@ impl TuiStore {
         .await
     }
 
-    pub(crate) fn spawn_search_preview(
+    pub fn spawn_search_preview(
         &self,
         input: String,
         project: Option<String>,
@@ -304,13 +304,13 @@ impl TuiStore {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn accept_search(&mut self, input: &str) -> Result<Option<usize>> {
         self.accept_search_in_scope(input, self.view_state.scope.clone())
             .await
     }
 
-    pub(crate) async fn accept_search_in_scope(
+    pub async fn accept_search_in_scope(
         &mut self,
         input: &str,
         scope: TaskScope,
@@ -361,8 +361,8 @@ impl TuiStore {
             .selected)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn set_recurring_search(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn set_recurring_search(
         &mut self,
         input: String,
         selected_id: Option<&aven_core::recurrence::RecurrenceSeriesId>,
@@ -376,7 +376,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn set_recurring_search_restoring(
+    pub async fn set_recurring_search_restoring(
         &mut self,
         input: String,
         scope: TaskScope,
@@ -391,7 +391,7 @@ impl TuiStore {
             .selected)
     }
 
-    pub(crate) async fn cycle_recurring_lifecycle_restoring(
+    pub async fn cycle_recurring_lifecycle_restoring(
         &mut self,
         restore: &SelectionRestore,
     ) -> Result<Option<usize>> {
@@ -410,10 +410,7 @@ impl TuiStore {
             .selected)
     }
 
-    pub(crate) async fn show_task_by_id(
-        &mut self,
-        task_id: crate::ids::TaskId,
-    ) -> Result<Option<usize>> {
+    pub async fn show_task_by_id(&mut self, task_id: crate::ids::TaskId) -> Result<Option<usize>> {
         let mut view_state = self.view_state.clone();
         view_state.scope = TaskScope::Workspace;
         view_state.set_query(TaskQuery::Search);
@@ -550,10 +547,7 @@ impl TuiStore {
         self.restored_main_selection(&restore)
     }
 
-    pub(crate) fn restored_task_selection_at_index(
-        &self,
-        selected: Option<usize>,
-    ) -> Option<usize> {
+    pub fn restored_task_selection_at_index(&self, selected: Option<usize>) -> Option<usize> {
         if self.tasks.is_empty() {
             None
         } else {

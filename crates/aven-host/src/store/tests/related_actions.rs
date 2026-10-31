@@ -75,7 +75,7 @@ async fn related_removal_picker_includes_deleted_targets_with_marker() {
         .ensure_task_details(std::slice::from_ref(&task_id))
         .await
         .unwrap();
-    let items = crate::tui::store::related_picker_items(&store.tasks[selected]);
+    let items = crate::store::related_picker_items(&store.tasks[selected]);
     assert_eq!(items.len(), 1);
     assert!(items[0].label.contains("[deleted]"));
     assert_eq!(items[0].value, related_id.to_string());

@@ -4,7 +4,7 @@ use super::{TaskFilterModifiers, TaskScope, TuiStore};
 use crate::workspaces::Workspace;
 
 impl TuiStore {
-    pub(crate) async fn create_workspace(&mut self, name: String) -> Result<String> {
+    pub async fn create_workspace(&mut self, name: String) -> Result<String> {
         let workspace = self.database.create_workspace(&name).await?;
         let key = workspace.key.clone();
         let name = workspace.name.clone();
@@ -21,7 +21,7 @@ impl TuiStore {
         Ok(format!("created workspace {display}"))
     }
 
-    pub(crate) async fn rename_workspace(
+    pub async fn rename_workspace(
         &mut self,
         workspace_ref: String,
         new_name: String,
@@ -62,15 +62,12 @@ impl TuiStore {
         }
     }
 
-    pub(crate) fn take_deleted_active_workspace(&mut self) -> Option<String> {
+    pub fn take_deleted_active_workspace(&mut self) -> Option<String> {
         self.deleted_active_workspace.take()
     }
 
     /// Lines describing what still uses a workspace, shown before deleting it.
-    pub(crate) async fn workspace_deletion_warnings(
-        &self,
-        workspace: &Workspace,
-    ) -> Result<Vec<String>> {
+    pub async fn workspace_deletion_warnings(&self, workspace: &Workspace) -> Result<Vec<String>> {
         let contents = self.database.workspace_contents(&workspace.id).await?;
         let mut lines = Vec::new();
         if !contents.is_empty() {
@@ -93,7 +90,7 @@ impl TuiStore {
 
     /// Deletes a workspace after the user typed its key, which stands in for
     /// forcing past remaining contents and config entries.
-    pub(crate) async fn delete_workspace(&mut self, workspace: &Workspace) -> Result<String> {
+    pub async fn delete_workspace(&mut self, workspace: &Workspace) -> Result<String> {
         let (deleted, _) = self
             .database
             .delete_workspace(&workspace.id, &[], true)
@@ -102,7 +99,7 @@ impl TuiStore {
         Ok(format!("deleted workspace {}", deleted.key))
     }
 
-    pub(crate) async fn switch_workspace(&mut self, key: String) -> Result<Option<usize>> {
+    pub async fn switch_workspace(&mut self, key: String) -> Result<Option<usize>> {
         let workspace = self
             .database
             .find_workspace(&key)

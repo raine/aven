@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::tui::store::{
+use crate::store::{
     MutationMessage, RefreshHealth, TaskScope, UndoPresentation, types::committed_mutation_error,
 };
 
@@ -19,10 +19,7 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    pub(crate) async fn undo_last(
-        &mut self,
-        selected: Option<usize>,
-    ) -> Result<Option<MutationMessage>> {
+    pub async fn undo_last(&mut self, selected: Option<usize>) -> Result<Option<MutationMessage>> {
         if self.refresh_health == RefreshHealth::Failed {
             return Ok(None);
         }

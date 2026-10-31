@@ -1,6 +1,6 @@
 //! Host logic shared by the CLI, TUI and desktop app: configuration and path
-//! policy, routing, input parsing, task intake, and the desktop side of sync.
-use aven_core::{choices, ids, query, types};
+//! policy, routing, input parsing, task intake, the desktop side of sync, and the task store.
+use aven_core::{choices, ids, query, queue, types, undo};
 
 #[cfg(target_os = "macos")]
 pub mod app_bundle;
@@ -16,6 +16,7 @@ pub mod render;
 pub mod routing;
 pub mod schedule_input;
 pub mod status;
+pub mod store;
 pub mod sync;
 pub mod sync_http;
 pub mod task_intake;

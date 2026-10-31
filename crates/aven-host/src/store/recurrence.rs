@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use super::{MainRowSelection, MutationMessage, SelectionRestore, TuiProjection, TuiStore};
 
 impl TuiStore {
-    pub(crate) async fn load_recurrence_series_detail(
+    pub async fn load_recurrence_series_detail(
         &mut self,
         series_id: &RecurrenceSeriesId,
     ) -> Result<()> {
@@ -21,7 +21,7 @@ impl TuiStore {
         self.projection.set_recurrence_detail(series_id, detail)
     }
 
-    pub(crate) async fn create_recurrence_series(
+    pub async fn create_recurrence_series(
         &mut self,
         mut draft: RecurrenceSeriesDraft,
         current_selected_index: Option<usize>,
@@ -90,7 +90,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn recurrence_detail_for_series(
+    pub async fn recurrence_detail_for_series(
         &self,
         series_id: &RecurrenceSeriesId,
     ) -> Result<RecurrenceSeriesDetail> {
@@ -99,7 +99,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn find_recurrence_project(
+    pub async fn find_recurrence_project(
         &self,
         detail: &RecurrenceSeriesDetail,
     ) -> Result<Option<aven_core::types::Project>> {
@@ -108,7 +108,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn recurrence_history_for_series(
+    pub async fn recurrence_history_for_series(
         &self,
         series_id: &RecurrenceSeriesId,
         as_of: DateTime<Utc>,
@@ -120,7 +120,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn update_recurrence_template(
+    pub async fn update_recurrence_template(
         &mut self,
         series_id: &RecurrenceSeriesId,
         update: RecurrenceTemplateUpdate,
@@ -156,7 +156,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn skip_recurrence(
+    pub async fn skip_recurrence(
         &mut self,
         series_id: &RecurrenceSeriesId,
         task_id: &crate::ids::TaskId,
@@ -184,7 +184,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn pause_recurrence(
+    pub async fn pause_recurrence(
         &mut self,
         series_id: &RecurrenceSeriesId,
         selected_task_id: Option<&crate::ids::TaskId>,
@@ -193,7 +193,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn resume_recurrence(
+    pub async fn resume_recurrence(
         &mut self,
         series_id: &RecurrenceSeriesId,
         selected_task_id: Option<&crate::ids::TaskId>,
@@ -202,7 +202,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn stop_recurrence(
+    pub async fn stop_recurrence(
         &mut self,
         series_id: &RecurrenceSeriesId,
         selected_task_id: Option<&crate::ids::TaskId>,
@@ -313,7 +313,7 @@ impl RecurrenceStateAction {
     }
 }
 
-pub(crate) fn recurrence_draft(
+pub fn recurrence_draft(
     title: String,
     description: String,
     project: Option<String>,

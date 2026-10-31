@@ -633,7 +633,7 @@ async fn undo_atomic_attachment_task_removes_all_database_rows() {
     image::DynamicImage::ImageRgba8(image::RgbaImage::new(2, 1))
         .write_to(&mut bytes, image::ImageFormat::Png)
         .unwrap();
-    let pending = crate::tui::authoring::PendingTaskAttachment::new(
+    let pending = crate::store::PendingTaskAttachment::new(
         "ATTACHMENT000001".to_string(),
         crate::operations::AttachmentAddInput {
             filename: Some("image.png".to_string()),

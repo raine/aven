@@ -7,13 +7,13 @@ use crate::query::TaskListItem;
 use crate::queue::unix_seconds;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskGroupRow {
-    pub(crate) label: String,
-    pub(crate) count: usize,
+pub struct TaskGroupRow {
+    pub label: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TaskListRow {
+pub enum TaskListRow {
     Group(TaskGroupRow),
     Task {
         task_index: usize,
@@ -26,14 +26,14 @@ pub(crate) enum TaskListRow {
 }
 
 #[derive(Debug)]
-pub(crate) struct TaskListView {
-    pub(crate) rows: Vec<TaskListRow>,
-    pub(crate) render_mode: TaskListRenderMode,
+pub struct TaskListView {
+    pub rows: Vec<TaskListRow>,
+    pub render_mode: TaskListRenderMode,
     visual_rows: Vec<Option<usize>>,
 }
 
 impl TaskListView {
-    pub(crate) fn from_tasks(
+    pub fn from_tasks(
         render_mode: TaskListRenderMode,
         tasks: &[TaskListItem],
         expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
@@ -46,7 +46,7 @@ impl TaskListView {
         )
     }
 
-    pub(crate) fn from_tasks_at(
+    pub fn from_tasks_at(
         render_mode: TaskListRenderMode,
         tasks: &[TaskListItem],
         expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
@@ -77,20 +77,20 @@ impl TaskListView {
         }
     }
 
-    pub(crate) fn visual_row(&self, selected_task: usize) -> usize {
+    pub fn visual_row(&self, selected_task: usize) -> usize {
         self.visual_row_for(selected_task).unwrap_or(0)
     }
 
-    pub(crate) fn visual_row_for(&self, selected_task: usize) -> Option<usize> {
+    pub fn visual_row_for(&self, selected_task: usize) -> Option<usize> {
         self.visual_rows.get(selected_task).copied().flatten()
     }
 
-    pub(crate) fn row_count(&self) -> usize {
+    pub fn row_count(&self) -> usize {
         self.rows.len()
     }
 
-    #[cfg(test)]
-    pub(crate) fn group_labels(&self) -> Vec<&str> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn group_labels(&self) -> Vec<&str> {
         self.rows
             .iter()
             .filter_map(|row| match row {
@@ -100,7 +100,7 @@ impl TaskListView {
             .collect()
     }
 
-    pub(crate) fn task_index_at_visual_row(&self, visual_row: usize) -> Option<usize> {
+    pub fn task_index_at_visual_row(&self, visual_row: usize) -> Option<usize> {
         match self.rows.get(visual_row)? {
             TaskListRow::EpicChild { task_index, .. } | TaskListRow::Task { task_index } => {
                 Some(*task_index)
@@ -110,7 +110,7 @@ impl TaskListView {
     }
 }
 
-pub(crate) fn epics_rows(
+pub fn epics_rows(
     tasks: &[TaskListItem],
     expanded_epic_ids: &BTreeSet<crate::ids::TaskId>,
 ) -> Vec<TaskListRow> {
@@ -147,7 +147,7 @@ pub(crate) fn epics_rows(
     rows
 }
 
-pub(crate) fn task_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
+pub fn task_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
     tasks
         .iter()
         .enumerate()
@@ -176,11 +176,11 @@ where
     rows
 }
 
-pub(crate) fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
+pub fn queue_rows(tasks: &[TaskListItem]) -> Vec<TaskListRow> {
     grouped_task_rows_by(tasks, queue_group_label)
 }
 
-pub(crate) fn queue_group_label(item: &TaskListItem) -> String {
+pub fn queue_group_label(item: &TaskListItem) -> String {
     match item.task.status.as_str() {
         "done" => "done".to_string(),
         "canceled" => "canceled".to_string(),
@@ -188,13 +188,13 @@ pub(crate) fn queue_group_label(item: &TaskListItem) -> String {
     }
 }
 
-pub(crate) fn upcoming_rows(tasks: &[TaskListItem], now_seconds: i64) -> Vec<TaskListRow> {
+pub fn upcoming_rows(tasks: &[TaskListItem], now_seconds: i64) -> Vec<TaskListRow> {
     grouped_task_rows_by(tasks, |item| {
         available_day_label(item.task.available_at.as_deref().unwrap_or(""), now_seconds)
     })
 }
 
-pub(crate) fn available_day_label(available_at: &str, now_seconds: i64) -> String {
+pub fn available_day_label(available_at: &str, now_seconds: i64) -> String {
     let Some(available_seconds) = unix_seconds(available_at) else {
         return "later".to_string();
     };
@@ -215,6 +215,6 @@ pub(crate) fn available_day_label(available_at: &str, now_seconds: i64) -> Strin
     }
 }
 
-pub(crate) fn local_date(seconds: i64) -> Option<chrono::NaiveDate> {
+pub fn local_date(seconds: i64) -> Option<chrono::NaiveDate> {
     Some(Local.timestamp_opt(seconds, 0).single()?.date_naive())
 }

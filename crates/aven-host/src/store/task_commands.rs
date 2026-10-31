@@ -5,25 +5,25 @@ use aven_core::operations::{TaskLabelSelection, TaskMutationReport, TaskUpdate};
 
 use super::task_selection::TaskSelection;
 use crate::choices::{TaskPriority, TaskStatus};
-use crate::tui::store::{MutationMessage, types::committed_mutation_error};
+use crate::store::{MutationMessage, types::committed_mutation_error};
 use crate::undo::UndoContext;
 
 use super::TuiStore;
 
 #[derive(Clone, Copy)]
-pub(crate) enum PriorityMutation {
+pub enum PriorityMutation {
     Cycle { reverse: bool },
     Set(TaskPriority),
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum TaskDateField {
+pub enum TaskDateField {
     Availability,
     Due,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum TaskTextField {
+pub enum TaskTextField {
     Title,
     Description,
 }
@@ -33,7 +33,7 @@ fn task_noun(count: usize) -> &'static str {
 }
 
 impl TuiStore {
-    pub(crate) async fn metadata_fields(&self) -> Result<Vec<aven_core::metadata::MetadataField>> {
+    pub async fn metadata_fields(&self) -> Result<Vec<aven_core::metadata::MetadataField>> {
         Ok(self
             .database
             .list_metadata_fields(&self.active_workspace.id)
@@ -43,7 +43,7 @@ impl TuiStore {
             .collect())
     }
 
-    pub(crate) async fn metadata_values(
+    pub async fn metadata_values(
         &self,
         task_id: &crate::ids::TaskId,
     ) -> Result<Vec<aven_core::metadata::TaskMetadataValue>> {
@@ -52,7 +52,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_metadata(
+    pub async fn mutate_metadata(
         &mut self,
         selection: &TaskSelection,
         field: &aven_core::metadata::MetadataField,
@@ -113,7 +113,7 @@ impl TuiStore {
         self.apply_task_updates(updates, undo).await
     }
 
-    pub(crate) async fn mutate_status_selection(
+    pub async fn mutate_status_selection(
         &mut self,
         selection: &TaskSelection,
         status: TaskStatus,
@@ -171,7 +171,7 @@ impl TuiStore {
         Ok(result)
     }
 
-    pub(crate) async fn mutate_status_changes(
+    pub async fn mutate_status_changes(
         &mut self,
         selection: &TaskSelection,
         changes: &[(crate::ids::TaskId, TaskStatus)],
@@ -203,7 +203,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_priority_selection(
+    pub async fn mutate_priority_selection(
         &mut self,
         selection: &TaskSelection,
         mutation: PriorityMutation,
@@ -238,7 +238,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_text_selection(
+    pub async fn mutate_text_selection(
         &mut self,
         selection: &TaskSelection,
         field: TaskTextField,
@@ -278,7 +278,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_date_selection(
+    pub async fn mutate_date_selection(
         &mut self,
         selection: &TaskSelection,
         field: TaskDateField,
@@ -320,7 +320,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_project_selection(
+    pub async fn mutate_project_selection(
         &mut self,
         selection: &TaskSelection,
         project: String,
@@ -345,7 +345,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_labels_selection(
+    pub async fn mutate_labels_selection(
         &mut self,
         selection: &TaskSelection,
         selected_labels: Vec<String>,
@@ -375,7 +375,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_epic_selection(
+    pub async fn mutate_epic_selection(
         &mut self,
         selection: &TaskSelection,
         is_epic: bool,
@@ -420,7 +420,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn mutate_deleted_selection(
+    pub async fn mutate_deleted_selection(
         &mut self,
         selection: &TaskSelection,
         deleted: bool,
@@ -497,8 +497,8 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    #[cfg(test)]
-    pub(crate) async fn add_dependency(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn add_dependency(
         &mut self,
         index: Option<usize>,
         depends_on_task_id: &crate::ids::TaskId,
@@ -512,7 +512,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn add_dependency_to_selection(
+    pub async fn add_dependency_to_selection(
         &mut self,
         selection: &TaskSelection,
         depends_on_task_id: &crate::ids::TaskId,
@@ -550,8 +550,8 @@ impl TuiStore {
         .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn add_related(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn add_related(
         &mut self,
         index: Option<usize>,
         related_task_id: &crate::ids::TaskId,
@@ -565,7 +565,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn add_related_to_selection(
+    pub async fn add_related_to_selection(
         &mut self,
         selection: &TaskSelection,
         related_task_id: &crate::ids::TaskId,
@@ -603,8 +603,8 @@ impl TuiStore {
         .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn remove_related(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn remove_related(
         &mut self,
         index: Option<usize>,
         related_task_id: &crate::ids::TaskId,
@@ -618,7 +618,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn remove_related_from_selection(
+    pub async fn remove_related_from_selection(
         &mut self,
         selection: &TaskSelection,
         related_task_id: &crate::ids::TaskId,
@@ -656,8 +656,8 @@ impl TuiStore {
         .await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn remove_dependency(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn remove_dependency(
         &mut self,
         index: Option<usize>,
         depends_on_task_id: &crate::ids::TaskId,
@@ -671,7 +671,7 @@ impl TuiStore {
         ))
     }
 
-    pub(crate) async fn remove_dependency_from_selection(
+    pub async fn remove_dependency_from_selection(
         &mut self,
         selection: &TaskSelection,
         depends_on_task_id: &crate::ids::TaskId,
@@ -708,7 +708,7 @@ impl TuiStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl TuiStore {
     fn test_selection(
         &self,
@@ -723,7 +723,7 @@ impl TuiStore {
         self.test_selection(selected, &[id])
     }
 
-    pub(crate) async fn update_status(
+    pub async fn update_status(
         &mut self,
         selected: Option<usize>,
         status: &str,
@@ -736,7 +736,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_status_preserving_task(
+    pub async fn update_status_preserving_task(
         &mut self,
         selected: Option<usize>,
         status: &str,
@@ -749,7 +749,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_status_for_tasks(
+    pub async fn update_status_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
@@ -763,7 +763,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn set_exact_priority(
+    pub async fn set_exact_priority(
         &mut self,
         selected: Option<usize>,
         priority: &str,
@@ -779,7 +779,7 @@ impl TuiStore {
         .map(Some)
     }
 
-    pub(crate) async fn set_exact_priority_for_tasks(
+    pub async fn set_exact_priority_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
@@ -796,7 +796,7 @@ impl TuiStore {
         .map(Some)
     }
 
-    pub(crate) async fn update_title(
+    pub async fn update_title(
         &mut self,
         selected: Option<usize>,
         title: String,
@@ -805,7 +805,7 @@ impl TuiStore {
             .await
     }
 
-    pub(crate) async fn update_description(
+    pub async fn update_description(
         &mut self,
         selected: Option<usize>,
         description: String,
@@ -828,7 +828,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_availability(
+    pub async fn update_availability(
         &mut self,
         selected: Option<usize>,
         value: String,
@@ -847,7 +847,7 @@ impl TuiStore {
         .map(Some)
     }
 
-    pub(crate) async fn update_availability_for_tasks(
+    pub async fn update_availability_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
@@ -864,7 +864,7 @@ impl TuiStore {
         .await
     }
 
-    pub(crate) async fn update_due_for_tasks(
+    pub async fn update_due_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
@@ -896,7 +896,7 @@ impl TuiStore {
         .map(Some)
     }
 
-    pub(crate) async fn update_project(
+    pub async fn update_project(
         &mut self,
         selected: Option<usize>,
         project: String,
@@ -909,7 +909,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_project_for_tasks(
+    pub async fn update_project_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
@@ -923,7 +923,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_labels(
+    pub async fn update_labels(
         &mut self,
         selected: Option<usize>,
         labels: Vec<String>,
@@ -936,7 +936,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_labels_for_tasks(
+    pub async fn update_labels_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],
@@ -951,7 +951,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_deleted(
+    pub async fn update_deleted(
         &mut self,
         selected: Option<usize>,
         deleted: bool,
@@ -964,7 +964,7 @@ impl TuiStore {
             .map(Some)
     }
 
-    pub(crate) async fn update_deleted_for_tasks(
+    pub async fn update_deleted_for_tasks(
         &mut self,
         selected: Option<usize>,
         task_ids: &[crate::ids::TaskId],

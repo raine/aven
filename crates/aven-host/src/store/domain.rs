@@ -7,13 +7,13 @@ use crate::operations::{
     rename_config_project_mapping,
 };
 use crate::projects::{inferred_project_key_for_add_with_database, project_has_config_mapping};
-use crate::tui::store::{MutationMessage, TaskScope};
+use crate::store::{MutationMessage, TaskScope};
 
 use super::TuiStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectCreationResult {
-    pub(crate) project_key: String,
+pub struct ProjectCreationResult {
+    pub project_key: String,
 }
 
 fn usage_count(count: usize, singular: &str, plural: &str) -> String {
@@ -22,7 +22,7 @@ fn usage_count(count: usize, singular: &str, plural: &str) -> String {
 }
 
 impl TuiStore {
-    pub(crate) async fn create_project(&mut self, name: String) -> Result<ProjectCreationResult> {
+    pub async fn create_project(&mut self, name: String) -> Result<ProjectCreationResult> {
         let name = name.trim().to_string();
         let outcome = self
             .database
@@ -34,7 +34,7 @@ impl TuiStore {
         Ok(ProjectCreationResult { project_key })
     }
 
-    pub(crate) async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {
+    pub async fn delete_project(&mut self, project: &str) -> Result<MutationMessage> {
         let project = self
             .database
             .resolve_existing_project(&self.active_workspace.id, project)
@@ -66,7 +66,7 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    pub(crate) async fn rename_project(
+    pub async fn rename_project(
         &mut self,
         project: &str,
         new_name: &str,
@@ -109,7 +109,7 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    pub(crate) async fn create_label(&mut self, name: String) -> Result<String> {
+    pub async fn create_label(&mut self, name: String) -> Result<String> {
         let name = name.trim().to_string();
         let outcome = self
             .database
@@ -120,15 +120,11 @@ impl TuiStore {
         Ok(format!("created label {}", outcome.name))
     }
 
-    pub(crate) async fn label_usage(&self) -> Result<Vec<aven_core::labels::LabelUsage>> {
+    pub async fn label_usage(&self) -> Result<Vec<aven_core::labels::LabelUsage>> {
         self.database.label_usage(&self.active_workspace.id).await
     }
 
-    pub(crate) async fn rename_label(
-        &mut self,
-        label: &str,
-        new_name: String,
-    ) -> Result<MutationMessage> {
+    pub async fn rename_label(&mut self, label: &str, new_name: String) -> Result<MutationMessage> {
         let outcome = self
             .database
             .rename_label_with_tui_undo(&self.active_workspace, label, &new_name)
@@ -155,7 +151,7 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    pub(crate) async fn delete_label(&mut self, label: &str) -> Result<MutationMessage> {
+    pub async fn delete_label(&mut self, label: &str) -> Result<MutationMessage> {
         let outcome = self
             .database
             .delete_label_with_tui_undo(&self.active_workspace, label)
@@ -177,25 +173,25 @@ impl TuiStore {
         Ok(MutationMessage::new(message, selected))
     }
 
-    pub(crate) async fn inferred_add_project(&self) -> Result<Option<String>> {
+    pub async fn inferred_add_project(&self) -> Result<Option<String>> {
         inferred_project_key_for_add_with_database(&self.database, &self.active_workspace).await
     }
 
-    pub(crate) async fn project_paths(
+    pub async fn project_paths(
         &self,
         project: &str,
     ) -> Result<Vec<crate::operations::ProjectPathOutcome>> {
         list_project_paths_operation(&self.database, &self.active_workspace, Some(project)).await
     }
 
-    pub(crate) async fn add_project_path(&self, project: &str, path: &Path) -> Result<String> {
+    pub async fn add_project_path(&self, project: &str, path: &Path) -> Result<String> {
         let outcome =
             add_project_path_operation(&self.database, &self.active_workspace, project, path)
                 .await?;
         Ok(format!("added project path for {}", outcome.project.key))
     }
 
-    pub(crate) async fn remove_project_path(&self, project: &str, path: &Path) -> Result<String> {
+    pub async fn remove_project_path(&self, project: &str, path: &Path) -> Result<String> {
         let outcome =
             remove_project_path_operation(&self.database, &self.active_workspace, project, path)
                 .await?;

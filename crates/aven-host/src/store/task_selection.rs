@@ -4,7 +4,7 @@ use crate::ids::TaskId;
 use crate::query::TaskListItem;
 
 #[derive(Debug, Clone)]
-pub(crate) struct TaskSelection {
+pub struct TaskSelection {
     targets: Vec<TaskListItem>,
     anchor: TaskSelectionAnchor,
     uses_marks: bool,
@@ -27,7 +27,7 @@ impl PartialEq for TaskSelection {
 impl Eq for TaskSelection {}
 
 impl TaskSelection {
-    pub(crate) fn resolve(
+    pub fn resolve(
         tasks: &[TaskListItem],
         marked_task_ids: &BTreeSet<TaskId>,
         selected: Option<usize>,
@@ -60,7 +60,7 @@ impl TaskSelection {
         })
     }
 
-    pub(crate) fn resolve_single(tasks: &[TaskListItem], selected: Option<usize>) -> Option<Self> {
+    pub fn resolve_single(tasks: &[TaskListItem], selected: Option<usize>) -> Option<Self> {
         let index = selected.filter(|index| *index < tasks.len())?;
         Some(Self {
             targets: vec![tasks[index].clone()],
@@ -72,7 +72,7 @@ impl TaskSelection {
         })
     }
 
-    pub(crate) fn for_detail_target(
+    pub fn for_detail_target(
         target: TaskListItem,
         anchor: &TaskListItem,
         anchor_index: usize,
@@ -87,7 +87,7 @@ impl TaskSelection {
         }
     }
 
-    pub(crate) fn from_captured(
+    pub fn from_captured(
         targets: Vec<TaskListItem>,
         anchor: &TaskListItem,
         anchor_index: usize,
@@ -95,7 +95,7 @@ impl TaskSelection {
         Self::from_captured_with_marks(targets, anchor, anchor_index, false)
     }
 
-    pub(crate) fn from_captured_with_marks(
+    pub fn from_captured_with_marks(
         targets: Vec<TaskListItem>,
         anchor: &TaskListItem,
         anchor_index: usize,
@@ -111,8 +111,8 @@ impl TaskSelection {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_ids(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_ids(
         tasks: &[TaskListItem],
         task_ids: &[TaskId],
         selected: Option<usize>,
@@ -137,102 +137,35 @@ impl TaskSelection {
         })
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.targets.len()
     }
 
-    pub(crate) fn is_single(&self) -> bool {
+    pub fn is_single(&self) -> bool {
         self.targets.len() == 1
     }
 
-    pub(crate) fn uses_marks(&self) -> bool {
+    pub fn uses_marks(&self) -> bool {
         self.uses_marks
     }
 
-    pub(crate) fn targets(&self) -> &[TaskListItem] {
+    pub fn targets(&self) -> &[TaskListItem] {
         &self.targets
     }
 
-    pub(crate) fn ids(&self) -> impl Iterator<Item = &TaskId> {
+    pub fn ids(&self) -> impl Iterator<Item = &TaskId> {
         self.targets.iter().map(|item| &item.task.id)
     }
 
-    pub(crate) fn single_id(&self) -> Option<&TaskId> {
+    pub fn single_id(&self) -> Option<&TaskId> {
         self.is_single().then(|| &self.targets[0].task.id)
     }
 
-    pub(crate) fn anchor_id(&self) -> &TaskId {
+    pub fn anchor_id(&self) -> &TaskId {
         &self.anchor.task_id
     }
 
-    pub(crate) fn anchor_index(&self) -> usize {
+    pub fn anchor_index(&self) -> usize {
         self.anchor.index
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::TaskSelection;
-    use crate::tui::test_support::task_list_item_with_id;
-
-    #[test]
-    fn resolves_visible_marks_before_selected_row() {
-        let tasks = vec![
-            task_list_item_with_id("first", "task-1"),
-            task_list_item_with_id("second", "task-2"),
-            task_list_item_with_id("third", "task-3"),
-        ];
-        let marked = BTreeSet::from([tasks[0].task.id.clone(), tasks[2].task.id.clone()]);
-
-        let selection = TaskSelection::resolve(&tasks, &marked, Some(1)).unwrap();
-
-        assert_eq!(selection.len(), 2);
-        assert_eq!(
-            selection.ids().cloned().collect::<Vec<_>>(),
-            vec![tasks[0].task.id.clone(), tasks[2].task.id.clone()]
-        );
-        assert_eq!(selection.anchor_id(), &tasks[1].task.id);
-        assert_eq!(selection.anchor_index(), 1);
-    }
-
-    #[test]
-    fn resolves_single_target_without_marks() {
-        let tasks = vec![
-            task_list_item_with_id("first", "task-1"),
-            task_list_item_with_id("second", "task-2"),
-        ];
-
-        let selection = TaskSelection::resolve_single(&tasks, Some(1)).unwrap();
-
-        assert_eq!(selection.single_id(), Some(&tasks[1].task.id));
-        assert_eq!(selection.anchor_id(), &tasks[1].task.id);
-        assert_eq!(selection.anchor_index(), 1);
-        assert_eq!(TaskSelection::resolve_single(&tasks, None), None);
-    }
-
-    #[test]
-    fn detail_target_uses_open_task_as_refresh_anchor() {
-        let anchor = task_list_item_with_id("open", "task-open");
-        let target = task_list_item_with_id("related", "task-related");
-
-        let selection = TaskSelection::for_detail_target(target.clone(), &anchor, 3);
-
-        assert_eq!(selection.single_id(), Some(&target.task.id));
-        assert_eq!(selection.anchor_id(), &anchor.task.id);
-        assert_eq!(selection.anchor_index(), 3);
-    }
-
-    #[test]
-    fn ignores_hidden_marks_and_requires_a_visible_target() {
-        let tasks = vec![task_list_item_with_id("visible", "task-visible")];
-        let hidden = task_list_item_with_id("hidden", "task-hidden").task.id;
-        let marked = BTreeSet::from([hidden]);
-
-        let selection = TaskSelection::resolve(&tasks, &marked, Some(0)).unwrap();
-        assert_eq!(selection.single_id(), Some(&tasks[0].task.id));
-        assert!(TaskSelection::resolve(&tasks, &marked, None).is_none());
-        assert!(TaskSelection::resolve(&[], &marked, Some(0)).is_none());
     }
 }

@@ -8,7 +8,7 @@ use super::TuiStore;
 use super::types::{SyncStatusCheck, TuiSyncStatus};
 
 impl TuiStore {
-    pub(crate) fn config_info_lines(&self) -> Result<Vec<String>> {
+    pub fn config_info_lines(&self) -> Result<Vec<String>> {
         let outcome = show_config_operation()?;
         let mut lines = vec![
             format!("config path: {}", outcome.path.display()),
@@ -18,22 +18,22 @@ impl TuiStore {
         Ok(lines)
     }
 
-    pub(crate) fn config_path_lines(&self) -> Result<Vec<String>> {
+    pub fn config_path_lines(&self) -> Result<Vec<String>> {
         Ok(show_config_paths_operation(Some(self.database.path()))?.lines)
     }
 
-    pub(crate) fn init_config(&self, path: std::path::PathBuf) -> Result<String> {
+    pub fn init_config(&self, path: std::path::PathBuf) -> Result<String> {
         let outcome = crate::operations::init_config_at(path)?;
         Ok(format!("created config {}", outcome.path.display()))
     }
 
-    pub(crate) async fn refresh_sync_status(&mut self) -> Result<()> {
+    pub async fn refresh_sync_status(&mut self) -> Result<()> {
         self.projection.sync_status =
             load_sync_status(&self.database, &self.app_config, &self.sync_status).await?;
         Ok(())
     }
 
-    pub(crate) fn set_sync_invitation(
+    pub fn set_sync_invitation(
         &mut self,
         invitation: Option<crate::sync::encrypted::InvitationStatus>,
     ) {

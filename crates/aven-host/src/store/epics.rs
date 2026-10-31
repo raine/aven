@@ -1,40 +1,40 @@
 use crate::query::{TaskDependencyLink, TaskListItem};
-use crate::tui::store::MutationMessage;
+use crate::store::MutationMessage;
 use crate::undo::UndoContext;
 
 use super::{TaskListRenderMode, TuiStore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EpicContext {
-    pub(crate) epic_id: crate::ids::TaskId,
-    pub(crate) display_ref: String,
-    pub(crate) project_key: String,
+pub struct EpicContext {
+    pub epic_id: crate::ids::TaskId,
+    pub display_ref: String,
+    pub project_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AddEpicChildContext {
+pub enum AddEpicChildContext {
     Existing(EpicContext),
     Promote(EpicContext),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EpicChildTarget {
-    pub(crate) epic: EpicContext,
-    pub(crate) child: TaskDependencyLink,
-    pub(crate) original_position: usize,
+pub struct EpicChildTarget {
+    pub epic: EpicContext,
+    pub child: TaskDependencyLink,
+    pub original_position: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct EpicChildMutation {
-    pub(crate) message: MutationMessage,
-    pub(crate) epic: EpicContext,
-    pub(crate) child: TaskDependencyLink,
-    pub(crate) original_position: usize,
-    pub(crate) changed: bool,
+pub struct EpicChildMutation {
+    pub message: MutationMessage,
+    pub epic: EpicContext,
+    pub child: TaskDependencyLink,
+    pub original_position: usize,
+    pub changed: bool,
 }
 
 impl TuiStore {
-    pub(crate) async fn toggle_selected_epic(
+    pub async fn toggle_selected_epic(
         &mut self,
         index: Option<usize>,
     ) -> Result<Option<MutationMessage>, anyhow::Error> {
@@ -66,7 +66,7 @@ impl TuiStore {
         Ok(Some(MutationMessage::new(message, selected)))
     }
 
-    pub(crate) fn resolve_add_epic_child_context(
+    pub fn resolve_add_epic_child_context(
         &self,
         selected: Option<usize>,
     ) -> Option<AddEpicChildContext> {
@@ -101,7 +101,7 @@ impl TuiStore {
             .map(|target| target.epic)
     }
 
-    pub(crate) fn resolve_epic_child_target(
+    pub fn resolve_epic_child_target(
         &self,
         selected: Option<usize>,
         focused_child_id: Option<&crate::ids::TaskId>,
@@ -147,7 +147,7 @@ impl TuiStore {
         })
     }
 
-    pub(crate) fn resolve_epic_child_target_for_item(
+    pub fn resolve_epic_child_target_for_item(
         &self,
         item: &TaskListItem,
     ) -> Option<EpicChildTarget> {
@@ -171,7 +171,7 @@ impl TuiStore {
         })
     }
 
-    pub(crate) async fn add_epic_child(
+    pub async fn add_epic_child(
         &mut self,
         epic: EpicContext,
         child_id: crate::ids::TaskId,
@@ -239,7 +239,7 @@ impl TuiStore {
         })
     }
 
-    pub(crate) async fn remove_epic_child(
+    pub async fn remove_epic_child(
         &mut self,
         target: EpicChildTarget,
     ) -> Result<EpicChildMutation, anyhow::Error> {

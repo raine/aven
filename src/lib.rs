@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use aven_core::{
-    change_log, choices, db, ids, labels, query, queue, refs, task_fields, types, undo,
-};
+use aven_core::{change_log, choices, db, ids, labels, query, queue, refs, task_fields, types};
 #[cfg(target_os = "macos")]
 use aven_host::app_bundle;
 use aven_host::attachments;

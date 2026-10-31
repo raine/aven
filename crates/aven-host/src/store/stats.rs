@@ -4,7 +4,7 @@ use super::TuiStore;
 use super::types::{DatabaseStatsPriorityCounts, DatabaseStatsStatusCounts, TuiDatabaseStats};
 
 impl TuiStore {
-    pub(crate) async fn load_database_stats(&mut self) -> Result<()> {
+    pub async fn load_database_stats(&mut self) -> Result<()> {
         let stats = self.database.database_stats(&self.active_workspace).await?;
         self.db_stats = TuiDatabaseStats {
             workspace_name: stats.workspace_name,

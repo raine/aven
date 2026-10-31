@@ -10,14 +10,14 @@ use crate::operations::TaskAttachmentAddInput;
 use super::TuiStore;
 
 #[derive(Clone)]
-pub(crate) struct AttachmentWorkerContext {
+pub struct AttachmentWorkerContext {
     database: Database,
     workspace: crate::workspaces::Workspace,
     app_config: crate::config::AppConfig,
 }
 
 impl AttachmentWorkerContext {
-    pub(crate) async fn add_ordered_attachment(
+    pub async fn add_ordered_attachment(
         &self,
         blob_dir: &Path,
         lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
@@ -42,7 +42,7 @@ impl AttachmentWorkerContext {
 }
 
 impl TuiStore {
-    pub(crate) fn attachment_worker_context(&self) -> AttachmentWorkerContext {
+    pub fn attachment_worker_context(&self) -> AttachmentWorkerContext {
         AttachmentWorkerContext {
             database: self.database.clone(),
             workspace: self.active_workspace.clone(),
@@ -50,7 +50,7 @@ impl TuiStore {
         }
     }
 
-    pub(crate) async fn delete_attachment(&self, attachment_id: &str) -> Result<()> {
+    pub async fn delete_attachment(&self, attachment_id: &str) -> Result<()> {
         self.database
             .delete_task_attachment(&self.active_workspace, attachment_id)
             .await?;
@@ -58,7 +58,7 @@ impl TuiStore {
         Ok(())
     }
 
-    pub(crate) async fn save_attachment(
+    pub async fn save_attachment(
         &self,
         blob_dir: &Path,
         attachment_id: &str,
@@ -74,7 +74,7 @@ impl TuiStore {
         .await
     }
 
-    pub(crate) async fn lease_image_export(
+    pub async fn lease_image_export(
         &self,
         blob_dir: &Path,
         attachment_id: &str,
@@ -88,7 +88,7 @@ impl TuiStore {
         .await
     }
 
-    pub(crate) async fn release_image_export(&self, export: &mut LeasedImageExport) -> Result<()> {
+    pub async fn release_image_export(&self, export: &mut LeasedImageExport) -> Result<()> {
         export.release().await
     }
 }
