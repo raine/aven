@@ -22,7 +22,7 @@ needs a worktree with that directory.
 
 `scripts/desktop/cargo` keeps build artifacts in
 `~/Library/Caches/aven-desktop/target`, so worktrees share compiled GPUI, and copies
-final binaries to this worktree's `target/bin`. A lock serialises build plus copy,
+the binaries each build produced to this worktree's `target/bin`. A lock serialises build plus copy,
 so concurrent worktrees wait for each other.
 
 ## Isolation
@@ -31,9 +31,20 @@ so concurrent worktrees wait for each other.
 refuses when started without the launcher. Everything sits under
 `AVEN_DESKTOP_ROOT`: state, config, database, blobs, logs, server storage and
 file-backed keys. The guard exits with status 78 when a resolved path overlaps the
-owner's directories, when a path contains `.aven`, when the root contains `..`, when
-the environment points outside the root, or when the root's config lacks a private
-loopback wake port and `sync.enabled: false`.
+owner's data, when a path contains `.aven`, when the root contains `..`, when the
+environment points outside the root or sets a variable that moves storage, or when
+the root's config is anything but `sync.enabled: false`, a private loopback wake port
+and storage paths inside the layout.
+
+Owner data comes from three sources, all read-only:
+
+- fixed paths in `OWNER_PATHS` and `OWNER_SYSTEM_PATHS`, audited from every home and
+  XDG lookup in the root and core crates. `every_owner_path_source_is_audited` fails
+  when a new lookup appears, until it is audited,
+- names starting with `aven`, `com.raine.aven` or `fi.zendit.aven` directly in the
+  home or in `Library` directories that macOS keys by app,
+- whatever the owner's `config.yaml` and installed daemon plist name: the database
+  with its sidecars, blobs, config directory, logs and wake port.
 
 Owner directories come from the password database rather than `$HOME`. Paths are
 compared by device and inode of each resolved component, following every symlink,

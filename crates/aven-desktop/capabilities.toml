@@ -3160,3 +3160,35 @@ operation = "Store::edit_task"
 phase = "core-screens"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["detail-edit"]
+
+[[capability]]
+id = "listener:addImageTo.r.load"
+action = "Add picked image to task"
+operation = "aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-images"]
+
+[[capability]]
+id = "listener:dialog.layer.mousedown"
+action = "Dismiss dialog by clicking outside"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["detail-menu"]
+
+[[capability]]
+id = "listener:openComposer.r.load"
+action = "Attach picked image to composer"
+operation = "aven_core::attachments"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["composer"]
+
+[[capability]]
+id = "listener:openMenu.menus.mousedown"
+action = "Dismiss menu by clicking outside"
+operation = "session state"
+phase = "core-screens"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["menu-status"]

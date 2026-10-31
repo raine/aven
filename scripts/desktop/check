@@ -49,6 +49,16 @@ if [[ -e "$root/lock-cache/build.pid" || -L "$root/lock-cache/build.pid" ]]; the
   exit 1
 fi
 
+echo "== build isolation"
+capture_binary="$desktop_bin/aven-desktop-capture"
+printf 'kept' >>"$capture_binary"
+"$cargo_script" build --bin aven-desktop
+if [[ $(tail -c 4 "$capture_binary") != kept ]]; then
+  echo "a build replaced a binary it did not build" >&2
+  exit 1
+fi
+"$cargo_script" build --features capture
+
 echo "== launcher"
 mkdir "$root/launch"
 AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --seed --background

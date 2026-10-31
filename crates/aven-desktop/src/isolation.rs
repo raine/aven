@@ -26,21 +26,68 @@ const OWNER_WAKE_PORT: u16 = 47631;
 /// The kernel's own limit on symlinks followed while resolving one path.
 const MAX_LINKS: usize = 32;
 
-/// Paths below the owner's home that hold real Aven data or daemon state.
+/// Paths below the owner's home that Aven reads or writes, from every path
+/// source in the root and core crates, listed in the test
+/// `every_owner_path_source_is_audited`, which fails when a new one appears.
 const OWNER_PATHS: &[&str] = &[
     ".aven",
     ".cache/aven",
+    ".cargo/bin/aven",
+    ".claude/skills/aven",
+    ".codex/skills/aven",
     ".config/aven",
+    ".config/opencode/skills/aven",
+    ".config/systemd/user/aven-daemon.service",
+    ".local/bin/aven",
     ".local/share/aven",
     ".local/state/aven",
-    "Library/Application Support/Aven",
-    "Library/Application Support/aven",
-    "Library/Application Support/fi.zendit.Aven",
-    "Library/Caches/fi.zendit.Aven",
-    "Library/Containers/fi.zendit.Aven",
+    ".pi/agent/skills/aven",
     "Library/Keychains",
     "Library/LaunchAgents",
-    "Library/Preferences/fi.zendit.Aven.plist",
+    "Library/Logs/aven",
+];
+
+/// Install locations outside the home, from `daemon/service.rs`, the release
+/// archive's bundle name and the documented systemd state directory.
+const OWNER_SYSTEM_PATHS: &[&str] = &[
+    "/Applications/Aven.app",
+    "/opt/homebrew/Cellar/aven",
+    "/opt/homebrew/bin/aven",
+    "/opt/homebrew/opt/aven",
+    "/usr/local/Cellar/aven",
+    "/usr/local/bin/aven",
+    "/usr/local/opt/aven",
+    "/var/lib/aven",
+];
+
+/// Directories, relative to the owner's home, where names alone mark Aven data:
+/// macOS keys these by bundle or app name, and owners keep hand-made databases
+/// and backups beside them.
+const OWNER_NAME_PARENTS: &[&str] = &[
+    "",
+    "Library/Application Scripts",
+    "Library/Application Support",
+    "Library/Caches",
+    "Library/Containers",
+    "Library/Group Containers",
+    "Library/HTTPStorages",
+    "Library/Logs",
+    "Library/Preferences",
+    "Library/Saved Application State",
+    "Library/WebKit",
+];
+const OWNER_NAME_PREFIXES: &[&str] = &["aven", "com.raine.aven", "fi.zendit.aven"];
+
+const OWNER_CONFIG: &str = ".config/aven/config.yaml";
+const OWNER_DAEMON_PLIST: &str = "Library/LaunchAgents/com.raine.aven.daemon.plist";
+
+/// Variables that move Aven's storage and that a development launch never sets.
+const REFUSED_ENVIRONMENT: &[&str] = &[
+    "AVEN_DEV_DB",
+    "AVEN_DEV_MIGRATION_BACKUPS",
+    "AVEN_SERVER_CONFIG",
+    "AVEN_TEST_PROTECTED_KEYS",
+    "STATE_DIRECTORY",
 ];
 
 /// One launch's private paths.
@@ -62,20 +109,194 @@ pub struct Isolation {
 }
 
 /// The settings that keep a launch away from a real daemon and sync server.
+/// Anything else in the file is refused, because other sections can run
+/// commands or redirect storage.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct IsolatedConfig {
     sync: SyncSettings,
     daemon: DaemonSettings,
+    #[serde(default)]
+    local: LocalSettings,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SyncSettings {
     enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DaemonSettings {
     wake_addr: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalSettings {
+    db_path: Option<PathBuf>,
+    blob_dir: Option<PathBuf>,
+}
+
+/// The parts of the owner's own config that place data or claim a port.
+#[derive(Debug, Default, Deserialize)]
+struct OwnerConfig {
+    #[serde(default)]
+    local: OwnerLocal,
+    #[serde(default)]
+    daemon: OwnerDaemon,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OwnerLocal {
+    db_path: Option<PathBuf>,
+    blob_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OwnerDaemon {
+    wake_addr: Option<String>,
+}
+
+/// What the owner's installation occupies, including what its config and
+/// installed daemon point at. Read-only.
+#[derive(Debug)]
+struct Owner {
+    paths: Vec<(PathBuf, Vec<Step>)>,
+    /// A directory and a lowercase name prefix within it.
+    names: Vec<(Vec<Step>, String)>,
+    wake_ports: Vec<u16>,
+}
+
+impl Owner {
+    fn read(home: &Path) -> Result<Self> {
+        let mut paths: Vec<PathBuf> = OWNER_PATHS.iter().map(|path| home.join(path)).collect();
+        paths.extend(OWNER_SYSTEM_PATHS.iter().map(PathBuf::from));
+        let mut names = Vec::new();
+        for parent in OWNER_NAME_PARENTS {
+            let steps = walk(&home.join(parent))?;
+            for prefix in OWNER_NAME_PREFIXES {
+                names.push((steps.clone(), prefix.to_string()));
+            }
+        }
+        let mut wake_ports = vec![OWNER_WAKE_PORT];
+
+        let mut config_files = vec![home.join(OWNER_CONFIG)];
+        let plist = home.join(OWNER_DAEMON_PLIST);
+        if let Some(text) = read_if_present(&plist)? {
+            let daemon = daemon_paths(&text);
+            config_files.extend(daemon.config_dirs.iter().map(|dir| dir.join("config.yaml")));
+            paths.extend(daemon.config_dirs);
+            for database in daemon.databases {
+                add_database(&database, &mut paths, &mut names)?;
+            }
+            paths.extend(daemon.other);
+        }
+        for file in config_files {
+            let Some(text) = read_if_present(&file)? else {
+                continue;
+            };
+            let config: OwnerConfig = serde_saphyr::from_str(&text)
+                .with_context(|| format!("read {}", file.display()))?;
+            let database = config.local.db_path.map(|path| expand_owner(&path, home));
+            if let Some(database) = &database {
+                add_database(database, &mut paths, &mut names)?;
+            }
+            if let Some(blobs) = config.local.blob_dir {
+                let base = database.as_deref().and_then(Path::parent);
+                let blobs = expand_owner(&blobs, home);
+                paths.push(base.map_or(blobs.clone(), |base| base.join(&blobs)));
+            }
+            if let Some(address) = config.daemon.wake_addr
+                && let Ok(address) = address.parse::<SocketAddr>()
+            {
+                wake_ports.push(address.port());
+            }
+        }
+
+        let paths = paths
+            .into_iter()
+            .map(|path| {
+                let steps = walk(&path)?;
+                Ok((path, steps))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            paths,
+            names,
+            wake_ports,
+        })
+    }
+}
+
+/// A database's blobs and sidecars share its name, so the name protects them.
+fn add_database(
+    database: &Path,
+    paths: &mut Vec<PathBuf>,
+    names: &mut Vec<(Vec<Step>, String)>,
+) -> Result<()> {
+    paths.push(database.to_path_buf());
+    if let (Some(parent), Some(name)) = (database.parent(), database.file_name()) {
+        names.push((walk(parent)?, name.to_string_lossy().to_lowercase()));
+    }
+    Ok(())
+}
+
+fn expand_owner(path: &Path, home: &Path) -> PathBuf {
+    path.strip_prefix("~")
+        .map_or_else(|_| path.to_path_buf(), |rest| home.join(rest))
+}
+
+fn read_if_present(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// Paths an installed daemon's plist names.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DaemonPaths {
+    databases: Vec<PathBuf>,
+    config_dirs: Vec<PathBuf>,
+    other: Vec<PathBuf>,
+}
+
+/// Reads the flat key and string sequence that `daemon/service.rs` renders.
+fn daemon_paths(plist: &str) -> DaemonPaths {
+    let mut paths = DaemonPaths::default();
+    let mut previous = String::new();
+    for (tag, close) in [("<key>", "</key>"), ("<string>", "</string>")]
+        .iter()
+        .flat_map(|(open, close)| {
+            plist
+                .match_indices(open)
+                .map(move |(index, _)| (index + open.len(), *close))
+        })
+        .collect::<BTreeMap<_, _>>()
+    {
+        let Some(length) = plist[tag..].find(close) else {
+            continue;
+        };
+        let value = plist[tag..tag + length]
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&apos;", "'")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&");
+        let path = PathBuf::from(&value);
+        match previous.as_str() {
+            "--db" | "AVEN_DB" | "AVEN_DEV_DB" => paths.databases.push(path),
+            "AVEN_CONFIG_DIR" => paths.config_dirs.push(path),
+            "XDG_STATE_HOME" => paths.other.push(path.join("aven")),
+            "StandardOutPath" | "StandardErrorPath" => paths.other.push(path),
+            _ => {}
+        }
+        previous = value;
+    }
+    paths
 }
 
 impl Isolation {
@@ -121,7 +342,7 @@ impl Isolation {
     /// Validates this process's environment and the launch's config.
     pub fn from_process() -> Result<Self> {
         let isolation = Self::paths_from_process()?;
-        isolation.require_isolated_config()?;
+        isolation.require_isolated_config(&Owner::read(&owner_home()?)?)?;
         Ok(isolation)
     }
 
@@ -148,7 +369,7 @@ impl Isolation {
         if root.components().any(|part| part == Component::ParentDir) {
             bail!("{ROOT_VAR} must not contain `..`: {}", root.display());
         }
-        let owner = owner_paths(owner_home)?;
+        let owner = Owner::read(owner_home)?;
         refuse_owner_path(ROOT_VAR, &root, &owner)?;
         let isolation = Self::layout(&root);
         for (name, expected) in isolation.environment() {
@@ -163,11 +384,13 @@ impl Isolation {
                 );
             }
         }
-        if let Some(value) = environment.get("AVEN_DEV_DB") {
-            bail!(
-                "AVEN_DEV_DB must be unset, found {}; worktree copies hold real data",
-                Path::new(value).display()
-            );
+        for name in REFUSED_ENVIRONMENT {
+            if let Some(value) = environment.get(*name) {
+                bail!(
+                    "{name} must be unset, found {}; it moves storage outside the root",
+                    Path::new(value).display()
+                );
+            }
         }
         for (name, path) in isolation.resolved_paths() {
             refuse_owner_path(name, path, &owner)?;
@@ -196,7 +419,7 @@ impl Isolation {
 
     /// Requires this launch's own config. Without one, the shared defaults
     /// reach the owner's daemon on its wake port.
-    pub fn require_isolated_config(&self) -> Result<()> {
+    fn require_isolated_config(&self, owner: &Owner) -> Result<()> {
         let path = &self.config_file;
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("{} is required", path.display()))?;
@@ -210,11 +433,33 @@ impl Isolation {
             .wake_addr
             .parse()
             .with_context(|| format!("daemon.wake_addr in {}", path.display()))?;
-        if !wake.ip().is_loopback() || wake.port() == OWNER_WAKE_PORT {
+        if !wake.ip().is_loopback() || owner.wake_ports.contains(&wake.port()) {
             bail!(
                 "daemon.wake_addr must be a private loopback port, found {wake} in {}",
                 path.display()
             );
+        }
+        if let Some(database) = &config.local.db_path
+            && database != &self.database
+        {
+            bail!(
+                "local.db_path must be {}, found {}",
+                self.database.display(),
+                database.display()
+            );
+        }
+        if let Some(blobs) = &config.local.blob_dir {
+            let parent = self
+                .database
+                .parent()
+                .context("the database has a parent")?;
+            if parent.join(blobs) != self.blobs {
+                bail!(
+                    "local.blob_dir must be {}, found {}",
+                    self.blobs.display(),
+                    blobs.display()
+                );
+            }
         }
         Ok(())
     }
@@ -246,21 +491,10 @@ impl Isolation {
     }
 }
 
-fn owner_paths(owner_home: &Path) -> Result<Vec<(PathBuf, Vec<Step>)>> {
-    OWNER_PATHS
-        .iter()
-        .map(|path| {
-            let path = owner_home.join(path);
-            let steps = walk(&path)?;
-            Ok((path, steps))
-        })
-        .collect()
-}
-
-/// Refuses a path inside owner data, and a path that contains owner data, such
-/// as the home directory itself. Any `.aven` component is a worktree's copy of
-/// the real database.
-fn refuse_owner_path(name: &str, path: &Path, owner: &[(PathBuf, Vec<Step>)]) -> Result<()> {
+/// Refuses a path inside owner data, a path that contains owner data, such as
+/// the home directory itself, and a name reserved in one of the owner's
+/// directories. Any `.aven` component is a worktree's copy of the real database.
+fn refuse_owner_path(name: &str, path: &Path, owner: &Owner) -> Result<()> {
     let steps = walk(path).with_context(|| format!("{name} cannot be resolved"))?;
     if steps
         .iter()
@@ -268,11 +502,27 @@ fn refuse_owner_path(name: &str, path: &Path, owner: &[(PathBuf, Vec<Step>)]) ->
     {
         bail!("{name} is inside a worktree data copy: {}", path.display());
     }
-    for (protected, protected_steps) in owner {
-        if contains(protected_steps, &steps) || contains(&steps, protected_steps) {
+    for (protected, protected_steps) in &owner.paths {
+        if below(protected_steps, &steps).is_some() || below(&steps, protected_steps).is_some() {
             bail!(
                 "{name} overlaps the owner's {}: {}",
                 protected.display(),
+                path.display()
+            );
+        }
+    }
+    for (parent, prefix) in &owner.names {
+        let Some(child) = below(parent, &steps).and_then(<[Step]>::first) else {
+            continue;
+        };
+        if child
+            .name
+            .to_string_lossy()
+            .to_lowercase()
+            .starts_with(prefix)
+        {
+            bail!(
+                "{name} overlaps the owner's data named {prefix}*: {}",
                 path.display()
             );
         }
@@ -360,21 +610,21 @@ fn components(path: &Path) -> impl Iterator<Item = OsString> + '_ {
     })
 }
 
-/// Whether `inner` is `outer` or below it. Existing components match by identity
-/// and missing ones by name, ignoring case as the default macOS volume does.
-fn contains(outer: &[Step], inner: &[Step]) -> bool {
-    let Some(anchor) = outer.iter().rposition(|step| step.identity.is_some()) else {
-        return false;
-    };
+/// The part of `inner` below `outer`, empty when they are the same place.
+/// Existing components match by identity and missing ones by name, ignoring
+/// case as the default macOS volume does.
+fn below<'a>(outer: &[Step], inner: &'a [Step]) -> Option<&'a [Step]> {
+    let anchor = outer.iter().rposition(|step| step.identity.is_some())?;
     let tail = &outer[anchor + 1..];
-    inner.iter().enumerate().any(|(index, step)| {
-        let below = &inner[index + 1..];
-        step.identity == outer[anchor].identity
-            && below.len() >= tail.len()
+    inner.iter().enumerate().find_map(|(index, step)| {
+        let rest = &inner[index + 1..];
+        (step.identity == outer[anchor].identity
+            && rest.len() >= tail.len()
             && tail
                 .iter()
-                .zip(below)
-                .all(|(left, right)| same_name(&left.name, &right.name))
+                .zip(rest)
+                .all(|(left, right)| same_name(&left.name, &right.name)))
+        .then(|| &rest[tail.len()..])
     })
 }
 
@@ -567,22 +817,25 @@ mod tests {
         Isolation::resolve(&valid(&root), owner.path()).unwrap();
     }
 
-    fn with_config(text: Option<&str>) -> Result<()> {
+    fn with_config(text: Option<&str>, owner_home: &Path) -> Result<()> {
         let root = tempfile::tempdir().unwrap();
         let isolation = Isolation::layout(root.path());
         std::fs::create_dir_all(&isolation.config_dir).unwrap();
         if let Some(text) = text {
+            let text = text.replace("ROOT", &root.path().display().to_string());
             std::fs::write(&isolation.config_file, text).unwrap();
         }
-        isolation.require_isolated_config()
+        isolation.require_isolated_config(&Owner::read(owner_home)?)
+    }
+
+    fn config(enabled: bool, address: &str) -> String {
+        format!("sync:\n  enabled: {enabled}\ndaemon:\n  wake_addr: \"{address}\"\n")
     }
 
     #[test]
     fn requires_a_private_wake_port_and_no_sync() {
-        let config = |enabled, address| {
-            format!("sync:\n  enabled: {enabled}\ndaemon:\n  wake_addr: \"{address}\"\n")
-        };
-        with_config(Some(&config(false, "127.0.0.1:50000"))).unwrap();
+        let owner = tempfile::tempdir().unwrap();
+        with_config(Some(&config(false, "127.0.0.1:50000")), owner.path()).unwrap();
         for (text, reason) in [
             (None, "no config"),
             (
@@ -593,8 +846,229 @@ mod tests {
             (Some(config(false, "127.0.0.1:47631")), "the owner's port"),
             (Some(config(false, "192.0.2.1:50000")), "not loopback"),
         ] {
-            assert!(with_config(text.as_deref()).is_err(), "{reason}");
+            assert!(
+                with_config(text.as_deref(), owner.path()).is_err(),
+                "{reason}"
+            );
         }
+    }
+
+    #[test]
+    fn refuses_storage_settings_outside_the_layout() {
+        let owner = tempfile::tempdir().unwrap();
+        let base = config(false, "127.0.0.1:50000");
+        for allowed in [
+            "local:\n  db_path: ROOT/state/aven/db.sqlite\n",
+            "local:\n  blob_dir: ROOT/state/aven/db.sqlite.blobs\n",
+            "local:\n  blob_dir: db.sqlite.blobs\n",
+        ] {
+            with_config(Some(&format!("{base}{allowed}")), owner.path()).unwrap();
+        }
+        for refused in [
+            "local:\n  db_path: /elsewhere/db.sqlite\n",
+            "local:\n  blob_dir: /elsewhere/blobs\n",
+            "local:\n  blob_dir: ../blobs\n",
+            "local:\n  image_optimization: {}\n",
+            "agent:\n  task_intake:\n    command: /bin/sh\n",
+            "reminders:\n  enabled: true\n",
+        ] {
+            let error = with_config(Some(&format!("{base}{refused}")), owner.path());
+            assert!(error.is_err(), "{refused}");
+        }
+    }
+
+    fn refuses_in_owner(relative: &str) {
+        let owner = tempfile::tempdir().unwrap();
+        let root = owner.path().join(relative);
+        assert!(
+            refusal(&valid(&root), owner.path()).contains("overlaps the owner's"),
+            "{relative}"
+        );
+    }
+
+    #[test]
+    fn refuses_every_listed_owner_path() {
+        for path in OWNER_PATHS.iter().filter(|path| **path != ".aven") {
+            refuses_in_owner(&format!("{path}/run"));
+        }
+    }
+
+    #[test]
+    fn refuses_the_daemon_log_directory() {
+        refuses_in_owner("Library/Logs/aven/run");
+    }
+
+    #[test]
+    fn refuses_names_reserved_in_owner_directories() {
+        for path in [
+            "Library/Application Support/aven-real-install-backup-20261014/run",
+            "Library/Application Support/Aven/run",
+            "Library/Application Support/fi.zendit.Aven/run",
+            "Library/Caches/fi.zendit.Aven/run",
+            "Library/Containers/fi.zendit.Aven/run",
+            "Library/Preferences/fi.zendit.Aven.plist",
+            "Library/Saved Application State/fi.zendit.Aven.savedState/run",
+            "aven-e2ee.sqlite",
+            "aven-e2ee-test/run",
+        ] {
+            refuses_in_owner(path);
+        }
+    }
+
+    #[test]
+    fn refuses_install_locations_outside_the_home() {
+        let owner = tempfile::tempdir().unwrap();
+        for path in OWNER_SYSTEM_PATHS {
+            let root = Path::new(path).join("run");
+            assert!(
+                refusal(&valid(&root), owner.path()).contains("overlaps the owner's"),
+                "{path}"
+            );
+        }
+    }
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn refuses_storage_the_owner_config_points_at() {
+        let owner = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let database = data.path().join("real.sqlite");
+        let blobs = data.path().join("elsewhere");
+        write(
+            &owner.path().join(OWNER_CONFIG),
+            &format!(
+                "local:\n  db_path: {}\n  blob_dir: {}\ndaemon:\n  wake_addr: \"127.0.0.1:51234\"\nagent:\n  other: 1\n",
+                database.display(),
+                blobs.display()
+            ),
+        );
+        for root in [
+            database.clone(),
+            data.path().join("real.sqlite.blobs/run"),
+            blobs.join("run"),
+        ] {
+            assert!(
+                refusal(&valid(&root), owner.path()).contains("overlaps the owner's"),
+                "{}",
+                root.display()
+            );
+        }
+        let error = with_config(Some(&config(false, "127.0.0.1:51234")), owner.path());
+        assert!(error.is_err(), "the owner's configured wake port");
+    }
+
+    #[test]
+    fn refuses_storage_the_installed_daemon_points_at() {
+        let owner = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let (database, logs, config_dir, state) = (
+            data.path().join("daemon.sqlite"),
+            data.path().join("logs/out.log"),
+            data.path().join("config"),
+            data.path().join("state"),
+        );
+        write(
+            &owner.path().join(OWNER_DAEMON_PLIST),
+            &format!(
+                "<plist><dict><key>ProgramArguments</key><array>\
+                 <string>/bin/aven</string><string>--db</string><string>{}</string>\
+                 <string>daemon</string></array>\
+                 <key>EnvironmentVariables</key><dict>\
+                 <key>AVEN_CONFIG_DIR</key><string>{}</string>\
+                 <key>XDG_STATE_HOME</key><string>{}</string></dict>\
+                 <key>StandardOutPath</key><string>{}</string></dict></plist>",
+                database.display(),
+                config_dir.display(),
+                state.display(),
+                logs.display()
+            ),
+        );
+        write(
+            &config_dir.join("config.yaml"),
+            "daemon:\n  wake_addr: \"127.0.0.1:51235\"\n",
+        );
+        for root in [
+            database.join("run"),
+            logs.clone(),
+            config_dir.join("run"),
+            state.join("aven/run"),
+        ] {
+            assert!(
+                refusal(&valid(&root), owner.path()).contains("overlaps the owner's"),
+                "{}",
+                root.display()
+            );
+        }
+        let error = with_config(Some(&config(false, "127.0.0.1:51235")), owner.path());
+        assert!(error.is_err(), "the daemon's configured wake port");
+    }
+
+    fn sources(directory: &Path, found: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(directory).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                found.push(path);
+            }
+        }
+    }
+
+    /// A new home or XDG lookup can add an owner path. When this fails, read the
+    /// new source, extend the lists above, then add the file here.
+    #[test]
+    fn every_owner_path_source_is_audited() {
+        const PATTERNS: &[&str] = &[
+            "home_dir()",
+            "dirs::",
+            "\"HOME\"",
+            "XDG_STATE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "STATE_DIRECTORY",
+        ];
+        const AUDITED: &[&str] = &[
+            "src/cli/sync.rs",
+            "src/commands/doctor/bootstrap.rs",
+            "src/commands/skill.rs",
+            "src/config/paths.rs",
+            "src/daemon/service.rs",
+            "src/daemon/service/systemd.rs",
+            "src/logging.rs",
+            "src/protected_local_keys.rs",
+            "src/sync/encrypted/tests.rs",
+            "src/tui/app.rs",
+            "src/tui/changelog.rs",
+            "src/tui/custom_command.rs",
+            "src/tui/natural_add_runtime.rs",
+            "src/update/cache.rs",
+            "src/update/install.rs",
+        ];
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut files = Vec::new();
+        for directory in ["src", "crates/aven-core/src", "crates/aven-protocol/src"] {
+            sources(&repository.join(directory), &mut files);
+        }
+        let mut found: Vec<String> = files
+            .iter()
+            .filter(|file| {
+                let text = std::fs::read_to_string(file).unwrap();
+                PATTERNS.iter().any(|pattern| text.contains(pattern))
+            })
+            .map(|file| {
+                file.strip_prefix(&repository)
+                    .unwrap()
+                    .display()
+                    .to_string()
+            })
+            .collect();
+        found.sort();
+        assert_eq!(found, AUDITED);
     }
 
     #[test]
@@ -622,8 +1096,10 @@ mod tests {
                 "{name} missing"
             );
         }
-        let mut environment = valid(root.path());
-        environment.insert("AVEN_DEV_DB".to_string(), OsString::from("/x/db.sqlite"));
-        assert!(refusal(&environment, owner.path()).contains("AVEN_DEV_DB"));
+        for name in REFUSED_ENVIRONMENT {
+            let mut environment = valid(root.path());
+            environment.insert(name.to_string(), OsString::from("/x/elsewhere"));
+            assert!(refusal(&environment, owner.path()).contains(name), "{name}");
+        }
     }
 }

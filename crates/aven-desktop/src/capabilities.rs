@@ -198,12 +198,16 @@ fn receiver(before: &str) -> String {
 }
 
 fn listeners(line: &str, owner: &str, surfaces: &mut BTreeSet<String>) {
-    for event in ["click", "input", "change", "keydown"] {
-        for (index, _) in line.match_indices(&format!(".on{event} =")) {
-            let target = receiver(&line[..index]);
-            if !target.is_empty() && !target.contains("data-d") {
-                surfaces.insert(format!("listener:{owner}.{target}.{event}"));
-            }
+    for (index, _) in line.match_indices(".on") {
+        let rest = &line[index + ".on".len()..];
+        let event = identifier(rest);
+        let target = receiver(&line[..index]);
+        if !event.is_empty()
+            && rest[event.len()..].starts_with(" = ")
+            && !target.is_empty()
+            && !target.contains("data-d")
+        {
+            surfaces.insert(format!("listener:{owner}.{target}.{event}"));
         }
     }
     for (index, _) in line.match_indices("addEventListener('") {
@@ -282,6 +286,7 @@ function search() {
 }
 function demos() {
   on('off', () => {});
+  layer.onmousedown = (e) => {};
   x.innerHTML = `<div data-rec="1"></div><button data-d="${computed}"></button>`;
 }
 document.addEventListener('keydown', (e) => {
@@ -305,6 +310,7 @@ const narrow = 1;
             "handler-key:search.shift+enter",
             "handler-key:search.ctrl+s",
             "dialog:demos.off",
+            "listener:demos.layer.mousedown",
             "attribute:rec",
         ] {
             assert!(surfaces.contains(id), "{id}: {surfaces:?}");
