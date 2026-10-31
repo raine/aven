@@ -8,20 +8,20 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Utc, Weekday};
 /// The instant and local time zone that supply defaults for omitted recurrence
 /// fields.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct RecurrenceClock {
-    pub(crate) now: DateTime<Utc>,
-    pub(crate) local_time_zone: fn() -> Result<TimeZoneId>,
+pub struct RecurrenceClock {
+    pub now: DateTime<Utc>,
+    pub local_time_zone: fn() -> Result<TimeZoneId>,
 }
 
 impl RecurrenceClock {
-    pub(crate) fn system() -> Self {
+    pub fn system() -> Self {
         Self {
             now: Utc::now(),
             local_time_zone: system_time_zone,
         }
     }
 
-    pub(crate) fn today_in(&self, time_zone: &TimeZoneId) -> NaiveDate {
+    pub fn today_in(&self, time_zone: &TimeZoneId) -> NaiveDate {
         date_in(self.now, time_zone)
     }
 }
@@ -43,7 +43,7 @@ fn system_time_zone() -> Result<TimeZoneId> {
 
 /// Builds a schedule from a canonical rule. An omitted time zone defaults to
 /// the clock's local zone and an omitted start date to today in that zone.
-pub(crate) fn recurrence_schedule(
+pub fn recurrence_schedule(
     rule: &str,
     repeat_at: Option<&str>,
     repeat_due: Option<&str>,
@@ -69,18 +69,18 @@ pub(crate) fn recurrence_schedule(
 /// defaults, and a template fixes the rule, time zone, and start date so only
 /// the local time and due policy apply.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct RecurrenceDraft<'a> {
-    pub(crate) template: Option<&'a RecurrenceSchedule>,
-    pub(crate) rule: &'a str,
-    pub(crate) repeat_at: &'a str,
-    pub(crate) repeat_due: &'a str,
-    pub(crate) time_zone: &'a str,
-    pub(crate) start_on: &'a str,
+pub struct RecurrenceDraft<'a> {
+    pub template: Option<&'a RecurrenceSchedule>,
+    pub rule: &'a str,
+    pub repeat_at: &'a str,
+    pub repeat_due: &'a str,
+    pub time_zone: &'a str,
+    pub start_on: &'a str,
 }
 
 impl RecurrenceDraft<'_> {
     /// Returns `None` when the draft has no template and no repeat rule.
-    pub(crate) fn schedule(&self, clock: RecurrenceClock) -> Result<Option<RecurrenceSchedule>> {
+    pub fn schedule(&self, clock: RecurrenceClock) -> Result<Option<RecurrenceSchedule>> {
         let repeat_at = non_blank(self.repeat_at);
         if let Some(template) = self.template {
             let available_local_time = repeat_at.map(parse_repeat_time).transpose()?.flatten();
@@ -114,7 +114,7 @@ fn non_blank(value: &str) -> Option<&str> {
 
 /// The next `count` slot dates, starting from the later of the schedule start
 /// and today in the schedule's time zone.
-pub(crate) fn upcoming_slots(
+pub fn upcoming_slots(
     schedule: &RecurrenceSchedule,
     now: DateTime<Utc>,
     count: usize,
@@ -135,7 +135,7 @@ fn parse_date(value: &str) -> Result<NaiveDate> {
     })
 }
 
-pub(crate) fn parse_repeat_time(value: &str) -> Result<Option<NaiveTime>> {
+pub fn parse_repeat_time(value: &str) -> Result<Option<NaiveTime>> {
     if value == "none" {
         return Ok(None);
     }
@@ -149,7 +149,7 @@ pub(crate) fn parse_repeat_time(value: &str) -> Result<Option<NaiveTime>> {
         })
 }
 
-pub(crate) fn parse_due_policy(value: &str) -> Result<RecurrenceDuePolicy> {
+pub fn parse_due_policy(value: &str) -> Result<RecurrenceDuePolicy> {
     match value {
         "same-day" => Ok(RecurrenceDuePolicy::SameDay),
         "none" => Ok(RecurrenceDuePolicy::None),
@@ -214,7 +214,7 @@ fn parse_rule_interval(value: &str, unit: &str) -> Result<u32> {
     Ok(interval)
 }
 
-pub(crate) fn canonical_rule_input(input: &str) -> Result<Option<String>> {
+pub fn canonical_rule_input(input: &str) -> Result<Option<String>> {
     let normalized = input
         .trim()
         .to_ascii_lowercase()
@@ -351,7 +351,7 @@ fn weekday_name(weekday: Weekday) -> &'static str {
     }
 }
 
-pub(crate) fn natural_rule_label(rule: RecurrenceRule) -> String {
+pub fn natural_rule_label(rule: RecurrenceRule) -> String {
     match rule.frequency() {
         RecurrenceFrequency::Daily if rule.interval() == 1 => "Every day".to_string(),
         RecurrenceFrequency::Daily => format!("Every {} days", rule.interval()),
@@ -386,7 +386,7 @@ pub(crate) fn natural_rule_label(rule: RecurrenceRule) -> String {
     }
 }
 
-pub(crate) const fn rule_guidance() -> &'static str {
+pub const fn rule_guidance() -> &'static str {
     "Try daily, every 3 days, weekdays, monthly, every 3 months, yearly, every 2 years, every Friday, every 3 weeks, or every 4 weeks on Monday and Thursday"
 }
 

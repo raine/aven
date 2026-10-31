@@ -5,7 +5,7 @@ use aven_core::db::Database;
 
 use crate::config::{self, AppConfig, WorkspaceRouteConfig};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use aven_core::test_support::{create_workspace, ensure_default_workspace};
 pub use aven_core::workspaces::{DEFAULT_WORKSPACE_ID, Workspace};
 
@@ -24,7 +24,7 @@ pub async fn resolve_active_workspace_with_database(
     resolve_inferred_workspace(database, config, &cwd).await
 }
 
-pub(crate) async fn resolve_active_workspace_with_routing(
+pub async fn resolve_active_workspace_with_routing(
     database: &Database,
     explicit: Option<&str>,
     routing: &crate::routing::InvocationRouting<'_>,
@@ -52,7 +52,7 @@ async fn resolve_inferred_workspace(
 }
 
 /// The workspace used when neither a command nor a directory route selects one.
-pub(crate) async fn resolve_default_workspace(
+pub async fn resolve_default_workspace(
     database: &Database,
     config: &AppConfig,
 ) -> Result<Workspace> {
@@ -80,7 +80,7 @@ pub(crate) async fn resolve_default_workspace(
 }
 
 /// Names the local configuration entries that select this workspace.
-pub(crate) async fn config_entries_for_workspace(
+pub async fn config_entries_for_workspace(
     database: &Database,
     config: &AppConfig,
     workspace: &Workspace,

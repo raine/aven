@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-pub(crate) const DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS: u64 = 300;
+pub const DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS: u64 = 300;
 pub(super) const MAX_CUSTOM_COMMAND_TIMEOUT_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

@@ -86,7 +86,7 @@ pub fn print_text_diff(from_label: &str, old: &str, to_label: &str, new: &str) {
     }
 }
 
-pub(crate) fn format_bytes(bytes: impl Into<i128>) -> String {
+pub fn format_bytes(bytes: impl Into<i128>) -> String {
     let bytes = bytes.into();
     const KIB: i128 = 1024;
     const MIB: i128 = KIB * 1024;
@@ -106,14 +106,14 @@ pub(crate) fn format_bytes(bytes: impl Into<i128>) -> String {
 }
 
 /// Inline command suggestions use the CLI help's magenta accent.
-pub(crate) fn stdout_command(command: &str) -> String {
+pub fn stdout_command(command: &str) -> String {
     command_suggestion(
         command,
         command_color_enabled(std::io::stdout().is_terminal()),
     )
 }
 
-pub(crate) fn stderr_command(command: &str) -> String {
+pub fn stderr_command(command: &str) -> String {
     command_suggestion(
         command,
         command_color_enabled(std::io::stderr().is_terminal()),
@@ -122,7 +122,7 @@ pub(crate) fn stderr_command(command: &str) -> String {
 
 /// Render paired backtick spans in application-authored terminal prose.
 /// User-authored Markdown and structured output must bypass this formatter.
-pub(crate) fn inline_code(text: &str, color: bool) -> String {
+pub fn inline_code(text: &str, color: bool) -> String {
     let mut output = String::new();
     let mut rest = text;
     while let Some(open) = rest.find('`') {
@@ -140,11 +140,11 @@ pub(crate) fn inline_code(text: &str, color: bool) -> String {
     output
 }
 
-pub(crate) fn stdout_inline_code(text: &str) -> String {
+pub fn stdout_inline_code(text: &str) -> String {
     inline_code(text, command_color_enabled(std::io::stdout().is_terminal()))
 }
 
-pub(crate) fn stderr_inline_code(text: &str) -> String {
+pub fn stderr_inline_code(text: &str) -> String {
     inline_code(text, command_color_enabled(std::io::stderr().is_terminal()))
 }
 

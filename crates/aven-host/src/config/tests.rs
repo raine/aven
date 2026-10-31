@@ -204,7 +204,6 @@ fn protected_destinations_are_never_replaced_or_followed() {
                 );
             }
         }
-        assert!(!crate::server_config::write_template_if_missing(&path).unwrap());
         assert_eq!(fs::read_link(&path).unwrap(), link);
     }
 }

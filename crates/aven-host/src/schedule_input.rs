@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ParsedScheduleInput {
+pub enum ParsedScheduleInput {
     None,
     Once {
         available_at: String,
@@ -15,7 +15,7 @@ pub(crate) enum ParsedScheduleInput {
     },
 }
 
-pub(crate) fn parse_schedule_input(input: &str) -> Result<ParsedScheduleInput> {
+pub fn parse_schedule_input(input: &str) -> Result<ParsedScheduleInput> {
     let input = input.trim();
     if input.is_empty() || input.eq_ignore_ascii_case("none") {
         return Ok(ParsedScheduleInput::None);
@@ -87,7 +87,7 @@ pub(crate) fn parse_schedule_input(input: &str) -> Result<ParsedScheduleInput> {
     })
 }
 
-pub(crate) fn format_schedule_input(
+pub fn format_schedule_input(
     available_at: &str,
     due_on: &str,
     repeat_rule: &str,
@@ -129,7 +129,7 @@ pub(crate) fn format_schedule_input(
     }
 }
 
-pub(crate) fn recurrence_intent(value: &str) -> bool {
+pub fn recurrence_intent(value: &str) -> bool {
     let normalized = value.trim().to_ascii_lowercase();
     let weekday = normalized
         .split_once(" at ")
@@ -148,7 +148,7 @@ pub(crate) fn recurrence_intent(value: &str) -> bool {
         )
 }
 
-pub(crate) const fn schedule_guidance() -> &'static str {
+pub const fn schedule_guidance() -> &'static str {
     "Try tomorrow, available tomorrow at 9am, due next Friday, every Friday at 09:00, or every 3 days at 09:00"
 }
 

@@ -9,7 +9,7 @@ use crate::ids::WorkspaceId;
 use crate::render::{print_near_error, quote};
 
 pub use aven_core::projects::normalize_key;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use aven_core::test_support::create_project_in_workspace;
 
 pub async fn resolve_project_key_for_add_with_database(
@@ -43,7 +43,7 @@ pub async fn resolve_project_key_for_add_with_database(
 }
 
 /// Resolve browsing scope without changing ref-based commands or task creation.
-pub(crate) async fn browsing_project(
+pub async fn browsing_project(
     database: &Database,
     workspace: &crate::workspaces::Workspace,
     routing: &crate::routing::InvocationRouting<'_>,
@@ -94,7 +94,7 @@ pub async fn inferred_project_key_for_add_with_database(
     inferred_project_key_for_add_with_routing(database, workspace, &routing).await
 }
 
-pub(crate) async fn inferred_project_key_for_add_with_routing(
+pub async fn inferred_project_key_for_add_with_routing(
     database: &Database,
     workspace: &crate::workspaces::Workspace,
     routing: &crate::routing::InvocationRouting<'_>,
@@ -202,7 +202,7 @@ fn matching_path(cwd: &Path, root: &Path, path: &Path) -> Option<PathMatch> {
     None
 }
 
-pub(crate) fn git_root(path: &Path) -> Result<Option<PathBuf>> {
+pub fn git_root(path: &Path) -> Result<Option<PathBuf>> {
     let Some(root) = path
         .ancestors()
         .find(|ancestor| ancestor.join(".git").exists())

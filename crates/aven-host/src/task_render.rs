@@ -3,21 +3,21 @@ mod json;
 mod markdown;
 mod text;
 
-#[cfg(test)]
-pub(crate) use attachments::attachment_placeholder;
-#[cfg(test)]
-pub(crate) use attachments::attachment_unavailable_placeholder;
-pub(crate) use attachments::{
+#[cfg(any(test, feature = "test-support"))]
+pub use attachments::attachment_placeholder;
+#[cfg(any(test, feature = "test-support"))]
+pub use attachments::attachment_unavailable_placeholder;
+pub use attachments::{
     AttachmentMetadataJson, attachment_metadata_json, attachment_state_placeholder,
     human_file_size, print_attachment_section,
 };
-pub(crate) use json::{
+pub use json::{
     MetadataDetailJson, TaskConflictReport, TaskEpicLinkJson, TaskLineJson, TaskRecurrenceJson,
     TaskRelatedJson, task_dependency_summary_json, task_epic_link_json, task_full_json,
     task_line_json_item, task_recurrence_json, task_related_json,
 };
-pub(crate) use markdown::{gist_description, gist_filename, task_markdown};
-pub(crate) use text::{
+pub use markdown::{gist_description, gist_filename, task_markdown};
+pub use text::{
     print_full_task_report, print_task_dependency_summary, print_task_line_item, task_line_text,
 };
 
@@ -32,15 +32,15 @@ use attachments::attachment_availability;
 #[cfg(test)]
 use markdown::{markdown_authored_body, markdown_code, prepare_authored_markdown};
 
-pub(crate) struct TaskFullReport {
-    pub(crate) workspace_key: String,
-    pub(crate) workspace_name: String,
-    pub(crate) detail: crate::query::TaskDetail,
-    pub(crate) conflicts: Vec<TaskConflictReport>,
-    pub(crate) attachments: Vec<AttachmentMetadataJson>,
+pub struct TaskFullReport {
+    pub workspace_key: String,
+    pub workspace_name: String,
+    pub detail: crate::query::TaskDetail,
+    pub conflicts: Vec<TaskConflictReport>,
+    pub attachments: Vec<AttachmentMetadataJson>,
 }
 
-pub(crate) async fn build_full_task_report(
+pub async fn build_full_task_report(
     database: &Database,
     workspace: &Workspace,
     blob_dir: &std::path::Path,

@@ -3,7 +3,7 @@ use crate::render::{KvLine, print_multiline_block, quote, yes_no};
 
 use super::TaskFullReport;
 
-pub(crate) fn task_line_text(item: &TaskListItem) -> String {
+pub fn task_line_text(item: &TaskListItem) -> String {
     let labels = item.labels.join(",");
     if let Some(group) = &item.recurrence_group {
         let counts = &group.counts;
@@ -74,11 +74,11 @@ pub(crate) fn task_line_text(item: &TaskListItem) -> String {
         .finish()
 }
 
-pub(crate) fn print_task_line_item(item: &TaskListItem) {
+pub fn print_task_line_item(item: &TaskListItem) {
     println!("{}", task_line_text(item));
 }
 
-pub(crate) fn print_full_task_report(report: &TaskFullReport) {
+pub fn print_full_task_report(report: &TaskFullReport) {
     let detail = &report.detail;
     print_task_line_item(&detail.item);
     let task = &detail.item.task;
@@ -132,7 +132,7 @@ pub(crate) fn print_full_task_report(report: &TaskFullReport) {
     }
 }
 
-pub(crate) fn print_task_dependency_summary(summary: &TaskDependencySummary) {
+pub fn print_task_dependency_summary(summary: &TaskDependencySummary) {
     print_dependency_section("depends_on", &summary.depends_on);
     print_dependency_section("blocks", &summary.blocks);
 }

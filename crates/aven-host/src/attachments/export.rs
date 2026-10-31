@@ -35,27 +35,27 @@ impl Drop for LeaseGuard {
     }
 }
 
-pub(crate) struct LeasedImageExport {
+pub struct LeasedImageExport {
     directory: Option<tempfile::TempDir>,
     path: PathBuf,
     lease: LeaseGuard,
 }
 
 impl LeasedImageExport {
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub(crate) fn into_directory(mut self) -> tempfile::TempDir {
+    pub fn into_directory(mut self) -> tempfile::TempDir {
         self.directory.take().expect("image export directory")
     }
 
-    pub(crate) async fn release(&mut self) -> Result<()> {
+    pub async fn release(&mut self) -> Result<()> {
         self.lease.release().await
     }
 }
 
-pub(crate) async fn lease_image_export(
+pub async fn lease_image_export(
     database: &Database,
     workspace: &Workspace,
     blob_dir: &Path,

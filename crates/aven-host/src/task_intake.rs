@@ -43,13 +43,13 @@ struct ParsedTaskPayload {
     repeat_start_on: Option<String>,
 }
 
-pub(crate) struct TaskIntakeResult {
-    pub(crate) task: TaskDraft,
-    pub(crate) recurrence: Option<aven_core::recurrence::RecurrenceSchedule>,
+pub struct TaskIntakeResult {
+    pub task: TaskDraft,
+    pub recurrence: Option<aven_core::recurrence::RecurrenceSchedule>,
 }
 
 impl TaskIntakeResult {
-    pub(crate) fn into_recurrence_draft(self) -> Option<RecurrenceSeriesDraft> {
+    pub fn into_recurrence_draft(self) -> Option<RecurrenceSeriesDraft> {
         let schedule = self.recurrence?;
         Some(RecurrenceSeriesDraft {
             title: self.task.title,
@@ -64,16 +64,16 @@ impl TaskIntakeResult {
     }
 }
 
-pub(crate) struct TaskIntakeContext {
-    pub(crate) workspace_id: WorkspaceId,
-    pub(crate) fixed_project: Option<String>,
-    pub(crate) inferred_project: Option<String>,
-    pub(crate) projects: Vec<ProjectListItem>,
-    pub(crate) labels: Vec<String>,
+pub struct TaskIntakeContext {
+    pub workspace_id: WorkspaceId,
+    pub fixed_project: Option<String>,
+    pub inferred_project: Option<String>,
+    pub projects: Vec<ProjectListItem>,
+    pub labels: Vec<String>,
 }
 
 impl TaskIntakeContext {
-    pub(crate) async fn load_with_database(
+    pub async fn load_with_database(
         database: &Database,
         workspace: &Workspace,
         project: Option<&str>,
@@ -87,7 +87,7 @@ impl TaskIntakeContext {
         Self::load_with_routing(database, workspace, project, &routing).await
     }
 
-    pub(crate) async fn load_with_routing(
+    pub async fn load_with_routing(
         database: &Database,
         workspace: &Workspace,
         project: Option<&str>,
@@ -121,7 +121,7 @@ impl TaskIntakeContext {
     }
 }
 
-pub(crate) async fn run_task_intake_command(
+pub async fn run_task_intake_command(
     config: &TaskIntakeConfig,
     context: &TaskIntakeContext,
     input: &str,
@@ -261,7 +261,7 @@ fn task_intake_labels_prompt(context: &TaskIntakeContext) -> String {
     }
 }
 
-pub(crate) async fn parsed_output_to_result_with_database(
+pub async fn parsed_output_to_result_with_database(
     database: &Database,
     context: &TaskIntakeContext,
     output: &str,

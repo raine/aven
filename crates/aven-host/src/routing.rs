@@ -7,15 +7,15 @@ use crate::config::AppConfig;
 
 /// Invocation inputs shared by workspace selection and project inference.
 /// Path discovery is lazy so explicit arguments bypass unused path failures.
-pub(crate) struct InvocationRouting<'a> {
-    pub(crate) config: &'a AppConfig,
+pub struct InvocationRouting<'a> {
+    pub config: &'a AppConfig,
     invocation_cwd: std::io::Result<PathBuf>,
     cwd: OnceLock<Result<PathBuf>>,
     git_root: OnceLock<Result<Option<PathBuf>>>,
 }
 
 impl<'a> InvocationRouting<'a> {
-    pub(crate) fn new(config: &'a AppConfig) -> Self {
+    pub fn new(config: &'a AppConfig) -> Self {
         Self {
             config,
             invocation_cwd: std::env::current_dir(),
@@ -24,21 +24,21 @@ impl<'a> InvocationRouting<'a> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn at(config: &'a AppConfig, cwd: PathBuf) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn at(config: &'a AppConfig, cwd: PathBuf) -> Self {
         Self {
             invocation_cwd: Ok(cwd),
             ..Self::new(config)
         }
     }
 
-    pub(crate) fn invocation_cwd(&self) -> Result<&Path> {
+    pub fn invocation_cwd(&self) -> Result<&Path> {
         self.invocation_cwd
             .as_deref()
             .map_err(|error| anyhow!("{error}"))
     }
 
-    pub(crate) fn cwd(&self) -> Result<&Path> {
+    pub fn cwd(&self) -> Result<&Path> {
         self.cwd
             .get_or_init(|| {
                 std::fs::canonicalize(self.invocation_cwd()?).context("could not resolve cwd")
@@ -48,7 +48,7 @@ impl<'a> InvocationRouting<'a> {
             .map_err(|error| anyhow!("{error:#}"))
     }
 
-    pub(crate) fn git_root(&self) -> Result<Option<&Path>> {
+    pub fn git_root(&self) -> Result<Option<&Path>> {
         self.git_root
             .get_or_init(|| crate::projects::git_root(self.cwd()?))
             .as_ref()

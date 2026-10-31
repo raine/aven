@@ -11,12 +11,12 @@ use super::decode::{decode_first_frame, validate_image_blocking};
 use super::storage::{object_path, sha256_hex};
 use super::validation::validate_sha256;
 
-pub(crate) const PREVIEW_LONG_EDGE: u32 = 1_200;
-pub(crate) const MAX_PREVIEW_PIXELS: u64 = 1_000_000;
-pub(crate) const MAX_PREVIEW_BYTES: usize = 5 * 1024 * 1024;
-pub(crate) const PREVIEW_PROFILE: &str = "v1-edge1200-pixels1000000-png";
+pub const PREVIEW_LONG_EDGE: u32 = 1_200;
+pub const MAX_PREVIEW_PIXELS: u64 = 1_000_000;
+pub const MAX_PREVIEW_BYTES: usize = 5 * 1024 * 1024;
+pub const PREVIEW_PROFILE: &str = "v1-edge1200-pixels1000000-png";
 
-pub(crate) fn cached_preview_path(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
+pub fn cached_preview_path(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
     validate_sha256(source_hash)?;
     Ok(blob_dir
         .join("cache")
@@ -25,14 +25,14 @@ pub(crate) fn cached_preview_path(blob_dir: &Path, source_hash: &str) -> Result<
         .join(format!("{source_hash}.png")))
 }
 
-#[cfg(test)]
-pub(crate) async fn ensure_preview(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
+#[cfg(any(test, feature = "test-support"))]
+pub async fn ensure_preview(blob_dir: &Path, source_hash: &str) -> Result<PathBuf> {
     let blob_dir = blob_dir.to_path_buf();
     let source_hash = source_hash.to_string();
     blocking::run_preview(move || ensure_preview_blocking(&blob_dir, &source_hash)).await
 }
 
-pub(crate) async fn load_preview_png(
+pub async fn load_preview_png(
     blob_dir: &Path,
     source_hash: &str,
     preview_quota_bytes: u64,

@@ -9,7 +9,7 @@ use crate::attachments::storage::object_path;
 use crate::workspaces::Workspace;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum AttachmentSaveError {
+pub enum AttachmentSaveError {
     Invalidated,
     BlobUnavailable,
     StorageUnavailable,
@@ -19,12 +19,12 @@ pub(crate) enum AttachmentSaveError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct AttachmentSaveOutcome {
-    pub(crate) destination: PathBuf,
-    pub(crate) lease_release_failed: bool,
+pub struct AttachmentSaveOutcome {
+    pub destination: PathBuf,
+    pub lease_release_failed: bool,
 }
 
-pub(crate) async fn save_attachment(
+pub async fn save_attachment(
     database: &Database,
     workspace: &Workspace,
     blob_dir: &Path,

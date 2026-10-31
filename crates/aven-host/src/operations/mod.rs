@@ -1,20 +1,20 @@
 mod config;
 mod projects;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use aven_core::operations::attachment_read_items_by_task;
 pub use aven_core::operations::{
     AttachmentAddInput, ConflictDetail, ConflictListItem, TaskAttachmentAddInput,
     TaskCreationOptions, TaskCreationUndo, TaskDraft, TaskOutcome, TaskUpdate,
     local_object_missing,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use aven_core::test_support::{
     add_task_dependency, add_task_to_epic, create_label_operation, set_task_deleted, update_task,
     update_task_labels_in_workspace,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub async fn create_task(
     conn: &mut sqlx::SqliteConnection,
     workspace: &crate::workspaces::Workspace,

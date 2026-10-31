@@ -396,7 +396,7 @@ fn render_managed_entries(entries: &[ManagedProjectOverride]) -> Vec<String> {
     lines
 }
 
-pub(crate) fn yaml_scalar(value: &str) -> String {
+pub fn yaml_scalar(value: &str) -> String {
     // Scalars are spliced into fixed-indent lines, so block styles are not valid here.
     let mut options = serde_saphyr::SerializerOptions::default();
     options.prefer_block_scalars = false;

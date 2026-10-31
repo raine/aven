@@ -99,3 +99,19 @@ fn template_is_written_once_and_loads_as_defaults_or_uncommented() {
     assert_eq!(config.attachments.grace_days, 30);
     assert_eq!(config.attachments.workspace_quota_bytes, 10737418240);
 }
+
+#[cfg(unix)]
+#[test]
+fn template_leaves_a_config_symlink_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, target) in [
+        ("kept", dir.path().join("source.yaml")),
+        ("dangling", dir.path().join("missing.yaml")),
+    ] {
+        std::fs::write(dir.path().join("source.yaml"), "# private\n").unwrap();
+        let path = dir.path().join(name);
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(!write_template_if_missing(&path).unwrap());
+        assert_eq!(std::fs::read_link(&path).unwrap(), target);
+    }
+}

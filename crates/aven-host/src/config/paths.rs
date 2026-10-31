@@ -11,7 +11,7 @@ pub fn expand_tilde(path: &Path) -> Result<PathBuf> {
     expand_tilde_from(path, dirs::home_dir().as_deref())
 }
 
-pub(crate) fn expand_tilde_from(path: &Path, home: Option<&Path>) -> Result<PathBuf> {
+pub fn expand_tilde_from(path: &Path, home: Option<&Path>) -> Result<PathBuf> {
     let mut components = path.components();
     if !matches!(components.next(), Some(Component::Normal(component)) if component == "~") {
         return Ok(path.to_path_buf());

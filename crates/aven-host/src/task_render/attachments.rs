@@ -10,7 +10,7 @@ pub(super) fn attachment_availability(attachment: &AttachmentMetadataJson) -> &'
         AttachmentBytesState::Unavailable => "Unavailable",
     }
 }
-pub(crate) fn print_attachment_section(attachments: &[AttachmentMetadataJson]) {
+pub fn print_attachment_section(attachments: &[AttachmentMetadataJson]) {
     let live = attachments
         .iter()
         .filter(|attachment| !attachment.deleted)
@@ -24,7 +24,7 @@ pub(crate) fn print_attachment_section(attachments: &[AttachmentMetadataJson]) {
     }
 }
 
-pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson) {
+pub fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson) {
     let line = KvLine::new("attachment")
         .field("attachment_id", &attachment.attachment_id)
         .field("media_type", &attachment.media_type)
@@ -35,7 +35,7 @@ pub(crate) fn print_attachment_metadata_line(attachment: &AttachmentMetadataJson
 }
 
 #[allow(dead_code)]
-pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
+pub fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> String {
     let placeholder = attachment_state_placeholder(attachment);
     let filename = attachment
         .filename
@@ -50,7 +50,7 @@ pub(crate) fn attachment_placeholder(attachment: &AttachmentMetadataJson) -> Str
     format!("{placeholder}{filename}{dimensions} · {file_size}")
 }
 
-pub(crate) fn attachment_state_placeholder(attachment: &AttachmentMetadataJson) -> &'static str {
+pub fn attachment_state_placeholder(attachment: &AttachmentMetadataJson) -> &'static str {
     if attachment.deleted {
         "[image: deleted attachment]"
     } else {
@@ -62,7 +62,7 @@ pub(crate) fn attachment_state_placeholder(attachment: &AttachmentMetadataJson) 
     }
 }
 
-pub(crate) fn human_file_size(byte_size: i64) -> String {
+pub fn human_file_size(byte_size: i64) -> String {
     const KIB: i64 = 1024;
     const MIB: i64 = KIB * 1024;
 
@@ -75,11 +75,11 @@ pub(crate) fn human_file_size(byte_size: i64) -> String {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn attachment_unavailable_placeholder(_attachment: &AttachmentMetadataJson) -> String {
+#[cfg(any(test, feature = "test-support"))]
+pub fn attachment_unavailable_placeholder(_attachment: &AttachmentMetadataJson) -> String {
     "[image: unavailable bytes]".to_string()
 }
-pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMetadataJson {
+pub fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMetadataJson {
     AttachmentMetadataJson {
         attachment_id: item.attachment.attachment_id,
         task_id: item.attachment.task_id.to_string(),
@@ -98,4 +98,4 @@ pub(crate) fn attachment_metadata_json(item: AttachmentReadItem) -> AttachmentMe
     }
 }
 
-pub(crate) type AttachmentMetadataJson = crate::query::AttachmentMetadata;
+pub type AttachmentMetadataJson = crate::query::AttachmentMetadata;

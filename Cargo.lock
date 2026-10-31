@@ -292,12 +292,12 @@ dependencies = [
  "anyhow",
  "aven-conformance",
  "aven-core",
+ "aven-host",
  "aven-protocol",
  "axum",
  "base64",
  "chacha20poly1305",
  "chrono",
- "chrono-tz",
  "clap",
  "clap_complete",
  "core-foundation",
@@ -308,7 +308,6 @@ dependencies = [
  "hex",
  "hyper",
  "hyper-util",
- "iana-time-zone",
  "image",
  "libc",
  "linkify",
@@ -329,7 +328,6 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "sha2 0.11.0",
- "similar",
  "sqlx",
  "tar",
  "tempfile",
@@ -386,6 +384,27 @@ dependencies = [
  "url",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "aven-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aven-core",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "dirs",
+ "iana-time-zone",
+ "image",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "similar",
+ "sqlx",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

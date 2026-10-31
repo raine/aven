@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
+members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance"]
 # Keeps GPUI out of the root lockfile, CI, Nix and cargo-deny.
 exclude = ["crates/aven-desktop"]
 resolver = "3"
@@ -48,6 +48,7 @@ exclude = ["docs/", "macos/", "meta/"]
 [dependencies]
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
 aven-core = { path = "crates/aven-core", version = "=0.1.37" }
+aven-host = { path = "crates/aven-host", version = "=0.1.0" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
@@ -56,7 +57,6 @@ hex.workspace = true
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["http1", "server", "server-graceful", "service", "tokio"] }
 image.workspace = true
-iana-time-zone = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rustls = { version = "0.23.46", default-features = false }
 flate2.workspace = true
@@ -69,12 +69,10 @@ tempfile.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
-chrono-tz.workspace = true
 crossterm = "0.29"
 pulldown-cmark = "0.13"
 ratatui = "0.30"
 sha2.workspace = true
-similar = "3.1"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tokio = { workspace = true, features = ["io-util", "process", "rt-multi-thread", "signal", "net"] }
 unicode-width = "0.2"
@@ -106,6 +104,7 @@ notify-rust = "4"
 aven-conformance = { path = "crates/aven-conformance" }
 tokio = { workspace = true, features = ["test-util"] }
 aven-core = { path = "crates/aven-core", version = "=0.1.37", features = ["test-support"] }
+aven-host = { path = "crates/aven-host", version = "=0.1.0", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 zstd.workspace = true
 

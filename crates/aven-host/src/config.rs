@@ -15,12 +15,12 @@ mod paths;
 mod test_support;
 mod tui;
 
-pub(crate) use custom_commands::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS;
+pub use custom_commands::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS;
 pub use custom_commands::{
     CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
     CustomTuiCommandTarget, TuiCommandRules, install_tui_command_rules,
 };
-pub(crate) use paths::expand_tilde_from;
+pub use paths::expand_tilde_from;
 pub use paths::{
     config_dir_path, config_file_path, debug_db_path_from_env, default_db_path,
     default_server_data_path, expand_tilde, resolve_blob_dir, resolve_db_path,
@@ -135,7 +135,7 @@ impl Default for AttachmentLifecycleConfig {
 }
 
 impl AttachmentLifecycleConfig {
-    pub(crate) fn policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
+    pub fn policy(self) -> crate::attachments::lifecycle::LifecyclePolicy {
         crate::attachments::lifecycle::LifecyclePolicy {
             grace: std::time::Duration::from_secs(self.grace_days.saturating_mul(24 * 60 * 60)),
             quota_bytes: self.quota_bytes,
@@ -164,11 +164,11 @@ pub enum ImageOptimizationConfig {
 }
 
 impl ImageOptimizationConfig {
-    pub(crate) fn optimizes_pasted_images(self) -> bool {
+    pub fn optimizes_pasted_images(self) -> bool {
         matches!(self, Self::Paste | Self::On)
     }
 
-    pub(crate) fn optimizes_file_attachments(self) -> bool {
+    pub fn optimizes_file_attachments(self) -> bool {
         matches!(self, Self::On)
     }
 }
@@ -246,7 +246,7 @@ pub struct SyncConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(skip)]
-    pub(crate) disable_override: bool,
+    pub disable_override: bool,
     pub interval_seconds: Option<u64>,
     /// Terminal glyphs for device invitation QR codes.
     #[serde(default)]
@@ -312,7 +312,7 @@ impl Default for RemindersConfig {
 }
 
 impl RemindersConfig {
-    pub(crate) fn digest_time(&self) -> Result<chrono::NaiveTime> {
+    pub fn digest_time(&self) -> Result<chrono::NaiveTime> {
         chrono::NaiveTime::parse_from_str(&self.digest_time, "%H:%M").with_context(|| {
             format!(
                 "reminders.digest_time must be HH:MM, got {:?}",
@@ -401,20 +401,20 @@ impl AppConfig {
             .max(1)
     }
 
-    pub(crate) fn sync_is_allowed(&self) -> bool {
+    pub fn sync_is_allowed(&self) -> bool {
         !self.sync.disable_override
     }
 
-    pub(crate) fn automatic_sync_is_enabled(&self) -> bool {
+    pub fn automatic_sync_is_enabled(&self) -> bool {
         self.sync.enabled && self.sync_is_allowed()
     }
 
     /// The daemon runs when it has sync or reminders to do.
-    pub(crate) fn daemon_has_work(&self) -> bool {
+    pub fn daemon_has_work(&self) -> bool {
         self.automatic_sync_is_enabled() || self.reminders.enabled
     }
 
-    pub(crate) fn ensure_daemon_has_work(&self) -> Result<()> {
+    pub fn ensure_daemon_has_work(&self) -> Result<()> {
         if !self.daemon_has_work() {
             if self.sync.enabled {
                 self.ensure_sync_allowed()?;
@@ -426,7 +426,7 @@ impl AppConfig {
         Ok(())
     }
 
-    pub(crate) fn ensure_sync_allowed(&self) -> Result<()> {
+    pub fn ensure_sync_allowed(&self) -> Result<()> {
         if !self.sync_is_allowed() {
             return Err(anyhow::anyhow!("error sync-disabled-by-environment").context(
                 "error sync-disabled hint=\"sync is disabled by AVEN_SYNC_DISABLED; unset it to allow sync\"",
@@ -491,7 +491,7 @@ impl std::fmt::Display for ConfigWriteRefusal {
 impl std::error::Error for ConfigWriteRefusal {}
 
 /// Present the filesystem reason before operation-specific recovery context.
-pub(crate) fn config_write_refusal_message(error: &anyhow::Error) -> Option<String> {
+pub fn config_write_refusal_message(error: &anyhow::Error) -> Option<String> {
     let refusal = error.downcast_ref::<ConfigWriteRefusal>()?;
     let guidance = error
         .chain()

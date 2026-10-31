@@ -6,7 +6,7 @@ use crate::query::{TaskDependencyLink, TaskDependencySummary, TaskListItem};
 
 use super::{AttachmentMetadataJson, TaskFullReport};
 
-pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
+pub fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
     let detail = &report.detail;
     let task = &detail.item.task;
     TaskFullJson {
@@ -48,64 +48,64 @@ pub(crate) fn task_full_json(report: &TaskFullReport) -> TaskFullJson {
 // --- JSON DTOs ---
 
 #[derive(Serialize)]
-pub(crate) struct TaskEpicLinkJson {
-    pub(crate) r#ref: String,
-    pub(crate) id: String,
-    pub(crate) title: String,
-    pub(crate) status: String,
-    pub(crate) priority: String,
-    pub(crate) open: bool,
+pub struct TaskEpicLinkJson {
+    pub r#ref: String,
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub open: bool,
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskRecurrenceJson {
-    pub(crate) series_ref: String,
-    pub(crate) series_id: String,
-    pub(crate) slot_on: String,
-    pub(crate) rule: String,
-    pub(crate) timezone: String,
-    pub(crate) lifecycle: String,
-    pub(crate) outcome: Option<String>,
-    pub(crate) projection_state: String,
+pub struct TaskRecurrenceJson {
+    pub series_ref: String,
+    pub series_id: String,
+    pub slot_on: String,
+    pub rule: String,
+    pub timezone: String,
+    pub lifecycle: String,
+    pub outcome: Option<String>,
+    pub projection_state: String,
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskRecurrenceGroupJson {
-    pub(crate) series_ref: String,
-    pub(crate) series_id: String,
-    pub(crate) completed: usize,
-    pub(crate) skipped: usize,
-    pub(crate) missed: usize,
-    pub(crate) pause_intervals: usize,
-    pub(crate) latest_slot_on: Option<String>,
-    pub(crate) latest_outcome: Option<String>,
+pub struct TaskRecurrenceGroupJson {
+    pub series_ref: String,
+    pub series_id: String,
+    pub completed: usize,
+    pub skipped: usize,
+    pub missed: usize,
+    pub pause_intervals: usize,
+    pub latest_slot_on: Option<String>,
+    pub latest_outcome: Option<String>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskLineJson {
-    pub(crate) r#ref: String,
-    pub(crate) id: String,
-    pub(crate) title: String,
-    pub(crate) project: String,
-    pub(crate) status: String,
-    pub(crate) priority: String,
-    pub(crate) labels: Vec<String>,
-    pub(crate) deleted: bool,
-    pub(crate) is_epic: bool,
-    pub(crate) epic_parent: Option<TaskEpicLinkJson>,
-    pub(crate) epic_children: Vec<TaskEpicLinkJson>,
-    pub(crate) has_conflict: bool,
-    pub(crate) blocked_by: i64,
-    pub(crate) blocks: i64,
-    pub(crate) available_at: String,
-    pub(crate) due_on: String,
-    pub(crate) recurrence: Option<TaskRecurrenceJson>,
-    pub(crate) recurrence_group: Option<TaskRecurrenceGroupJson>,
-    pub(crate) created_at: String,
-    pub(crate) updated_at: String,
+pub struct TaskLineJson {
+    pub r#ref: String,
+    pub id: String,
+    pub title: String,
+    pub project: String,
+    pub status: String,
+    pub priority: String,
+    pub labels: Vec<String>,
+    pub deleted: bool,
+    pub is_epic: bool,
+    pub epic_parent: Option<TaskEpicLinkJson>,
+    pub epic_children: Vec<TaskEpicLinkJson>,
+    pub has_conflict: bool,
+    pub blocked_by: i64,
+    pub blocks: i64,
+    pub available_at: String,
+    pub due_on: String,
+    pub recurrence: Option<TaskRecurrenceJson>,
+    pub recurrence_group: Option<TaskRecurrenceGroupJson>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
-pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
+pub fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
     TaskLineJson {
         r#ref: item
             .recurrence_group
@@ -141,9 +141,7 @@ pub(crate) fn task_line_json_item(item: &TaskListItem) -> TaskLineJson {
     }
 }
 
-pub(crate) fn task_recurrence_json(
-    value: &crate::query::TaskRecurrenceSummary,
-) -> TaskRecurrenceJson {
+pub fn task_recurrence_json(value: &crate::query::TaskRecurrenceSummary) -> TaskRecurrenceJson {
     TaskRecurrenceJson {
         series_ref: value.series_ref.clone(),
         series_id: value.series_id.to_string(),
@@ -156,7 +154,7 @@ pub(crate) fn task_recurrence_json(
     }
 }
 
-pub(crate) fn task_recurrence_group_json(
+pub fn task_recurrence_group_json(
     value: &crate::query::RecurrenceTaskGroup,
 ) -> TaskRecurrenceGroupJson {
     TaskRecurrenceGroupJson {
@@ -174,7 +172,7 @@ pub(crate) fn task_recurrence_group_json(
     }
 }
 
-pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson {
+pub fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson {
     TaskEpicLinkJson {
         r#ref: link.display_ref.clone(),
         id: link.task_id.to_string(),
@@ -186,17 +184,17 @@ pub(crate) fn task_epic_link_json(link: &TaskDependencyLink) -> TaskEpicLinkJson
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskRelatedJson {
-    pub(crate) task_id: String,
-    pub(crate) display_ref: String,
-    pub(crate) title: String,
-    pub(crate) status: String,
-    pub(crate) priority: String,
-    pub(crate) deleted: bool,
-    pub(crate) linked_at: String,
+pub struct TaskRelatedJson {
+    pub task_id: String,
+    pub display_ref: String,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub deleted: bool,
+    pub linked_at: String,
 }
 
-pub(crate) fn task_related_json(link: &crate::query::TaskRelatedLink) -> TaskRelatedJson {
+pub fn task_related_json(link: &crate::query::TaskRelatedLink) -> TaskRelatedJson {
     TaskRelatedJson {
         task_id: link.task_id.to_string(),
         display_ref: link.display_ref.clone(),
@@ -209,67 +207,65 @@ pub(crate) fn task_related_json(link: &crate::query::TaskRelatedLink) -> TaskRel
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskFullJson {
-    pub(crate) task: TaskLineJson,
-    pub(crate) project_prefix: String,
-    pub(crate) description: String,
-    pub(crate) metadata: BTreeMap<String, String>,
-    pub(crate) metadata_details: Vec<MetadataDetailJson>,
-    pub(crate) dependencies: TaskDependencySummaryJson,
-    pub(crate) related: Vec<TaskRelatedJson>,
-    pub(crate) notes: Vec<TaskNoteJson>,
-    pub(crate) conflicts: Vec<TaskConflictReport>,
-    pub(crate) attachments: Vec<AttachmentMetadataJson>,
+pub struct TaskFullJson {
+    pub task: TaskLineJson,
+    pub project_prefix: String,
+    pub description: String,
+    pub metadata: BTreeMap<String, String>,
+    pub metadata_details: Vec<MetadataDetailJson>,
+    pub dependencies: TaskDependencySummaryJson,
+    pub related: Vec<TaskRelatedJson>,
+    pub notes: Vec<TaskNoteJson>,
+    pub conflicts: Vec<TaskConflictReport>,
+    pub attachments: Vec<AttachmentMetadataJson>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct MetadataDetailJson {
-    pub(crate) field_id: String,
-    pub(crate) key: String,
-    pub(crate) value: String,
+pub struct MetadataDetailJson {
+    pub field_id: String,
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskNoteJson {
-    pub(crate) id: String,
-    pub(crate) body: String,
-    pub(crate) created_at: String,
+pub struct TaskNoteJson {
+    pub id: String,
+    pub body: String,
+    pub created_at: String,
 }
 
 #[derive(Clone, Serialize)]
-pub(crate) struct TaskConflictReport {
-    pub(crate) field: String,
-    pub(crate) variant_a: String,
-    pub(crate) local_value: String,
-    pub(crate) variant_b: String,
-    pub(crate) remote_value: String,
+pub struct TaskConflictReport {
+    pub field: String,
+    pub variant_a: String,
+    pub local_value: String,
+    pub variant_b: String,
+    pub remote_value: String,
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskDependencySummaryJson {
-    pub(crate) depends_on_open: i64,
-    pub(crate) depends_on_total: i64,
-    pub(crate) blocks_open: i64,
-    pub(crate) blocks_total: i64,
-    pub(crate) depends_on: Vec<TaskDependencyItemJson>,
-    pub(crate) blocks: Vec<TaskDependencyItemJson>,
+pub struct TaskDependencySummaryJson {
+    pub depends_on_open: i64,
+    pub depends_on_total: i64,
+    pub blocks_open: i64,
+    pub blocks_total: i64,
+    pub depends_on: Vec<TaskDependencyItemJson>,
+    pub blocks: Vec<TaskDependencyItemJson>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct TaskDependencyItemJson {
-    pub(crate) r#ref: String,
-    pub(crate) id: String,
-    pub(crate) title: String,
-    pub(crate) status: String,
-    pub(crate) priority: String,
-    pub(crate) deleted: bool,
-    pub(crate) unresolved: bool,
-    pub(crate) created_at: String,
+pub struct TaskDependencyItemJson {
+    pub r#ref: String,
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub deleted: bool,
+    pub unresolved: bool,
+    pub created_at: String,
 }
 
-pub(crate) fn task_dependency_summary_json(
-    summary: &TaskDependencySummary,
-) -> TaskDependencySummaryJson {
+pub fn task_dependency_summary_json(summary: &TaskDependencySummary) -> TaskDependencySummaryJson {
     TaskDependencySummaryJson {
         depends_on_open: summary.depends_on.iter().filter(|d| d.unresolved).count() as i64,
         depends_on_total: summary.depends_on.len() as i64,

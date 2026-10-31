@@ -4,7 +4,7 @@ use crate::query::TaskDependencyLink;
 
 use super::TaskFullReport;
 
-pub(crate) fn task_markdown(report: &TaskFullReport) -> String {
+pub fn task_markdown(report: &TaskFullReport) -> String {
     let detail = &report.detail;
     let item = &detail.item;
     let task = &item.task;
@@ -604,11 +604,11 @@ fn markdown_literal_block(output: &mut String, value: &str) {
     output.push('\n');
 }
 
-pub(crate) fn gist_filename(report: &TaskFullReport) -> String {
+pub fn gist_filename(report: &TaskFullReport) -> String {
     format!("{}.md", report.detail.item.display_ref)
 }
 
-pub(crate) fn gist_description(report: &TaskFullReport) -> String {
+pub fn gist_description(report: &TaskFullReport) -> String {
     format!(
         "{} {}",
         report.detail.item.display_ref,

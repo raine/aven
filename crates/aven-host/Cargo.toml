@@ -1,0 +1,34 @@
+[package]
+name = "aven-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+authors = ["Raine"]
+description = "Desktop host logic shared by the Aven CLI, TUI and desktop app"
+repository = "https://github.com/raine/aven"
+license = "MIT"
+
+[features]
+test-support = ["aven-core/test-support", "dep:sqlx"]
+
+[dependencies]
+aven-core = { path = "../aven-core", version = "=0.1.37" }
+anyhow.workspace = true
+clap = "4.5"
+chrono.workspace = true
+chrono-tz.workspace = true
+dirs = "6.0"
+iana-time-zone = "0.1"
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr = "1.3"
+sqlx = { workspace = true, features = ["sqlite"], optional = true }
+similar = "3.1"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "rt-multi-thread", "net"] }
+
+[dev-dependencies]
+aven-core = { path = "../aven-core", version = "=0.1.37", features = ["test-support"] }
+sqlx = { workspace = true, features = ["sqlite"] }
+tokio = { workspace = true, features = ["test-util"] }
