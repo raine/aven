@@ -40,7 +40,7 @@ import '../styles/privacy.css';
         <header class="privacy-heading">
           <p class="eyebrow">Your data</p>
           <h1>Privacy policy</h1>
-          <p class="privacy-updated">Last updated: <time datetime="2026-10-29">October 29, 2026</time></p>
+          <p class="privacy-updated">Last updated: <time datetime="2026-10-31">October 31, 2026</time></p>
           <p class="privacy-intro">Your tasks stay on your devices and, if you choose to sync, are encrypted before they reach a server. Task content leaves your device readable only when you use Tell Aven or a cloud voice input provider, and only after you agree. Aven includes no analytics, advertising, or automatic crash-reporting SDK.</p>
         </header>
 
@@ -67,19 +67,19 @@ import '../styles/privacy.css';
 
           <section aria-labelledby="tell-aven">
             <h2 id="tell-aven">Tell Aven</h2>
-            <p>Tell Aven, the iPhone assistant, sends readable task content to an AI provider. End-to-end encrypted sync does not protect these requests. Nothing is sent until you agree on Tell Aven's first page, and nothing is sent while you do not use it. Pairing a different server, or a change to the provider or its disclosed retention, asks again. Declining leaves the rest of the app working.</p>
+            <p>Tell Aven, the iPhone and Android assistant, sends readable task content to an AI provider. End-to-end encrypted sync does not protect these requests. Nothing is sent until you agree on Tell Aven's first page, and nothing is sent while you do not use it. Pairing a different server, or a change to the provider or its disclosed retention, asks again. Declining leaves the rest of the app working.</p>
             <p>A request contains what you type or dictate, the conversation so far, photos you add, and the task content the assistant reads to answer: titles, descriptions, notes, labels, and project and workspace names. Photos are sent as a downscaled copy without metadata such as location. Text and photos that have been sent cannot be recalled.</p>
             <p><strong>On Aven Cloud</strong>, requests go to Aven Cloud and then to OpenAI. Aven Cloud passes requests to OpenAI without storing their content, photos, or responses, and its logs do not record them. To enforce a monthly usage allowance, it records each request's ID, time, token counts, and cost against your account; these records are deleted with your account. OpenAI receives no account identifier. OpenAI does not use API data to train models by default, and keeps API data under its standard retention, which includes abuse-monitoring logs kept for up to 30 days, subject to exceptions described in <a href="https://openai.com/policies/privacy-policy/">OpenAI's policies</a>.</p>
             <p><strong>On a server you operate</strong>, requests go to that server and on to the AI provider its administrator configures. The server forwards requests without storing them; the provider's own policy applies.</p>
-            <p>Conversations are kept on your iPhone, excluded from device backups, limited to recent chats, and deleted when you pair a different server.</p>
+            <p>Conversations are kept on your phone, excluded from device backups, limited to recent chats, and deleted when you pair a different server.</p>
           </section>
 
           <section aria-labelledby="voice">
             <h2 id="voice">Voice input</h2>
-            <p>The iPhone app transcribes voice input with one provider at a time, chosen in Settings. Apple transcription runs on the device and sends no audio. The other providers receive your recording, and each asks once before any audio is sent:</p>
+            <p>The iPhone and Android apps transcribe voice input with one provider at a time, chosen in Settings. Apple transcription on iPhone and on-device recognition on Android run on the device and send no audio. The other providers receive your recording, and each asks once before any audio is sent:</p>
             <p><strong>ChatGPT through your Aven server</strong> uploads each finished recording to the paired server, which forwards it to OpenAI using the server's ChatGPT login. OpenAI reports keeping uploaded audio for up to 30 days; neither Aven nor the server can delete it.</p>
-            <p><strong>Soniox, Deepgram, and OpenAI</strong> receive audio streamed directly from your iPhone using an API key you enter. The key stays in this device's Keychain and is sent only to that provider. The provider's own policy applies.</p>
-            <p>Recordings are kept only while you can retry a transcription and are deleted afterwards. Keyboard dictation is provided by Apple under Apple's policies.</p>
+            <p><strong>Soniox, Deepgram, and OpenAI</strong> receive audio streamed directly from your phone using an API key you enter. The key stays on this device, in the Keychain on iPhone or protected by the Android Keystore, and is sent only to that provider. The provider's own policy applies.</p>
+            <p>Recordings are kept only while you can retry a transcription and are deleted afterwards. Keyboard dictation is provided by Apple or by your Android keyboard under its own policies.</p>
           </section>
 
           <section aria-labelledby="images">
@@ -89,9 +89,10 @@ import '../styles/privacy.css';
           </section>
 
           <section aria-labelledby="permissions">
-            <h2 id="permissions">Camera and local network</h2>
+            <h2 id="permissions">Camera, microphone, and local network</h2>
             <p>The iPhone app can use the camera to scan a pairing QR code. Camera images are not saved or uploaded by this pairing flow; only the decoded invitation is used to connect. Local-network permission lets the app reach a sync server on your network. You can manage these permissions in iOS Settings.</p>
             <p>The Android app uses the camera only to scan a pairing QR code. Camera images are not saved or uploaded; only the decoded invitation is used. You can also pair by pasting an invitation without camera access. Android uses the internet permission to connect to your server and does not request a separate local-network permission. You can manage permissions in Android Settings.</p>
+            <p>Both apps use the microphone only for voice input, as described above. You can type instead without microphone access.</p>
           </section>
 
           <section aria-labelledby="integrations">
