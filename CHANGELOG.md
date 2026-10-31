@@ -3,7 +3,7 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.52 (2026-10-31)
 
 - Breaking: `aven server` uses a separate `server.yaml` instead of the client configuration. See the [migration guide](https://aventasks.dev/migration-guide/#move-server-settings-to-serveryaml).
 - New: `aven mcp` serves your tasks to Claude Code, Codex, Claude Desktop, and other MCP clients over stdio, and to ChatGPT through OpenAI's tunnel. It can list, search, count, create, update, note, and delete tasks and manage recurring series. See [MCP server](https://aventasks.dev/mcp/).
