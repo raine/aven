@@ -5,6 +5,8 @@ description: Release notes for Aven for Android.
 
 ## Unreleased
 
+- Settings can send feedback by email as well as through GitHub issues.
+
 ## 0.2.0 (2026-10-16)
 
 - Capture suggests one-tap label chips while typing, prioritizing labels named in the title and frequently used in the project. Reuse the labels from the project's latest labelled task, or open the full picker with **…**.
