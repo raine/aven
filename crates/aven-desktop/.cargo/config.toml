@@ -1,0 +1,3 @@
+# Overrides the repository's target-dir, which would resolve to the root target.
+[build]
+target-dir = "target"

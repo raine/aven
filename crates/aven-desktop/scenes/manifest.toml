@@ -1,0 +1,80 @@
+# Named scenes rendered by both sides. See README.md for the tolerance policy.
+target = "history/2026-10-31-phased-gpui-desktop/target/prototype-v3.html"
+
+[tolerance]
+default_px = 1.0
+
+[[element]]
+name = "app"
+selector = ".app"
+
+[[element]]
+name = "nav"
+selector = ".nav"
+
+[[element]]
+name = "main"
+selector = ".main"
+
+[[element]]
+name = "main-header"
+selector = ".main-h"
+
+[[element]]
+name = "list"
+selector = ".list"
+
+[[element]]
+name = "detail"
+selector = ".detail"
+
+[[element]]
+name = "section-0"
+selector = ".list .sect"
+index = 0
+
+[[element]]
+name = "section-1"
+selector = ".list .sect"
+index = 1
+
+[[element]]
+name = "row-0"
+selector = ".list .row"
+index = 0
+
+[[element]]
+name = "row-1"
+selector = ".list .row"
+index = 1
+
+[[element]]
+name = "row-2"
+selector = ".list .row"
+index = 2
+
+[[element]]
+name = "row-8"
+selector = ".list .row"
+index = 8
+
+[[scene]]
+name = "queue-dark"
+theme = "dark"
+width = 1440
+height = 900
+measure = ["app", "nav", "main", "main-header", "list", "detail", "section-0", "section-1", "row-0", "row-1", "row-2", "row-8"]
+
+[[scene]]
+name = "queue-light"
+theme = "light"
+width = 1440
+height = 900
+measure = ["app", "nav", "main", "main-header", "list", "detail", "section-0", "section-1", "row-0", "row-1", "row-2", "row-8"]
+
+[[scene]]
+name = "queue-narrow"
+theme = "dark"
+width = 960
+height = 600
+measure = ["app", "nav", "main", "main-header", "list", "section-0", "row-0", "row-1"]

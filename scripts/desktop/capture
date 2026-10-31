@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Captures paired scenes and box measurements on a disposable database.
+#
+# usage: capture OUTPUT [SCENE]
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/env"
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: capture OUTPUT [SCENE]" >&2
+  exit 2
+fi
+mkdir -p "$1"
+output=$(cd "$1" && pwd)
+"$desktop_repo/scripts/desktop/cargo" build --features capture --bin aven-desktop-capture >&2
+root=$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop.XXXXXX")
+trap 'rm -rf "$root"' EXIT
+write_isolated_config "$root"
+mkdir "$root/tmp"
+TMPDIR="$root/tmp" run_isolated "$root" "$desktop_bin/aven-desktop-capture" run "$output" "${@:2}"

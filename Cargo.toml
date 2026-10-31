@@ -1,5 +1,7 @@
 [workspace]
 members = [".", "crates/aven-core", "crates/aven-protocol", "crates/aven-conformance"]
+# Keeps GPUI out of the root lockfile, CI, Nix and cargo-deny.
+exclude = ["crates/aven-desktop"]
 resolver = "3"
 
 [workspace.dependencies]

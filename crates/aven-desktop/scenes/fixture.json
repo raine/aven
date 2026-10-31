@@ -1,0 +1,1849 @@
+{
+  "frozen_at": "2026-10-14T12:00",
+  "data": {
+    "tasks": [
+      {
+        "id": "TBS6",
+        "project": "AVN",
+        "title": "Workspace deletion",
+        "status": "active",
+        "pri": 2,
+        "due": "2026-10-26",
+        "availableAt": null,
+        "labels": [
+          "sync"
+        ],
+        "body": "Delete a workspace across every replica without leaving orphaned tasks.\n\n- Reader ships first\n- Producer follows once clients have updated",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "tui",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "1CDE",
+        "project": "AVN",
+        "title": "Ship workspace deletion reader in mobile apps",
+        "status": "active",
+        "pri": 3,
+        "due": "2026-10-17",
+        "availableAt": null,
+        "labels": [
+          "ios",
+          "sync"
+        ],
+        "body": "Readers must ship before any producer can emit the new operation.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "TBS6",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-14T08:00",
+        "source": "cli",
+        "meta": {
+          "review_status": "waiting",
+          "pr_url": "https://github.com/example/aven/pull/412"
+        },
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "0HCM",
+        "project": "AVN",
+        "title": "Workspace deletion producer release",
+        "status": "backlog",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "sync"
+        ],
+        "body": "Waits on the reader reaching enough clients.",
+        "notes": [],
+        "blockedBy": [
+          "1CDE"
+        ],
+        "related": [],
+        "epic": "TBS6",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "7RMR",
+        "project": "AVN",
+        "title": "Let explicit inbox status win over priority promotion",
+        "status": "active",
+        "pri": 2,
+        "due": "2026-10-14",
+        "availableAt": null,
+        "labels": [
+          "core"
+        ],
+        "body": "Priority promotion moves a task out of the inbox even when the status was set by hand.\n\nKeep promotion for tasks that **never** had an explicit status. The check belongs in `task_intake`.",
+        "notes": [
+          {
+            "id": "n1",
+            "at": "2026-10-13T10:00",
+            "text": "Reproduced with a capture that sets both status and priority."
+          },
+          {
+            "id": "n2",
+            "at": "2026-10-14T09:00",
+            "text": "Next: add a regression test for the CLI path.\n\n- Test lives next to intake tests"
+          }
+        ],
+        "blockedBy": [],
+        "related": [
+          "MM5Z"
+        ],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-14T09:00",
+        "source": "tui",
+        "meta": {},
+        "attachments": [
+          {
+            "id": "a1",
+            "name": "intake-flow.png",
+            "alt": "Diagram of the capture flow",
+            "hue": 270,
+            "state": "local"
+          },
+          {
+            "id": "a2",
+            "name": "before-after.png",
+            "alt": "",
+            "hue": 200,
+            "state": "transferring"
+          }
+        ],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "KR7P",
+        "project": "APP",
+        "title": "Android sync stops after device sleep",
+        "status": "active",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "android",
+          "sync"
+        ],
+        "body": "Reported twice this month. No logs captured yet.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "M3RK",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-05T12:00",
+        "source": "android",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "4K2T",
+        "project": "INF",
+        "title": "Rotate sync server TLS certificates",
+        "status": "todo",
+        "pri": 4,
+        "due": "2026-10-15",
+        "availableAt": null,
+        "labels": [
+          "ops"
+        ],
+        "body": "The current certificate expires soon. Check the renewal timer on the Pi as well.",
+        "notes": [],
+        "blockedBy": [
+          "Z3HD"
+        ],
+        "related": [],
+        "epic": "S5ST",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "Z3HD",
+        "project": "INF",
+        "title": "Confirm DNS provider API token still works",
+        "status": "todo",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ops"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T16:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "9QWX",
+        "project": "APP",
+        "title": "Show pending uploads in the attachment tile",
+        "status": "todo",
+        "pri": 2,
+        "due": "2026-10-18",
+        "availableAt": null,
+        "labels": [
+          "ios",
+          "android"
+        ],
+        "body": "A task with an unsent image looks finished. Add a progress state to the tile.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [
+          {
+            "field": "body",
+            "label": "Description",
+            "values": [
+              {
+                "device": "This Mac",
+                "value": "A task with an unsent image looks finished. Add a progress state to the tile."
+              },
+              {
+                "device": "iPhone",
+                "value": "A task with an unsent image looks finished. Show progress and a retry button."
+              }
+            ]
+          }
+        ],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "P4A3",
+        "project": "AVN",
+        "title": "Opt-in hash colors for labels",
+        "status": "todo",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ui"
+        ],
+        "body": "Labels are one color everywhere. Offer stable colors from a hash of the name.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "JY1F",
+        "project": "AVN",
+        "title": "Forward remote workspace ports",
+        "status": "todo",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "feature"
+        ],
+        "body": "Open URLs from a remote agent in the laptop browser.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-09-10T12:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "Y2KD",
+        "project": "WEB",
+        "title": "Record a new capture screencast",
+        "status": "todo",
+        "pri": 3,
+        "due": "2026-10-13",
+        "availableAt": null,
+        "labels": [
+          "marketing"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "8H3N",
+        "project": "WEB",
+        "title": "Add quick capture demo to the landing page",
+        "status": "todo",
+        "pri": 2,
+        "due": "2026-10-27",
+        "availableAt": null,
+        "labels": [
+          "marketing"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [
+          "Y2KD"
+        ],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "D1EF",
+        "project": "WEB",
+        "title": "Refresh the sync comparison table",
+        "status": "todo",
+        "pri": 1,
+        "due": null,
+        "availableAt": "2026-10-14T07:00",
+        "labels": [
+          "docs"
+        ],
+        "body": "Deferred until the hosted plans were final.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-12T12:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "MM5Z",
+        "project": "AVN",
+        "title": "Add MCP server",
+        "status": "inbox",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [
+          "7RMR"
+        ],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "ios",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "2FT2",
+        "project": "AVN",
+        "title": "Submit Aven to the Ratatui showcase",
+        "status": "inbox",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "marketing"
+        ],
+        "body": "Needs a short description and the TUI recording.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "ios",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "3N8T",
+        "project": "APP",
+        "title": "Improve Tell Aven field layout",
+        "status": "inbox",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ios"
+        ],
+        "body": "The send button crowds the microphone on small phones.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "6P0V",
+        "project": "INF",
+        "title": "Alert when the backup job misses a night",
+        "status": "inbox",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ops"
+        ],
+        "body": "A silent failure went unnoticed for four days in September.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "H2VC",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "B4RJ",
+        "project": "AVN",
+        "title": "Look into an AUR package",
+        "status": "backlog",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "AMV0",
+        "project": "AVN",
+        "title": "Decide how Ask Aven works on Aven Cloud",
+        "status": "backlog",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ai"
+        ],
+        "body": "The server cannot read tasks, so answers have to come from a device.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "5D7L",
+        "project": "APP",
+        "title": "Android home screen capture widget",
+        "status": "backlog",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "android"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "F6GH",
+        "project": "AVN",
+        "title": "Write the release notes for 0.2",
+        "status": "todo",
+        "pri": 2,
+        "due": "2026-10-19",
+        "availableAt": "2026-10-17T09:00",
+        "labels": [
+          "docs"
+        ],
+        "body": "Hidden until Monday, due later that week.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "T9LQ",
+        "project": "INF",
+        "title": "Renew the domain",
+        "status": "todo",
+        "pri": 1,
+        "due": "2026-10-13",
+        "availableAt": "2026-10-16T09:00",
+        "labels": [
+          "ops"
+        ],
+        "body": "Deferred past its deadline. It stays deferred, and shows when you inspect overdue deferred work.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "H4MN",
+        "project": "APP",
+        "title": "Ask beta testers about widget size",
+        "status": "todo",
+        "pri": 0,
+        "due": null,
+        "availableAt": "2026-10-23T14:00",
+        "labels": [
+          "android"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "C7ZA",
+        "project": "AVN",
+        "title": "Fold recurring tasks in the queue",
+        "status": "done",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "tui"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "R8FT",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "2Y6G",
+        "project": "WEB",
+        "title": "Scale marketing pages with font preferences",
+        "status": "done",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "site"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "P7DQ",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-12T08:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "X4FQ",
+        "project": "INF",
+        "title": "Move backups to a second disk",
+        "status": "canceled",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ops"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "Q0RS",
+        "project": "AVN",
+        "title": "Old experiment with a tray icon",
+        "status": "backlog",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": true,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "WV1A",
+        "project": "AVN",
+        "title": "Friday review",
+        "status": "todo",
+        "pri": 1,
+        "due": "2026-10-14",
+        "availableAt": null,
+        "labels": [
+          "review"
+        ],
+        "body": "Clear the inbox, look through stale work, pick next week's focus.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": "RCR-4K9",
+        "scheduledOn": "2026-10-14",
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "V8LM",
+        "project": "PAY",
+        "title": "Retry failed webhook deliveries",
+        "status": "active",
+        "pri": 3,
+        "due": "2026-10-15",
+        "availableAt": null,
+        "labels": [
+          "backend"
+        ],
+        "body": "Deliveries fail silently after the third attempt.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "H3RT",
+        "project": "PAY",
+        "title": "Reconcile refunds against the ledger",
+        "status": "todo",
+        "pri": 2,
+        "due": "2026-10-19",
+        "availableAt": null,
+        "labels": [
+          "finance"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "Q9NB",
+        "project": "DSH",
+        "title": "Add date range to the revenue chart",
+        "status": "todo",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "ui"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "K1ZS",
+        "project": "DSH",
+        "title": "Investigate slow customer search",
+        "status": "inbox",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [
+          "performance"
+        ],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "M3RK",
+        "project": "APP",
+        "title": "Android public launch",
+        "status": "active",
+        "pri": 3,
+        "due": "2026-11-03",
+        "availableAt": null,
+        "labels": [],
+        "body": "Reach feature parity with iOS and open the Play listing to everyone.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "A1QR",
+        "project": "APP",
+        "title": "Pair with QR on Android",
+        "status": "done",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "M3RK",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "A3WG",
+        "project": "APP",
+        "title": "Home screen capture widget v2",
+        "status": "todo",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "M3RK",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "A4TL",
+        "project": "APP",
+        "title": "Translate store listing",
+        "status": "todo",
+        "pri": 1,
+        "due": null,
+        "availableAt": "2026-10-18T09:00",
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "M3RK",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "A6BT",
+        "project": "APP",
+        "title": "Run closed beta for two weeks",
+        "status": "backlog",
+        "pri": 3,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [
+          "KR7P",
+          "A3WG"
+        ],
+        "related": [],
+        "epic": "M3RK",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "H2VC",
+        "project": "INF",
+        "title": "Self-hosted backups",
+        "status": "todo",
+        "pri": 2,
+        "due": "2026-10-12",
+        "availableAt": null,
+        "labels": [],
+        "body": "Nightly backups to a second disk, with an alert when a night is missed.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "B1DK",
+        "project": "INF",
+        "title": "Mount the second disk",
+        "status": "done",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "H2VC",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "B2CR",
+        "project": "INF",
+        "title": "Schedule the nightly job",
+        "status": "todo",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [
+          "B1DK"
+        ],
+        "related": [],
+        "epic": "H2VC",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "S5ST",
+        "project": "INF",
+        "title": "Sync server migration",
+        "status": "active",
+        "pri": 2,
+        "due": "2026-11-08",
+        "availableAt": null,
+        "labels": [],
+        "body": "Move the sync server to the new host.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "R8FT",
+        "project": "AVN",
+        "title": "Recurring tasks",
+        "status": "active",
+        "pri": 2,
+        "due": "2026-10-15",
+        "availableAt": null,
+        "labels": [],
+        "body": "Repeating tasks that create their next date only after the current one is finished.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "R2SK",
+        "project": "AVN",
+        "title": "Skip and missed outcomes",
+        "status": "done",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "R8FT",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "R5IC",
+        "project": "AVN",
+        "title": "Calendar export",
+        "status": "canceled",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "R8FT",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "N4SW",
+        "project": "AVN",
+        "title": "Calendar sync",
+        "status": "backlog",
+        "pri": 0,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "Show due tasks in a calendar app.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "P7DQ",
+        "project": "WEB",
+        "title": "New marketing site",
+        "status": "done",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "Tell the local-first story better.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "W1CP",
+        "project": "WEB",
+        "title": "Rewrite homepage copy",
+        "status": "todo",
+        "pri": 2,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "P7DQ",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "Q9DS",
+        "project": "WEB",
+        "title": "Docs site redesign",
+        "status": "done",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "Move the docs to the new layout.",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": null,
+        "isEpic": true,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      },
+      {
+        "id": "Q2NV",
+        "project": "WEB",
+        "title": "New docs navigation",
+        "status": "done",
+        "pri": 1,
+        "due": null,
+        "availableAt": null,
+        "labels": [],
+        "body": "",
+        "notes": [],
+        "blockedBy": [],
+        "related": [],
+        "epic": "Q9DS",
+        "isEpic": false,
+        "createdAt": "2026-10-04T12:00",
+        "updatedAt": "2026-10-13T06:00",
+        "source": "cli",
+        "meta": {},
+        "attachments": [],
+        "conflicts": [],
+        "deleted": false,
+        "rcr": null,
+        "scheduledOn": null,
+        "reviewedAt": null,
+        "activity": [
+          {
+            "at": "2026-10-04T12:00",
+            "text": "Created"
+          }
+        ]
+      }
+    ],
+    "series": [
+      {
+        "id": "RCR-4K9",
+        "title": "Friday review",
+        "project": "AVN",
+        "schedule": "Every Friday at 09:00",
+        "step": [
+          7,
+          "d"
+        ],
+        "time": "09:00",
+        "dueMode": "Same day",
+        "tz": "Europe/Helsinki",
+        "state": "active",
+        "startedOn": "2026-08-05",
+        "currentId": "WV1A",
+        "next": "2026-10-21",
+        "body": "Clear the inbox, look through stale work, pick next week's focus.",
+        "history": [
+          {
+            "date": "2026-10-07",
+            "outcome": "done"
+          },
+          {
+            "date": "2026-09-30",
+            "outcome": "skipped"
+          },
+          {
+            "date": "2026-09-23",
+            "outcome": "missed"
+          },
+          {
+            "date": "2026-09-16",
+            "outcome": "missed"
+          },
+          {
+            "date": "2026-09-09",
+            "outcome": "done"
+          }
+        ]
+      },
+      {
+        "id": "RCR-2HT",
+        "title": "Check monthly invoices",
+        "project": "INF",
+        "schedule": "Monthly",
+        "step": [
+          1,
+          "m"
+        ],
+        "time": "",
+        "dueMode": "Same day",
+        "tz": "Europe/Helsinki",
+        "state": "paused",
+        "startedOn": "2026-06-16",
+        "currentId": null,
+        "next": "2026-10-30",
+        "body": "Compare server and domain invoices with last month.",
+        "history": [
+          {
+            "date": "2026-09-30",
+            "outcome": "done"
+          },
+          {
+            "date": "2026-08-30",
+            "outcome": "done"
+          }
+        ]
+      },
+      {
+        "id": "RCR-8XN",
+        "title": "Archive support exports",
+        "project": "WEB",
+        "schedule": "Every 3 weeks, no due",
+        "step": [
+          21,
+          "d"
+        ],
+        "time": "",
+        "dueMode": "No due date",
+        "tz": "Europe/Helsinki",
+        "state": "stopped",
+        "startedOn": "2026-03-28",
+        "currentId": null,
+        "next": null,
+        "body": "",
+        "history": [
+          {
+            "date": "2026-09-14",
+            "outcome": "done"
+          }
+        ]
+      }
+    ],
+    "workspaces": {
+      "personal": "Personal",
+      "work": "Work"
+    },
+    "projects": {
+      "AVN": [
+        "Aven",
+        "personal",
+        "#b68af5"
+      ],
+      "APP": [
+        "Mobile",
+        "personal",
+        "#5cb5ff"
+      ],
+      "WEB": [
+        "Website",
+        "personal",
+        "#5ea732"
+      ],
+      "INF": [
+        "Infra",
+        "personal",
+        "#d3a66b"
+      ],
+      "PAY": [
+        "Payments",
+        "work",
+        "#e15b8b"
+      ],
+      "DSH": [
+        "Dashboard",
+        "work",
+        "#3fb8a8"
+      ]
+    },
+    "fields": [
+      "pr_url",
+      "review_status",
+      "owner"
+    ],
+    "devices": [
+      [
+        "This Mac",
+        "Now"
+      ],
+      [
+        "iPhone",
+        "2h ago"
+      ],
+      [
+        "Pixel",
+        "Yesterday"
+      ],
+      [
+        "Home server agent",
+        "11m ago"
+      ]
+    ],
+    "welcomed": true
+  }
+}

@@ -1,0 +1,27 @@
+name: desktop
+
+on:
+  pull_request:
+    paths:
+      - crates/aven-desktop/**
+      - crates/aven-core/**
+      - scripts/desktop/**
+      - .github/workflows/desktop.yml
+  push:
+    paths:
+      - crates/aven-desktop/**
+      - crates/aven-core/**
+      - scripts/desktop/**
+      - .github/workflows/desktop.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Capture needs the prototype in history/, which is not in the repository.
+      - name: Test
+        run: scripts/desktop/cargo test --features capture

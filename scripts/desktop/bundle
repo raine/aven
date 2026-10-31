@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Builds "Aven Dev.app". Launching needs a real bundle: a bare binary stays
+# behind other windows. The app must never use Aven.app's name or identifier,
+# which notifications, updates and daemon migration key on.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/env"
+
+"$desktop_repo/scripts/desktop/cargo" build --bin aven-desktop >&2
+
+bundle="$desktop_crate/target/Aven Dev.app"
+contents="$bundle/Contents"
+mkdir -p "$contents/MacOS"
+cat >"$contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key><string>Aven Dev</string>
+  <key>CFBundleExecutable</key><string>aven-desktop</string>
+  <key>CFBundleIdentifier</key><string>fi.zendit.Aven.dev</string>
+  <key>CFBundleName</key><string>Aven Dev</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.0.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+PLIST
+plutil -lint "$contents/Info.plist" >/dev/null
+# Replaced rather than written over, which fails while the app runs.
+rm -f "$contents/MacOS/aven-desktop"
+cp "$desktop_bin/aven-desktop" "$contents/MacOS/aven-desktop"
+xattr -cr "$bundle"
+codesign --force --sign - "$bundle" 2>/dev/null
+printf '%s\n' "$bundle"

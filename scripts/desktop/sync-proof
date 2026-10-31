@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Exchanges changes between two clients through a disposable sync server.
+
+The root binary reaches the login Keychain, so every client runs through the
+root test binary's CLI worker, the only build with file-backed keys. Everything
+lives in one temporary root, which is removed afterwards.
+"""
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+WORKER = "sync::encrypted::tests::cli_worker"
+
+
+def worker_binary():
+    built = subprocess.run(
+        ["cargo", "test", "--lib", "--no-run", "--message-format=json"],
+        cwd=REPO,
+        env={**os.environ, "SQLX_OFFLINE": "true"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=True,
+    )
+    for line in built.stdout.splitlines():
+        message = json.loads(line)
+        if (
+            message.get("reason") == "compiler-artifact"
+            and message["target"]["name"] == "aven"
+            and message.get("executable")
+        ):
+            return message["executable"]
+    sys.exit("root test binary not found")
+
+
+class Client:
+    def __init__(self, binary, root, name):
+        self.binary, self.root, self.name = binary, root / name, name
+        self.root.mkdir()
+
+    def process(self, args, **options):
+        full = ["--db", str(self.root / "db.sqlite"), *args]
+        environment = {
+            "PATH": os.environ["PATH"],
+            "HOME": str(self.root / "home"),
+            "TMPDIR": tempfile.gettempdir(),
+            "AVEN_CLI_WORKER_ARGS": json.dumps(full),
+            "AVEN_CONFIG_DIR": str(self.root / "config"),
+            "AVEN_TEST_PROTECTED_KEYS": str(self.root / "keys"),
+            "XDG_STATE_HOME": str(self.root / "state"),
+            "AVEN_LOG_FILE": str(self.root / "aven.log"),
+            "AVEN_NO_UPDATE_CHECK": "1",
+        }
+        command = [self.binary, "--ignored", "--exact", WORKER, "--nocapture", "--quiet"]
+        return subprocess.Popen(
+            command,
+            cwd=self.root,
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=options.get("stderr", subprocess.PIPE),
+            text=True,
+        )
+
+    def ok(self, args, stdin=None):
+        child = self.process(args)
+        stdout, stderr = child.communicate(stdin, timeout=120)
+        if child.returncode:
+            sys.exit(f"{self.name} {args} failed\n{stdout}\n{stderr}")
+        return stdout.split("running 1 test\n", 1)[-1]
+
+    def titles(self):
+        return sorted(task["title"] for task in json.loads(self.ok(["list", "--all", "--json"])))
+
+
+def line_with(text, prefix):
+    return next(line for line in text.splitlines() if line.startswith(prefix))
+
+
+def expect(client, title):
+    titles = client.titles()
+    if title not in titles:
+        sys.exit(f"{client.name} is missing {title!r}: {titles}")
+    print(f"{client.name} sees {title!r}")
+
+
+def prove(binary, root):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        bind = f"127.0.0.1:{probe.getsockname()[1]}"
+    url = f"http://{bind}"
+    operator, a, b = (Client(binary, root, name) for name in ("operator", "a", "b"))
+    data = str(operator.root / "server.sqlite")
+
+    setup = line_with(operator.ok(["server", "setup", "--data", data, "--url", url]), "aven-setup:")
+    server = operator.process(["server", "--data", data, "--bind", bind], stderr=subprocess.DEVNULL)
+    invite = None
+    try:
+        for line in server.stdout:
+            if line.startswith("listening url="):
+                break
+        else:
+            sys.exit("server exited before listening")
+
+        a.ok(["add", "Task from A", "--project", "app"])
+        print(a.ok(["sync", "setup", "--yes"], setup).splitlines()[0])
+
+        invite = a.process(["sync", "invite"], stderr=subprocess.DEVNULL)
+        invitation = next(line.strip() for line in invite.stdout if line.startswith("AVEN:"))
+        print(b.ok(["sync", "join", "--yes"], invitation).splitlines()[0])
+        invite.wait(timeout=120)
+        expect(b, "Task from A")
+
+        b.ok(["add", "Task from B", "--project", "app"])
+        b.ok(["sync"])
+        a.ok(["sync"])
+        expect(a, "Task from B")
+
+        a.ok(["add", "Second task from A", "--project", "app"])
+        a.ok(["sync"])
+        b.ok(["sync"])
+        expect(b, "Second task from A")
+
+        if a.titles() != b.titles():
+            sys.exit(f"clients differ: {a.titles()} {b.titles()}")
+        print(f"clients agree on {len(a.titles())} tasks")
+    finally:
+        for child in (invite, server):
+            if child is not None and child.poll() is None:
+                child.kill()
+                child.wait()
+
+
+def main():
+    binary = worker_binary()
+    root = Path(tempfile.mkdtemp(prefix="aven-sync-proof-")).resolve()
+    try:
+        prove(binary, root)
+    finally:
+        shutil.rmtree(root)
+
+
+main()

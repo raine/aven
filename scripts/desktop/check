@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Validates the harness: crate tests, guard refusal, launcher, paired capture,
+# capability map, root workspace separation and the sync proof.
+#
+# usage: check [CAPTURE_OUTPUT]
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/env"
+
+output=${1:-$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop-capture.XXXXXX")}
+root=$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop.XXXXXX")
+trap 'rm -rf "$root"' EXIT
+cargo_script="$desktop_repo/scripts/desktop/cargo"
+
+echo "== crate tests"
+"$cargo_script" test --features capture
+"$cargo_script" build --features capture
+
+echo "== guard refusal"
+owner_home=$(python3 -c 'import pwd, os; print(pwd.getpwuid(os.getuid()).pw_dir)')
+refused="$owner_home/.local/state/aven/aven-desktop-refusal-check"
+status=0
+env -i PATH="$PATH" AVEN_DESKTOP_ROOT="$refused" "$desktop_bin/aven-desktop" --check-isolation || status=$?
+if [[ $status -ne 78 || -e $refused ]]; then
+  echo "guard did not refuse the owner's state directory (status $status)" >&2
+  exit 1
+fi
+status=0
+run_isolated "$root" env AVEN_DESKTOP_ROOT="$desktop_repo/.aven/desktop" \
+  "$desktop_bin/aven-desktop" --check-isolation || status=$?
+if [[ $status -ne 78 ]]; then
+  echo "guard did not refuse a worktree data copy (status $status)" >&2
+  exit 1
+fi
+
+echo "== launcher"
+mkdir "$root/launch"
+AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --seed --background
+launched_pid=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pid"])' "$root/launch/launch.json")
+trap 'kill "$launched_pid" 2>/dev/null || true; rm -rf "$root"' EXIT
+codesign -dv "$desktop_crate/target/Aven Dev.app" 2>&1 | rg '^Identifier=fi\.zendit\.Aven\.dev$'
+python3 - "$root/launch/launch.json" "$root/launch" <<'PY'
+import json, os, sys
+launch = json.load(open(sys.argv[1]))
+root = os.path.realpath(sys.argv[2])
+assert launch["queue_rows"] > 0, "the launched app shows no seeded rows"
+for name, path in launch["paths"].items():
+    assert os.path.realpath(path).startswith(root), f"{name} escapes the root: {path}"
+print(f"launched with {launch['queue_rows']} rows, all paths under the root")
+PY
+
+echo "== capture"
+"$desktop_repo/scripts/desktop/capture" "$output"
+echo "evidence: $output"
+
+echo "== capabilities"
+"$desktop_bin/aven-desktop-capture" check-capabilities
+
+echo "== root workspace"
+cd "$desktop_repo"
+if rg -q '^name = "gpui' Cargo.lock; then
+  echo "GPUI is in the root lockfile" >&2
+  exit 1
+fi
+if cargo metadata --format-version 1 --locked --no-deps | rg -q aven-desktop; then
+  echo "aven-desktop is a root workspace member" >&2
+  exit 1
+fi
+cargo machete
+
+echo "== sync"
+scripts/desktop/sync-proof

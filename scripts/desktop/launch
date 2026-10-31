@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Starts Aven Dev.app on a disposable root and prints the root.
+#
+# usage: launch [--seed] [--check-only] [--background]
+#
+# AVEN_DESKTOP_ROOT selects an existing root; otherwise a new one is created.
+# --seed loads the scene fixture. --check-only stops after the isolation guard.
+# --background leaves the current app focused. Fails unless the app comes up.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/env"
+
+seed=0
+check_only=0
+open_flags=(-n)
+for argument in "$@"; do
+  case $argument in
+    --seed) seed=1 ;;
+    --check-only) check_only=1 ;;
+    --background) open_flags+=(-g) ;;
+    *) echo "usage: launch [--seed] [--check-only] [--background]" >&2; exit 2 ;;
+  esac
+done
+
+root=${AVEN_DESKTOP_ROOT:-$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop.XXXXXX")}
+bundle=$("$desktop_repo/scripts/desktop/bundle")
+executable="$bundle/Contents/MacOS/aven-desktop"
+
+# The guard runs before anything is written below the root.
+run_isolated "$root" "$executable" --check-isolation
+write_isolated_config "$root"
+if ((seed)); then
+  "$desktop_repo/scripts/desktop/cargo" build --features capture --bin aven-desktop-capture >&2
+  run_isolated "$root" "$desktop_bin/aven-desktop-capture" seed >&2
+fi
+((check_only)) && { printf '%s\n' "$root"; exit 0; }
+
+environment=()
+while IFS= read -r line; do environment+=(--env "$line"); done < <(isolated_environment "$root")
+# open passes its own environment to the app, so it must be clean too.
+errors="$root/launch.stderr"
+env -i PATH="$PATH" open "${open_flags[@]}" --stderr "$errors" "${environment[@]}" "$bundle"
+for _ in {1..100}; do
+  if [[ -e "$root/launch.json" ]]; then
+    printf '%s\n' "$root"
+    exit 0
+  fi
+  sleep 0.1
+done
+echo "Aven Dev.app did not start" >&2
+cat "$errors" >&2
+exit 1

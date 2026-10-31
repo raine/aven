@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Runs Cargo for crates/aven-desktop against a build cache shared by worktrees.
+# Git dependencies such as GPUI hash identically across worktrees, so they build
+# once. Path dependencies hash by path, so each worktree keeps its own.
+#
+# The final binary path is shared by every worktree, so a lock spans the build
+# and the copy into this worktree's target/bin.
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+crate="$repo/crates/aven-desktop"
+cache="${AVEN_DESKTOP_CACHE:-$HOME/Library/Caches/aven-desktop}"
+lock="$cache/build.lock"
+mkdir -p "$cache"
+
+release_lock() { rmdir "$lock" 2>/dev/null || true; }
+waited=0
+until mkdir "$lock" 2>/dev/null; do
+  if ((waited % 60 == 0)); then echo "waiting for desktop build lock: $lock" >&2; fi
+  sleep 1
+  waited=$((waited + 1))
+done
+trap release_lock EXIT
+
+cd "$crate"
+export CARGO_TARGET_DIR="$cache/target"
+export SQLX_OFFLINE=true
+cargo "$@"
+
+if [[ ${1:-} == build ]]; then
+  mkdir -p "$crate/target/bin"
+  for name in aven-desktop aven-desktop-capture; do
+    built="$CARGO_TARGET_DIR/debug/$name"
+    [[ -x $built ]] || continue
+    # A running binary must be replaced, not written over.
+    rm -f "$crate/target/bin/$name"
+    cp "$built" "$crate/target/bin/$name"
+  done
+fi
