@@ -1,9 +1,7 @@
 use std::time::Duration;
 
-mod device_label;
 pub(crate) mod encrypted;
-pub(crate) mod error_explanations;
-pub(crate) mod progress_text;
+pub(crate) use aven_host::sync::{error_explanations, progress_text};
 mod server;
 
 pub(crate) const ATTACHMENT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);

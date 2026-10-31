@@ -7,27 +7,27 @@ use anyhow::Error;
 use crate::protected_local_keys::{ProtectedLocalKeyStoreError, ProtectedLocalKeyStoreErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ErrorAction {
+pub enum ErrorAction {
     General,
     Setup,
     Join,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ErrorSurface {
+pub enum ErrorSurface {
     Cli,
     Tui,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Explanation {
-    pub(crate) code: &'static str,
-    pub(crate) message: &'static str,
-    pub(crate) next_step: &'static str,
+pub struct Explanation {
+    pub code: &'static str,
+    pub message: &'static str,
+    pub next_step: &'static str,
 }
 
 impl Explanation {
-    pub(crate) fn combined(self) -> String {
+    pub fn combined(self) -> String {
         match self.next_step {
             "" => self.message.to_string(),
             next => format!("{} {next}", self.message),
@@ -35,13 +35,9 @@ impl Explanation {
     }
 }
 
-pub(crate) use aven_core::sync::client::errors::{codes, has_code};
+pub use aven_core::sync::client::errors::{codes, has_code};
 
-pub(crate) fn explain(
-    action: ErrorAction,
-    surface: ErrorSurface,
-    error: &Error,
-) -> Option<Explanation> {
+pub fn explain(action: ErrorAction, surface: ErrorSurface, error: &Error) -> Option<Explanation> {
     let all = codes(error).collect::<Vec<_>>();
     let has = |expected: &str| all.iter().any(|code| code == expected);
     // Codes that share one explanation; the first present one is displayed.
@@ -1146,7 +1142,7 @@ mod tests {
 }
 
 /// Connectivity wording shared by transient feedback and terminal errors.
-pub(crate) fn connectivity_message(server: &str, retrying: bool) -> String {
+pub fn connectivity_message(server: &str, retrying: bool) -> String {
     let private = reqwest::Url::parse(server)
         .ok()
         .and_then(|url| {
@@ -1176,7 +1172,7 @@ pub(crate) fn connectivity_message(server: &str, retrying: bool) -> String {
     format!("Couldn't reach the sync server at {server}. {action} {hint}")
 }
 
-pub(crate) fn connectivity_error(error: &Error) -> Option<String> {
+pub fn connectivity_error(error: &Error) -> Option<String> {
     error
         .downcast_ref::<crate::sync_http::ConnectivityError>()
         .map(|error| error.0.clone())

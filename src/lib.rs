@@ -4,7 +4,7 @@ use aven_core::{
     change_log, choices, db, ids, labels, query, queue, refs, task_fields, types, undo,
 };
 #[cfg(target_os = "macos")]
-mod app_bundle;
+use aven_host::app_bundle;
 use aven_host::attachments;
 mod cli;
 mod clipboard;
@@ -24,7 +24,7 @@ use aven_host::operations;
 mod pairing;
 pub mod peer_enrollment_http;
 use aven_host::projects;
-pub mod protected_local_keys;
+pub use aven_host::protected_local_keys;
 use aven_host::recurrence_input;
 mod reminders;
 use aven_host::render;
@@ -33,9 +33,9 @@ use aven_host::schedule_input;
 pub mod seed_bootstrap_http;
 mod server_config;
 mod signals;
-mod status;
+use aven_host::status;
 mod sync;
-pub mod sync_http;
+pub use aven_host::sync_http;
 use aven_host::task_intake;
 use aven_host::task_render;
 use aven_host::time_input;

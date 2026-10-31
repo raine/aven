@@ -3,7 +3,7 @@ use crate::render::format_bytes;
 
 /// Measured work in the current stage. A percentage appears only against an
 /// exact total, and reaches 100% only when every byte has transferred.
-pub(crate) fn amount_text(amount: Amount) -> String {
+pub fn amount_text(amount: Amount) -> String {
     match amount {
         Amount::Bytes {
             done,

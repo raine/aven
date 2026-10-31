@@ -15,11 +15,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 tokio::task_local! {
     /// Transient connectivity feedback for the current foreground operation.
-    pub(crate) static NETWORK_STATUS: Arc<Mutex<Option<String>>>;
+    pub static NETWORK_STATUS: Arc<Mutex<Option<String>>>;
 }
 
 #[derive(Debug)]
-pub(crate) struct ConnectivityError(pub(crate) String);
+pub struct ConnectivityError(pub String);
 
 impl std::fmt::Display for ConnectivityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -36,7 +36,7 @@ fn report_network(message: Option<String>) {
 /// One Reqwest client that sends session requests.
 #[derive(Clone)]
 pub struct HttpDriver {
-    pub(crate) http: reqwest::Client,
+    pub http: reqwest::Client,
 }
 
 impl HttpDriver {
@@ -56,7 +56,7 @@ impl HttpDriver {
 
     /// A single credential-free probe. Any HTTP status proves reachability;
     /// the protocol request remains responsible for validating the server.
-    pub(crate) async fn check_reachability(&self, server: &str) -> Result<()> {
+    pub async fn check_reachability(&self, server: &str) -> Result<()> {
         let origin = aven_core::sync::client::server_origin(server)?;
         self.http
             .head(&origin)

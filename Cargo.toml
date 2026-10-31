@@ -58,7 +58,6 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["http1", "server", "server-graceful", "service", "tokio"] }
 image.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-rustls = { version = "0.23.46", default-features = false }
 flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -91,11 +90,8 @@ schemars = "1.2"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-chacha20poly1305.workspace = true
 core-foundation = "0.10"
 mac-notification-sys = "0.6"
-security-framework = { version = "3.7", default-features = false }
-security-framework-sys = { version = "2.15", default-features = false }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify-rust = "4"

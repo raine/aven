@@ -2,13 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-pub(crate) const AVEN_BUNDLE_ID: &str = "fi.zendit.Aven";
-pub(crate) const BUNDLE_NAME: &str = "Aven.app";
+pub const AVEN_BUNDLE_ID: &str = "fi.zendit.Aven";
+pub const BUNDLE_NAME: &str = "Aven.app";
 /// The main executable, relative to the bundle directory.
-pub(crate) const BUNDLE_EXECUTABLE: &str = "Contents/MacOS/aven";
+pub const BUNDLE_EXECUTABLE: &str = "Contents/MacOS/aven";
 
 /// The `.app` directory whose main executable is the canonical `aven` path.
-pub(crate) fn enclosing_bundle(executable: &Path) -> Option<PathBuf> {
+pub fn enclosing_bundle(executable: &Path) -> Option<PathBuf> {
     if executable.file_name()? != "aven" {
         return None;
     }
@@ -23,6 +23,6 @@ pub(crate) fn enclosing_bundle(executable: &Path) -> Option<PathBuf> {
 
 /// Where the install script and `aven update` keep the bundle of a direct
 /// install; the bin directory holds a symlink to its executable.
-pub(crate) fn direct_install_bundle(home: &Path) -> PathBuf {
+pub fn direct_install_bundle(home: &Path) -> PathBuf {
     home.join(".local/share/aven").join(BUNDLE_NAME)
 }

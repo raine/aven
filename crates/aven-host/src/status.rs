@@ -8,7 +8,7 @@ use crate::daemon::ServiceStatus;
 /// Stable top-level condition used by daemon status reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum StatusState {
+pub enum StatusState {
     Unavailable,
     Unconfigured,
     Healthy,
@@ -18,7 +18,7 @@ pub(crate) enum StatusState {
 }
 
 impl StatusState {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Unavailable => "unavailable",
             Self::Unconfigured => "unconfigured",
@@ -32,36 +32,33 @@ impl StatusState {
 
 /// Versioned, presentation-independent report for `aven daemon status --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct DaemonStatusReport {
-    pub(crate) version: u32,
-    pub(crate) state: StatusState,
-    pub(crate) platform_supported: bool,
-    pub(crate) platform: String,
-    pub(crate) installed: bool,
-    pub(crate) loaded: Option<bool>,
-    pub(crate) running: Option<bool>,
-    pub(crate) executable_matches: Option<bool>,
-    pub(crate) configuration_valid: bool,
-    pub(crate) sync_enabled: bool,
-    pub(crate) wake_address_valid: bool,
-    pub(crate) paths: DaemonPaths,
-    pub(crate) guidance: Vec<String>,
-    pub(crate) sync: aven_core::local_state::DaemonSyncState,
+pub struct DaemonStatusReport {
+    pub version: u32,
+    pub state: StatusState,
+    pub platform_supported: bool,
+    pub platform: String,
+    pub installed: bool,
+    pub loaded: Option<bool>,
+    pub running: Option<bool>,
+    pub executable_matches: Option<bool>,
+    pub configuration_valid: bool,
+    pub sync_enabled: bool,
+    pub wake_address_valid: bool,
+    pub paths: DaemonPaths,
+    pub guidance: Vec<String>,
+    pub sync: aven_core::local_state::DaemonSyncState,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct DaemonPaths {
-    pub(crate) service: Option<PathBuf>,
-    pub(crate) program: Option<PathBuf>,
-    pub(crate) current_executable: Option<PathBuf>,
-    pub(crate) stdout_log: Option<PathBuf>,
-    pub(crate) stderr_log: Option<PathBuf>,
+pub struct DaemonPaths {
+    pub service: Option<PathBuf>,
+    pub program: Option<PathBuf>,
+    pub current_executable: Option<PathBuf>,
+    pub stdout_log: Option<PathBuf>,
+    pub stderr_log: Option<PathBuf>,
 }
 
-pub(crate) fn build_daemon_status(
-    config: &AppConfig,
-    service: ServiceStatus,
-) -> DaemonStatusReport {
+pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> DaemonStatusReport {
     let wake_address_valid = config.wake_addr().is_ok();
     let configuration_valid = config.daemon_has_work() && wake_address_valid;
     let state = if !service.platform_supported {
@@ -133,7 +130,7 @@ pub(crate) fn build_daemon_status(
 }
 
 impl DaemonStatusReport {
-    pub(crate) fn with_sync(mut self, sync: aven_core::local_state::DaemonSyncState) -> Self {
+    pub fn with_sync(mut self, sync: aven_core::local_state::DaemonSyncState) -> Self {
         if self.sync_enabled
             && daemon_sync_blocked(&sync, chrono::Utc::now().timestamp())
             && self.state == StatusState::Healthy
@@ -148,16 +145,13 @@ impl DaemonStatusReport {
 /// Key storage failures need user action immediately. Other errors must persist
 /// for two minutes before being called blocked, so short network retries do not
 /// replace the normal pending headline.
-pub(crate) fn daemon_sync_blocked(
-    state: &aven_core::local_state::DaemonSyncState,
-    now: i64,
-) -> bool {
+pub fn daemon_sync_blocked(state: &aven_core::local_state::DaemonSyncState, now: i64) -> bool {
     state.error.as_ref().is_some_and(|error| {
         error.code.starts_with("protected-key-storage-") || now.saturating_sub(error.since) >= 120
     })
 }
 
-pub(crate) fn daemon_time(at: i64) -> String {
+pub fn daemon_time(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0)
         .map(|time| {
             time.with_timezone(&chrono::Local)
@@ -167,7 +161,7 @@ pub(crate) fn daemon_time(at: i64) -> String {
         .unwrap_or_else(|| at.to_string())
 }
 
-pub(crate) fn elapsed_text(seconds: i64) -> String {
+pub fn elapsed_text(seconds: i64) -> String {
     let seconds = seconds.max(0);
     if seconds >= 3600 {
         format!("{}h {}m", seconds / 3600, seconds % 3600 / 60)

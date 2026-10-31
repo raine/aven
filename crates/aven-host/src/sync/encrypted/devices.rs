@@ -6,7 +6,7 @@
 use anyhow::{Result, bail};
 use aven_core::db::Database;
 use aven_core::sync::client::engine;
-pub(crate) use aven_core::sync::client::engine::{Device, DeviceListing, Removal};
+pub use aven_core::sync::client::engine::{Device, DeviceListing, Removal};
 use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
 
@@ -39,14 +39,14 @@ struct RemovalReport {
     key_rotation_pending: bool,
 }
 
-pub(crate) async fn load_devices(database: &Database, config: &AppConfig) -> Result<DeviceListing> {
+pub async fn load_devices(database: &Database, config: &AppConfig) -> Result<DeviceListing> {
     let host = DesktopHost::foreground(config);
     driver()?
         .run(|link| engine::load_devices(link, database, &host))
         .await
 }
 
-pub(crate) async fn list(database: &Database, config: &AppConfig, json: bool) -> Result<()> {
+pub async fn list(database: &Database, config: &AppConfig, json: bool) -> Result<()> {
     let listing = load_devices(database, config).await?;
     let report = DeviceList {
         version: 1,
@@ -181,7 +181,7 @@ async fn resolve_device_id(
 }
 
 /// Removes another device, or resumes its retained removal.
-pub(crate) async fn remove_other_device(
+pub async fn remove_other_device(
     database: &Database,
     config: &AppConfig,
     target: [u8; 32],
@@ -194,14 +194,14 @@ pub(crate) async fn remove_other_device(
 
 /// Continues an unfinished removal or key rotation, as an ordinary sync
 /// round would. Returns whether rotation is still pending.
-pub(crate) async fn finish_removal(database: &Database, config: &AppConfig) -> Result<bool> {
+pub async fn finish_removal(database: &Database, config: &AppConfig) -> Result<bool> {
     let host = DesktopHost::foreground(config);
     driver()?
         .run(|link| engine::finish_removal(link, database, &host))
         .await
 }
 
-pub(crate) async fn remove(
+pub async fn remove(
     database: &Database,
     config: &AppConfig,
     device_id: &str,

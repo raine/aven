@@ -9,16 +9,16 @@ pub use aven_core::sync::client::keys::{
     ProtectedLocalKeyStoreErrorKind, peer, rotation,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use aven_core::sync::client::keys::{FileProtectedStorage, ProtectedStorage, StoreResult};
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 const STORE_DIRECTORY: &str = "protected-keys";
 #[cfg(target_os = "macos")]
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 const KEYCHAIN_SERVICE: &str = "fi.zendit.Aven.local-package-keyring";
 
 /// Whether protected storage may ask an attended macOS user for Keychain access.
@@ -32,12 +32,12 @@ pub enum KeychainInteraction {
 
 /// This installation's protected key storage.
 pub fn storage(interaction: KeychainInteraction) -> StoreResult<Arc<dyn ProtectedStorage>> {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     return production_storage(protected_store_directory()?, interaction);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     let _ = interaction;
     // Tests never reach the login Keychain; CLI test workers name isolated files.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Ok(Arc::new(FileProtectedStorage::new(
         std::env::var_os("AVEN_TEST_PROTECTED_KEYS")
             .map(PathBuf::from)
@@ -49,7 +49,7 @@ fn error(kind: ProtectedLocalKeyStoreErrorKind) -> ProtectedLocalKeyStoreError {
     ProtectedLocalKeyStoreError::new(kind)
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 fn protected_store_directory() -> StoreResult<std::path::PathBuf> {
     let state = std::env::var_os("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
@@ -59,7 +59,7 @@ fn protected_store_directory() -> StoreResult<std::path::PathBuf> {
     Ok(state.join("aven").join(STORE_DIRECTORY))
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 fn production_storage(
     directory: std::path::PathBuf,
     interaction: KeychainInteraction,
@@ -85,6 +85,7 @@ fn production_storage(
 }
 
 #[cfg(target_os = "macos")]
+#[cfg_attr(feature = "test-support", allow(dead_code))]
 mod keychain {
     use super::*;
     use std::collections::{HashMap, HashSet};
@@ -714,7 +715,7 @@ mod keychain {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    pub(crate) use aven_core::sync::client::keys::test_support::{BACKEND_LOADS, isolated_store};
+#[cfg(any(test, feature = "test-support"))]
+pub mod tests {
+    pub use aven_core::sync::client::keys::test_support::{BACKEND_LOADS, isolated_store};
 }

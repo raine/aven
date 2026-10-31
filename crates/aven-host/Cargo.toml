@@ -18,8 +18,12 @@ clap = "4.5"
 chrono.workspace = true
 chrono-tz.workspace = true
 dirs = "6.0"
+getrandom = "0.4"
+hex.workspace = true
 iana-time-zone = "0.1"
 image.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rustls = { version = "0.23.46", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 serde-saphyr = "1.3"
@@ -27,8 +31,21 @@ sqlx = { workspace = true, features = ["sqlite"], optional = true }
 similar = "3.1"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "rt-multi-thread", "net"] }
+tracing.workspace = true
+unicode-width = "0.2"
+zeroize.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+chacha20poly1305.workspace = true
+core-foundation = "0.10"
+security-framework = { version = "3.7", default-features = false }
+security-framework-sys = { version = "2.15", default-features = false }
 
 [dev-dependencies]
+axum = "0.8"
 aven-core = { path = "../aven-core", version = "=0.1.37", features = ["test-support"] }
 sqlx = { workspace = true, features = ["sqlite"] }
 tokio = { workspace = true, features = ["test-util"] }

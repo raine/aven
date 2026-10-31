@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -16,11 +15,12 @@ use crate::config::AppConfig;
 use crate::signals::shutdown_signal;
 use crate::sync::encrypted::{self, DaemonRound};
 
-mod service;
+use aven_host::daemon::service;
 
+pub(crate) use aven_host::daemon::wake_if_enabled;
 pub use service::{
-    InstalledService, ServiceInstallArgs, ServiceRepairArgs, ServiceStatus, install,
-    reload_service_definition, repair, restart, status_snapshot, uninstall,
+    InstalledService, ServiceInstallArgs, ServiceRepairArgs, install, reload_service_definition,
+    repair, restart, status_snapshot, uninstall,
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
@@ -359,23 +359,6 @@ async fn record_failure(database: &Database, error: &anyhow::Error, retry_second
     }
 }
 
-/// A successful foreground sync can repair prompt-less key access. The `r` wake
-/// bypasses backoff; ordinary mutation wakes retain the legacy `1` payload.
-pub(crate) async fn retry_after_foreground_sync(database: &Database, config: &AppConfig) {
-    if !config.automatic_sync_is_enabled() {
-        return;
-    }
-    match database.daemon_sync_state().await {
-        Ok(state) if state.error.is_some() => {
-            if let Ok(addr) = config.wake_addr() {
-                send_wake(addr, b"r");
-            }
-        }
-        Err(error) => warn!(%error, "could not read daemon sync health"),
-        _ => {}
-    }
-}
-
 async fn sync_once(
     database: &Database,
     config: &AppConfig,
@@ -416,29 +399,6 @@ async fn maintain_attachments(
     }
 }
 
-pub(crate) fn wake_if_enabled(config: &AppConfig) {
-    if !config.daemon_has_work() {
-        return;
-    }
-    let Ok(addr) = config.wake_addr() else {
-        return;
-    };
-    debug!(wake_addr = %addr, "waking daemon after local mutation");
-    wake(addr);
-}
-
-fn wake(addr: SocketAddr) {
-    send_wake(addr, b"1");
-}
-
-fn send_wake(addr: SocketAddr, payload: &[u8]) {
-    let bind_addr = SocketAddr::new(addr.ip(), 0);
-    match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(payload, addr)) {
-        Ok(_) => debug!(wake_addr = %addr, "daemon wake sent"),
-        Err(err) => warn!(wake_addr = %addr, error = %err, "daemon wake send failed"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,40 +431,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn foreground_recovery_wakes_only_when_enabled_and_error_recorded() {
-        let database = Database::open(Path::new(":memory:")).await.unwrap();
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-        let mut config = AppConfig::default();
-        config.sync.enabled = true;
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
-        let mut buf = [0; 16];
-        retry_after_foreground_sync(&database, &config).await;
-        assert!(socket.recv(&mut buf).is_err());
-        database
-            .record_daemon_sync_round(
-                100,
-                Some(("protected-key-storage-unavailable", "unlock", 400)),
-            )
-            .await
-            .unwrap();
-        config.sync.disable_override = true;
-        retry_after_foreground_sync(&database, &config).await;
-        assert!(socket.recv(&mut buf).is_err());
-        config.sync.disable_override = false;
-        retry_after_foreground_sync(&database, &config).await;
-        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
-        assert_eq!(buf[0], b'r');
-        // Foreground success cannot claim that the daemon recovered.
-        assert!(database.daemon_sync_state().await.unwrap().error.is_some());
-        database.record_daemon_sync_round(200, None).await.unwrap();
-        retry_after_foreground_sync(&database, &config).await;
-        assert!(socket.recv(&mut buf).is_err());
-    }
-
-    #[tokio::test]
     async fn failure_records_codes_and_explanations_without_raw_details() {
         let database = Database::open(Path::new(":memory:")).await.unwrap();
         record_failure(
@@ -518,53 +444,6 @@ mod tests {
         assert_eq!(error.code, "encrypted-tail-reply");
         assert!(!error.message.contains("secret"));
         assert_eq!(state.next_retry_at, Some(error.since + 1));
-    }
-
-    #[test]
-    fn wake_if_enabled_sends_to_configured_address() {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let mut config = AppConfig::default();
-        config.sync.enabled = true;
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
-
-        wake_if_enabled(&config);
-
-        let mut buf = [0_u8; 1];
-        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
-        assert_eq!(buf, [b'1']);
-    }
-
-    #[test]
-    fn wake_if_enabled_skips_when_sync_is_disabled() {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_millis(25)))
-            .unwrap();
-        let mut config = AppConfig::default();
-        config.sync.enabled = true;
-        config.sync.disable_override = true;
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
-
-        wake_if_enabled(&config);
-
-        let mut buf = [0_u8; 1];
-        let error = socket.recv(&mut buf).unwrap_err();
-        assert!(matches!(
-            error.kind(),
-            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-        ));
-    }
-
-    #[test]
-    fn wake_if_enabled_skips_invalid_address() {
-        let mut config = AppConfig::default();
-        config.sync.enabled = true;
-        config.daemon.wake_addr = Some("not-an-address".to_string());
-
-        wake_if_enabled(&config);
     }
 
     #[test]
