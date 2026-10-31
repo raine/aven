@@ -35,7 +35,9 @@ owner's data, when a path contains `.aven`, when the root contains `..`, when th
 environment points outside the root or sets a variable that moves storage, or when
 the root's config is anything but `sync.enabled: false`, a private loopback wake port
 and storage paths inside the layout. It also refuses any link below the root and a
-`TMPDIR` or capture output in owner data.
+`TMPDIR` or capture output in owner data. Capture output outlives any root, so it
+must also hold no links, and a relative output resolves against the working directory
+before the check.
 
 Every path a launch, capture or script writes is a field of `Isolation`. Scripts read
 them from `aven-desktop --print-paths`, which runs the guard first, so a new path is

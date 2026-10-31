@@ -405,7 +405,7 @@ impl Isolation {
         if let Some(temporary) = environment.get("TMPDIR") {
             refuse_owner_path("TMPDIR", Path::new(temporary), &owner)?;
         }
-        refuse_links_below(&isolation.root, &isolation.prototype)?;
+        refuse_links_below(&isolation.root, Some(&isolation.prototype))?;
         Ok(isolation)
     }
 
@@ -529,6 +529,10 @@ impl Isolation {
 /// the home directory itself, and a name reserved in one of the owner's
 /// directories. Any `.aven` component is a worktree's copy of the real database.
 fn refuse_owner_path(name: &str, path: &Path, owner: &Owner) -> Result<()> {
+    // `walk` starts at `/`, so a relative path would be judged as a different place.
+    if !path.is_absolute() {
+        bail!("{name} must be absolute: {}", path.display());
+    }
     let steps = walk(path).with_context(|| format!("{name} cannot be resolved"))?;
     if steps
         .iter()
@@ -570,10 +574,25 @@ pub fn require_outside_owner(name: &str, path: &Path) -> Result<()> {
     refuse_owner_path(name, path, &Owner::read(&owner_home()?)?)
 }
 
+/// The absolute, created directory for capture output. Output outlives any root,
+/// so it gets the guard's checks here: a link in it would send a write past them.
+pub fn prepare_output(path: &Path) -> Result<PathBuf> {
+    let base = std::env::current_dir().context("read the working directory")?;
+    prepare_output_from(&base, path, &Owner::read(&owner_home()?)?)
+}
+
+fn prepare_output_from(base: &Path, path: &Path, owner: &Owner) -> Result<PathBuf> {
+    let output = base.join(path);
+    refuse_owner_path("capture output", &output, owner)?;
+    std::fs::create_dir_all(&output).with_context(|| format!("create {}", output.display()))?;
+    refuse_links_below(&output, None)?;
+    Ok(output)
+}
+
 /// A root is disposable and nothing in it needs a link, so any link is a way out
 /// of it, including at files only Aven names, such as database sidecars.
 /// `skipped` is cleared before use, and a link at `skipped` itself is refused.
-fn refuse_links_below(directory: &Path, skipped: &Path) -> Result<()> {
+fn refuse_links_below(directory: &Path, skipped: Option<&Path>) -> Result<()> {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -584,9 +603,9 @@ fn refuse_links_below(directory: &Path, skipped: &Path) -> Result<()> {
         let path = entry.path();
         let kind = entry.file_type()?;
         if kind.is_symlink() {
-            bail!("the root holds a link: {}", path.display());
+            bail!("found a link where files are written: {}", path.display());
         }
-        if kind.is_dir() && path != skipped {
+        if kind.is_dir() && skipped != Some(path.as_path()) {
             refuse_links_below(&path, skipped)?;
         }
     }
@@ -1152,6 +1171,63 @@ mod tests {
             let reason = refusal(&valid(root.path()), owner.path());
             assert!(reason.contains("link"), "{relative}: {reason}");
         }
+    }
+
+    #[test]
+    fn refuses_a_link_in_capture_output() {
+        let owner_home = tempfile::tempdir().unwrap();
+        let owner = Owner::read(owner_home.path()).unwrap();
+        for name in [
+            "report.json",
+            "queue-dark.gpui.png",
+            "queue-dark.prototype.png",
+            "queue-dark.measure.json",
+        ] {
+            let scratch = tempfile::tempdir().unwrap();
+            let output = scratch.path().join("out");
+            std::fs::create_dir(&output).unwrap();
+            let target = scratch.path().join("target");
+            std::os::unix::fs::symlink(&target, output.join(name)).unwrap();
+            let reason = prepare_output_from(scratch.path(), &output, &owner)
+                .unwrap_err()
+                .to_string();
+            assert!(reason.contains("link"), "{name}: {reason}");
+            assert!(!target.exists(), "{name}");
+        }
+    }
+
+    #[test]
+    fn capture_output_resolves_against_the_working_directory() {
+        let owner_home = tempfile::tempdir().unwrap();
+        let owner = Owner::read(owner_home.path()).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+
+        let refused = scratch.path().join(".aven");
+        std::fs::create_dir(&refused).unwrap();
+        let reason = prepare_output_from(&refused, Path::new("rel"), &owner)
+            .unwrap_err()
+            .to_string();
+        assert!(reason.contains("worktree data copy"), "{reason}");
+        assert!(!refused.join("rel").exists());
+
+        let output = prepare_output_from(scratch.path(), Path::new("rel"), &owner).unwrap();
+        assert_eq!(output, scratch.path().join("rel"));
+        assert!(output.is_dir());
+    }
+
+    #[test]
+    fn refuses_a_relative_path() {
+        let owner_home = tempfile::tempdir().unwrap();
+        let owner = Owner::read(owner_home.path()).unwrap();
+        let reason = refuse_owner_path("output", Path::new("rel"), &owner)
+            .unwrap_err()
+            .to_string();
+        assert!(reason.contains("must be absolute"), "{reason}");
+
+        let root = tempfile::tempdir().unwrap();
+        let mut environment = valid(root.path());
+        environment.insert("TMPDIR".to_string(), OsString::from("rel"));
+        assert!(refusal(&environment, owner_home.path()).contains("TMPDIR"));
     }
 
     #[test]

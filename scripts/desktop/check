@@ -97,6 +97,26 @@ fi
 echo "== chrome keychain"
 "$desktop_repo/scripts/desktop/keychain-proof"
 
+echo "== capture output"
+mkdir -p "$root/output/.aven" "$root/output/linked"
+ln -s "$root/output/.aven/report.json" "$root/output/linked/report.json"
+capture_root="$root/output/root"
+mkdir "$capture_root"
+write_isolated_config "$capture_root"
+for output_path in "$root/output/linked" rel; do
+  status=0
+  (cd "$root/output/.aven" &&
+    run_isolated "$capture_root" "$desktop_bin/aven-desktop-capture" run "$output_path" queue-dark) || status=$?
+  if [[ $status -ne 2 ]]; then
+    echo "capture did not refuse output $output_path (status $status)" >&2
+    exit 1
+  fi
+done
+if [[ -n $(ls -A "$root/output/.aven") ]]; then
+  echo "capture wrote past the guard" >&2
+  exit 1
+fi
+
 echo "== capture"
 "$desktop_repo/scripts/desktop/capture" "$output"
 echo "evidence: $output"

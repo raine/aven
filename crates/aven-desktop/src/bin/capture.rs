@@ -215,8 +215,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
     if scenes.is_empty() {
         bail!("no scene named {only:?}");
     }
-    isolation::require_outside_owner("capture output", output)?;
-    std::fs::create_dir_all(output)?;
+    let output = &isolation::prepare_output(output)?;
     let anchor = fixture::anchor_now()?;
     let seeded = seed_database(&isolation, anchor)?;
     let runtime = tokio::runtime::Runtime::new()?;
