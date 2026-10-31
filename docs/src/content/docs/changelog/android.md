@@ -5,7 +5,19 @@ description: Release notes for Aven for Android.
 
 ## Unreleased
 
+## 0.3.0 — in review
+
+- **Tell Aven** turns a typed or spoken request into task drafts you review before anything changes. It can search and answer questions about your tasks, use a photo as context, and open from task detail with that task attached. Chats stay on your phone.
+- Voice input in Tell Aven offers on-device and alternative transcription providers, with a choice in Settings.
+- Add notes to a task from task detail.
+- Create new labels from the label picker's search and while editing a task.
+- Task priority is drawn as signal bars.
+- Task lists follow to another workspace when the one you're viewing is deleted on another device.
 - Settings can send feedback by email as well as through GitHub issues.
+- Sync retries brief failures before showing them.
+- Fix: Dialogs keep their side margins.
+- Fix: The sync headline stays centered as its status changes.
+- Fix: The undo toast stays at full size while it is shown.
 
 ## 0.2.0 (2026-10-16)
 
