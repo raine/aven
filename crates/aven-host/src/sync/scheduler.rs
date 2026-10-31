@@ -52,7 +52,7 @@ impl SyncScheduler {
     /// Brings the next round forward unless a retry delay forbids it. `retry_now`
     /// bypasses that delay.
     pub fn wake(&mut self, retry_now: bool, now: Instant) {
-        if wake_can_sync(retry_now, self.retry_not_before, now) {
+        if retry_now || self.retry_not_before.is_none_or(|deadline| now >= deadline) {
             self.retry_not_before = None;
             self.next_sync = now;
         }
@@ -78,11 +78,9 @@ impl SyncScheduler {
 
     /// Returns true the first time this state is reached.
     pub fn not_set_up(&mut self, now: Instant) -> bool {
-        self.catching_up = false;
+        self.idle_for_interval(now);
         self.access_refused = false;
         self.vault_deleted = false;
-        self.backoff_seconds = 1;
-        self.next_sync = now + self.interval;
         !std::mem::replace(&mut self.awaiting_setup, true)
     }
 
@@ -95,18 +93,14 @@ impl SyncScheduler {
     /// user resets sync or a foreground sync succeeds. Returns true the first
     /// time this state is reached.
     pub fn vault_deleted(&mut self, now: Instant) -> bool {
-        self.catching_up = false;
-        self.backoff_seconds = 1;
-        self.next_sync = now + self.interval;
+        self.idle_for_interval(now);
         !std::mem::replace(&mut self.vault_deleted, true)
     }
 
     /// Refusals persist until the user acts elsewhere, so backing off only
     /// repeats the warning. Returns true the first time this state is reached.
     pub fn access_refused(&mut self, now: Instant) -> bool {
-        self.catching_up = false;
-        self.backoff_seconds = 1;
-        self.next_sync = now + self.interval;
+        self.idle_for_interval(now);
         self.retry_not_before = Some(self.next_sync);
         !std::mem::replace(&mut self.access_refused, true)
     }
@@ -121,15 +115,17 @@ impl SyncScheduler {
         retry_seconds
     }
 
+    fn idle_for_interval(&mut self, now: Instant) {
+        self.catching_up = false;
+        self.backoff_seconds = 1;
+        self.next_sync = now + self.interval;
+    }
+
     fn clear_terminal_states(&mut self) {
         self.awaiting_setup = false;
         self.access_refused = false;
         self.vault_deleted = false;
     }
-}
-
-fn wake_can_sync(retry_now: bool, deadline: Option<Instant>, now: Instant) -> bool {
-    retry_now || deadline.is_none_or(|deadline| now >= deadline)
 }
 
 #[cfg(test)]
@@ -141,20 +137,6 @@ mod tests {
     fn scheduler() -> (SyncScheduler, Instant) {
         let now = Instant::now();
         (SyncScheduler::new(INTERVAL, now), now)
-    }
-
-    #[test]
-    fn only_retry_wakes_bypass_backoff() {
-        let now = Instant::now();
-        let deadline = Some(now + Duration::from_secs(300));
-        assert!(!wake_can_sync(false, deadline, now));
-        assert!(wake_can_sync(true, deadline, now));
-        assert!(wake_can_sync(
-            false,
-            deadline,
-            now + Duration::from_secs(300)
-        ));
-        assert!(wake_can_sync(false, None, now));
     }
 
     #[test]
@@ -258,10 +240,11 @@ mod tests {
     #[test]
     fn ordinary_wakes_run_once_the_retry_delay_passes() {
         let (mut scheduler, now) = scheduler();
-        scheduler.failed(now);
-        let due = scheduler.next_sync();
+        let due = now + Duration::from_secs(scheduler.failed(now));
         scheduler.wake(false, due);
-        assert_eq!(scheduler.next_sync(), due);
+        // The delay is gone, so a wake stamped before it now runs.
+        scheduler.wake(false, now);
+        assert_eq!(scheduler.next_sync(), now);
         scheduler.failed(now);
         scheduler.round_started();
         scheduler.wake(false, now);

@@ -77,16 +77,13 @@ impl DesktopHost {
         Self::new(config, HostMode::Terminal)
     }
 
-    pub fn background(config: &AppConfig) -> Self {
+    fn background(config: &AppConfig) -> Self {
         Self::new(config, HostMode::Background)
     }
 
     /// Uses `storage` instead of the installation's protected key storage.
-    pub fn with_storage(self, storage: Arc<dyn ProtectedStorage>) -> Self {
-        *self
-            .protected_storage
-            .lock()
-            .expect("new host has no storage users") = Some(storage);
+    pub fn with_storage(mut self, storage: Arc<dyn ProtectedStorage>) -> Self {
+        self.protected_storage = Mutex::new(Some(storage));
         self
     }
 }
