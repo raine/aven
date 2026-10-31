@@ -39,22 +39,37 @@ def worker_binary():
     sys.exit("root test binary not found")
 
 
+def isolation_paths(root):
+    """The guard's validated layout for a root, which refuses a bad one."""
+    listing = subprocess.run(
+        ["bash", "-c", 'source "$1"; run_isolated "$2" "$desktop_bin/aven-desktop" --print-paths',
+         "print-paths", REPO / "scripts/desktop/env", root],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout
+    return dict(line.split("=", 1) for line in listing.splitlines())
+
+
 class Client:
     def __init__(self, binary, root, name):
         self.binary, self.root, self.name = binary, root / name, name
         self.root.mkdir()
+        self.paths = isolation_paths(self.root)
+        for path in ("database", "logs", "server_storage"):
+            Path(self.paths[path]).parent.mkdir(parents=True, exist_ok=True)
 
     def process(self, args, **options):
-        full = ["--db", str(self.root / "db.sqlite"), *args]
+        full = ["--db", self.paths["database"], *args]
         environment = {
             "PATH": os.environ["PATH"],
-            "HOME": str(self.root / "home"),
+            "HOME": self.paths["home"],
             "TMPDIR": tempfile.gettempdir(),
             "AVEN_CLI_WORKER_ARGS": json.dumps(full),
-            "AVEN_CONFIG_DIR": str(self.root / "config"),
-            "AVEN_TEST_PROTECTED_KEYS": str(self.root / "keys"),
-            "XDG_STATE_HOME": str(self.root / "state"),
-            "AVEN_LOG_FILE": str(self.root / "aven.log"),
+            "AVEN_CONFIG_DIR": self.paths["config_dir"],
+            "AVEN_TEST_PROTECTED_KEYS": self.paths["keys"],
+            "XDG_STATE_HOME": self.paths["state"],
+            "AVEN_LOG_FILE": self.paths["logs"],
             "AVEN_NO_UPDATE_CHECK": "1",
         }
         command = [self.binary, "--ignored", "--exact", WORKER, "--nocapture", "--quiet"]
@@ -96,7 +111,7 @@ def prove(binary, root):
         bind = f"127.0.0.1:{probe.getsockname()[1]}"
     url = f"http://{bind}"
     operator, a, b = (Client(binary, root, name) for name in ("operator", "a", "b"))
-    data = str(operator.root / "server.sqlite")
+    data = str(Path(operator.paths["server_storage"]) / "sync-server.sqlite")
 
     setup = line_with(operator.ok(["server", "setup", "--data", data, "--url", url]), "aven-setup:")
     server = operator.process(["server", "--data", data, "--bind", bind], stderr=subprocess.DEVNULL)
@@ -138,6 +153,7 @@ def prove(binary, root):
 
 
 def main():
+    subprocess.run([REPO / "scripts/desktop/cargo", "build", "--bin", "aven-desktop"], check=True)
     binary = worker_binary()
     root = Path(tempfile.mkdtemp(prefix="aven-sync-proof-")).resolve()
     try:

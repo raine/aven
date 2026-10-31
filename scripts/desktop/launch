@@ -25,8 +25,9 @@ root=${AVEN_DESKTOP_ROOT:-$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop.XXXXXX")}
 bundle=$("$desktop_repo/scripts/desktop/bundle")
 executable="$bundle/Contents/MacOS/aven-desktop"
 
-# The guard runs before anything is written below the root.
-run_isolated "$root" "$executable" --check-paths
+# Asking for a path runs the guard, so it passes before anything is written.
+errors=$(isolation_path "$root" launch_errors)
+record=$(isolation_path "$root" launch_record)
 write_isolated_config "$root"
 run_isolated "$root" "$executable" --check-isolation
 if ((seed)); then
@@ -38,11 +39,10 @@ fi
 environment=()
 while IFS= read -r line; do environment+=(--env "$line"); done < <(isolated_environment "$root")
 # open passes its own environment to the app, so it must be clean too.
-errors="$root/launch.stderr"
-rm -f "$root/launch.json"
+rm -f "$record"
 env -i PATH="$PATH" open "${open_flags[@]}" --stderr "$errors" "${environment[@]}" "$bundle"
 for _ in {1..100}; do
-  if [[ -e "$root/launch.json" ]]; then
+  if [[ -e "$record" ]]; then
     printf '%s\n' "$root"
     exit 0
   fi

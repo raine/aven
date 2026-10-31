@@ -106,6 +106,10 @@ pub struct Isolation {
     pub keys: PathBuf,
     pub server: PathBuf,
     pub launch_record: PathBuf,
+    pub launch_errors: PathBuf,
+    /// Rebuilt by each capture, so Chrome's own links below it never persist.
+    pub prototype: PathBuf,
+    pub scratch: PathBuf,
 }
 
 /// The settings that keep a launch away from a real daemon and sync server.
@@ -319,6 +323,9 @@ impl Isolation {
             keys: state.join("protected-keys"),
             server: state.join("server"),
             launch_record: root.join("launch.json"),
+            launch_errors: root.join("launch.stderr"),
+            prototype: root.join("prototype"),
+            scratch: root.join("tmp"),
             database,
             state_home,
             config_home,
@@ -395,11 +402,35 @@ impl Isolation {
         for (name, path) in isolation.resolved_paths() {
             refuse_owner_path(name, path, &owner)?;
         }
+        if let Some(temporary) = environment.get("TMPDIR") {
+            refuse_owner_path("TMPDIR", Path::new(temporary), &owner)?;
+        }
+        refuse_links_below(&isolation.root, &isolation.prototype)?;
         Ok(isolation)
     }
 
+    /// Lines of `name=path` that give scripts every path they may write.
+    pub fn path_listing(&self) -> String {
+        self.resolved_paths()
+            .iter()
+            .map(|(name, path)| format!("{}={}\n", name.replace(' ', "_"), path.display()))
+            .collect()
+    }
+
+    /// An empty directory for this capture's prototype pages and Chrome profiles.
+    pub fn fresh_prototype_directory(&self) -> Result<&Path> {
+        match std::fs::remove_dir_all(&self.prototype) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(error).context("clear the prototype directory");
+            }
+            _ => {}
+        }
+        std::fs::create_dir(&self.prototype).context("create the prototype directory")?;
+        Ok(&self.prototype)
+    }
+
     /// Each resolved path, for the guard and for launch records.
-    pub fn resolved_paths(&self) -> [(&'static str, &Path); 13] {
+    pub fn resolved_paths(&self) -> [(&'static str, &Path); 16] {
         [
             ("root", &self.root),
             ("home", &self.home),
@@ -414,6 +445,9 @@ impl Isolation {
             ("keys", &self.keys),
             ("server storage", &self.server),
             ("launch record", &self.launch_record),
+            ("launch errors", &self.launch_errors),
+            ("prototype", &self.prototype),
+            ("scratch", &self.scratch),
         ]
     }
 
@@ -525,6 +559,35 @@ fn refuse_owner_path(name: &str, path: &Path, owner: &Owner) -> Result<()> {
                 "{name} overlaps the owner's data named {prefix}*: {}",
                 path.display()
             );
+        }
+    }
+    Ok(())
+}
+
+/// Refuses a path this process would write outside any root, such as capture
+/// output or a temporary directory.
+pub fn require_outside_owner(name: &str, path: &Path) -> Result<()> {
+    refuse_owner_path(name, path, &Owner::read(&owner_home()?)?)
+}
+
+/// A root is disposable and nothing in it needs a link, so any link is a way out
+/// of it, including at files only Aven names, such as database sidecars.
+/// `skipped` is cleared before use, and a link at `skipped` itself is refused.
+fn refuse_links_below(directory: &Path, skipped: &Path) -> Result<()> {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("read {}", directory.display())),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            bail!("the root holds a link: {}", path.display());
+        }
+        if kind.is_dir() && path != skipped {
+            refuse_links_below(&path, skipped)?;
         }
     }
     Ok(())
@@ -1069,6 +1132,75 @@ mod tests {
             .collect();
         found.sort();
         assert_eq!(found, AUDITED);
+    }
+
+    #[test]
+    fn refuses_a_link_at_any_path_below_the_root() {
+        for relative in [
+            "launch.stderr",
+            "prototype",
+            "tmp",
+            "state/aven/db.sqlite-wal",
+            "state/aven/db.sqlite.aven-open.lock",
+            "home/deep/inside",
+        ] {
+            let owner = tempfile::tempdir().unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let link = root.path().join(relative);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(owner.path().join("target"), &link).unwrap();
+            let reason = refusal(&valid(root.path()), owner.path());
+            assert!(reason.contains("link"), "{relative}: {reason}");
+        }
+    }
+
+    #[test]
+    fn a_rerun_clears_chrome_links_in_the_prototype_directory() {
+        let owner = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let isolation = Isolation::layout(root.path());
+        let first = isolation.fresh_prototype_directory().unwrap();
+        std::os::unix::fs::symlink("host-1234", first.join("SingletonLock")).unwrap();
+        Isolation::resolve(&valid(root.path()), owner.path()).unwrap();
+        let second = isolation.fresh_prototype_directory().unwrap();
+        assert_eq!(std::fs::read_dir(second).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn refuses_a_temporary_directory_in_owner_data() {
+        let owner = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut environment = valid(root.path());
+        environment.insert(
+            "TMPDIR".to_string(),
+            owner.path().join(".local/state/aven/tmp").into(),
+        );
+        assert!(refusal(&environment, owner.path()).contains("TMPDIR"));
+    }
+
+    /// Layout paths have one owner, so a script asks for them instead of
+    /// spelling them, and a path added here cannot be missed by the guard.
+    #[test]
+    fn scripts_take_their_paths_from_the_guard() {
+        let scripts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/desktop");
+        for (script, spelling) in [
+            ("launch", "$root/"),
+            ("capture", "$root/"),
+            ("sync-proof", "self.root /"),
+        ] {
+            let text = std::fs::read_to_string(scripts.join(script)).unwrap();
+            assert!(!text.contains(spelling), "{script} spells a layout path");
+        }
+    }
+
+    #[test]
+    fn lists_paths_for_scripts() {
+        let root = tempfile::tempdir().unwrap();
+        let isolation = Isolation::layout(root.path());
+        let listing = isolation.path_listing();
+        for name in ["config_file", "launch_errors", "prototype", "scratch"] {
+            assert!(listing.contains(&format!("\n{name}=")), "{name}");
+        }
     }
 
     #[test]

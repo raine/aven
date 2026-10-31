@@ -18,6 +18,8 @@ use anyhow::{Context, Result, bail};
 use base64::Engine;
 use serde_json::{Value, json};
 
+pub const KEYCHAIN_PROBE_COOKIE: &str = "aven_keychain_probe";
+pub const KEYCHAIN_PROBE_VALUE: &str = "encrypted-with-the-mock-key";
 const DEFAULT_CHROME: &str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const STORAGE_KEY: &str = "aven-desktop-proto-v3-collab";
 const SCALE: u32 = 2;
@@ -50,7 +52,6 @@ impl Prototype {
     pub fn new(target: &Path, work: &Path) -> Result<Self> {
         let html = std::fs::read_to_string(target)
             .with_context(|| format!("read the frozen prototype {}", target.display()))?;
-        std::fs::create_dir_all(work)?;
         Ok(Self {
             html,
             work: work.to_path_buf(),
@@ -62,6 +63,15 @@ impl Prototype {
         std::fs::write(&page, self.instrument(render)?)?;
         let mut session = Session::start(&self.work.join(render.name))?;
         let result = session.render(render, &page);
+        session.close();
+        result
+    }
+
+    /// Stores a cookie in an isolated profile and returns the command line
+    /// Chrome reports, so a caller can check how Chrome handled the secret.
+    pub fn write_keychain_probe(profile: &Path) -> Result<String> {
+        let mut session = Session::start(profile)?;
+        let result = session.keychain_probe();
         session.close();
         result
     }
@@ -134,6 +144,15 @@ impl Session {
         command
             .args([
                 "--headless=new",
+                // Chrome's cookie key comes from a fixed mock, not the login
+                // Keychain. Without background traffic, nothing reads the
+                // Keychain's certificates either.
+                "--use-mock-keychain",
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-extensions",
+                "--disable-sync",
                 "--disable-gpu",
                 "--hide-scrollbars",
                 "--no-first-run",
@@ -217,13 +236,44 @@ impl Session {
         Ok(reply["result"]["value"].clone())
     }
 
-    fn render(&mut self, render: &Render, page: &Path) -> Result<Value> {
-        let target = self.call("Target.createTarget", json!({ "url": "about:blank" }))?;
+    fn keychain_probe(&mut self) -> Result<String> {
+        self.open_page("chrome://version")?;
+        let mut command_line = Value::Null;
+        for _ in 0..50 {
+            command_line =
+                self.evaluate("document.getElementById('command_line')?.innerText ?? null")?;
+            if command_line.is_string() {
+                break;
+            }
+            std::thread::sleep(POLL);
+        }
+        self.call(
+            "Network.setCookie",
+            json!({
+                "name": KEYCHAIN_PROBE_COOKIE,
+                "value": KEYCHAIN_PROBE_VALUE,
+                "url": "https://aven-keychain-probe.invalid/",
+                "expires": 4_102_444_800_i64,
+            }),
+        )?;
+        command_line
+            .as_str()
+            .map(str::to_string)
+            .context("chrome://version has no command line")
+    }
+
+    fn open_page(&mut self, url: &str) -> Result<()> {
+        let target = self.call("Target.createTarget", json!({ "url": url }))?;
         let attached = self.call(
             "Target.attachToTarget",
             json!({ "targetId": target["targetId"], "flatten": true }),
         )?;
         self.page = attached["sessionId"].as_str().map(str::to_string);
+        Ok(())
+    }
+
+    fn render(&mut self, render: &Render, page: &Path) -> Result<Value> {
+        self.open_page("about:blank")?;
         self.call(
             "Emulation.setDeviceMetricsOverride",
             json!({

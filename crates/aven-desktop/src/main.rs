@@ -3,7 +3,8 @@ use std::process::ExitCode;
 use aven_desktop::{app, isolation::Isolation};
 
 fn main() -> ExitCode {
-    let paths_only = std::env::args().any(|argument| argument == "--check-paths");
+    let print_paths = std::env::args().any(|argument| argument == "--print-paths");
+    let paths_only = print_paths || std::env::args().any(|argument| argument == "--check-paths");
     let validated = if paths_only {
         Isolation::paths_from_process()
     } else {
@@ -16,6 +17,9 @@ fn main() -> ExitCode {
             return ExitCode::from(78);
         }
     };
+    if print_paths {
+        print!("{}", isolation.path_listing());
+    }
     if paths_only || std::env::args().any(|argument| argument == "--check-isolation") {
         return ExitCode::SUCCESS;
     }

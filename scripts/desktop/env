@@ -28,15 +28,24 @@ run_isolated() {
   env -i PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" "${variables[@]}" "$@"
 }
 
+# Prints one path from the guard's validated layout, or refuses the root. Every
+# path a script writes comes from here. Takes the name from --print-paths.
+isolation_path() {
+  local root=$1 name=$2 listing
+  listing=$(run_isolated "$root" "$desktop_bin/aven-desktop" --print-paths)
+  sed -n "s/^$name=//p" <<<"$listing"
+}
+
 free_loopback_port() {
   python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
 # Writes the launch's config, with its own wake port and no automatic sync.
 write_isolated_config() {
-  local root=$1
-  mkdir -p "$root/config/aven"
-  cat >"$root/config/aven/config.yaml" <<YAML
+  local root=$1 config
+  config=$(isolation_path "$root" config_file)
+  mkdir -p "$(dirname "$config")"
+  cat >"$config" <<YAML
 sync:
   enabled: false
 daemon:

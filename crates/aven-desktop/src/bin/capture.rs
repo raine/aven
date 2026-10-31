@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
-use aven_desktop::isolation::Isolation;
+use aven_desktop::isolation::{self, Isolation};
 use aven_desktop::measure::{self, MeasuredBounds, NamedBounds};
 use aven_desktop::prototype::{Prototype, Render};
 use aven_desktop::scene::{Manifest, Scene, Theme};
@@ -30,6 +30,13 @@ fn repository_dir() -> PathBuf {
 
 fn manifest() -> Result<Manifest> {
     Manifest::load(&crate_dir().join("scenes/manifest.toml"))
+}
+
+/// A directory for a command that has no root of its own.
+fn scratch() -> Result<tempfile::TempDir> {
+    let base = std::env::temp_dir();
+    isolation::require_outside_owner("TMPDIR", &base)?;
+    Ok(tempfile::tempdir_in(base)?)
 }
 
 fn main() -> ExitCode {
@@ -54,10 +61,11 @@ fn dispatch(args: &[String]) -> Result<bool> {
             Ok(true)
         }
         ["check-capabilities"] => check_capabilities().map(|()| true),
+        ["keychain-probe"] => keychain_probe().map(|()| true),
         ["run", output] => run(Path::new(output), None),
         ["run", output, scene] => run(Path::new(output), Some(scene)),
         _ => bail!(
-            "usage: aven-desktop-capture export-fixture | seed | inventory | check-capabilities | run OUTPUT [SCENE]"
+            "usage: aven-desktop-capture export-fixture | seed | inventory | check-capabilities | keychain-probe | run OUTPUT [SCENE]"
         ),
     }
 }
@@ -69,7 +77,7 @@ fn export_fixture() -> Result<()> {
         .with_ymd_and_hms(year, month, day, hour, 0, 0)
         .single()
         .context("fixture instant")?;
-    let work = tempfile::tempdir()?;
+    let work = scratch()?;
     let prototype = Prototype::new(&repository_dir().join(manifest()?.target), work.path())?;
     let data = prototype.render(&Render {
         name: "export",
@@ -96,7 +104,7 @@ fn export_fixture() -> Result<()> {
 fn prototype_inventory() -> Result<BTreeSet<String>> {
     let target = repository_dir().join(manifest()?.target);
     let html = std::fs::read_to_string(&target)?;
-    let work = tempfile::tempdir()?;
+    let work = scratch()?;
     let tables = Prototype::new(&target, work.path())?.render(&Render {
         name: "inventory",
         now_ms: Local::now().timestamp_millis(),
@@ -186,6 +194,16 @@ fn seed_only() -> Result<()> {
     Ok(())
 }
 
+/// Leaves an isolated Chrome profile for `scripts/desktop/keychain-proof`.
+fn keychain_probe() -> Result<()> {
+    let isolation = Isolation::from_process()?;
+    let profile = isolation
+        .fresh_prototype_directory()?
+        .join("keychain-probe");
+    println!("{}", Prototype::write_keychain_probe(&profile)?);
+    Ok(())
+}
+
 fn run(output: &Path, only: Option<&str>) -> Result<bool> {
     let isolation = Isolation::from_process()?;
     let manifest = manifest()?;
@@ -197,6 +215,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
     if scenes.is_empty() {
         bail!("no scene named {only:?}");
     }
+    isolation::require_outside_owner("capture output", output)?;
     std::fs::create_dir_all(output)?;
     let anchor = fixture::anchor_now()?;
     let seeded = seed_database(&isolation, anchor)?;
@@ -209,7 +228,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
 
     let prototype = Prototype::new(
         &repository_dir().join(&manifest.target),
-        &isolation.root.join("prototype"),
+        isolation.fresh_prototype_directory()?,
     )?;
     let mut cx = capture_context();
     let mut passed = true;

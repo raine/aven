@@ -60,12 +60,21 @@ fi
 "$cargo_script" build --features capture
 
 echo "== launcher"
+mkdir "$root/linked"
+ln -s "$root/escaped.log" "$root/linked/launch.stderr"
+if AVEN_DESKTOP_ROOT="$root/linked" "$desktop_repo/scripts/desktop/launch" --background 2>/dev/null ||
+  [[ -e "$root/escaped.log" ]]; then
+  echo "launcher wrote through a link below the root" >&2
+  exit 1
+fi
+
 mkdir "$root/launch"
 AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --seed --background
-launched_pid=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pid"])' "$root/launch/launch.json")
+launch_record=$(isolation_path "$root/launch" launch_record)
+launched_pid=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pid"])' "$launch_record")
 trap 'kill "$launched_pid" 2>/dev/null || true; rm -rf "$root"' EXIT
 codesign -dv "$desktop_crate/target/Aven Dev.app" 2>&1 | rg '^Identifier=fi\.zendit\.Aven\.dev$'
-python3 - "$root/launch/launch.json" "$root/launch" <<'PY'
+python3 - "$launch_record" "$root/launch" <<'PY'
 import json, os, sys
 launch = json.load(open(sys.argv[1]))
 root = os.path.realpath(sys.argv[2])
@@ -77,12 +86,16 @@ PY
 
 kill "$launched_pid"
 sleep 1
-rm -rf "$root/launch/state/aven/db.sqlite"
-mkdir "$root/launch/state/aven/db.sqlite"
+database=$(isolation_path "$root/launch" database)
+rm -rf "$database"
+mkdir "$database"
 if AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --background; then
   echo "launcher reported success for an app that could not start" >&2
   exit 1
 fi
+
+echo "== chrome keychain"
+"$desktop_repo/scripts/desktop/keychain-proof"
 
 echo "== capture"
 "$desktop_repo/scripts/desktop/capture" "$output"

@@ -34,7 +34,12 @@ file-backed keys. The guard exits with status 78 when a resolved path overlaps t
 owner's data, when a path contains `.aven`, when the root contains `..`, when the
 environment points outside the root or sets a variable that moves storage, or when
 the root's config is anything but `sync.enabled: false`, a private loopback wake port
-and storage paths inside the layout.
+and storage paths inside the layout. It also refuses any link below the root and a
+`TMPDIR` or capture output in owner data.
+
+Every path a launch, capture or script writes is a field of `Isolation`. Scripts read
+them from `aven-desktop --print-paths`, which runs the guard first, so a new path is
+validated by adding it to `resolved_paths`.
 
 Owner data comes from three sources, all read-only:
 

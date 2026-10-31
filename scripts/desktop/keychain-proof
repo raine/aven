@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Proves capture's Chrome keeps its secrets away from the login Keychain, using
+# only Chrome's own report of its flags and a cookie in an isolated profile.
+# Chrome encrypts cookies with the Safe Storage key, so a cookie that decrypts
+# with the mock key shows where Chrome took that key from. The Keychain itself
+# is never queried.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/env"
+
+"$desktop_repo/scripts/desktop/cargo" build --features capture >&2
+root=$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop.XXXXXX")
+trap 'rm -rf "$root"' EXIT
+write_isolated_config "$root"
+scratch=$(isolation_path "$root" scratch)
+mkdir "$scratch"
+command_line=$(TMPDIR="$scratch" run_isolated "$root" "$desktop_bin/aven-desktop-capture" keychain-probe)
+if [[ $command_line != *--use-mock-keychain* ]]; then
+  echo "Chrome does not report --use-mock-keychain: $command_line" >&2
+  exit 1
+fi
+echo "Chrome reports --use-mock-keychain"
+
+python3 - "$(isolation_path "$root" prototype)/keychain-probe" <<'PY'
+import hashlib, pathlib, sqlite3, subprocess, sys
+
+profile = pathlib.Path(sys.argv[1])
+database = next(profile.glob("Default/**/Cookies"))
+cookies = sqlite3.connect(database)
+rows = cookies.execute(
+    "select encrypted_value, value from cookies where name = 'aven_keychain_probe'"
+).fetchall()
+version = cookies.execute("select value from meta where key = 'version'").fetchone()[0]
+assert len(rows) == 1, "Chrome did not store the probe cookie"
+encrypted, plain = rows[0]
+assert not plain and encrypted[:3] == b"v10", "Chrome did not encrypt the probe cookie"
+
+# Chromium's os_crypt on macOS: PBKDF2-SHA1 with this salt and iteration count,
+# AES-128-CBC with a blank IV. Newer databases prefix the host's SHA-256.
+key = hashlib.pbkdf2_hmac("sha1", b"mock_password", b"saltysalt", 1003, 16)
+decrypted = subprocess.run(
+    ["openssl", "enc", "-d", "-aes-128-cbc", "-K", key.hex(), "-iv", (b" " * 16).hex()],
+    input=encrypted[3:],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    check=True,
+).stdout
+if int(version) >= 24:
+    decrypted = decrypted[32:]
+assert decrypted == b"encrypted-with-the-mock-key", "the cookie is not under the mock key"
+print("Chrome's cookie key is the mock key, not a Keychain item")
+PY
