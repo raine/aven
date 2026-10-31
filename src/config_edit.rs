@@ -42,8 +42,16 @@ fn set_scalar_text(text: &str, section: &str, key: &str, value: &str) -> Result<
                 None => format!("{indentation}{key}: {value}"),
             };
         } else {
+            // Comments and blank lines before the next section belong to it.
+            let mut insert_at = section_end;
+            while insert_at > section_line + 1
+                && indent_len(&lines[insert_at - 1]) == 0
+                && (lines[insert_at - 1].trim().is_empty() || lines[insert_at - 1].starts_with('#'))
+            {
+                insert_at -= 1;
+            }
             lines.insert(
-                section_end,
+                insert_at,
                 format!("{}{key}: {value}", " ".repeat(child_indent)),
             );
         }
