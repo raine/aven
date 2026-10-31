@@ -148,10 +148,10 @@ suites at 12 threads. Record wall, user, and system time for both phases. Keep
 sccache disabled or hold its cache state equal; on macOS and Linux,
 `RUSTC_WRAPPER=/usr/bin/env` bypasses the configured wrapper.
 
-The workspace packages are `aven` and `aven-core`; `aven` depends on
-`aven-core`, not the reverse. Select the package that owns the changed behavior.
-If a core API or contract change affects its `aven` consumer, check both
-packages. Database migration or SQLx query/metadata changes also need
+The workspace packages are `aven`, `aven-host` and `aven-core`. `aven` depends on
+`aven-host`, and both depend on `aven-core`, not the reverse. Select the package
+that owns the changed behavior. If a core or host API or contract change affects
+a consumer, check both packages. Database migration or SQLx query/metadata changes also need
 `just sqlx-check`.
 
 The pre-commit hook runs format, dependency/static-safety, and migration-order
@@ -176,7 +176,7 @@ material risk, choose the conservative full gate rather than guessing.
 | Root app code outside the rows below (`src/`, root `tests/`) | `just check-package aven` |
 | TUI (`src/tui/`) | `just check-package aven` |
 | CLI and commands (`src/cli/`, `src/commands/`, `tests/cli_*.rs`) | `just check-package aven` |
-| Configuration (`src/config/` and related CLI/TUI behavior) | `just check-package aven` |
+| Host logic (`crates/aven-host/src/`: configuration, routing, operations, the store, sync host) | `just check-package aven-host`; include `just check-package aven` for CLI or TUI behavior that depends on it |
 | Core (`crates/aven-core/src/`, `crates/aven-core/tests/`) | `just check-package aven-core` |
 | Sync (`crates/aven-core/src/sync/`, app/server sync paths) | `just check-package aven-core`; include `just check-package aven` for affected app/server paths or consumer contracts |
 | Database (`crates/aven-core/src/db/`, migrations, SQLx metadata) | `just check-package aven-core`; also `just sqlx-check` for migrations or SQLx inputs |

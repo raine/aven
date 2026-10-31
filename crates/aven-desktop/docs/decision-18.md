@@ -2,7 +2,7 @@
 
 Decision 18 ships the desktop inside the existing bundle, with one executable,
 `Contents/MacOS/aven`, that starts the GUI when launched as an app. Checked
-against `aven update`, `scripts/install`, Homebrew and `src/daemon/service.rs`.
+against `aven update`, `scripts/install`, Homebrew and `crates/aven-host/src/daemon/service.rs`.
 
 **Result: the decision holds.** No path below forces a second executable or a
 bundle change. Integration has to make the five changes under "Required".
@@ -17,7 +17,7 @@ bundle change. Integration has to make the five changes under "Required".
   so a GUI-capable bundle installs unchanged.
 - **Homebrew.** `scripts/homebrew-formula` installs `Contents` and symlinks the
   executable, and checks the identifier `fi.zendit.Aven`, which stays.
-- **Daemon.** `src/daemon/service.rs` always passes arguments, keys bundle
+- **Daemon.** `crates/aven-host/src/daemon/service.rs` always passes arguments, keys bundle
   detection on `app_bundle::enclosing_bundle`, and associates the agent with
   `fi.zendit.Aven`. One executable and one identifier keep the login item,
   repair and migration logic as they are. An update does not touch the daemon,

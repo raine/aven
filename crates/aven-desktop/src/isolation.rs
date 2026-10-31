@@ -1115,14 +1115,14 @@ mod tests {
             "STATE_DIRECTORY",
         ];
         const AUDITED: &[&str] = &[
+            "crates/aven-host/src/config/paths.rs",
+            "crates/aven-host/src/daemon/service.rs",
+            "crates/aven-host/src/daemon/service/systemd.rs",
+            "crates/aven-host/src/protected_local_keys.rs",
             "src/cli/sync.rs",
             "src/commands/doctor/bootstrap.rs",
             "src/commands/skill.rs",
-            "src/config/paths.rs",
-            "src/daemon/service.rs",
-            "src/daemon/service/systemd.rs",
             "src/logging.rs",
-            "src/protected_local_keys.rs",
             "src/sync/encrypted/tests.rs",
             "src/tui/app.rs",
             "src/tui/changelog.rs",
@@ -1133,7 +1133,12 @@ mod tests {
         ];
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut files = Vec::new();
-        for directory in ["src", "crates/aven-core/src", "crates/aven-protocol/src"] {
+        for directory in [
+            "src",
+            "crates/aven-core/src",
+            "crates/aven-host/src",
+            "crates/aven-protocol/src",
+        ] {
             sources(&repository.join(directory), &mut files);
         }
         let mut found: Vec<String> = files
