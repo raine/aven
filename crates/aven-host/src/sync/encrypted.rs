@@ -20,6 +20,7 @@ use aven_core::sync::client::keys::{ProtectedStorage, StoreResult};
 use aven_core::sync::client::tail::ImageTransfer;
 
 use crate::config::{self, AppConfig};
+use crate::protected_local_keys::KeychainInteraction;
 use crate::sync_http::HttpDriver;
 
 mod devices;
@@ -34,42 +35,59 @@ pub use devices::{
     remove as remove_device, remove_other_device,
 };
 
+/// Who waits on a sync action, which decides if it may ask for Keychain access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostMode {
+    /// A CLI or TUI command, which can answer only through a terminal.
+    Terminal,
+    /// A person started this action in a GUI: setup, join or Sync now.
+    UserStarted,
+    /// Nobody is waiting, so the action must never show Keychain UI.
+    Background,
+}
+
+impl HostMode {
+    fn keychain_interaction(self, terminal_attended: bool) -> KeychainInteraction {
+        match self {
+            Self::Terminal if terminal_attended => KeychainInteraction::Allow,
+            Self::UserStarted => KeychainInteraction::Allow,
+            Self::Terminal | Self::Background => KeychainInteraction::Deny,
+        }
+    }
+}
+
 /// The desktop's answers to what the engine asks of its host.
 pub struct DesktopHost {
     pub config: AppConfig,
-    keychain_interaction: crate::protected_local_keys::KeychainInteraction,
+    keychain_interaction: KeychainInteraction,
     protected_storage: Mutex<Option<Arc<dyn ProtectedStorage>>>,
 }
 
 impl DesktopHost {
-    pub fn foreground(config: &AppConfig) -> Self {
+    pub fn new(config: &AppConfig, mode: HostMode) -> Self {
         let attended = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-        Self::new(
-            config,
-            if attended {
-                crate::protected_local_keys::KeychainInteraction::Allow
-            } else {
-                crate::protected_local_keys::KeychainInteraction::Deny
-            },
-        )
-    }
-
-    fn background(config: &AppConfig) -> Self {
-        Self::new(
-            config,
-            crate::protected_local_keys::KeychainInteraction::Deny,
-        )
-    }
-
-    fn new(
-        config: &AppConfig,
-        keychain_interaction: crate::protected_local_keys::KeychainInteraction,
-    ) -> Self {
         Self {
             config: config.clone(),
-            keychain_interaction,
+            keychain_interaction: mode.keychain_interaction(attended),
             protected_storage: Mutex::new(None),
         }
+    }
+
+    pub fn foreground(config: &AppConfig) -> Self {
+        Self::new(config, HostMode::Terminal)
+    }
+
+    pub fn background(config: &AppConfig) -> Self {
+        Self::new(config, HostMode::Background)
+    }
+
+    /// Uses `storage` instead of the installation's protected key storage.
+    pub fn with_storage(self, storage: Arc<dyn ProtectedStorage>) -> Self {
+        *self
+            .protected_storage
+            .lock()
+            .expect("new host has no storage users") = Some(storage);
+        self
     }
 }
 
@@ -215,18 +233,23 @@ pub async fn run_join(
 }
 
 pub async fn run_to_completion(database: &Database, config: &AppConfig) -> Result<Outcome> {
-    let host = DesktopHost::foreground(config);
+    run_to_completion_with(database, &DesktopHost::foreground(config)).await
+}
+
+/// Syncs until caught up on `host`, for an action someone is waiting on.
+pub async fn run_to_completion_with(database: &Database, host: &DesktopHost) -> Result<Outcome> {
     let outcome = driver()?
-        .run(|link| engine::run_to_completion(link, database, &host))
+        .run(|link| engine::run_to_completion(link, database, host))
         .await?;
     if outcome.metadata_caught_up && outcome.images != ImageTransfer::Failed {
-        crate::daemon::retry_after_foreground_sync(database, config).await;
+        crate::daemon::retry_after_foreground_sync(database, &host.config).await;
     }
     Ok(outcome)
 }
 
 #[derive(Default)]
 pub struct DaemonSync {
+    storage: Option<Arc<dyn ProtectedStorage>>,
     cached: Option<DaemonResources>,
 }
 
@@ -247,6 +270,15 @@ struct DaemonResourceKey {
 }
 
 impl DaemonSync {
+    /// Runs background rounds on `storage` instead of the installation's
+    /// protected key storage.
+    pub fn with_storage(storage: Arc<dyn ProtectedStorage>) -> Self {
+        Self {
+            storage: Some(storage),
+            cached: None,
+        }
+    }
+
     async fn resource_key(database: &Database, config: &AppConfig) -> Result<DaemonResourceKey> {
         Ok(DaemonResourceKey {
             blob_dir: config.local.blob_dir.clone(),
@@ -261,9 +293,13 @@ impl DaemonSync {
         if self.cached.as_ref().is_some_and(|cached| cached.key == key) {
             return Ok(());
         }
+        let host = DesktopHost::background(config);
         self.cached = Some(DaemonResources {
             key,
-            host: DesktopHost::background(config),
+            host: match &self.storage {
+                Some(storage) => host.with_storage(storage.clone()),
+                None => host,
+            },
             driver: driver()?,
             #[cfg(test)]
             generation: next_daemon_resource_generation(),
@@ -327,7 +363,71 @@ pub async fn status_report(database: &Database, config: &AppConfig) -> Result<St
 
 #[cfg(test)]
 mod tests {
+    use aven_core::sync::client::keys::FileProtectedStorage;
+
     use super::*;
+
+    #[test]
+    fn user_started_actions_may_ask_for_keychain_access_without_a_terminal() {
+        assert_eq!(
+            HostMode::UserStarted.keychain_interaction(false),
+            KeychainInteraction::Allow
+        );
+    }
+
+    #[test]
+    fn background_actions_never_ask_for_keychain_access() {
+        for attended in [false, true] {
+            assert_eq!(
+                HostMode::Background.keychain_interaction(attended),
+                KeychainInteraction::Deny
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_commands_ask_only_when_attended() {
+        assert_eq!(
+            HostMode::Terminal.keychain_interaction(true),
+            KeychainInteraction::Allow
+        );
+        assert_eq!(
+            HostMode::Terminal.keychain_interaction(false),
+            KeychainInteraction::Deny
+        );
+    }
+
+    #[test]
+    fn hosts_carry_the_interaction_of_their_mode() {
+        let config = AppConfig::default();
+        assert_eq!(
+            DesktopHost::new(&config, HostMode::UserStarted).keychain_interaction,
+            KeychainInteraction::Allow
+        );
+        assert_eq!(
+            DesktopHost::background(&config).keychain_interaction,
+            KeychainInteraction::Deny
+        );
+    }
+
+    #[tokio::test]
+    async fn daemon_rounds_use_given_storage_and_never_allow_keychain_access() {
+        let temp = tempfile::tempdir().unwrap();
+        let database = Database::open(&temp.path().join("daemon.sqlite"))
+            .await
+            .unwrap();
+        let storage: Arc<dyn ProtectedStorage> =
+            Arc::new(FileProtectedStorage::new(temp.path().join("keys")));
+        let mut sync = DaemonSync::with_storage(storage.clone());
+
+        sync.prepare(&database, &AppConfig::default())
+            .await
+            .unwrap();
+
+        let host = &sync.cached.as_ref().unwrap().host;
+        assert_eq!(host.keychain_interaction, KeychainInteraction::Deny);
+        assert!(Arc::ptr_eq(&host.protected_storage().unwrap(), &storage));
+    }
 
     #[tokio::test]
     async fn daemon_resources_persist_until_config_server_or_fatal_error_changes() {

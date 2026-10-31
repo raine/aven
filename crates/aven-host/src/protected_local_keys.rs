@@ -22,7 +22,7 @@ const STORE_DIRECTORY: &str = "protected-keys";
 const KEYCHAIN_SERVICE: &str = "fi.zendit.Aven.local-package-keyring";
 
 /// Whether protected storage may ask an attended macOS user for Keychain access.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeychainInteraction {
     /// Allow Keychain authorization UI.
     Allow,
