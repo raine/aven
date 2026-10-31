@@ -107,18 +107,40 @@ impl Database {
         new_name: &str,
         prefix: Option<&str>,
     ) -> Result<ProjectRenameOutcome> {
+        let (outcome, ()) = self
+            .rename_project_with_tui_undo_before_commit(
+                workspace,
+                project,
+                new_name,
+                prefix,
+                |_| Ok(()),
+            )
+            .await?;
+        Ok(outcome)
+    }
+
+    pub async fn rename_project_with_tui_undo_before_commit<T, F>(
+        &self,
+        workspace: &Workspace,
+        project: &str,
+        new_name: &str,
+        prefix: Option<&str>,
+        before_commit: F,
+    ) -> Result<(ProjectRenameOutcome, T)>
+    where
+        F: FnOnce(&ProjectRenameOutcome) -> Result<T>,
+    {
         let mut conn = self.acquire_writer().await?;
-        let (outcome, ()) = rename_project_operation_before_commit(
+        rename_project_operation_before_commit(
             &mut conn,
             workspace,
             project,
             new_name,
             prefix,
-            |_| Ok(()),
+            before_commit,
             true,
         )
-        .await?;
-        Ok(outcome)
+        .await
     }
 
     pub async fn rename_project_before_commit<T, F>(
@@ -331,7 +353,6 @@ where
         project,
         changed: true,
     };
-    let value = before_commit(&outcome)?;
     if tui_undo {
         record_tui_undo(
             &mut tx,
@@ -350,6 +371,7 @@ where
         )
         .await?;
     }
+    let value = before_commit(&outcome)?;
     tx.commit().await?;
     info!(project_id = %outcome.project.id, project_key = %outcome.project.key, "project renamed");
     Ok((outcome, value))

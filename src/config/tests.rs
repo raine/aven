@@ -148,3 +148,103 @@ fn removed_shared_auth_token_is_ignored_and_not_serialized() {
     assert!(!serialized.contains("auth_token"));
     assert!(!serialized.contains("obsolete-secret"));
 }
+
+#[cfg(unix)]
+#[test]
+fn protected_destinations_are_never_replaced_or_followed() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    for (target_mode, relative, dangling) in [
+        (0o600, false, false),
+        (0o444, false, false),
+        (0o644, true, false),
+        (0o644, true, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("source.yaml");
+        let path = dir.path().join("config.yaml");
+        if !dangling {
+            fs::write(&target, "# private\nsync:\n  enabled: false\n").unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(target_mode)).unwrap();
+        }
+        let link = if relative {
+            PathBuf::from("source.yaml")
+        } else {
+            target.clone()
+        };
+        symlink(&link, &path).unwrap();
+        for result in [
+            write_config_text(&path, "replaced".into()),
+            crate::config_edit::set_scalar(&path, "sync", "enabled", "true"),
+            write_default_config(&path),
+        ] {
+            assert!(
+                result
+                    .unwrap_err()
+                    .downcast_ref::<ConfigWriteRefusal>()
+                    .is_some()
+            );
+            assert!(
+                fs::symlink_metadata(&path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(fs::read_link(&path).unwrap(), link);
+            assert!(!path.with_extension("yaml.tmp").exists());
+            if dangling {
+                assert!(!target.exists());
+            } else {
+                assert_eq!(
+                    fs::read_to_string(&target).unwrap(),
+                    "# private\nsync:\n  enabled: false\n"
+                );
+                assert_eq!(
+                    fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                    target_mode
+                );
+            }
+        }
+        assert!(!crate::server_config::write_template_if_missing(&path).unwrap());
+        assert_eq!(fs::read_link(&path).unwrap(), link);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn config_write_modes_and_parent_symlinks() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().join("directory");
+    fs::create_dir(&parent).unwrap();
+    let link = dir.path().join("link");
+    symlink(&parent, &link).unwrap();
+    let path = link.join("config.yaml");
+    write_config_text(&path, "original".into()).unwrap();
+    for mode in [0o444, 0o600, 0o644] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        let result = write_config_text(&path, format!("mode {mode}"));
+        if mode == 0o444 {
+            assert!(
+                result
+                    .unwrap_err()
+                    .downcast_ref::<ConfigWriteRefusal>()
+                    .is_some()
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+        } else {
+            result.unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), format!("mode {mode}"));
+        }
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            mode
+        );
+        assert!(!path.with_extension("yaml.tmp").exists());
+    }
+    assert!(
+        check_config_write(&parent)
+            .unwrap_err()
+            .downcast_ref::<ConfigWriteRefusal>()
+            .is_some()
+    );
+}

@@ -2471,3 +2471,21 @@ async fn add_task_explicit_inbox_survives_high_priority() {
     assert_eq!(task.task.status, TaskStatus::Inbox);
     assert_eq!(task.task.priority, TaskPriority::High);
 }
+
+#[tokio::test]
+async fn config_recovery_remains_visible_below_main_tui_minimum_size() {
+    let mut app = test_app().await;
+    app.overlay = Some(OverlayState::ConfigWriteRefusal {
+        title: "Could not add project path".into(),
+        message: format!("{}\nmanual recovery", "mapping details\n".repeat(20)),
+        reason: "symlinked",
+    });
+    let small = render_app_text(&mut app, 46, 12);
+    assert!(small.contains("This config is a symbolic link."));
+    assert!(small.contains("Enlarge the terminal"));
+    assert!(small.contains("close"));
+    assert!(!small.contains("terminal too small for aven tui"));
+    let large = render_app_text(&mut app, 100, 40);
+    assert!(large.contains("manual recovery"));
+    assert!(!large.contains("Enlarge the terminal"));
+}

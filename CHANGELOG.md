@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: Refuse edits to symlinked or read-only config files instead of replacing them, with instructions for making changes through your [config manager](https://aventasks.dev/configuration/#externally-managed-configuration).
 - New: `aven mcp` serves your tasks to Claude Code, Codex, Claude Desktop, and other MCP clients over stdio, and to ChatGPT through OpenAI's tunnel. It can list, search, count, create, update, note, and delete tasks and manage recurring series. See [MCP server](https://aventasks.dev/mcp/).
 - Fix: Print ambiguous task ref matches to standard error with the rest of the error, instead of to standard output.
 - UX: Bare HTTP(S) URLs in TUI task descriptions and notes are clickable without Markdown link syntax.

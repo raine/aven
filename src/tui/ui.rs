@@ -1,4 +1,5 @@
 mod columns;
+mod config_write_refusal;
 mod detail;
 mod dialog;
 mod empty_state;
@@ -235,6 +236,15 @@ fn render_surface(
     }
 
     if frame.area().width < MIN_TUI_WIDTH || frame.area().height < MIN_TUI_HEIGHT {
+        if let Some(OverlayView::ConfigWriteRefusal {
+            title,
+            message,
+            reason,
+        }) = &view.overlay
+        {
+            config_write_refusal::render(frame, theme, title, message, reason);
+            return;
+        }
         if let Some(OverlayView::Metadata(state)) = &view.overlay {
             self::overlays::metadata::render(frame, theme, state);
             return;
@@ -860,7 +870,8 @@ fn order_menu_items() -> [(TaskOrder, &'static str, &'static str); 6] {
 
 fn overlay_dims_underlay(overlay: &OverlayView, inline_title_editor: bool) -> bool {
     match overlay {
-        OverlayView::Onboarding { .. }
+        OverlayView::ConfigWriteRefusal { .. }
+        | OverlayView::Onboarding { .. }
         | OverlayView::Help { .. }
         | OverlayView::DetailHelp { .. }
         | OverlayView::Search { .. }
@@ -967,6 +978,13 @@ fn render_overlay_content(
         OverlayView::HeaderMenu(state) => render_header_menu(frame, theme, state),
         OverlayView::OrderMenu(state) => render_order_menu(frame, theme, state),
         OverlayView::Confirm(state) => render_confirm(frame, theme, state),
+        OverlayView::ConfigWriteRefusal {
+            title,
+            message,
+            reason,
+        } => {
+            config_write_refusal::render(frame, theme, title, message, reason);
+        }
         OverlayView::TextPanel(state) => render_text_panel(frame, theme, state),
         OverlayView::Changelog { markdown, scroll } => {
             self::overlays::render_changelog(frame, theme, markdown, *scroll)

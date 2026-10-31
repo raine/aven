@@ -111,6 +111,9 @@ pub fn report_cli_error(error: &anyhow::Error) {
 }
 
 fn cli_error_lines(error: &anyhow::Error) -> Vec<String> {
+    if let Some(message) = config::config_write_refusal_message(error) {
+        return vec![format!("Error: {message}")];
+    }
     if let Some(message) = sync::error_explanations::connectivity_error(error) {
         return vec![format!("Error: {message} [sync-network]")];
     }

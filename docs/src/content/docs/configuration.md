@@ -11,6 +11,21 @@ aven config init
 
 aven reads `config.yaml` from `AVEN_CONFIG_DIR` when set, otherwise from `~/.config/aven`.
 
+## Externally managed configuration
+
+aven reads symlinked and read-only configuration, but refuses to edit it, including
+through explicit settings commands. A symlink at the config file itself is protected
+even if its target is writable; on Unix, a regular file with no write permission
+bits is protected even when aven runs with elevated privileges.
+
+Make the requested change in your configuration source or config manager instead.
+Project path errors include instructions for editing the existing `project.overrides`
+sequence. A mapped project rename requires updating those entries before retrying.
+
+`aven server setup` leaves existing `server.yaml` files unchanged. Symlinked
+parent directories are supported. The check does not detect externally managed writable regular files or
+establish effective access under ACLs and ownership rules.
+
 ## Scalar values from scripts and agents
 
 `aven config get` reads these non-secret scalar settings:

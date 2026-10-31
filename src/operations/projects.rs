@@ -36,9 +36,30 @@ pub async fn create_project_operation(
     prefix: Option<&str>,
 ) -> Result<aven_core::operations::ProjectOutcome> {
     let path = path.map(canonicalize_project_path).transpose()?;
+    if let Some(path) = &path {
+        config_edit::check_project_path_write(
+            &config::config_file_path()?,
+            &ProjectPathMappingEdit {
+                workspace_id: &workspace.id,
+                workspace: &workspace.key,
+                project: &aven_core::projects::normalize_key(name),
+                path: path.clone(),
+            },
+        )?;
+    }
     let outcome = database.create_project(workspace, name, prefix).await?;
     if let Some(path) = path {
-        save_project_path_mapping(workspace, &outcome.project, path)?;
+        save_project_path_mapping(workspace, &outcome.project, path).with_context(|| {
+            format!(
+                "Project {} {} but its path mapping was not saved",
+                outcome.project.key,
+                if outcome.created {
+                    "was created"
+                } else {
+                    "already exists"
+                },
+            )
+        })?;
     }
     Ok(outcome)
 }

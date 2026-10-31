@@ -69,6 +69,11 @@ impl SearchKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayView<'a> {
+    ConfigWriteRefusal {
+        title: &'a str,
+        message: &'a str,
+        reason: &'static str,
+    },
     Metadata(super::metadata::MetadataView<'a>),
     Onboarding {
         splash_underlay: bool,
@@ -499,6 +504,15 @@ pub(crate) struct OverlayViewContext<'a> {
 impl<'a> OverlayView<'a> {
     pub(crate) fn project(state: &'a OverlayState, context: OverlayViewContext<'a>) -> Self {
         match state {
+            ConfigWriteRefusal {
+                title,
+                message,
+                reason,
+            } => Self::ConfigWriteRefusal {
+                title,
+                message,
+                reason,
+            },
             Onboarding { persist_on_exit } => Self::Onboarding {
                 splash_underlay: *persist_on_exit,
             },
