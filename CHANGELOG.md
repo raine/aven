@@ -3,6 +3,15 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- UX: Bare HTTP(S) URLs in TUI task descriptions and notes are clickable without Markdown link syntax.
+- Breaking: `aven server` uses a separate `server.yaml` instead of the client configuration. See the [migration guide](https://aventasks.dev/migration-guide/#move-server-settings-to-serveryaml).
+- UX: Browse long TUI sidebars with page and half-page keys or the mouse wheel without changing the active view until you press `Enter`. Scrolling focuses the pane under the pointer, and clicking blank task-pane space returns focus to tasks. Thanks [@pnaaberi](https://github.com/pnaaberi). ([#38](https://github.com/raine/aven/pull/38))
+- UX: TUI priority icons use one, two, or three signal bars for low, medium, and high, and an alert box for urgent. The icons require a Nerd Font and appear in priority pickers and recurring task views too.
+- Perf: Optimize PNG attachments faster, with a small trade-off in compressed file size.
+- Fix: Explicitly choosing Inbox keeps a task in Inbox even with medium, high, or urgent priority. Omitting the status still promotes these tasks to Todo.
+
 ## v0.1.51 (2026-10-21)
 
 - New: Switch workspaces from the TUI sidebar, with available open task counts for each workspace. ([#35](https://github.com/raine/aven/issues/35))

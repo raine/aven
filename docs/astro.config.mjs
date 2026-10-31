@@ -125,6 +125,7 @@ export default defineConfig({
             { label: 'Recurring tasks', slug: 'recurring-tasks' },
             { label: 'Work with agents', slug: 'agents' },
             { label: 'Sync across devices', slug: 'sync/setup' },
+            { label: 'Mobile app', slug: 'mobile-app' },
             { label: 'Back up and restore', slug: 'backups' },
             { label: 'Task metadata', slug: 'task-metadata' },
             { label: 'Custom TUI commands', slug: 'custom-commands' },
