@@ -4,13 +4,32 @@ use anyhow::Result;
 use aven_core::choices::TaskSource;
 use tokio::task::JoinHandle;
 
+use crate::attachments::storage::sha256_hex;
 use crate::config::TaskIntakeConfig;
 use crate::operations::{
-    TaskAttachmentAddInput, TaskCreationOptions, TaskCreationUndo, TaskDraft, TaskOutcome,
+    AttachmentAddInput, TaskAttachmentAddInput, TaskCreationOptions, TaskCreationUndo, TaskDraft,
+    TaskOutcome,
 };
-use crate::tui::authoring::PendingTaskAttachment;
 
 use super::TuiStore;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingTaskAttachment {
+    pub(crate) attachment_id: String,
+    pub(crate) sha256: String,
+    pub(crate) input: AttachmentAddInput,
+}
+
+impl PendingTaskAttachment {
+    pub(crate) fn new(attachment_id: String, input: AttachmentAddInput) -> Self {
+        let sha256 = sha256_hex(&input.bytes);
+        Self {
+            attachment_id,
+            sha256,
+            input,
+        }
+    }
+}
 
 struct CreatedTaskMessage {
     message: String,

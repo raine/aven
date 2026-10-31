@@ -164,7 +164,7 @@ impl TaskListFixture {
     pub(super) fn source(&self) -> TaskListSource<'_> {
         TaskListSource {
             tasks: &self.tasks,
-            view: TaskListViewRef::Owned(TaskListView::from_tasks(
+            view: TaskListViewRef::Owned(crate::tui::store::TaskListView::from_tasks(
                 self.view_state.render_mode(),
                 &self.tasks,
                 &self.view_state.expanded_epic_ids,

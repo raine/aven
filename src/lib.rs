@@ -141,6 +141,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
+    tui::install_command_rules();
     let cli = cli::parse_from(args);
     if cli.command.is_some() && (cli.project.is_some() || cli.all_projects) {
         anyhow::bail!(

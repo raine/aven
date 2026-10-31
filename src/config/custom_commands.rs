@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -141,8 +142,26 @@ pub enum CustomTuiCommandSuccess {
     RefreshAndQuit,
 }
 
+/// The TUI's command catalogue, which custom commands must not collide with.
+pub struct TuiCommandRules {
+    pub built_in_names: fn() -> Vec<&'static str>,
+    pub validate_keys: fn(&[CustomTuiCommandConfig]) -> Result<()>,
+}
+
+static TUI_COMMAND_RULES: OnceLock<TuiCommandRules> = OnceLock::new();
+
+/// Installs the rules that config validation applies. The process that hosts
+/// the TUI calls this before loading config.
+pub fn install_tui_command_rules(rules: TuiCommandRules) {
+    let _ = TUI_COMMAND_RULES.set(rules);
+}
+
 pub(super) fn validate(commands: &[CustomTuiCommandConfig]) -> Result<()> {
-    let mut command_names = crate::tui::built_in_command_names()
+    let rules = TUI_COMMAND_RULES.get();
+    let mut command_names = rules
+        .map(|rules| (rules.built_in_names)())
+        .unwrap_or_default()
+        .into_iter()
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
     for command in commands {
@@ -210,8 +229,10 @@ pub(super) fn validate(commands: &[CustomTuiCommandConfig]) -> Result<()> {
             }
         }
     }
-    crate::tui::validate_custom_command_keys(commands)?;
-    Ok(())
+    match rules {
+        Some(rules) => (rules.validate_keys)(commands),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -389,18 +410,6 @@ mod tests {
     }
 
     #[test]
-    fn custom_tui_commands_reject_invalid_names_and_collisions() {
-        for yaml in [
-            "tui:\n  commands:\n    - name: ':dispatch'\n      description: Dispatch\n      program: dispatch\n",
-            "tui:\n  commands:\n    - name: quit\n      description: Dispatch\n      program: dispatch\n",
-            "tui:\n  commands:\n    - name: dispatch\n      aliases: [dispatch]\n      description: Dispatch\n      program: dispatch\n",
-            "tui:\n  commands:\n    - name: dispatch\n      aliases: [same]\n      description: Dispatch\n      program: dispatch\n    - name: other\n      aliases: [same]\n      description: Other\n      program: other\n",
-        ] {
-            assert!(load_config(yaml).is_err(), "accepted {yaml}");
-        }
-    }
-
-    #[test]
     fn custom_tui_command_success_policies_deserialize() {
         for (value, expected) in [
             ("stay", CustomTuiCommandSuccess::Stay),
@@ -436,32 +445,5 @@ mod tests {
             stay.tui.commands[0].on_success,
             CustomTuiCommandSuccess::Stay
         );
-    }
-
-    #[test]
-    fn custom_tui_commands_validate_contextual_keybindings() {
-        let inherited = load_config(
-                "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n",
-            )
-            .unwrap();
-        assert_eq!(inherited.tui.commands[0].detail_keys, None);
-
-        let detail_disabled = load_config(
-                "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n      detail_keys: []\n",
-            )
-            .unwrap();
-        assert_eq!(detail_disabled.tui.commands[0].detail_keys, Some(vec![]));
-
-        for yaml in [
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [q]\n",
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: ['']\n",
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [Esc]\n",
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z unknown]\n",
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d a b c]\n",
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n      detail_keys: [s]\n",
-            "tui:\n  commands:\n    - name: dispatch\n      description: Dispatch\n      program: dispatch\n      keys: [z d]\n    - name: other\n      description: Other\n      program: other\n      keys: [z d]\n",
-        ] {
-            assert!(load_config(yaml).is_err(), "accepted {yaml}");
-        }
     }
 }

@@ -1,7 +1,9 @@
-use crate::attachments::storage::sha256_hex;
-use crate::operations::{AttachmentAddInput, TaskDraft};
+#[cfg(test)]
+use crate::operations::AttachmentAddInput;
+use crate::operations::TaskDraft;
 use crate::tui::overlay::SearchState;
 use crate::tui::store::EpicContext;
+pub(crate) use crate::tui::store::PendingTaskAttachment;
 
 pub(crate) const ADD_NOTE_TITLE: &str = "Add note";
 pub(crate) const ADD_TASK_TITLE_PROJECT_TITLE: &str = "Add task: project";
@@ -202,24 +204,6 @@ pub(crate) struct PendingTaskAttachmentSummary {
     pub(crate) filename: String,
     pub(crate) byte_size: i64,
     pub(crate) dimensions: Option<(u32, u32)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PendingTaskAttachment {
-    pub(crate) attachment_id: String,
-    pub(crate) sha256: String,
-    pub(crate) input: AttachmentAddInput,
-}
-
-impl PendingTaskAttachment {
-    pub(crate) fn new(attachment_id: String, input: AttachmentAddInput) -> Self {
-        let sha256 = sha256_hex(&input.bytes);
-        Self {
-            attachment_id,
-            sha256,
-            input,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

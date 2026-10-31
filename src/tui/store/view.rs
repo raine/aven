@@ -521,18 +521,18 @@ impl TuiStore {
     }
 
     fn epic_selection_at_or_near_visual_row(&self, row: usize) -> Option<usize> {
-        let count = crate::tui::ui::task_visual_row_count(self);
+        let count = self.task_list_view().row_count();
         if count == 0 {
             return None;
         }
         let row = row.min(count - 1);
         (0..count).find_map(|distance| {
             row.checked_sub(distance)
-                .and_then(|candidate| crate::tui::ui::task_index_at_visual_row(self, candidate))
+                .and_then(|candidate| self.task_list_view().task_index_at_visual_row(candidate))
                 .or_else(|| {
                     let candidate = row.saturating_add(distance);
                     (candidate < count)
-                        .then(|| crate::tui::ui::task_index_at_visual_row(self, candidate))
+                        .then(|| self.task_list_view().task_index_at_visual_row(candidate))
                         .flatten()
                 })
         })

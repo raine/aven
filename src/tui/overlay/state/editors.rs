@@ -2,6 +2,7 @@ use crate::ids::{TaskId, WorkspaceId};
 use crate::tui::conflict_flow::ConflictResolutionChoice;
 use crate::tui::overlay::text_buffer::TextBuffer;
 use crate::tui::overlay::text_input::LineEdit;
+pub(crate) use crate::tui::store::PickerItem;
 use crate::tui::store::{ConflictTarget, EpicChildTarget, EpicContext};
 use crate::tui::task_selection::TaskSelection;
 use crate::tui::text::normalize_pasted_newlines;
@@ -427,13 +428,6 @@ pub(crate) struct TagComboboxState {
     pub(crate) partial: Vec<String>,
     /// An option index, or `TAG_COMBOBOX_CREATE` for the synthetic create row.
     pub(crate) highlighted: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PickerItem {
-    pub(crate) label: String,
-    pub(crate) value: String,
-    pub(crate) selected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -35,7 +35,9 @@ mod attachment_controller;
 mod authoring;
 mod bounded_history;
 mod changelog;
-mod columns;
+#[cfg(test)]
+mod command_rule_tests;
+use store::columns;
 mod config_overlay;
 mod conflict_flow;
 mod custom_command;
@@ -47,6 +49,7 @@ mod gist_controller;
 mod inline_image_surface;
 mod inline_images;
 mod input;
+mod launch;
 mod list_surface;
 mod markdown;
 mod natural_add_runtime;
@@ -59,7 +62,7 @@ mod store;
 mod sync_controller;
 mod sync_errors;
 mod sync_operations;
-mod task_selection;
+use store::task_selection;
 mod terminal_command;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -71,16 +74,19 @@ mod triage;
 mod ui;
 mod widgets;
 
-pub(crate) fn built_in_command_names() -> impl Iterator<Item = &'static str> {
+fn built_in_command_names() -> Vec<&'static str> {
     event::COMMANDS
         .iter()
         .flat_map(|command| std::iter::once(command.name).chain(command.aliases.iter().copied()))
+        .collect()
 }
 
-pub(crate) fn validate_custom_command_keys(
-    commands: &[crate::config::CustomTuiCommandConfig],
-) -> Result<()> {
-    event::validate_custom_command_keys(commands)
+/// Makes config validation reject custom commands that collide with the TUI.
+pub(crate) fn install_command_rules() {
+    crate::config::install_tui_command_rules(crate::config::TuiCommandRules {
+        built_in_names: built_in_command_names,
+        validate_keys: event::validate_custom_command_keys,
+    });
 }
 
 struct TerminalSession {
@@ -134,14 +140,14 @@ pub(crate) async fn resolve_launch(
     workspace: &crate::workspaces::Workspace,
     args: crate::cli::TuiArgs,
     routing: &crate::routing::InvocationRouting<'_>,
-) -> Result<store::TuiLaunch> {
-    store::TuiLaunch::resolve(database, workspace, args, routing).await
+) -> Result<launch::TuiLaunch> {
+    launch::TuiLaunch::resolve(database, workspace, args, routing).await
 }
 
 pub(crate) async fn run(
     database: Database,
     workspace: crate::workspaces::Workspace,
-    launch: store::TuiLaunch,
+    launch: launch::TuiLaunch,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
@@ -151,7 +157,7 @@ pub(crate) async fn run(
 pub(crate) async fn run_demo(
     database: Database,
     workspace: crate::workspaces::Workspace,
-    launch: store::TuiLaunch,
+    launch: launch::TuiLaunch,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
 ) -> Result<()> {
@@ -161,7 +167,7 @@ pub(crate) async fn run_demo(
 async fn run_with_welcome_intro(
     database: Database,
     workspace: crate::workspaces::Workspace,
-    launch: store::TuiLaunch,
+    launch: launch::TuiLaunch,
     db_path: std::path::PathBuf,
     config: crate::config::AppConfig,
     show_welcome_intro: bool,
@@ -178,7 +184,7 @@ async fn run_with_welcome_intro(
     app.set_add_task_db_path(db_path);
     app.set_appearance(appearance);
     match launch.startup {
-        store::TuiStartup::AddTaskOnly { natural } => {
+        launch::TuiStartup::AddTaskOnly { natural } => {
             let mut terminal = TerminalSession::init()?;
             let result = app
                 .run_add_task_only(terminal.terminal_mut(), natural)
@@ -196,15 +202,15 @@ async fn run_with_welcome_intro(
         startup => {
             app.start_update_check();
             match startup {
-                store::TuiStartup::Browse if show_welcome_intro => app.show_welcome_intro(),
-                store::TuiStartup::Browse => app.maybe_open_onboarding().await,
-                store::TuiStartup::AddTask { natural } => {
+                launch::TuiStartup::Browse if show_welcome_intro => app.show_welcome_intro(),
+                launch::TuiStartup::Browse => app.maybe_open_onboarding().await,
+                launch::TuiStartup::AddTask { natural } => {
                     app.open_add_task_on_start(natural).await?;
                 }
-                store::TuiStartup::Detail { task_id } => {
+                launch::TuiStartup::Detail { task_id } => {
                     app.open_task_on_start(&task_id)?;
                 }
-                store::TuiStartup::AddTaskOnly { .. } => unreachable!(),
+                launch::TuiStartup::AddTaskOnly { .. } => unreachable!(),
             }
             let mut terminal = TerminalSession::init()?;
             let result = app.run(terminal.terminal_mut()).await;

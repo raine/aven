@@ -1,11 +1,17 @@
 use crate::choices::{PRIORITIES, STATUSES};
 use crate::query::{ProjectListItem, TaskListItem};
-use crate::tui::overlay::PickerItem;
 use crate::workspaces::Workspace;
 
 use super::TuiStore;
 
 pub(crate) const CREATE_PROJECT_PICKER_VALUE_PREFIX: &str = "\0create-project:";
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PickerItem {
+    pub(crate) label: String,
+    pub(crate) value: String,
+    pub(crate) selected: bool,
+}
+
 pub(crate) const ADD_TASK_STATUS_AUTO_VALUE: &str = "\0auto-status";
 
 pub(crate) fn create_project_picker_name(value: &str) -> Option<&str> {

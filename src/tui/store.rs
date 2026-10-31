@@ -1,10 +1,10 @@
 use crate::config::AppConfig;
 mod attachments;
+pub(crate) mod columns;
 mod config;
 mod conflicts;
 mod domain;
 mod epics;
-mod launch;
 mod onboarding;
 mod pickers;
 mod recurrence;
@@ -13,6 +13,8 @@ mod sort;
 mod stats;
 mod task_commands;
 mod task_creation;
+mod task_list_view;
+pub(crate) mod task_selection;
 mod types;
 mod undo;
 mod view;
@@ -33,8 +35,8 @@ use aven_core::db::Database;
 pub(crate) use crate::query::RecentActionItem;
 pub(crate) use attachments::AttachmentWorkerContext;
 pub(crate) use epics::{AddEpicChildContext, EpicChildTarget, EpicContext};
-pub(crate) use launch::{TuiLaunch, TuiStartup};
 pub(crate) use onboarding::OnboardingStatus;
+pub(crate) use pickers::PickerItem;
 pub(crate) use pickers::{
     ADD_TASK_STATUS_AUTO_VALUE, CREATE_PROJECT_PICKER_VALUE_PREFIX,
     blocker_navigation_picker_items, create_project_picker_name, deleted_picker_items,
@@ -42,7 +44,8 @@ pub(crate) use pickers::{
 };
 pub(crate) use recurrence::recurrence_draft;
 pub(crate) use task_commands::{PriorityMutation, TaskDateField, TaskTextField};
-pub(crate) use task_creation::task_creation_committed;
+pub(crate) use task_creation::{PendingTaskAttachment, task_creation_committed};
+pub(crate) use task_list_view::{TaskGroupRow, TaskListRow, TaskListView, local_date};
 #[cfg(test)]
 pub(crate) use types::SyncStatusCheck;
 pub(crate) use types::{
@@ -60,9 +63,8 @@ use crate::query::{
     ProjectListItem, RecurrenceSeriesDetail, RecurrenceSeriesListItem, SidebarCounts,
     TaskItemHydration, TaskListItem,
 };
-use crate::tui::columns::ColumnBoard;
-use crate::tui::ui::TaskListView;
 use crate::workspaces::Workspace;
+use columns::ColumnBoard;
 
 // The summary row owns task identity, visibility, ordering, conflict, and recurrence fields.
 // Detail hydration fills only collections omitted from the summary projection.

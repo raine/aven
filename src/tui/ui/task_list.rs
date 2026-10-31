@@ -11,7 +11,6 @@ pub(crate) use self::hit_test::{TaskListHit, task_at_position, task_status_at_po
 use self::layout::{TaskListAreas, task_list_areas};
 use self::source::TaskListSource;
 use self::table::render_task_list;
-pub(crate) use self::view_model::TaskListView;
 
 use crate::tui::app::Focus;
 use crate::tui::list_surface::ListSurface;

@@ -18,7 +18,7 @@ mod tui;
 pub(crate) use custom_commands::DEFAULT_CUSTOM_COMMAND_TIMEOUT_SECONDS;
 pub use custom_commands::{
     CustomTuiCommandConfig, CustomTuiCommandExecution, CustomTuiCommandSuccess,
-    CustomTuiCommandTarget,
+    CustomTuiCommandTarget, TuiCommandRules, install_tui_command_rules,
 };
 pub(crate) use paths::expand_tilde_from;
 pub use paths::{

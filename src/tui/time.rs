@@ -1,27 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 
 use crate::queue::unix_seconds;
-
-pub(crate) fn available_day_label(available_at: &str, now_seconds: i64) -> String {
-    let Some(available_seconds) = unix_seconds(available_at) else {
-        return "later".to_string();
-    };
-    let Some(available_date) = local_date(available_seconds) else {
-        return "later".to_string();
-    };
-    let Some(today) = local_date(now_seconds) else {
-        return "later".to_string();
-    };
-    let days = (available_date - today).num_days();
-    match days {
-        i64::MIN..=-1 => "ready".to_string(),
-        0 => "today".to_string(),
-        1 => "tomorrow".to_string(),
-        2..=6 => available_date.format("%A").to_string().to_lowercase(),
-        _ if available_date.year() == today.year() => available_date.format("%b %-d").to_string(),
-        _ => available_date.format("%b %-d, %Y").to_string(),
-    }
-}
+use crate::tui::store::local_date;
 
 pub(crate) fn due_state_at(due_on: &str, now_seconds: i64) -> crate::due::DueState {
     local_date(now_seconds)
@@ -184,10 +164,6 @@ pub(crate) fn compact_duration(seconds: i64) -> String {
         return format!("{weeks}w");
     }
     format!("{}mo", days / 30)
-}
-
-fn local_date(seconds: i64) -> Option<chrono::NaiveDate> {
-    Some(Local.timestamp_opt(seconds, 0).single()?.date_naive())
 }
 
 #[cfg(test)]

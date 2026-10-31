@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use anyhow::{Result, ensure};
 use aven_core::operations::{TaskLabelSelection, TaskMutationReport, TaskUpdate};
 
+use super::task_selection::TaskSelection;
 use crate::choices::{TaskPriority, TaskStatus};
 use crate::tui::store::{MutationMessage, types::committed_mutation_error};
-use crate::tui::task_selection::TaskSelection;
 use crate::undo::UndoContext;
 
 use super::TuiStore;
