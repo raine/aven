@@ -9,6 +9,9 @@ use crate::config::{AppConfig, write_config_text};
 const MANAGED_MARKER: &str = "# aven-managed project path mapping";
 
 pub fn set_scalar(path: &Path, section: &str, key: &str, value: &str) -> Result<()> {
+    crate::config::check_config_write(path).with_context(|| {
+        format!("Set `{section}.{key}` to {value} in your configuration source")
+    })?;
     let text = if path.exists() {
         fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?
     } else {
@@ -160,7 +163,16 @@ struct ManagedProjectOverride {
     paths: Vec<PathBuf>,
 }
 
+pub fn check_project_path_write(path: &Path, edit: &ProjectPathMappingEdit<'_>) -> Result<()> {
+    crate::config::check_config_write(path).with_context(|| format!(
+        "In your configuration source, merge this entry into the existing `project.overrides` sequence (replace any mapping for this path):\n- workspace_id: {}\n  project: {}\n  paths:\n    - {}",
+        yaml_scalar(edit.workspace_id.as_str()), yaml_scalar(edit.project),
+        yaml_scalar(&edit.path.display().to_string()),
+    ))
+}
+
 pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<()> {
+    check_project_path_write(path, &edit)?;
     let text = read_config_text(path)?;
     let text = mark_scoped_project_overrides(&text);
     let (text, mut entries) = remove_managed_entries(&text)?;
@@ -206,6 +218,11 @@ pub fn remove_project_path(
         }
     }
     if changed {
+        crate::config::check_config_write(path).with_context(|| format!(
+            "In your configuration source, remove these paths from `project.overrides` for workspace_id {} and project {}:\n{}",
+            yaml_scalar(workspace_id.as_str()), yaml_scalar(project),
+            remove_paths.iter().map(|path| format!("- {}", yaml_scalar(&path.display().to_string()))).collect::<Vec<_>>().join("\n"),
+        ))?;
         entries.retain(|entry| !entry.paths.is_empty());
         write_edited_config(path, append_managed_entries(&text, &entries)?)?;
     }
@@ -229,12 +246,22 @@ pub fn rename_project_path(
         }
     }
     if changed {
+        crate::config::check_config_write(path).with_context(|| format!(
+            "In your configuration source, change `project` from {} to {} in `project.overrides` entries with workspace_id {}. Keep their paths unchanged, then retry the rename",
+            yaml_scalar(old_project), yaml_scalar(new_project), yaml_scalar(workspace_id.as_str()),
+        ))?;
         write_edited_config(path, append_managed_entries(&text, &entries)?)?;
     }
     Ok(changed)
 }
 
 fn read_config_text(path: &Path) -> Result<String> {
+    if fs::metadata(path).is_ok_and(|metadata| !metadata.is_file()) {
+        crate::config::check_config_write(path)?;
+    }
+    if !path.exists() {
+        crate::config::check_config_write(path)?;
+    }
     if path.exists() {
         return fs::read_to_string(path)
             .with_context(|| format!("could not read {}", path.display()));
@@ -471,6 +498,44 @@ fn has_trailing_newline(_text: &str, last_line: Option<&String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_mappings_preserve_no_write_outcomes_and_provide_scoped_yaml() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.yaml");
+        let path = dir.path().join("config.yaml");
+        let workspace_id = "0000000000000000".parse().unwrap();
+        let mapped = PathBuf::from("/path/quotes'\" and colon: value");
+        let edit = ProjectPathMappingEdit {
+            workspace_id: &workspace_id,
+            workspace: "default",
+            project: "app",
+            path: mapped.clone(),
+        };
+        add_project_path(&source, edit.clone()).unwrap();
+        let original = fs::read_to_string(&source).unwrap();
+        symlink(&source, &path).unwrap();
+        let error = add_project_path(&path, edit).unwrap_err();
+        let message = format!("{error:#}");
+        let yaml = message
+            .split_once("\n")
+            .unwrap()
+            .1
+            .split(": refusing")
+            .next()
+            .unwrap();
+        let entries: Vec<ManagedProjectOverride> = serde_saphyr::from_str(yaml).unwrap();
+        assert_eq!(entries[0].workspace_id, workspace_id);
+        assert_eq!(entries[0].paths, vec![mapped.clone()]);
+        assert!(remove_project_path(&path, &workspace_id, "app", &[mapped]).is_err());
+        assert!(rename_project_path(&path, &workspace_id, "app", "new").is_err());
+        assert!(!remove_project_path(&path, &workspace_id, "absent", &[]).unwrap());
+        assert!(!rename_project_path(&path, &workspace_id, "absent", "new").unwrap());
+        assert_eq!(fs::read_to_string(&source).unwrap(), original);
+        assert_eq!(fs::read_link(&path).unwrap(), source);
+    }
 
     #[test]
     fn managed_scalars_round_trip_on_single_lines() {

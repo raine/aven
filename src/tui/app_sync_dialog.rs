@@ -239,7 +239,9 @@ impl App {
         if let Err(error) =
             crate::config_edit::set_scalar(&target.config_path, "sync", "enabled", "true")
         {
-            self.set_error(format!("couldn't turn on automatic sync: {error:#}"));
+            if !self.show_config_write_refusal("Could not turn on automatic sync", &error) {
+                self.set_error(format!("couldn't turn on automatic sync: {error:#}"));
+            }
             return Ok(());
         }
         let mut config = self.intake.config().clone();

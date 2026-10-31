@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, IsTerminal};
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use inquire::{Confirm, InquireError, Select, Text};
 
 use super::{check_config, format_check, styled};
@@ -101,6 +101,8 @@ impl FileSelection {
 }
 
 pub(super) async fn setup(paths: ServerPaths, args: AiSetupArgs) -> Result<()> {
+    crate::config::check_config_write(&paths.config_file)
+        .context("Configure `ai.provider`, `ai.model` and optional `ai.endpoint` in your configuration source")?;
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
     if !interactive && (args.provider.is_none() || args.model.is_none()) {
         bail!(

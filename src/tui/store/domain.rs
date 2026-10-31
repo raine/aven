@@ -72,16 +72,23 @@ impl TuiStore {
         new_name: &str,
         prefix: &str,
     ) -> Result<MutationMessage> {
-        let outcome = self
+        let (outcome, config_mapping) = self
             .database
-            .rename_project_with_tui_undo(&self.active_workspace, project, new_name, Some(prefix))
+            .rename_project_with_tui_undo_before_commit(
+                &self.active_workspace,
+                project,
+                new_name,
+                Some(prefix),
+                |outcome| {
+                    rename_config_project_mapping(
+                        &self.active_workspace,
+                        &outcome.previous.key,
+                        &outcome.project.key,
+                    )
+                },
+            )
             .await?;
         self.wake_after_mutation();
-        let config_mapping = rename_config_project_mapping(
-            &self.active_workspace,
-            &outcome.previous.key,
-            &outcome.project.key,
-        )?;
         let mut view_state = self.view_state.clone();
         if self.scope_project() == Some(outcome.previous.key.as_str()) {
             view_state.scope = TaskScope::Project(outcome.project.key.clone());

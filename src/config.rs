@@ -471,7 +471,77 @@ fn disabled_env_value(value: Option<&str>) -> bool {
     })
 }
 
+/// A destination whose file type or mode explicitly forbids programmatic edits.
+#[derive(Debug)]
+pub struct ConfigWriteRefusal {
+    pub path: PathBuf,
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for ConfigWriteRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "refusing to modify {} config: {}",
+            self.reason,
+            self.path.display()
+        )
+    }
+}
+impl std::error::Error for ConfigWriteRefusal {}
+
+/// Present the filesystem reason before operation-specific recovery context.
+pub(crate) fn config_write_refusal_message(error: &anyhow::Error) -> Option<String> {
+    let refusal = error.downcast_ref::<ConfigWriteRefusal>()?;
+    let guidance = error
+        .chain()
+        .take_while(|cause| cause.downcast_ref::<ConfigWriteRefusal>().is_none())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(if guidance.is_empty() {
+        refusal.to_string()
+    } else {
+        format!("{refusal}\n\n{guidance}")
+    })
+}
+
+/// Inspect the final component only; parent-directory symlinks are supported.
+/// Mode bits express policy, not effective access under ownership rules or ACLs.
+pub fn check_config_write(path: &Path) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not inspect {}", path.display()));
+        }
+    };
+    let reason = if metadata.file_type().is_symlink() {
+        Some("symlinked")
+    } else if !metadata.is_file() {
+        Some("nonregular")
+    } else {
+        #[cfg(unix)]
+        let readonly = {
+            use std::os::unix::fs::PermissionsExt;
+            metadata.permissions().mode() & 0o222 == 0
+        };
+        #[cfg(not(unix))]
+        let readonly = metadata.permissions().readonly();
+        readonly.then_some("read-only")
+    };
+    if let Some(reason) = reason {
+        return Err(ConfigWriteRefusal {
+            path: path.to_path_buf(),
+            reason,
+        }
+        .into());
+    }
+    Ok(())
+}
+
 pub fn write_config_text(path: &Path, text: String) -> Result<()> {
+    check_config_write(path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
@@ -503,6 +573,7 @@ pub fn write_config_text(path: &Path, text: String) -> Result<()> {
 }
 
 pub fn write_default_config(path: &Path) -> Result<()> {
+    check_config_write(path).context("Initialize configuration through your config manager, or choose a new writable config path")?;
     if path.exists() {
         bail!("error config-exists path={}", path.display());
     }

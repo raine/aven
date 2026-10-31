@@ -283,3 +283,62 @@ async fn edit_project_picker_items_includes_project_creation() {
             .any(|item| item.value == CREATE_PROJECT_PICKER_VALUE_PREFIX)
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn protected_mapping_callback_rolls_back_project_and_undo_record() {
+    let (dir, pool, mut store) = test_store_with_pool().await;
+    store.create_project("Before".into()).await.unwrap();
+    let path = dir.path().join("config.yaml");
+    let source = dir.path().join("source.yaml");
+    crate::config_edit::add_project_path(
+        &source,
+        crate::config_edit::ProjectPathMappingEdit {
+            workspace_id: &store.active_workspace.id,
+            workspace: &store.active_workspace.key,
+            project: "before",
+            path: dir.path().to_path_buf(),
+        },
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&source, &path).unwrap();
+    let undo_before: i64 = sqlx::query_scalar("SELECT count(*) FROM tui_undo_entries")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let error = store
+        .database
+        .rename_project_with_tui_undo_before_commit(
+            &store.active_workspace,
+            "before",
+            "After",
+            Some("AFT"),
+            |outcome| {
+                crate::config_edit::rename_project_path(
+                    &path,
+                    &store.active_workspace.id,
+                    &outcome.previous.key,
+                    &outcome.project.key,
+                )
+            },
+        )
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .downcast_ref::<crate::config::ConfigWriteRefusal>()
+            .is_some()
+    );
+    let key: String = sqlx::query_scalar("SELECT key FROM projects WHERE name = 'Before'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(key, "before");
+    let undo_after: i64 = sqlx::query_scalar("SELECT count(*) FROM tui_undo_entries")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(undo_before, undo_after);
+    assert_eq!(std::fs::read_link(&path).unwrap(), source);
+}

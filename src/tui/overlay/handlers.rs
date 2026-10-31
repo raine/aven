@@ -153,6 +153,18 @@ pub(crate) fn handle_generic_overlay_key(
     help_scroll_cap: u16,
 ) -> OverlayOutcome {
     match overlay {
+        OverlayState::ConfigWriteRefusal {
+            title,
+            message,
+            reason,
+        } => match key.code {
+            KeyCode::Esc | KeyCode::Enter => OverlayOutcome::Cancelled,
+            _ => OverlayOutcome::None(OverlayState::ConfigWriteRefusal {
+                title,
+                message,
+                reason,
+            }),
+        },
         OverlayState::Metadata(state) => super::metadata::handle_key(state, key),
         OverlayState::AddTask(mut state) => {
             match std::mem::replace(&mut state.mode, AddTaskMode::Compose) {

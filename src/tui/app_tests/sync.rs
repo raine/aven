@@ -772,3 +772,31 @@ async fn background_refresh_during_a_sync_operation_keeps_the_last_association()
     assert_eq!(app.store.sync_status.server, None);
     assert_eq!(app.store.sync_status.devices, None);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn protected_config_prevents_runtime_sync_and_service_installation() {
+    let (mut app, dir) = set_up_app_offering_automatic_sync().await;
+    let source = dir.path().join("source.yaml");
+    let config_path = dir.path().join("config.yaml");
+    std::fs::write(&source, "sync:\n  enabled: false\n").unwrap();
+    std::os::unix::fs::symlink(&source, &config_path).unwrap();
+    let enabled = app.intake.config().sync.enabled;
+    app.turn_on_automatic_sync_at(crate::tui::app_sync_dialog::AutomaticSyncTarget {
+        config_path,
+        service_db: Some(app.store.database_path().to_path_buf()),
+        install: refuse_install,
+    })
+    .await
+    .unwrap();
+    assert_eq!(app.intake.config().sync.enabled, enabled);
+    let Some(OverlayState::ConfigWriteRefusal { message, .. }) = &app.overlay else {
+        panic!("expected recovery dialog")
+    };
+    assert!(message.contains("symlinked"));
+    assert!(message.contains("`sync.enabled`"));
+    assert_eq!(
+        std::fs::read_to_string(source).unwrap(),
+        "sync:\n  enabled: false\n"
+    );
+}

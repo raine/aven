@@ -34,6 +34,11 @@ pub(crate) enum PairingOverlay {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OverlayState {
+    ConfigWriteRefusal {
+        title: String,
+        message: String,
+        reason: &'static str,
+    },
     Metadata(Box<super::metadata::MetadataState>),
     Onboarding {
         persist_on_exit: bool,

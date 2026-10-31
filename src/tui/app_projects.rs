@@ -537,6 +537,9 @@ impl App {
         match self.store.add_project_path(&project, Path::new(path)).await {
             Ok(message) => self.set_success(message),
             Err(error) => {
+                if self.show_config_write_refusal("Could not add project path", &error) {
+                    return Ok(());
+                }
                 self.set_error(format!("{error:#}"));
                 self.overlay = Some(OverlayState::text_input(
                     TextIntent::AddProjectPath { project },
@@ -615,6 +618,9 @@ impl App {
         {
             Ok(message) => self.set_success(message),
             Err(error) => {
+                if self.show_config_write_refusal("Could not remove project path", &error) {
+                    return Ok(());
+                }
                 self.set_error(format!("{error:#}"));
                 self.overlay = Some(OverlayState::confirm(
                     ConfirmIntent::RemoveProjectPath {
@@ -658,6 +664,9 @@ impl App {
         {
             Ok(result) => self.apply_mutation_result(result),
             Err(error) => {
+                if self.show_config_write_refusal("Could not rename project", &error) {
+                    return Ok(());
+                }
                 let message = format!("{error:#}");
                 state.focus = if message.starts_with("error invalid-project-prefix")
                     || message.starts_with("error project-prefix-exists")

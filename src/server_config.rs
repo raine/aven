@@ -307,6 +307,19 @@ pub(crate) fn write_ai_selection(
     model: &str,
     endpoint: Option<&str>,
 ) -> Result<()> {
+    crate::config::check_config_write(path).with_context(|| {
+        format!(
+            "In your configuration source, set `ai.provider` to {}, `ai.model` to {}, and {}",
+            crate::config_edit::yaml_scalar(provider),
+            crate::config_edit::yaml_scalar(model),
+            endpoint
+                .map(|value| format!(
+                    "set `ai.endpoint` to {}",
+                    crate::config_edit::yaml_scalar(value)
+                ))
+                .unwrap_or_else(|| "remove `ai.endpoint`".to_string()),
+        )
+    })?;
     let text = match fs::read_to_string(path) {
         Ok(text) => {
             parse(&text)
