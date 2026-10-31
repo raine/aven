@@ -5,14 +5,14 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- Fix: Refuse edits to symlinked or read-only config files instead of replacing them, with instructions for making changes through your [config manager](https://aventasks.dev/configuration/#externally-managed-configuration).
-- New: `aven mcp` serves your tasks to Claude Code, Codex, Claude Desktop, and other MCP clients over stdio, and to ChatGPT through OpenAI's tunnel. It can list, search, count, create, update, note, and delete tasks and manage recurring series. See [MCP server](https://aventasks.dev/mcp/).
-- Fix: Print ambiguous task ref matches to standard error with the rest of the error, instead of to standard output.
-- UX: Bare HTTP(S) URLs in TUI task descriptions and notes are clickable without Markdown link syntax.
 - Breaking: `aven server` uses a separate `server.yaml` instead of the client configuration. See the [migration guide](https://aventasks.dev/migration-guide/#move-server-settings-to-serveryaml).
+- New: `aven mcp` serves your tasks to Claude Code, Codex, Claude Desktop, and other MCP clients over stdio, and to ChatGPT through OpenAI's tunnel. It can list, search, count, create, update, note, and delete tasks and manage recurring series. See [MCP server](https://aventasks.dev/mcp/).
+- UX: Bare HTTP(S) URLs in TUI task descriptions and notes are clickable without Markdown link syntax.
 - UX: Browse long TUI sidebars with page and half-page keys or the mouse wheel without changing the active view until you press `Enter`. Scrolling focuses the pane under the pointer, and clicking blank task-pane space returns focus to tasks. Thanks [@pnaaberi](https://github.com/pnaaberi). ([#38](https://github.com/raine/aven/pull/38))
 - UX: TUI priority icons use one, two, or three signal bars for low, medium, and high, and an alert box for urgent. The icons require a Nerd Font and appear in priority pickers and recurring task views too.
 - Perf: Optimize PNG attachments faster, with a small trade-off in compressed file size.
+- Fix: Refuse edits to symlinked or read-only config files instead of replacing them, with instructions for making changes through your [config manager](https://aventasks.dev/configuration/#externally-managed-configuration).
+- Fix: Print ambiguous task ref matches to standard error with the rest of the error, instead of to standard output.
 - Fix: Explicitly choosing Inbox keeps a task in Inbox even with medium, high, or urgent priority. Omitting the status still promotes these tasks to Todo.
 
 ## v0.1.51 (2026-10-21)
