@@ -30,6 +30,7 @@ mod render;
 mod routing;
 mod schedule_input;
 pub mod seed_bootstrap_http;
+mod server_config;
 mod signals;
 mod status;
 mod sync;
@@ -291,10 +292,7 @@ async fn dispatch_standalone(
             let db_path = config::resolve_db_path(db, &config)?;
             commands::cmd_backup_restore(&config, &db_path, args).await
         }
-        StandaloneCommand::Server(args) => {
-            let config = config::AppConfig::load()?;
-            run_server(args, config).await
-        }
+        StandaloneCommand::Server(args) => run_server(args).await,
         StandaloneCommand::Skill(args) => match args.command {
             None => cmd_skill(),
             Some(SkillSubcommand::Install(args)) => cmd_skill_install(args),

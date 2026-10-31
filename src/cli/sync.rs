@@ -158,9 +158,20 @@ pub(crate) struct ServerArgs {
     /// Allow a public or wildcard bind
     #[arg(long)]
     pub(crate) unsafe_public_bind: bool,
-    /// SQLite path of storage prepared by `server setup`
-    #[arg(long)]
+    #[command(flatten)]
+    pub(crate) location: ServerLocation,
+}
+
+/// Server storage and configuration paths, shared by every server command.
+#[derive(Args, Clone)]
+pub(crate) struct ServerLocation {
+    /// SQLite path of the server storage; defaults to the standard location
+    /// described in `aven server --help`
+    #[arg(long, global = true)]
     pub(crate) data: Option<PathBuf>,
+    /// Server config file; defaults to server.yaml beside the storage
+    #[arg(long, global = true)]
+    pub(crate) config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -172,10 +183,6 @@ pub(crate) enum ServerSubcommand {
 
 #[derive(Args)]
 pub(crate) struct ServerSetupArgs {
-    /// SQLite path of the server storage; defaults to the standard location
-    /// described in `aven server --help`
-    #[arg(long)]
-    pub(crate) data: Option<PathBuf>,
     /// HTTP or HTTPS origin that devices use to reach the server
     #[arg(long)]
     pub(crate) url: String,
@@ -206,6 +213,8 @@ Options:
       --bind <BIND>             Listen address [default: 127.0.0.1:3746]
       --unsafe-public-bind      Allow a public or wildcard bind
       --data <DATA>             SQLite path of storage prepared by `server setup`
+      --config <CONFIG>         Server config file; defaults to server.yaml beside
+                                the storage
   -h, --help                    Print help
 
 Prepare storage with `aven server setup` first. The server does not terminate
@@ -218,6 +227,10 @@ Storage defaults to $STATE_DIRECTORY/sync-server.sqlite when systemd sets
 StateDirectory=, otherwise ~/.local/state/aven/server/sync-server.sqlite
 (honoring $XDG_STATE_HOME). Pass the same --data PATH to setup and the server
 to use another location.
+
+Server settings are read from server.yaml in the storage directory, or from
+--config PATH or $AVEN_SERVER_CONFIG. The file is optional and changes apply
+after a restart. `aven server setup` writes a commented template.
 "#;
 
 #[derive(Args)]

@@ -215,7 +215,9 @@ pub fn bin() -> PathBuf {
 
 pub fn command() -> Command {
     let mut command = Command::new(bin());
-    command.env_remove("AVEN_DEV_DB");
+    for name in ["AVEN_DEV_DB", "AVEN_SERVER_CONFIG"] {
+        command.env_remove(name);
+    }
     command
 }
 

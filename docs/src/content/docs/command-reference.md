@@ -1090,7 +1090,9 @@ proxy in front of it. Both commands refuse storage
 that holds
 change history, including storage from the unencrypted sync of earlier
 releases. The server shuts down gracefully on an operating-system termination
-signal.
+signal. Server settings come from an optional `server.yaml` beside the storage;
+`--config PATH` or `AVEN_SERVER_CONFIG` chooses another file. See
+[Server configuration](/server-configuration/).
 
 ```sh
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746

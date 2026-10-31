@@ -1,6 +1,5 @@
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +14,7 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
-use crate::config;
+use crate::server_config::{self, ServerConfig, ServerPaths};
 use crate::signals::shutdown_signal;
 
 /// Setup invitations stay usable for one hour, or until a device claims storage.
@@ -36,26 +35,27 @@ const UNPREPARED_STORAGE: &str =
 const INVALID_MEMBERSHIP: &str = "error server-membership-invalid hint=\"stored device membership failed verification; restore this path from a backup or prepare a new one with `aven server setup`\"";
 const UNSUPPORTED_STORAGE: &str = "error server-storage-unsupported hint=\"this storage holds unencrypted sync history, which is no longer supported; prepare a new path with `aven server setup`\"";
 
-pub(crate) async fn run_server(args: ServerArgs, config: config::AppConfig) -> Result<()> {
-    if let Some(ServerSubcommand::Setup(setup)) = args.command {
-        return setup_server(setup).await;
+pub(crate) async fn run_server(args: ServerArgs) -> Result<()> {
+    let explicit_data = args.location.data.is_some();
+    let paths = ServerPaths::resolve(args.location.data, args.location.config)?;
+    match args.command {
+        Some(ServerSubcommand::Setup(setup)) => {
+            return setup_server(setup, &paths, explicit_data).await;
+        }
+        None => {}
     }
-    let data = server_data_path(args.data)?;
-    serve(args.bind, args.unsafe_public_bind, &data, &config).await
+    let config = ServerConfig::load(paths)?;
+    serve(args.bind, args.unsafe_public_bind, &config).await
 }
 
-fn server_data_path(flag: Option<PathBuf>) -> Result<PathBuf> {
-    match flag {
-        Some(path) => Ok(path),
-        None => config::default_server_data_path(),
-    }
-}
-
-async fn setup_server(args: ServerSetupArgs) -> Result<()> {
+async fn setup_server(
+    args: ServerSetupArgs,
+    paths: &ServerPaths,
+    explicit_data: bool,
+) -> Result<()> {
     let server = super::encrypted::server_origin(&args.url)?;
-    let explicit_data = args.data.is_some();
-    let data = server_data_path(args.data)?;
-    let database = Database::open(&data).await?;
+    let data = &paths.data;
+    let database = Database::open(data).await?;
     let mut fresh_id = [0; 32];
     getrandom::fill(&mut fresh_id).map_err(|_| anyhow::anyhow!("error server-setup-entropy"))?;
     let secret = Secret::generate()?;
@@ -79,6 +79,7 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
         secret,
     };
     let invitation = invitation.encode()?;
+    let wrote_config = server_config::write_template_if_missing(&paths.config_file)?;
     if args.invitation_only {
         println!("{}", invitation.as_str());
         return Ok(());
@@ -94,6 +95,12 @@ async fn setup_server(args: ServerSetupArgs) -> Result<()> {
         sync_setup = crate::render::stdout_command("aven sync setup")
     );
     println!("Server storage: {}", data.display());
+    let template = if wrote_config {
+        " (commented template)"
+    } else {
+        ""
+    };
+    println!("Server config: {}{template}", paths.config_file.display());
     let same_data = if explicit_data {
         " Pass the same --data path to aven server."
     } else {
@@ -140,12 +147,8 @@ fn is_private_address(address: IpAddr) -> bool {
 /// Serves the seed, enrollment and tail/image routers. Each operation
 /// authenticates against the stored vault. The server does not terminate TLS,
 /// so non-loopback binds need an independently protected network.
-async fn serve(
-    bind: SocketAddr,
-    unsafe_public_bind: bool,
-    data: &Path,
-    config: &config::AppConfig,
-) -> Result<()> {
+async fn serve(bind: SocketAddr, unsafe_public_bind: bool, config: &ServerConfig) -> Result<()> {
+    let data = config.paths.data.as_path();
     let scope = BindScope::classify(bind.ip());
     if scope == BindScope::Public && !unsafe_public_bind {
         bail!(
@@ -158,6 +161,7 @@ async fn serve(
         );
     }
     info!(storage = %data.display(), "sync server storage");
+    info!(config = %config.paths.config_file.display(), "sync server config");
     if !data.exists() {
         bail!(UNPREPARED_STORAGE);
     }
@@ -172,7 +176,7 @@ async fn serve(
         .verify_membership_history()
         .await
         .map_err(|error| error.context(INVALID_MEMBERSHIP))?;
-    let image_policy = config.local.attachment_lifecycle.server_policy();
+    let image_policy = config.attachments.policy();
     let publication_policy = aven_core::sync::bootstrap_staging::PublicationPolicy {
         workspace_quota_bytes: u64::try_from(image_policy.quota_bytes).unwrap_or(0),
     };

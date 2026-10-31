@@ -34,7 +34,7 @@ async fn restart_server(f: &mut Fixture, fault: Arc<HttpFault>) {
     restart_server_with_policy(
         f,
         fault,
-        crate::config::AttachmentLifecycleConfig::default().server_policy(),
+        crate::server_config::AttachmentsConfig::default().policy(),
     )
     .await;
 }
@@ -142,7 +142,7 @@ async fn proxy_body_limit_on_image_upload_stops_the_round_with_its_code() {
     let app = peer_enrollment_http::router(f.server.clone())
         .merge(router(
             f.server.clone(),
-            crate::config::AttachmentLifecycleConfig::default().server_policy(),
+            crate::server_config::AttachmentsConfig::default().policy(),
         ))
         .layer(axum::middleware::from_fn(proxy_rejecting_image_puts));
     (_, f.task) = e2ee_http::serve(app, f.origin.strip_prefix("http://").unwrap()).await;
@@ -914,7 +914,7 @@ async fn pruned_bootstrap_image_does_not_block_fresh_post_rotation_metadata() {
         .unwrap();
     let inputs = f.peer_store.tail_inputs(&f.peer, &f.origin).await.unwrap();
     drop(inputs);
-    let mut policy = crate::config::AttachmentLifecycleConfig::default().server_policy();
+    let mut policy = crate::server_config::AttachmentsConfig::default().policy();
     policy.grace = std::time::Duration::ZERO;
     restart_server_with_policy(&mut f, no_fault(), policy).await;
     let pruned = f

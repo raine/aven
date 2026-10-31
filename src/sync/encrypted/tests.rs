@@ -144,6 +144,7 @@ impl Installation {
             .env_remove("AVEN_DB")
             .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_SYNC_DISABLED")
+            .env_remove("AVEN_SERVER_CONFIG")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

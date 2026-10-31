@@ -155,6 +155,9 @@ Keep the Compose project name and volume when replacing containers. The volume
 is `aven-sync_aven-data` with the example's project name. `docker compose down`
 keeps it; **`docker compose down --volumes` deletes server storage**.
 
+The server keeps its settings in `/data/server.yaml` on the same volume. See
+[Server configuration](/server-configuration/).
+
 Keep the published port bound to `127.0.0.1` so only the host's HTTPS proxy can
 reach it. If your proxy runs in another container, connect them over a private
 Docker network instead of publishing a public plaintext port.

@@ -106,41 +106,7 @@ fn generated_client_config_preserves_sync_opt_in_and_omits_server_settings() {
     assert!(!text.contains("disabled:"));
     assert!(!text.contains("server_grace_days"));
     assert!(!text.contains("server_workspace_quota_bytes"));
-    let loaded = AppConfig::load_from_path(&path).unwrap();
-    assert_eq!(
-        loaded.local.attachment_lifecycle.server_grace_days,
-        default_server_attachment_grace_days()
-    );
-    assert_eq!(
-        loaded
-            .local
-            .attachment_lifecycle
-            .server_workspace_quota_bytes,
-        default_attachment_quota_bytes()
-    );
-}
-
-#[test]
-fn server_attachment_settings_remain_loadable_and_configurable() {
-    let config = load_config(
-            "local:\n  attachment_lifecycle:\n    server_grace_days: 12\n    server_workspace_quota_bytes: 345\n",
-        )
-        .unwrap();
-
-    assert_eq!(config.local.attachment_lifecycle.server_grace_days, 12);
-    assert_eq!(
-        config
-            .local
-            .attachment_lifecycle
-            .server_workspace_quota_bytes,
-        345
-    );
-    let policy = config.local.attachment_lifecycle.server_policy();
-    assert_eq!(
-        policy.grace,
-        std::time::Duration::from_secs(12 * 24 * 60 * 60)
-    );
-    assert_eq!(policy.quota_bytes, 345);
+    AppConfig::load_from_path(&path).unwrap();
 }
 
 #[test]
@@ -171,4 +137,14 @@ fn local_image_optimization_defaults_to_off() {
             serde_saphyr::from_str(&format!("local:\n  image_optimization: {value}\n")).unwrap();
         assert_eq!(parsed.local.image_optimization, expected);
     }
+}
+
+#[test]
+fn removed_shared_auth_token_is_ignored_and_not_serialized() {
+    let config: AppConfig =
+        serde_saphyr::from_str("sync:\n  enabled: true\n  auth_token: obsolete-secret\n").unwrap();
+    assert!(config.sync.enabled);
+    let serialized = serde_saphyr::to_string(&config).unwrap();
+    assert!(!serialized.contains("auth_token"));
+    assert!(!serialized.contains("obsolete-secret"));
 }

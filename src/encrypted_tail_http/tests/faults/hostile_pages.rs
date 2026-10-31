@@ -49,7 +49,7 @@ async fn restart_hostile(f: &mut Fixture, layer: impl FnOnce(Router) -> Router) 
     let _ = (&mut f.task).await;
     let app = peer_enrollment_http::router(f.server.clone()).merge(router(
         f.server.clone(),
-        crate::config::AttachmentLifecycleConfig::default().server_policy(),
+        crate::server_config::AttachmentsConfig::default().policy(),
     ));
     (_, f.task) = e2ee_http::serve(layer(app), f.origin.strip_prefix("http://").unwrap()).await;
 }

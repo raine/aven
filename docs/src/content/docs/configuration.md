@@ -63,9 +63,7 @@ local:
   image_optimization: off
   attachment_lifecycle:
     grace_days: 7
-    server_grace_days: 30
     quota_bytes: 10737418240
-    server_workspace_quota_bytes: 10737418240
     preview_quota_bytes: 536870912
     maintenance_limit: 128
 
@@ -148,6 +146,12 @@ agent:
     timeout_seconds: 45
 ```
 
+## Server settings
+
+`aven server` does not read `config.yaml`. See
+[Server configuration](/server-configuration/) for its `server.yaml`, including
+server image limits.
+
 ## Database path
 
 Tasks live in SQLite. aven resolves the database path from `--db`, then `AVEN_DB`, then `local.db_path`, then the default state directory.
@@ -198,9 +202,7 @@ Optimization applies only to PNG files. Aven preserves the original when optimiz
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `grace_days` | 7 days | Minimum age before an unused local image becomes eligible for cleanup. |
-| `server_grace_days` | 30 days | Minimum age before an unused server image becomes eligible for cleanup. |
 | `quota_bytes` | 10 GiB | Maximum unique attachment image storage on one device. |
-| `server_workspace_quota_bytes` | 10 GiB | Maximum unique attachment image storage for one server workspace. |
 | `preview_quota_bytes` | 512 MiB | Maximum disposable preview-cache size. |
 | `maintenance_limit` | 128 | Maximum files processed in one cleanup run. |
 

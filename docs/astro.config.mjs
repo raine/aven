@@ -137,6 +137,8 @@ export default defineConfig({
           items: [
             { label: 'Command reference', slug: 'command-reference' },
             { label: 'Configuration', slug: 'configuration' },
+            { label: 'Server configuration', slug: 'server-configuration' },
+            { label: 'Migration guide', slug: 'migration-guide' },
             { label: 'Changelog', slug: 'changelog' },
           ],
         },
