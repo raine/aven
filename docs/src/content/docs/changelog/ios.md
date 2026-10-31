@@ -5,8 +5,6 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
-- Settings can send feedback by email as well as through GitHub issues.
-
 ## 1.0.4 — in review
 
 - **Tell Aven** turns a typed or spoken request into task drafts you review before anything changes. It can search and answer questions about your tasks, take a photo or screenshot as context, and open from task detail with that task attached. Chats stay on your iPhone.

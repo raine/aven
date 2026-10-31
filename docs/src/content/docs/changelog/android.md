@@ -13,7 +13,6 @@ description: Release notes for Aven for Android.
 - Create new labels from the label picker's search and while editing a task.
 - Task priority is drawn as signal bars.
 - Task lists follow to another workspace when the one you're viewing is deleted on another device.
-- Settings can send feedback by email as well as through GitHub issues.
 - Sync retries brief failures before showing them.
 - Fix: Dialogs keep their side margins.
 - Fix: The sync headline stays centered as its status changes.
