@@ -132,7 +132,7 @@ fn cli_error_lines(error: &anyhow::Error) -> Vec<String> {
             }
             lines
         }
-        None => vec![format!("Error: {error}")],
+        None => vec![format!("Error: {error:#}")],
     }
 }
 
@@ -603,6 +603,18 @@ mod tests {
             &error,
             "sync-network"
         ));
+    }
+
+    #[test]
+    fn cli_unexplained_errors_preserve_context_and_cause() {
+        let error = anyhow::anyhow!("cannot safely edit project path mappings: config unchanged")
+            .context("Project third was created but its path mapping was not saved");
+        assert_eq!(
+            super::cli_error_lines(&error),
+            vec![
+                "Error: Project third was created but its path mapping was not saved: cannot safely edit project path mappings: config unchanged"
+            ]
+        );
     }
 
     #[test]

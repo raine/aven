@@ -516,7 +516,14 @@ fn unrelated_path_edits_preserve_valid_scoped_mappings() {
                     }],
                 );
             } else {
-                contains_all(&fail(output), &["cannot safely edit project path mappings"]);
+                let error = fail(output);
+                contains_all(&error, &["cannot safely edit project path mappings"]);
+                if create {
+                    contains_all(
+                        &error,
+                        &["Project third was created but its path mapping was not saved"],
+                    );
+                }
                 assert_eq!(fs::read_to_string(env.config_file()).unwrap(), original);
             }
             contains_all(
