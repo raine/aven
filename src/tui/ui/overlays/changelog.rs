@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Tag, TagEnd};
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Modifier, Style};
@@ -238,7 +238,7 @@ struct ChangelogLink {
 fn changelog_links(markdown: &str) -> Vec<ChangelogLink> {
     let mut links = Vec::new();
     let mut current: Option<ChangelogLink> = None;
-    for event in Parser::new(markdown) {
+    for event in crate::tui::markdown::markdown_events(markdown) {
         match event {
             Event::Start(Tag::Link { dest_url, .. }) => {
                 current = Some(ChangelogLink {

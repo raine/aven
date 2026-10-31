@@ -83,6 +83,7 @@ zeroize.workspace = true
 qrcode = { version = "0.14.1", default-features = false }
 terminal-colorsaurus = "1.0.3"
 clap_complete = "4.6"
+linkify = "0.11.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

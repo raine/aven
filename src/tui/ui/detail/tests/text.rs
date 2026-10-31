@@ -246,6 +246,28 @@ fn detail_content_renders_markdown_description_and_notes() {
 }
 
 #[test]
+fn bare_description_urls_have_wrapped_mouse_targets() {
+    let theme = Theme::dark();
+    let markdown = "See https://example.com/long/path, then [docs](https://docs.example).";
+    let lines = crate::tui::markdown::render_markdown_without_link_urls(&theme, markdown, 18);
+    let links = super::super::text::markdown_hyperlinks(markdown, &lines, 0, 0);
+    let bare: Vec<_> = links
+        .iter()
+        .filter(|link| link.url == "https://example.com/long/path")
+        .collect();
+    assert!(bare.len() > 1, "URL should wrap across lines");
+    let label: String = bare
+        .iter()
+        .map(|link| {
+            let line = lines[link.line_index].to_string();
+            line[link.start_column..link.end_column].to_string()
+        })
+        .collect();
+    assert_eq!(label, "https://example.com/long/path");
+    assert_eq!(links.last().unwrap().url, "https://docs.example");
+}
+
+#[test]
 fn detail_markdown_links_hide_destinations_and_have_mouse_targets() {
     let mut item = detail_test_item();
     item.task.description =

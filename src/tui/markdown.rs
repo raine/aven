@@ -1,4 +1,7 @@
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use linkify::{LinkFinder, LinkKind};
+use pulldown_cmark::{
+    CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd, TextMergeStream,
+};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -361,8 +364,12 @@ impl MarkdownRenderer {
                 self.attrs_stack.push(quote_attrs);
                 self.in_block_quote = true;
             }
-            Tag::Link { dest_url, .. } => {
-                self.link_url = Some(dest_url.to_string());
+            Tag::Link {
+                dest_url,
+                link_type,
+                ..
+            } => {
+                self.link_url = (link_type != LinkType::Autolink).then(|| dest_url.to_string());
                 self.attrs_stack.push(Attrs {
                     link: true,
                     underline: true,
@@ -678,17 +685,61 @@ fn render_markdown_blocks(
     .collect()
 }
 
+/// Parse Markdown and recognize bare HTTP(S) URLs outside code and existing links.
+pub(crate) fn markdown_events(input: &str) -> impl Iterator<Item = Event<'_>> {
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url]);
+    let mut excluded_depth = 0usize;
+    TextMergeStream::new(Parser::new_ext(input, options)).flat_map(move |event| {
+        match &event {
+            Event::Start(Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Image { .. }) => {
+                excluded_depth += 1;
+            }
+            Event::End(TagEnd::CodeBlock | TagEnd::Link | TagEnd::Image) => {
+                excluded_depth = excluded_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        if excluded_depth == 0
+            && let Event::Text(text) = &event
+        {
+            let mut events = Vec::new();
+            let mut offset = 0;
+            for link in finder.links(text).filter(|link| {
+                link.as_str().starts_with("https://") || link.as_str().starts_with("http://")
+            }) {
+                if link.start() > offset {
+                    events.push(Event::Text(text[offset..link.start()].to_string().into()));
+                }
+                events.push(Event::Start(Tag::Link {
+                    link_type: LinkType::Autolink,
+                    dest_url: link.as_str().to_string().into(),
+                    title: "".into(),
+                    id: "".into(),
+                }));
+                events.push(Event::Text(link.as_str().to_string().into()));
+                events.push(Event::End(TagEnd::Link));
+                offset = link.end();
+            }
+            if offset > 0 {
+                if offset < text.len() {
+                    events.push(Event::Text(text[offset..].to_string().into()));
+                }
+                return events;
+            }
+        }
+        vec![event]
+    })
+}
+
 fn layout_markdown(
     input: &str,
     max_width: usize,
     show_link_urls: bool,
     reflow_soft_breaks: bool,
 ) -> Vec<LayoutLine> {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TABLES);
-
-    let parser = Parser::new_ext(input, options);
+    let parser = markdown_events(input);
     let mut renderer = MarkdownRenderer::new(max_width.max(1), show_link_urls, reflow_soft_breaks);
     for event in parser {
         renderer.handle_event(event);
@@ -1011,6 +1062,41 @@ mod tests {
         for line in rendered.lines() {
             assert!(line.width() <= 16, "line too wide: {line:?}");
         }
+    }
+
+    #[test]
+    fn bare_urls_preserve_punctuation_and_do_not_repeat_destinations() {
+        let input = "See (https://example.com/a_(b)), then http://example.org/?a=1&b=2.";
+        assert_eq!(render_to_text(input, 100), input);
+        let urls: Vec<_> = markdown_events(input)
+            .filter_map(|event| match event {
+                Event::Start(Tag::Link { dest_url, .. }) => Some(dest_url.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            urls,
+            ["https://example.com/a_(b)", "http://example.org/?a=1&b=2"]
+        );
+    }
+
+    #[test]
+    fn bare_urls_skip_code_images_and_existing_links() {
+        let input = "`https://code.example`\n\n```text\nhttps://block.example\n```\n\n![https://image.example](image.png) [https://label.example](https://target.example) <https://auto.example> https://bare.example";
+        let urls: Vec<_> = markdown_events(input)
+            .filter_map(|event| match event {
+                Event::Start(Tag::Link { dest_url, .. }) => Some(dest_url.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                "https://target.example",
+                "https://auto.example",
+                "https://bare.example"
+            ]
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Tag, TagEnd};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
@@ -245,7 +245,7 @@ pub(super) fn detail_title_lines(
 fn markdown_links(markdown: &str) -> Vec<ParsedMarkdownLink> {
     let mut links = Vec::new();
     let mut current = None;
-    for event in Parser::new(markdown) {
+    for event in crate::tui::markdown::markdown_events(markdown) {
         match event {
             Event::Start(Tag::Link { dest_url, .. }) => {
                 current = Some(ParsedMarkdownLink {
