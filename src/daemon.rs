@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 use crate::config::AppConfig;
 use crate::signals::shutdown_signal;
 use crate::sync::encrypted::{self, DaemonRound};
+use aven_host::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
 
 use aven_host::daemon::service;
 
@@ -24,11 +25,6 @@ pub use service::{
 };
 
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
-const DAEMON_CONTENTION_RESCHEDULE: Duration = Duration::from_secs(1);
-/// Bounded sync rounds per daemon wake.
-const DAEMON_ROUND_BUDGET: usize = 8;
-/// Delay before continuing a wake that stopped at its round budget.
-const DAEMON_INCOMPLETE_RESCHEDULE: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryFingerprint {
@@ -95,16 +91,8 @@ async fn run_loop(
     let sync_on = config.automatic_sync_is_enabled();
     let reminders_on = config.reminders.enabled;
     let mut next_reminder = Instant::now();
-    // Reminders wait while sync rounds have more work, so they never judge a
-    // partly synced database.
-    let mut sync_catching_up = false;
     let mut wake_buf = [0_u8; 16];
-    let mut backoff_seconds = 1_u64;
-    let mut next_sync = Instant::now();
-    let mut retry_not_before = None;
-    let mut awaiting_setup = false;
-    let mut access_refused = false;
-    let mut vault_deleted = false;
+    let mut scheduler = SyncScheduler::new(Duration::from_secs(interval_seconds), Instant::now());
     let mut next_attachment_maintenance = Instant::now();
     let mut next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
     let mut sync = encrypted::DaemonSync::default();
@@ -127,10 +115,7 @@ async fn run_loop(
                 retry_now |= drain_wakes(&socket, &mut wake_buf);
                 let now = Instant::now();
                 next_reminder = now;
-                if wake_can_sync(retry_now, retry_not_before, now) {
-                    retry_not_before = None;
-                    next_sync = now;
-                }
+                scheduler.wake(retry_now, now);
             }
             _ = sleep_until(next_binary_check) => {
                 if binary_changed(&binary_fingerprint)? {
@@ -139,7 +124,9 @@ async fn run_loop(
                 }
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
             }
-            _ = sleep_until(next_reminder), if reminders_on && !sync_catching_up => {
+            // Reminders wait while sync rounds have more work, so they never
+            // judge a partly synced database.
+            _ = sleep_until(next_reminder), if reminders_on && !scheduler.catching_up() => {
                 next_reminder = Instant::now() + crate::reminders::remind(&database, &config.reminders).await;
             }
             _ = sleep_until(next_attachment_maintenance), if sync_on => {
@@ -147,68 +134,39 @@ async fn run_loop(
                 next_attachment_maintenance =
                     Instant::now() + crate::sync::ATTACHMENT_MAINTENANCE_INTERVAL;
             }
-            _ = sleep_until(next_sync), if sync_on => {
-                retry_not_before = None;
-                let round = sync_once(&database, config, &mut sync).await;
-                sync_catching_up = matches!(&round, Ok(DaemonRound::Completed(outcome)) if outcome.more_work_ready());
-                match round {
+            _ = sleep_until(scheduler.next_sync()), if sync_on => {
+                scheduler.round_started();
+                match sync_once(&database, config, &mut sync).await {
                     Ok(DaemonRound::Completed(outcome)) => {
                         if let Err(error) = database.record_daemon_sync_round(chrono::Utc::now().timestamp(), None).await {
                             warn!(%error, "could not persist daemon sync health");
                         }
-                        backoff_seconds = 1;
-                        awaiting_setup = false;
-                        access_refused = false;
-                        vault_deleted = false;
-                        next_sync = if outcome.more_work_ready() {
-                            Instant::now() + DAEMON_INCOMPLETE_RESCHEDULE
-                        } else {
+                        if scheduler.completed(outcome.more_work_ready(), Instant::now()) {
                             next_reminder = Instant::now();
-                            Instant::now() + Duration::from_secs(interval_seconds)
-                        };
+                        }
                     }
                     Ok(DaemonRound::NotSetUp) => {
-                        access_refused = false;
-                        vault_deleted = false;
-                        if !awaiting_setup {
-                            awaiting_setup = true;
+                        if scheduler.not_set_up(Instant::now()) {
                             println!("daemon-sync-not-set-up hint=\"run `aven sync setup` or `aven sync join`\"");
                         }
-                        backoff_seconds = 1;
-                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
                     }
                     Ok(DaemonRound::Deferred) => {
                         debug!("daemon sync deferred");
-                        next_sync = Instant::now() + DAEMON_CONTENTION_RESCHEDULE;
+                        scheduler.deferred(Instant::now());
                     }
-                    // Rounds check the recorded deletion locally and send no
-                    // request until the user resets sync or `aven sync`
-                    // succeeds.
                     Ok(DaemonRound::VaultDeleted) => {
-                        if !vault_deleted {
-                            vault_deleted = true;
+                        if scheduler.vault_deleted(Instant::now()) {
                             println!("daemon-sync-vault-deleted hint=\"this sync's vault was deleted; run `aven sync reset`, then `aven sync setup` with a new setup code\"");
                         }
-                        backoff_seconds = 1;
-                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
                     }
-                    // Refusals persist until the user acts elsewhere, so
-                    // backing off only repeats the warning.
                     Err(err) if is_access_refusal(&err) => {
-                        if !access_refused {
-                            access_refused = true;
+                        if scheduler.access_refused(Instant::now()) {
                             warn!(error = %err, "daemon sync refused by server");
                         }
-                        backoff_seconds = 1;
-                        next_sync = Instant::now() + Duration::from_secs(interval_seconds);
-                        retry_not_before = Some(next_sync);
                         record_failure(&database, &err, interval_seconds).await;
                     }
                     Err(err) => {
-                        let retry_seconds = backoff_seconds;
-                        backoff_seconds = (backoff_seconds * 2).min(300);
-                        next_sync = Instant::now() + Duration::from_secs(retry_seconds);
-                        retry_not_before = Some(next_sync);
+                        let retry_seconds = scheduler.failed(Instant::now());
                         record_failure(&database, &err, retry_seconds).await;
                         warn!(error = %daemon_error(&err), retry_seconds, "daemon sync failed");
                     }
@@ -326,10 +284,6 @@ fn binary_fingerprint(launch_path: &Path) -> Result<BinaryFingerprint> {
     })
 }
 
-fn wake_can_sync(retry_now: bool, deadline: Option<Instant>, now: Instant) -> bool {
-    retry_now || deadline.is_none_or(|deadline| now >= deadline)
-}
-
 fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) -> bool {
     let mut retry_now = false;
     while let Ok((len, _)) = socket.try_recv_from(wake_buf) {
@@ -364,7 +318,7 @@ async fn sync_once(
     config: &AppConfig,
     sync: &mut encrypted::DaemonSync,
 ) -> Result<DaemonRound> {
-    let round = sync.round(database, config, DAEMON_ROUND_BUDGET).await?;
+    let round = sync.round(database, config, ROUND_BUDGET).await?;
     match &round {
         DaemonRound::Completed(outcome) => {
             println!(
@@ -402,20 +356,6 @@ async fn maintain_attachments(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_retry_wakes_bypass_backoff() {
-        let now = Instant::now();
-        let deadline = Some(now + Duration::from_secs(300));
-        assert!(!wake_can_sync(false, deadline, now));
-        assert!(wake_can_sync(true, deadline, now));
-        assert!(wake_can_sync(
-            false,
-            deadline,
-            now + Duration::from_secs(300)
-        ));
-        assert!(wake_can_sync(false, None, now));
-    }
 
     #[tokio::test]
     async fn draining_preserves_retry_wakes_among_ordinary_wakes() {
