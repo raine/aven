@@ -600,18 +600,11 @@ impl Root {
             section = section.child(
                 div()
                     .flex()
-                    .items_baseline()
+                    .items_center()
                     .gap(px(8.))
                     .py(px(3.))
                     .text_size(px(12.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .mb(px(4.))
-                            .size(px(5.))
-                            .rounded_full()
-                            .bg(t.faint),
-                    )
+                    .child(div().flex_none().size(px(5.)).rounded_full().bg(t.faint))
                     .child(
                         div()
                             .flex_1()

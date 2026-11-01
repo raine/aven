@@ -17,7 +17,9 @@ use gpui::{
 };
 
 use crate::actions::*;
-use crate::adapter::{Bulk, Child, ChildGroup, Command, Detail, EpicProgress, SeriesRow, TaskRow};
+use crate::adapter::{
+    Bulk, Child, ChildGroup, Command, Detail, EpicProgress, SeriesRow, TaskRow, capitalised,
+};
 use crate::dialogs::Dialog;
 use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
@@ -1570,7 +1572,7 @@ impl Root {
         };
         let target = &targets[*at];
         let reference = target.display_ref.clone();
-        let label = field_label(&target.field);
+        let label = capitalised(&target.field);
         let typed = chosen.is_some() || !input.read(cx).text().trim().is_empty();
         let more = *at + 1 < targets.len();
         let written = takes_final_value(target);
@@ -2187,7 +2189,7 @@ impl Root {
     ) -> Option<impl IntoElement + use<>> {
         let text = match detail.conflicts.as_slice() {
             [] => return None,
-            [one] => format!("{} differs between devices", field_label(&one.field)),
+            [one] => format!("{} differs between devices", capitalised(&one.field)),
             many => format!("{} fields differ", many.len()),
         };
         Some(
@@ -2220,11 +2222,4 @@ impl Root {
 /// Whether a conflicted field takes typed text, not only one of its two sides.
 fn takes_final_value(target: &ConflictTarget) -> bool {
     matches!(target.field.as_str(), "title" | "description")
-}
-
-fn field_label(field: &str) -> String {
-    let mut letters = field.chars();
-    letters.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(letters).collect()
-    })
 }

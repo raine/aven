@@ -1106,18 +1106,12 @@ fn flat_groups(store: &TuiStore, rows: Vec<usize>, group: GroupBy) -> Vec<Group>
         TaskPriority::Low,
         TaskPriority::None,
     ];
-    let capitalised = |text: String| {
-        let mut letters = text.chars();
-        letters.next().map_or_else(String::new, |first| {
-            first.to_uppercase().chain(letters).collect()
-        })
-    };
     type Slot<'a> = Box<dyn Fn(&TaskListItem) -> usize + 'a>;
     let (names, slot): (Vec<String>, Slot<'_>) = match group {
         GroupBy::None => (vec![String::new()], Box::new(|_| 0)),
         GroupBy::Status => (
             STATUSES
-                .map(|status| capitalised(status.to_string()))
+                .map(|status| capitalised(&status.to_string()))
                 .to_vec(),
             Box::new(|item| {
                 STATUSES
@@ -1128,7 +1122,7 @@ fn flat_groups(store: &TuiStore, rows: Vec<usize>, group: GroupBy) -> Vec<Group>
         ),
         GroupBy::Priority => (
             PRIORITIES
-                .map(|priority| capitalised(priority.to_string()))
+                .map(|priority| capitalised(&priority.to_string()))
                 .to_vec(),
             Box::new(|item| {
                 PRIORITIES
@@ -1384,6 +1378,13 @@ fn dependency(link: &aven_core::query::TaskDependencyLink) -> Link {
     }
 }
 
+pub(crate) fn capitalised(text: &str) -> String {
+    let mut letters = text.chars();
+    letters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(letters).collect()
+    })
+}
+
 /// What the task's history reads as, newest first, ending at its creation.
 fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> {
     let mut lines: Vec<(String, String)> = item
@@ -1391,7 +1392,7 @@ fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> 
         .iter()
         .map(|action| {
             (
-                action.summary.clone(),
+                capitalised(&action.summary),
                 relative_time(&action.created_at, now),
             )
         })
@@ -4106,6 +4107,12 @@ mod tests {
         assert_eq!(crate::draft::Draft::from(loaded.composer.unwrap()), draft);
         SavedDrafts::default().save(&path).unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn capitalised_raises_only_the_first_letter() {
+        assert_eq!(capitalised("created task: keep"), "Created task: keep");
+        assert_eq!(capitalised(""), "");
     }
 
     #[tokio::test]
