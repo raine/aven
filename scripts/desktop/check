@@ -86,11 +86,15 @@ PY
 
 kill "$launched_pid"
 sleep 1
-database=$(isolation_path "$root/launch" database)
-rm -rf "$database"
-mkdir "$database"
-if AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --background; then
-  echo "launcher reported success for an app that could not start" >&2
+# A database that cannot open is the app's recovery screen, so the failure here
+# is the launch record: the app quits when it cannot write it.
+rm -f "$launch_record"
+chmod a-w "$root/launch"
+status=0
+launch_output=$(AVEN_DESKTOP_ROOT="$root/launch" "$desktop_repo/scripts/desktop/launch" --background 2>&1) || status=$?
+chmod u+w "$root/launch"
+if [[ $status -eq 0 || $launch_output != *"did not start"* ]]; then
+  echo "launcher did not report an app that could not start (status $status)" >&2
   exit 1
 fi
 
