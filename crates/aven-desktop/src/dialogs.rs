@@ -49,6 +49,8 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Toggle inspector", "g d"),
             ("Toggle sidebar", "g b"),
             ("Jump to blocker", "g B"),
+            ("Jump to epic", "g e"),
+            ("Focus epic tasks", "c"),
         ],
     ),
     (
@@ -113,6 +115,7 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Filter priority", "f p"),
             ("Deleted", "f x"),
             ("Metadata", "f m"),
+            ("Recurring state", "f r"),
             ("Clear", "f c"),
             ("Order", "o"),
         ],
@@ -153,6 +156,8 @@ pub enum Dialog {
         id: RecurrenceSeriesId,
         title: String,
         current: String,
+        /// Cancel, keep and skip, in Tab order.
+        buttons: [FocusHandle; 3],
     },
     /// One task's conflicts, walked field by field.
     Resolve {
@@ -160,9 +165,14 @@ pub enum Dialog {
         at: usize,
         input: Entity<Editor>,
         chosen: Option<usize>,
+        sides: [FocusHandle; 2],
+        /// Decide later, keep and next, and keep this value, in Tab order.
+        buttons: [FocusHandle; 3],
     },
     Gist {
         id: TaskId,
+        /// Cancel and publish, in Tab order.
+        buttons: [FocusHandle; 2],
     },
     Prompt {
         title: String,
@@ -232,15 +242,31 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let fields = editors
+            .iter()
+            .map(|editor| editor.read(cx).focus.clone())
+            .collect();
+        self.open_dialog_at(dialog, editors, fields, 0, window, cx);
+    }
+
+    /// Opens a dialog whose Tab order is `fields`, starting on `first`.
+    pub(crate) fn open_dialog_at(
+        &mut self,
+        dialog: Dialog,
+        editors: Vec<Entity<Editor>>,
+        fields: Vec<FocusHandle>,
+        first: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let subscriptions = editors
             .iter()
             .map(|editor| cx.subscribe_in(editor, window, Self::on_dialog_event))
             .collect();
-        let fields: Vec<FocusHandle> = editors
-            .iter()
-            .map(|editor| editor.read(cx).focus.clone())
-            .collect();
-        let focus = fields.first().cloned().unwrap_or_else(|| cx.focus_handle());
+        let focus = fields
+            .get(first)
+            .cloned()
+            .unwrap_or_else(|| cx.focus_handle());
         let prior = window.focused(cx);
         window.focus(&focus, cx);
         self.dialog = Some(Layer {

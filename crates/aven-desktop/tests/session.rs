@@ -784,6 +784,26 @@ async fn clear_marks_leaves_the_selection_as_the_only_target() {
     assert!(!h.session.bulk(aven_desktop::adapter::Bulk::Deleted(true)));
 }
 
+#[tokio::test]
+async fn a_row_menu_on_an_unmarked_row_clears_the_marks() {
+    let mut h = harness(&["One", "Two", "Three"]).await;
+    h.session.apply(h.list(0));
+    let snapshot = &h.session.snapshot;
+    let (one, two) = (row(snapshot, "One"), row(snapshot, "Two"));
+    let three = row(snapshot, "Three");
+    h.session.toggle_mark(one.clone());
+    h.session.toggle_mark(two);
+
+    h.session.open_row_menu(&one);
+    assert_eq!(h.session.marks.len(), 2);
+
+    h.session.open_row_menu(&three);
+    assert!(h.session.marks.is_empty());
+    h.session.select(three.clone());
+    assert_eq!(h.session.bulk_targets(), None);
+    assert_eq!(h.session.target(), Some(&three));
+}
+
 fn card(id: &TaskId, stale: bool) -> adapter::ReviewCard {
     adapter::ReviewCard {
         id: id.clone(),

@@ -35,4 +35,6 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Epics list has no groups | Epics | Core returns the Epics list ungrouped, so the prototype's three epic groups do not appear. | `epics.gpui.png` |
 | Series history starts empty in scenes | Recurring detail | Core records history as occurrences resolve, so the seeded series have no dated rows and refs are core's own. | `recurring-list.gpui.png` |
 | Row leaves on a local write only | List | A row that leaves through sync or another device goes at once, so a refresh never replays the motion. | `src/shell.rs` |
+| Conflict sides name no device or time | Resolve dialog | Core keeps which side is local and a change token, with no device name or time on the conflict, so sides read `This device` and `Other device`. | `conflict-resolve.gpui.png` |
+| No word-level diff in conflicts | Resolve dialog | The sides show each whole value. The dialog keeps both values in full, so the choice stays readable without the highlight. | `conflict-resolve.gpui.png` |
 | Review keys are modal | Triage | While a review runs only its own keys are live, so `t`, `d` or `a` cannot reach the list behind the card. | `src/actions.rs` |

@@ -562,7 +562,7 @@ width = 1440
 height = 900
 gpui_select = "9QWX"
 gpui_click = [1373.0, 122.0]
-prototype_steps = ["state.sel='9QWX'", "mount()", "openResolve()"]
+prototype_steps = ["state.sel=data.tasks.find((x)=>x.conflicts?.length).id", "mount()", "openResolve()"]
 measure = ["app", "nav", "main", "main-header"]
 
 [[scene]]

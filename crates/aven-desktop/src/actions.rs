@@ -148,7 +148,7 @@ pub const VIEWS: [(TaskQuery, &str, &str, &str, &str); 15] = [
         "Epics",
         "icons/ic-epics.svg",
         "v e",
-        "Open epics, plus closed ones with open tasks",
+        "Open epics. Closed ones stay under Show closed.",
     ),
     (
         TaskQuery::Recurring,

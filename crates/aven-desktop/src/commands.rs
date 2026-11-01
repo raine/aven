@@ -751,6 +751,7 @@ impl Root {
     ) {
         // Opens on mouse down, where the root would otherwise retake focus from the menu.
         window.prevent_default();
+        self.session.open_row_menu(&id);
         self.select(id.clone(), window, cx);
         let Some(row) = self.session.snapshot.row(&id).cloned() else {
             return;

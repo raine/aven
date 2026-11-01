@@ -175,8 +175,6 @@ pub struct Applied {
     pub moved: Option<TaskId>,
     /// A series whose replacement exists, to ask about stopping.
     pub stop: Option<RecurrenceSeriesId>,
-    /// A series that became the selected one.
-    pub series: bool,
     /// Rows a local write took off the list.
     pub left: Vec<TaskRow>,
 }
@@ -521,6 +519,13 @@ impl Session {
         self.marks.clear();
     }
 
+    /// A row's context menu acts on the marks only from a marked row.
+    pub fn open_row_menu(&mut self, id: &TaskId) {
+        if !self.marks.contains(id) {
+            self.marks.clear();
+        }
+    }
+
     pub fn select_series(&mut self, id: RecurrenceSeriesId) {
         if self.series.as_ref() != Some(&id) {
             self.series_detail = None;
@@ -636,8 +641,6 @@ impl Session {
             let at = self.review.as_ref().map_or(0, |review| review.at);
             self.set_status(&card.id, status);
             self.review_decided(ReviewChange::Store(at));
-        } else if status == TaskStatus::Inbox {
-            self.show_toast("choose a destination for inbox tasks".to_string(), None);
         } else {
             self.review_keep_card();
         }
@@ -947,7 +950,6 @@ impl Session {
             }
             ReplyBody::SelectSeries(id) => {
                 self.select_series(id);
-                applied.series = true;
             }
             ReplyBody::Review(cards, more) => self.take_review_page(cards, more),
             ReplyBody::AskStop(id) => applied.stop = Some(id),

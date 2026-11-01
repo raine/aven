@@ -4,7 +4,7 @@
 //! their order too. Outside writes surface through SQLite's `data_version`, which
 //! changes when another connection commits. A background task runs sync rounds.
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -36,7 +36,8 @@ use aven_core::recurrence::{
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
 use aven_host::config::{AppConfig, resolve_blob_dir};
-use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
+use aven_host::recurrence_input::natural_rule_label;
+use aven_host::schedule_input::{ParsedScheduleInput, format_schedule_input, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
 use aven_host::store::{
     ClosedTaskVisibility, ConflictTarget, EpicContext, PendingTaskAttachment, PriorityMutation,
@@ -179,6 +180,8 @@ pub struct SeriesDetail {
     pub description: String,
     pub state: RecurrenceSeriesState,
     pub rule: String,
+    /// The rule, time and due policy as the composer's schedule field reads them.
+    pub schedule: String,
     pub due: String,
     pub timezone: String,
     pub after: Option<String>,
@@ -578,7 +581,7 @@ pub enum Command {
     Bulk(Vec<TaskId>, Bulk),
     CreateChild(TaskId, String),
     AddChild(TaskId, TaskId),
-    RemoveChild(TaskId, TaskId),
+    RemoveChild(TaskId),
     SetClosed(bool),
     ShowRecurring(RecurrenceSeriesLifecycleFilter),
     /// Lists a series, widening the lifecycle filter if it is hidden.
@@ -1389,6 +1392,19 @@ impl OutsideWrites {
 }
 
 /// The slot after a series' current one, while it still has any.
+fn series_schedule(series: &aven_core::types::RecurrenceSeries) -> String {
+    let time = series
+        .available_local_time
+        .map(|time| time.format("%H:%M").to_string())
+        .unwrap_or_default();
+    let due = match series.due_policy {
+        RecurrenceDuePolicy::SameDay => "same-day",
+        RecurrenceDuePolicy::None => "none",
+    };
+    let rule = natural_rule_label(series.rule);
+    format_schedule_input("", "", &rule, &time, due, "")
+}
+
 fn slot_after(series: &aven_core::types::RecurrenceSeries, slot: &str) -> Option<String> {
     let slot = NaiveDate::parse_from_str(slot, "%Y-%m-%d").ok()?;
     (series.state != RecurrenceSeriesState::Stopped)
@@ -1486,8 +1502,6 @@ struct Actor {
     undoable: Vec<String>,
     /// Review marks a keep replaced, for taking the keep back.
     kept: HashMap<TaskId, Option<i64>>,
-    /// The GitHub CLI.
-    gh: OsString,
 }
 
 /// What a write reports once the list has caught up.
@@ -1554,7 +1568,6 @@ impl Actor {
             column_views: Vec::new(),
             undoable: Vec::new(),
             kept: HashMap::new(),
-            gh: OsString::from("gh"),
         }
     }
 
@@ -1796,6 +1809,7 @@ impl Actor {
             description: series.description.clone(),
             state: series.state,
             rule: detail.summary.rule_label.clone(),
+            schedule: series_schedule(series),
             due: match series.due_policy {
                 RecurrenceDuePolicy::SameDay => "Same day".to_string(),
                 RecurrenceDuePolicy::None => "None".to_string(),
@@ -2067,12 +2081,11 @@ impl Actor {
         let markdown = aven_host::task_render::task_markdown(&report);
         let filename = aven_host::task_render::gist_filename(&report);
         let description = aven_host::task_render::gist_description(&report);
-        let program = self.gh.clone();
         let replies = self.replies.clone();
         let request = self.handled;
         tokio::spawn(async move {
             let run = tokio::task::spawn_blocking(move || {
-                create_secret_gist(&program, &markdown, &filename, &description)
+                create_secret_gist(OsStr::new("gh"), &markdown, &filename, &description)
             })
             .await;
             let result = run
@@ -2522,7 +2535,7 @@ impl Actor {
                 let added = self.store.add_epic_child(context, child.clone()).await?;
                 Outcome::saved(added.message.message)
             }
-            Command::RemoveChild(_, child) => {
+            Command::RemoveChild(child) => {
                 let item = self
                     .store
                     .load_task_item(child)
@@ -3396,6 +3409,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_replacement_starts_from_the_series_rule_time_and_due_policy() {
+        let (_directory, mut actor, mut replies) = actor("Other").await;
+        let task = new_task("Review", "every Friday at 14:30, no due");
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        run(
+            &mut actor,
+            Command::ShowRecurring(RecurrenceSeriesLifecycleFilter::All),
+        )
+        .await;
+        let series = actor.store.recurrence_series[0].series.id.clone();
+        let detail = actor.series_detail(&series).await.unwrap();
+        assert_eq!(detail.rule, "weekly on fri");
+        assert_eq!(detail.schedule, "Every Friday at 14:30, no due");
+
+        let mut task = new_task("Replacement", &detail.schedule);
+        task.replaces = Some(series);
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        let bodies = bodies(&mut replies);
+        assert!(!format!("{bodies:?}").contains("A replacement needs a repeating schedule"));
+        let replacement = actor
+            .store
+            .recurrence_series
+            .iter()
+            .find(|row| row.series.title == "Replacement")
+            .expect("the replacement series exists");
+        assert_eq!(
+            replacement.series.available_local_time,
+            chrono::NaiveTime::from_hms_opt(14, 30, 0)
+        );
+        assert_eq!(replacement.series.due_policy, RecurrenceDuePolicy::None);
+    }
+
+    #[tokio::test]
     async fn a_replacement_without_a_repeating_schedule_is_refused() {
         let (_directory, mut actor, mut replies) = actor("Other").await;
         let task = new_task("Review", "every friday at 09:00");
@@ -3426,7 +3472,7 @@ mod tests {
         let other = task_id(&actor, "Other");
         run(&mut actor, Command::AddChild(epic.clone(), loose.clone())).await;
         run(&mut actor, Command::AddChild(epic.clone(), other.clone())).await;
-        run(&mut actor, Command::RemoveChild(epic.clone(), other)).await;
+        run(&mut actor, Command::RemoveChild(other)).await;
         run(
             &mut actor,
             Command::CreateChild(epic.clone(), "Fresh".to_string()),

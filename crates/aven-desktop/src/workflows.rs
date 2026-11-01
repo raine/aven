@@ -2,6 +2,7 @@
 //! series, review and conflicts. Data rules stay in the host; this module only
 //! decides what to ask and shows what came back.
 use std::f32::consts::{PI, TAU};
+use std::rc::Rc;
 
 use accesskit::Role;
 use aven_core::choices::TaskStatus;
@@ -10,9 +11,9 @@ use aven_core::query::RecurrenceSeriesLifecycleFilter as Lifecycle;
 use aven_core::recurrence::{RecurrenceSeriesId, RecurrenceSeriesState};
 use aven_host::store::ConflictTarget;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Bounds, Context, Div, Entity, FontWeight, Hsla,
-    MouseButton, MouseDownEvent, PathBuilder, Pixels, SharedString, Stateful, Window, canvas, div,
-    point, prelude::*, px,
+    Animation, AnimationExt, AnyElement, Bounds, Context, Div, Entity, FocusHandle, FontWeight,
+    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, SharedString, Stateful, Window, canvas,
+    div, point, prelude::*, px,
 };
 
 use crate::actions::*;
@@ -82,8 +83,22 @@ fn hint(text: impl Into<SharedString>, t: &Theme) -> Div {
     small(12.).mt(px(6.)).text_color(t.faint).child(text.into())
 }
 
-fn state_name(state: RecurrenceSeriesState) -> &'static str {
-    state.as_str()
+/// Puts a dialog button on the Tab order, where Enter does what a click does.
+fn tab_stop(
+    button: Stateful<Div>,
+    focus: &FocusHandle,
+    t: &Theme,
+    cx: &mut Context<Root>,
+    run: impl Fn(&mut Root, &mut Window, &mut Context<Root>) + 'static,
+) -> Stateful<Div> {
+    let run = Rc::new(run);
+    let press = run.clone();
+    let ring = t.inset_ring(t.accent);
+    button
+        .track_focus(focus)
+        .focus(move |style| style.shadow(vec![ring]))
+        .on_click(cx.listener(move |this, _, window, cx| run(this, window, cx)))
+        .on_action(cx.listener(move |this, _: &Accept, window, cx| press(this, window, cx)))
 }
 
 fn state_color(state: RecurrenceSeriesState, t: &Theme) -> Hsla {
@@ -641,14 +656,12 @@ impl Root {
 
     fn child_row(
         &self,
-        epic: &TaskId,
         child: &Child,
         cx: &mut Context<Self>,
         t: &Theme,
     ) -> impl IntoElement + use<> {
         let focused = self.session.child.as_ref() == Some(&child.link.id);
         let (target, remove) = (child.link.id.clone(), child.link.id.clone());
-        let epic = epic.clone();
         let raised = t.raised;
         div()
             .id(gpui::ElementId::Name(
@@ -711,8 +724,7 @@ impl Root {
                 .text_color(t.faint)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.session
-                        .write(Command::RemoveChild(epic.clone(), remove.clone()));
+                    this.session.write(Command::RemoveChild(remove.clone()));
                 }))
                 .child("Remove"),
             )
@@ -785,7 +797,7 @@ impl Root {
                     .child(format!("{name} {}", children.len())),
             );
             for child in children {
-                section = section.child(self.child_row(&row.id, child, cx, t));
+                section = section.child(self.child_row(child, cx, t));
             }
         }
         let finished: Vec<&Child> = detail
@@ -814,7 +826,7 @@ impl Root {
             );
             if open {
                 for child in finished {
-                    section = section.child(self.child_row(&row.id, child, cx, t));
+                    section = section.child(self.child_row(child, cx, t));
                 }
             }
         }
@@ -1154,7 +1166,7 @@ impl Root {
             small(12.).text_color(t.faint).child(next),
             small(11.)
                 .text_color(state_color(row.state, &t))
-                .child(state_name(row.state)),
+                .child(row.state.as_str()),
         );
         div()
             .id(("series", index))
@@ -1186,12 +1198,14 @@ impl Root {
         let title = row.map_or_else(String::new, |row| row.title.clone());
         match current {
             Some(current) => {
+                let buttons = [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()];
                 let dialog = Dialog::Stop {
                     id,
                     title,
                     current: current.reference,
+                    buttons: buttons.clone(),
                 };
-                self.open_dialog(dialog, Vec::new(), window, cx);
+                self.open_dialog_at(dialog, Vec::new(), buttons.to_vec(), 0, window, cx);
             }
             None => self.session.write(Command::StopSeries(id, false)),
         }
@@ -1212,7 +1226,7 @@ impl Root {
             title: detail.title,
             body: detail.description,
             project,
-            schedule: detail.rule.to_lowercase(),
+            schedule: detail.schedule,
             replaces: Some(detail.id),
             more: true,
             ..Draft::default()
@@ -1386,7 +1400,7 @@ impl Root {
                             .child(series.title.clone()),
                     )
                     .child(
-                        fact("State", state_name(series.state), &t)
+                        fact("State", series.state.as_str(), &t)
                             .text_color(state_color(series.state, &t)),
                     )
                     .child(fact("Schedule", series.rule.clone(), &t))
@@ -1468,13 +1482,30 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let input = cx.new(|cx| Editor::new(Mode::Multi, "", window, cx).enter_breaks());
+        let written = takes_final_value(&targets[at]);
+        let more = at + 1 < targets.len();
+        let sides = [cx.focus_handle(), cx.focus_handle()];
+        let buttons = [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()];
+        let [later, next, ok] = buttons.clone();
+        let mut fields = sides.to_vec();
+        if written {
+            fields.push(input.read(cx).focus.clone());
+        }
+        fields.push(later);
+        if more {
+            fields.push(next);
+        }
+        fields.push(ok);
         let dialog = Dialog::Resolve {
             targets,
             at,
             input: input.clone(),
             chosen: None,
+            sides,
+            buttons,
         };
-        self.open_dialog(dialog, vec![input], window, cx);
+        let first = if written { 2 } else { 0 };
+        self.open_dialog_at(dialog, vec![input], fields, first, window, cx);
     }
 
     fn pick_side(&mut self, side: usize, cx: &mut Context<Self>) {
@@ -1484,6 +1515,7 @@ impl Root {
                 at,
                 input,
                 chosen,
+                ..
             } = &mut layer.dialog
         {
             let target = &targets[*at];
@@ -1506,6 +1538,7 @@ impl Root {
             at,
             input,
             chosen,
+            ..
         }) = self.dialog.as_ref().map(|layer| &layer.dialog)
         else {
             return;
@@ -1529,6 +1562,8 @@ impl Root {
             at,
             input,
             chosen,
+            sides,
+            buttons: [later, next, ok],
         }) = self.dialog.as_ref().map(|layer| &layer.dialog)
         else {
             return Vec::new();
@@ -1538,10 +1573,10 @@ impl Root {
         let label = field_label(&target.field);
         let typed = chosen.is_some() || !input.read(cx).text().trim().is_empty();
         let more = *at + 1 < targets.len();
-        let written = matches!(target.field.as_str(), "title" | "description");
-        let side = |index: usize, device: &str, value: &str, cx: &mut Context<Self>| {
+        let written = takes_final_value(target);
+        let side = |index: usize, name: &'static str, value: &str, cx: &mut Context<Self>| {
             let on = *chosen == Some(index);
-            div()
+            let button = div()
                 .id(("pair", index))
                 .role(Role::Button)
                 .aria_label(format!("Keep {value}"))
@@ -1550,9 +1585,12 @@ impl Root {
                 .p(px(8.))
                 .rounded(px(7.))
                 .shadow(vec![t.inset_ring(if on { t.accent } else { t.line })])
-                .on_click(cx.listener(move |this, _, _, cx| this.pick_side(index, cx)))
-                .child(small(11.).text_color(t.faint).child(device.to_string()))
-                .child(div().mt(px(4.)).text_color(t.body).child(value.to_string()))
+                .when(on, |button| button.bg(t.raised))
+                .child(small(11.).text_color(t.faint).child(name))
+                .child(div().mt(px(4.)).text_color(t.body).child(value.to_string()));
+            tab_stop(button, &sides[index], t, cx, move |this, _, cx| {
+                this.pick_side(index, cx);
+            })
         };
         vec![
             div()
@@ -1570,8 +1608,8 @@ impl Root {
                         .mt(px(8.))
                         .flex()
                         .gap(px(10.))
-                        .child(side(0, &target.variant_a, &target.local_value, cx))
-                        .child(side(1, &target.variant_b, &target.remote_value, cx)),
+                        .child(side(0, "This device", &target.local_value, cx))
+                        .child(side(1, "Other device", &target.remote_value, cx)),
                 )
                 .when(written, |body| {
                     body.child(
@@ -1606,35 +1644,44 @@ impl Root {
                     )))
                 })
                 .child(div().flex_1())
-                .child(
+                .child(tab_stop(
                     btn("resolve-later", "Decide later", t)
                         .px(px(8.))
-                        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
                         .child("Decide later"),
-                )
+                    later,
+                    t,
+                    cx,
+                    |this, window, cx| this.close_dialog(window, cx),
+                ))
                 .when(more, |foot| {
-                    foot.child(
+                    foot.child(tab_stop(
                         line_btn("resolve-next", "Keep and next", t)
-                            .when(!typed, |button| button.opacity(0.5))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.finish_resolve(true, window, cx);
-                            })),
-                    )
+                            .when(!typed, |button| button.opacity(0.5)),
+                        next,
+                        t,
+                        cx,
+                        |this, window, cx| this.finish_resolve(true, window, cx),
+                    ))
                 })
-                .child(
+                .child(tab_stop(
                     fill_btn("resolve-ok", "Keep this value", t)
-                        .when(!typed, |button| button.opacity(0.5))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.finish_resolve(false, window, cx);
-                        })),
-                )
+                        .when(!typed, |button| button.opacity(0.5)),
+                    ok,
+                    t,
+                    cx,
+                    |this, window, cx| this.finish_resolve(false, window, cx),
+                ))
                 .into_any_element(),
         ]
     }
 
     pub(crate) fn render_stop(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
-        let Some(Dialog::Stop { id, title, current }) =
-            self.dialog.as_ref().map(|layer| &layer.dialog)
+        let Some(Dialog::Stop {
+            id,
+            title,
+            current,
+            buttons: [cancel, keep_it, skip_it],
+        }) = self.dialog.as_ref().map(|layer| &layer.dialog)
         else {
             return Vec::new();
         };
@@ -1660,24 +1707,33 @@ impl Root {
                 .flex()
                 .justify_end()
                 .gap(px(6.))
-                .child(
-                    btn("stop-cancel", "Cancel", t)
-                        .px(px(8.))
-                        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
-                        .child("Cancel"),
-                )
-                .child(line_btn("stop-keep", "Keep it", t).on_click(cx.listener(
-                    move |this, _, window, cx| {
+                .child(tab_stop(
+                    btn("stop-cancel", "Cancel", t).px(px(8.)).child("Cancel"),
+                    cancel,
+                    t,
+                    cx,
+                    |this, window, cx| this.close_dialog(window, cx),
+                ))
+                .child(tab_stop(
+                    line_btn("stop-keep", "Keep it", t),
+                    keep_it,
+                    t,
+                    cx,
+                    move |this, window, cx| {
                         this.session.write(Command::StopSeries(keep.clone(), false));
                         this.close_dialog(window, cx);
                     },
-                )))
-                .child(line_btn("stop-skip", "Skip it", t).on_click(cx.listener(
-                    move |this, _, window, cx| {
+                ))
+                .child(tab_stop(
+                    line_btn("stop-skip", "Skip it", t),
+                    skip_it,
+                    t,
+                    cx,
+                    move |this, window, cx| {
                         this.session.write(Command::StopSeries(skip.clone(), true));
                         this.close_dialog(window, cx);
                     },
-                )))
+                ))
                 .into_any_element(),
         ]
     }
@@ -1689,12 +1745,21 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         if let Some(id) = self.session.target().cloned() {
-            self.open_dialog(Dialog::Gist { id }, Vec::new(), window, cx);
+            let buttons = [cx.focus_handle(), cx.focus_handle()];
+            let dialog = Dialog::Gist {
+                id,
+                buttons: buttons.clone(),
+            };
+            self.open_dialog_at(dialog, Vec::new(), buttons.to_vec(), 1, window, cx);
         }
     }
 
     pub(crate) fn render_gist(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
-        let Some(Dialog::Gist { id }) = self.dialog.as_ref().map(|layer| &layer.dialog) else {
+        let Some(Dialog::Gist {
+            id,
+            buttons: [cancel, publish],
+        }) = self.dialog.as_ref().map(|layer| &layer.dialog)
+        else {
             return Vec::new();
         };
         let id = id.clone();
@@ -1719,19 +1784,24 @@ impl Root {
                 .flex()
                 .justify_end()
                 .gap(px(6.))
-                .child(
-                    btn("gist-cancel", "Cancel", t)
-                        .px(px(8.))
-                        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
-                        .child("Cancel"),
-                )
-                .child(fill_btn("gist-ok", "Publish", t).on_click(cx.listener(
-                    move |this, _, window, cx| {
+                .child(tab_stop(
+                    btn("gist-cancel", "Cancel", t).px(px(8.)).child("Cancel"),
+                    cancel,
+                    t,
+                    cx,
+                    |this, window, cx| this.close_dialog(window, cx),
+                ))
+                .child(tab_stop(
+                    fill_btn("gist-ok", "Publish", t),
+                    publish,
+                    t,
+                    cx,
+                    move |this, window, cx| {
                         this.close_dialog(window, cx);
                         this.session.publish_gist(id.clone());
                         this.arm_toast(cx);
                     },
-                )))
+                ))
                 .into_any_element(),
         ]
     }
@@ -2145,6 +2215,11 @@ impl Root {
                 ),
         )
     }
+}
+
+/// Whether a conflicted field takes typed text, not only one of its two sides.
+fn takes_final_value(target: &ConflictTarget) -> bool {
+    matches!(target.field.as_str(), "title" | "description")
 }
 
 fn field_label(field: &str) -> String {
