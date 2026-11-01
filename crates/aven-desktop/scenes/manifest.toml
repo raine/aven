@@ -490,3 +490,21 @@ height = 600
 gpui_keys = ["v o", "v l"]
 prototype_steps = ["state.view='open'", "state.layout='board'", "mount()"]
 measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "focus-return"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["/", "escape", "j", "s", "escape", "j"]
+prototype_steps = ["mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "draft-kept"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["a", "k e p t space d r a f t", "escape", "a"]
+prototype_steps = ["openComposer()"]
+measure = ["app", "nav", "main", "main-header"]
