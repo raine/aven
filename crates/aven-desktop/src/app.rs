@@ -1,16 +1,10 @@
 //! Application start.
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 use std::time::Duration;
 
-#[cfg(feature = "dev")]
-use anyhow::Context as _;
 use anyhow::Result;
-use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::app_bundle::enclosing_bundle;
-use aven_host::config::AppConfig;
-#[cfg(not(feature = "dev"))]
-use aven_host::config::resolve_db_path;
+use aven_host::config::{AppConfig, resolve_db_path};
 use gpui::{
     App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, point, prelude::*, px, size,
@@ -19,8 +13,6 @@ use gpui_platform::application;
 
 use crate::adapter::{self, Launch, Prefs, SavedWindow, WindowMode};
 use crate::assets::{Assets, load_fonts};
-#[cfg(feature = "dev")]
-use crate::isolation::Isolation;
 use crate::shell::Root;
 use crate::theme::Theme;
 use crate::{actions, input, platform};
@@ -32,87 +24,7 @@ const STORE_GRACE: Duration = Duration::from_millis(150);
 const UPDATE_POLL: Duration = Duration::from_secs(5);
 
 /// The window title.
-#[cfg(not(feature = "dev"))]
 const TITLE: &str = "Aven";
-#[cfg(feature = "dev")]
-const TITLE: &str = "Aven Dev";
-
-/// What one launch runs on.
-pub struct Start {
-    database: PathBuf,
-    config: AppConfig,
-    /// `None` keeps the installation's Keychain, whose access each host mode
-    /// decides for itself.
-    storage: Option<Arc<dyn ProtectedStorage>>,
-    #[cfg(feature = "dev")]
-    isolation: Isolation,
-}
-
-impl Start {
-    /// The owner's own configuration and database, as the CLI resolves them.
-    #[cfg(not(feature = "dev"))]
-    pub fn installed() -> Result<Self> {
-        let config = AppConfig::load()?;
-        let database = resolve_db_path(None, &config)?;
-        Ok(Self {
-            database,
-            config,
-            storage: None,
-        })
-    }
-
-    /// A disposable root that passed the isolation guard.
-    #[cfg(feature = "dev")]
-    pub fn isolated(isolation: Isolation) -> Result<Self> {
-        isolation.create_directories()?;
-        Ok(Self {
-            database: isolation.database.clone(),
-            config: AppConfig::load()?,
-            storage: Some(isolation.protected_storage()),
-            isolation,
-        })
-    }
-
-    /// The environment a relaunch has to carry over.
-    fn relaunch_environment(&self) -> Vec<(String, PathBuf)> {
-        #[cfg(feature = "dev")]
-        return self
-            .isolation
-            .environment()
-            .into_iter()
-            .map(|(name, value)| (name.to_string(), value.to_path_buf()))
-            .collect();
-        #[cfg(not(feature = "dev"))]
-        Vec::new()
-    }
-
-    /// Records what this launch resolved, for launchers and reviewers.
-    fn opened(&self, queue_rows: usize) -> Result<()> {
-        #[cfg(feature = "dev")]
-        {
-            let paths: serde_json::Map<_, _> = self
-                .isolation
-                .resolved_paths()
-                .iter()
-                .map(|(name, path)| (name.to_string(), path.display().to_string().into()))
-                .collect();
-            let record = serde_json::json!({
-                "pid": std::process::id(),
-                "executable": std::env::current_exe()?.display().to_string(),
-                "paths": paths,
-                "queue_rows": queue_rows,
-            });
-            std::fs::write(
-                &self.isolation.launch_record,
-                serde_json::to_vec_pretty(&record)?,
-            )
-            .context("write launch record")?;
-        }
-        #[cfg(not(feature = "dev"))]
-        let _ = queue_rows;
-        Ok(())
-    }
-}
 
 /// Identifies the file at `path`. A bundle swap puts a new file there, while
 /// this process keeps running the old one.
@@ -132,7 +44,7 @@ fn was_replaced(started: (u64, u64), now: Option<(u64, u64)>) -> bool {
 /// Follows an update of the bundle, whoever installed it. A running app keeps
 /// executing the old file, so it quits normally and reopens as soon as the owner
 /// is not using it.
-fn relaunch_after_update(environment: Vec<(String, PathBuf)>, cx: &mut App) {
+fn relaunch_after_update(cx: &mut App) {
     let Ok(executable) = std::env::current_exe() else {
         return;
     };
@@ -152,7 +64,7 @@ fn relaunch_after_update(environment: Vec<(String, PathBuf)>, cx: &mut App) {
                 if platform::is_active() {
                     return false;
                 }
-                match platform::reopen_after_exit(&bundle, &environment) {
+                match platform::reopen_after_exit(&bundle) {
                     Ok(()) => with_root(cx, Root::quit),
                     Err(error) => tracing::warn!(%error, "could not schedule a relaunch"),
                 }
@@ -240,16 +152,18 @@ fn window_placement(saved: Option<&SavedWindow>, cx: &App) -> (WindowBounds, Opt
     })
 }
 
-pub fn run(start: Start) -> Result<()> {
+/// Runs on the owner's own configuration and database, as the CLI resolves them.
+pub fn run() -> Result<()> {
+    let config = AppConfig::load()?;
+    let database = resolve_db_path(None, &config)?;
+    let prefs = Prefs::path(&database);
     let runtime = tokio::runtime::Runtime::new()?;
     let launch = Launch {
-        database: start.database.clone(),
-        config: start.config.clone(),
-        storage: start.storage.clone(),
+        database,
+        config,
+        storage: None,
     };
     let (session, replies) = adapter::start(runtime.handle().clone(), launch)?;
-    let queue_rows = session.snapshot.ordered().count();
-    let prefs = Prefs::path(&start.database);
     let saved = Prefs::load(&prefs);
     let app = application().with_assets(Assets);
     app.on_reopen(show_window);
@@ -306,13 +220,8 @@ pub fn run(start: Start) -> Result<()> {
             }
         })
         .detach();
-        relaunch_after_update(start.relaunch_environment(), cx);
+        relaunch_after_update(cx);
         cx.activate(true);
-        // Launchers read this as proof the window opened.
-        if let Err(error) = start.opened(queue_rows) {
-            eprintln!("aven-desktop failed: {error:#}");
-            cx.quit();
-        }
     });
     Ok(())
 }

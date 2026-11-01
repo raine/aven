@@ -30,7 +30,6 @@ use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::markdown;
-use crate::measure::measured;
 use crate::overlays::{Menu, TOAST_DURATION};
 use crate::platform;
 use crate::session::{
@@ -46,7 +45,7 @@ use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, S
 const QUIT_BUDGET: Duration = Duration::from_secs(40);
 const NAV_WIDTH_RANGE: (f32, f32) = (170., 340.);
 const DETAIL_WIDTH_RANGE: (f32, f32) = (290., 620.);
-/// The prototype's resize handles overlap each neighbouring panel by this much.
+/// Resize handles overlap each neighbouring panel by this much.
 const SPLIT_OVERLAP: f32 = 1.;
 /// The list keeps at least this width when panels are wide.
 const LIST_MIN_WIDTH: f32 = 300.;
@@ -113,7 +112,6 @@ fn snapped_height(height: f32) -> f32 {
 enum Item {
     Pad(f32),
     Section {
-        index: usize,
         name: String,
         hint: String,
         count: usize,
@@ -380,8 +378,6 @@ pub(crate) struct BodyEdit {
 }
 
 pub struct Root {
-    /// Draws the active window look without key status, for offscreen scenes.
-    pub always_active: bool,
     pub(crate) focus: FocusHandle,
     pub(crate) session: Session,
     items: Vec<Item>,
@@ -511,7 +507,6 @@ impl Root {
         );
         let new_label = cx.new(|cx| Editor::new(Mode::Single, "New label", window, cx));
         let mut this = Self {
-            always_active: false,
             focus,
             session,
             items: Vec::new(),
@@ -720,19 +715,6 @@ impl Root {
         self.save_prefs();
     }
 
-    /// The list's scroll extent, for layout measurement.
-    pub fn scroll_max(&self) -> f32 {
-        f32::from(self.list.max_offset_for_scrollbar().y)
-    }
-
-    pub fn session_mut(&mut self) -> &mut Session {
-        &mut self.session
-    }
-
-    fn active(&self, window: &Window) -> bool {
-        self.always_active || window.is_window_active()
-    }
-
     fn build_items(&self) -> Vec<Item> {
         let snapshot = &self.session.snapshot;
         let mut items = vec![Item::Pad(4.)];
@@ -760,13 +742,12 @@ impl Root {
         }
         let mut row = 0;
         let mut carried = 0.;
-        for (index, group) in snapshot.groups.iter().enumerate() {
+        for group in &snapshot.groups {
             let height = snapped_height(SECTION_HEIGHT + carried);
             carried += SECTION_HEIGHT - height;
             // A view core does not group lists its rows straight away.
             if !group.name.is_empty() {
                 items.push(Item::Section {
-                    index,
                     name: group.name.clone(),
                     hint: group.hint.clone(),
                     count: group.rows.len(),
@@ -840,12 +821,6 @@ impl Root {
             }
         }
         self.items = items;
-    }
-
-    /// Shows the session's list as it now stands.
-    pub fn reload_list(&mut self, cx: &mut Context<Self>) {
-        self.rebuild(false, &[]);
-        cx.notify();
     }
 
     /// Takes one reply from the store.
@@ -1356,7 +1331,6 @@ impl Root {
             Item::SeriesHead => self.render_series_head(cx),
             Item::Series(index) => self.render_series_row(index, cx),
             Item::Section {
-                index,
                 name,
                 hint,
                 count,
@@ -1364,14 +1338,7 @@ impl Root {
             } => {
                 let entered = self.list_motion.entered(&name);
                 let moved = self.list_motion.section(&name);
-                let section = self.section_heading(
-                    measured(div(), format!("section-{index}")),
-                    name,
-                    hint,
-                    count,
-                    height,
-                    &t,
-                );
+                let section = self.section_heading(div(), name, hint, count, height, &t);
                 let section = div().px(px(8.)).child(section);
                 match (entered, moved) {
                     (Some(run), _) => section
@@ -1520,7 +1487,7 @@ impl Root {
             &self.items[ix - 1],
             Item::Row { id, .. } if self.session.selected.as_ref() == Some(id)
         );
-        let active = self.active(window);
+        let active = window.is_window_active();
         let gliding = self.glide.is_some_and(Glide::live);
         let wide = self.list_wide;
         let date_color = match data.date_tone {
@@ -1537,7 +1504,7 @@ impl Root {
             .join(" ");
         let (select_id, toggle_id, menu_id) = (id.clone(), id.clone(), id.clone());
         let deleted = data.deleted;
-        let body = measured(div(), format!("row-{row}"))
+        let body = div()
             .relative()
             .id(("row", row))
             .role(Role::ListItem)
@@ -1672,7 +1639,7 @@ impl Root {
 
     fn render_nav(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx);
-        let active = self.active(window);
+        let active = window.is_window_active();
         let snapshot = &self.session.snapshot;
         let header = |label: &'static str| {
             div()
@@ -1792,7 +1759,7 @@ impl Root {
         }
         let (sync_tone, _) = self.session.sync_line();
         let sync_problem = matches!(sync_tone, SyncTone::Warn | SyncTone::Bad);
-        measured(div(), "nav")
+        div()
             .flex_none()
             .w(px(self.prefs.nav_width))
             .h_full()
@@ -1877,7 +1844,7 @@ impl Root {
 
     fn render_top(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx);
-        let active = self.active(window);
+        let active = window.is_window_active();
         let snapshot = &self.session.snapshot;
         let count = if snapshot.view.query == TaskQuery::Recurring {
             snapshot.series.len()
@@ -1926,7 +1893,7 @@ impl Root {
         let width = window.viewport_size().width;
         let hints = width > px(HEADER_HINTS_MIN_WINDOW_WIDTH);
         let crumbs = !settings && width > px(CRUMBS_MIN_WINDOW_WIDTH);
-        measured(div(), "main-header")
+        div()
             .flex_none()
             .h(px(44.))
             .pl(px(if self.nav_open { 16. } else { 0. }))
@@ -2234,7 +2201,7 @@ impl Root {
             ));
         }
         div().w_full().pt(px(48.)).flex().justify_center().child(
-            measured(div(), "empty")
+            div()
                 .max_w(px(340.))
                 .flex()
                 .flex_col()
@@ -2483,7 +2450,7 @@ impl Root {
             let top = (track - height) * (offset / max).clamp(0., 1.);
             (top, height)
         });
-        let (glide_bg, glide_ring) = t.selection(self.active(window));
+        let (glide_bg, glide_ring) = t.selection(window.is_window_active());
         let glide = self.glide.filter(|glide| glide.live()).map(|glide| {
             let scrolled = f32::from(offset);
             div().absolute().inset_0().overflow_hidden().child(
@@ -2559,7 +2526,7 @@ impl Root {
                     ),
             )
         });
-        measured(div(), "list")
+        div()
             .flex_1()
             .min_w_0()
             .min_h_0()
@@ -2789,7 +2756,8 @@ impl Render for Root {
         let expanded = self.session.expanded;
         let columns = self.session.snapshot.view.columns;
         let list_el = self.render_list(window, cx);
-        let board = (columns && !expanded).then(|| self.render_board(self.active(window), cx));
+        let board =
+            (columns && !expanded).then(|| self.render_board(window.is_window_active(), cx));
         let doc = expanded.then(|| self.render_doc(window, cx));
         let logged = self.session.snapshot.view.query == TaskQuery::RecentActions;
         let reviewing = self.session.review.is_some();
@@ -2827,7 +2795,7 @@ impl Render for Root {
             let gate = self.render_database_gate(cx);
             let dialog = self.render_dialog(window, cx);
             let toast = self.render_toast(cx);
-            return measured(div(), "app")
+            return div()
                 .relative()
                 .size_full()
                 .flex()
@@ -2854,7 +2822,7 @@ impl Render for Root {
         let settings_closed = self.session.settings.is_none();
         let on_list = unblocked && settings_closed && !reviewing;
         let has_task = self.session.target().is_some() || recurring;
-        measured(div(), "app")
+        div()
             .relative()
             .size_full()
             .flex()
@@ -2996,7 +2964,7 @@ impl Render for Root {
             })
             .when_some(nav, |root, nav| root.child(nav))
             .child(
-                measured(div(), "main")
+                div()
                     .flex_1()
                     .min_w_0()
                     .flex()
@@ -3111,7 +3079,6 @@ mod tests {
 
     fn section(name: &str) -> Item {
         Item::Section {
-            index: 0,
             name: name.to_string(),
             hint: String::new(),
             count: 0,

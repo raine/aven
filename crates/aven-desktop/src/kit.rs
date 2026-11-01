@@ -16,7 +16,7 @@ use crate::session::POP_DURATION;
 use crate::theme::Theme;
 
 /// The text size setting, as thousandths. Drawing goes through [`px`], so the
-/// whole window scales the way the prototype's page zoom does.
+/// whole window scales with it.
 static ZOOM: AtomicU32 = AtomicU32::new(1000);
 static COMPACT: AtomicBool = AtomicBool::new(false);
 

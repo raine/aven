@@ -1,4 +1,4 @@
-//! Design tokens, copied one to one from the prototype's CSS custom properties.
+//! Design tokens.
 
 use gpui::{App, BoxShadow, Global, Hsla, Rgba, point, px, rgb, rgba};
 

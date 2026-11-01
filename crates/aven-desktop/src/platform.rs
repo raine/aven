@@ -91,10 +91,7 @@ pub fn order_out(window: &gpui::Window) {
 
 /// Opens `bundle` in the background once this process has exited, through Launch
 /// Services, so it starts as an app and not as a child of this one.
-pub fn reopen_after_exit(
-    bundle: &std::path::Path,
-    environment: &[(String, std::path::PathBuf)],
-) -> std::io::Result<()> {
+pub fn reopen_after_exit(bundle: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
 
@@ -104,16 +101,9 @@ pub fn reopen_after_exit(
         while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
         exec /usr/bin/open -g "$@"
     "#;
-    let mut command = Command::new("/bin/sh");
-    command
+    Command::new("/bin/sh")
         .args(["-c", SCRIPT, "aven-relaunch"])
-        .arg(std::process::id().to_string());
-    for (name, value) in environment {
-        let mut setting = std::ffi::OsString::from(format!("{name}="));
-        setting.push(value);
-        command.arg("--env").arg(setting);
-    }
-    command
+        .arg(std::process::id().to_string())
         .arg(bundle)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

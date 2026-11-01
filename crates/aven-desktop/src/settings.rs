@@ -18,7 +18,6 @@ use crate::adapter::{Command, Reminders, SettingsEdit, SyncPhase, ThemePref};
 use crate::dialogs::{ConfirmAction, Dialog, Layer};
 use crate::input::{Editor, Mode};
 use crate::kit::*;
-use crate::measure::measured;
 use crate::session::{SettingsTab, SyncPage, SyncTone, count_text};
 use crate::shell::Root;
 use crate::sync_ops::{Secret, SetupFacts, SyncKind, SyncOp, SyncRequest, steps};
@@ -554,13 +553,13 @@ impl Root {
             SettingsTab::Data => self.data_tab(cx, &t),
         };
         let (tint, ink) = (t.tint, t.ink);
-        measured(div(), "settings")
+        div()
             .flex_1()
             .min_h_0()
             .min_w_0()
             .flex()
             .child(
-                measured(div(), "settings-nav")
+                div()
                     .flex_none()
                     .w(px(190.))
                     .h_full()
@@ -607,13 +606,7 @@ impl Root {
                     .px(px(32.))
                     .pt(px(32.))
                     .pb(px(60.))
-                    .child(
-                        measured(div(), "settings-page")
-                            .w_full()
-                            .max_w(px(620.))
-                            .mx_auto()
-                            .child(body),
-                    ),
+                    .child(div().w_full().max_w(px(620.)).mx_auto().child(body)),
             )
             .into_any_element()
     }

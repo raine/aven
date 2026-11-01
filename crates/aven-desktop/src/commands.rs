@@ -68,7 +68,7 @@ pub fn read_image(path: &Path) -> Option<PendingImage> {
     })
 }
 
-/// The image a paste carries, named as the prototype names a pasted one.
+/// The image a paste carries.
 pub fn pasted_image(pasted: PastedImage) -> Option<PendingImage> {
     match pasted {
         PastedImage::Path(path) => read_image(&path),

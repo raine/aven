@@ -28,7 +28,6 @@ use tokio::sync::mpsc;
 use zeroize::Zeroizing;
 
 use crate::adapter::{Reply, ReplyBody};
-use crate::require_allowed;
 
 /// An invitation's text. It grants access to synced data, so `Debug` hides it.
 #[derive(Clone, PartialEq, Eq)]
@@ -346,7 +345,6 @@ impl SyncWork {
         let path = fresh_path(&self.path, "joined", "sqlite");
         let config = own_blobs(&self.config);
         let attempt = async {
-            require_allowed("joined database", &path)?;
             let database = Database::open(&path).await?;
             let result = self
                 .join(&database, &self.host_with(&config), invitation)
@@ -628,9 +626,7 @@ fn remove_database(path: &Path) {
 /// Restores `archive` to a new database beside `current`, which stays as it
 /// was, and returns the new path. Nothing is left behind on failure.
 pub async fn restore_to_new(current: &Path, config: &AppConfig, archive: &Path) -> Result<PathBuf> {
-    require_allowed("backup archive", archive)?;
     let path = fresh_path(current, "restored", "sqlite");
-    require_allowed("restored database", &path)?;
     let blob_dir = resolve_blob_dir(&path, &own_blobs(config))?;
     let restored = if is_backup_archive(archive)? {
         restore_backup_archive(&path, &blob_dir, archive).await
@@ -649,7 +645,6 @@ pub async fn restore_to_new(current: &Path, config: &AppConfig, archive: &Path) 
 /// Writes a backup archive beside `current`, including its images.
 pub async fn write_backup(database: &Database, current: &Path, blob_dir: &Path) -> Result<PathBuf> {
     let path = fresh_path(current, "aven-backup", "aven-backup.tar.zst");
-    require_allowed("backup archive", &path)?;
     database.create_backup_archive(blob_dir, &path).await?;
     Ok(path)
 }
@@ -657,7 +652,6 @@ pub async fn write_backup(database: &Database, current: &Path, blob_dir: &Path) 
 /// Writes a JSON export beside `current`, without image files.
 pub async fn write_export(database: &Database, current: &Path) -> Result<PathBuf> {
     let path = fresh_path(current, "aven-export", "json");
-    require_allowed("export", &path)?;
     let export = database.export_data(aven_core::ids::now()).await?;
     let text = serde_json::to_vec(&export).context("could not serialize export")?;
     write_export_file(&path, &text)?;
@@ -669,7 +663,6 @@ pub fn check_database_path(path: &Path) -> Result<()> {
     if !path.is_absolute() {
         bail!("Use a full path");
     }
-    require_allowed("database", path)?;
     // SQLite's URL form would read these as a different path from the one checked.
     if path.to_string_lossy().contains(['%', '?']) {
         bail!("Use a path without % or ?");
@@ -677,9 +670,7 @@ pub fn check_database_path(path: &Path) -> Result<()> {
     if !path.is_file() {
         return Err(anyhow!("No database at {}", path.display()));
     }
-    let mut blobs = path.as_os_str().to_os_string();
-    blobs.push(".blobs");
-    require_allowed("database images", Path::new(&blobs))
+    Ok(())
 }
 
 /// Stages of a kind's progress, in order, with how each reads now and after.

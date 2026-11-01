@@ -25,7 +25,6 @@ use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::markdown;
-use crate::measure::measured;
 use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::session::{ALL_CLEAR_DURATION, RING_DURATION, Review};
 use crate::shell::Root;
@@ -908,7 +907,7 @@ impl Root {
                 .relative()
                 .child(anchor_probe(id, &self.anchors))
         };
-        measured(div(), "detail")
+        div()
             .flex_none()
             .w(px(width))
             .h_full()
@@ -1261,7 +1260,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let t = theme(cx);
-        let panel = measured(div(), "detail")
+        let panel = div()
             .flex_none()
             .w(px(width))
             .h_full()

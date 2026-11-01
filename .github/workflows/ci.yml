@@ -41,6 +41,22 @@ jobs:
           WM_TARGET_BRANCH: HEAD
         run: just check-ci
 
+  desktop:
+    name: Desktop app
+    runs-on: macos-latest
+    env:
+      SQLX_OFFLINE: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --locked -p aven-desktop
+      - name: Check the shipped build
+        run: cargo check --locked -p aven --features desktop
+
   shell-fixtures:
     name: Public shell fixtures (${{ matrix.os }})
     strategy:

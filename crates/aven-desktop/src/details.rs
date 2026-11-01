@@ -13,7 +13,6 @@ use crate::adapter::{Command, Detail, Link, TaskRow};
 use crate::commands::pasted_image;
 use crate::input::{Editor, EditorEvent};
 use crate::kit::*;
-use crate::measure::measured;
 use crate::session::COPIED_DURATION;
 use crate::shell::{BodyEdit, Root};
 use crate::theme::{Theme, theme};
@@ -640,7 +639,7 @@ impl Root {
             ))
     }
 
-    /// The task's sections below its description, in the prototype's order.
+    /// The task's sections below its description.
     fn render_sections(
         &self,
         row: &TaskRow,
@@ -761,7 +760,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let t = theme(cx);
-        let panel = measured(div(), "detail")
+        let panel = div()
             .flex_none()
             .w(px(width))
             .h_full()
@@ -838,13 +837,11 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let t = theme(cx);
-        let doc = measured(div(), "doc")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+        let doc = div().flex_1().min_w_0().h_full().on_drop(cx.listener(
+            |this, paths: &ExternalPaths, _, cx| {
                 this.attach_paths(paths.paths(), cx);
-            }));
+            },
+        ));
         let Some(row) = self.session.target_row().cloned() else {
             return doc;
         };

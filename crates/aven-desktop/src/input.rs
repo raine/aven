@@ -413,10 +413,6 @@ impl Editor {
         self
     }
 
-    pub fn selection(&self) -> Range<usize> {
-        self.selected.clone()
-    }
-
     pub fn text(&self) -> &str {
         &self.content
     }

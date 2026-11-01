@@ -72,7 +72,7 @@ const SYNC_DEBOUNCE: Duration = Duration::from_millis(700);
 /// How often a quit looks at user-started sync work.
 const QUIT_POLL: Duration = Duration::from_millis(50);
 
-/// The prototype's name and hint for each store group.
+/// The name and hint for each store group.
 const GROUP_NAMES: [(&str, &str, &str); 10] = [
     (
         "needs action",
@@ -142,7 +142,6 @@ impl EpicProgress {
         self.done + self.canceled + self.open
     }
 
-    /// Matches the prototype's `countsText`.
     pub fn counts(&self) -> String {
         let parts = [
             (self.done, "done"),
@@ -334,7 +333,7 @@ impl ViewInfo {
     }
 }
 
-/// Views the prototype offers as columns.
+/// Views that can show as columns.
 pub fn supports_columns(query: TaskQuery) -> bool {
     matches!(
         query,
@@ -840,7 +839,6 @@ pub struct Launch {
 
 pub type Replies = mpsc::UnboundedReceiver<Reply>;
 
-/// Matches the prototype's `dueText`.
 pub fn due_text(due: &str, today: NaiveDate) -> String {
     let Ok(date) = NaiveDate::parse_from_str(due, "%Y-%m-%d") else {
         return due.to_string();
@@ -853,8 +851,8 @@ pub fn due_text(due: &str, today: NaiveDate) -> String {
     }
 }
 
-/// The reason a queue row shows, with whether it reads as a problem. The prototype
-/// leaves urgency and dates to the priority icon and the date column.
+/// The reason a queue row shows, with whether it reads as a problem. Urgency and
+/// dates are left to the priority icon and the date column.
 fn reason_text(item: &TaskListItem) -> Option<(String, bool)> {
     match item.queue.reason? {
         QueueReason::Conflict => {
@@ -897,7 +895,6 @@ fn date_tone(item: &TaskListItem, today: NaiveDate) -> DateTone {
     }
 }
 
-/// Matches the prototype's `availText`.
 pub fn available_text(stamp: &str, today: NaiveDate) -> String {
     local_time(stamp).map_or_else(String::new, |time| {
         let day = time.format("%Y-%m-%d").to_string();
@@ -1068,7 +1065,7 @@ fn review_page(
     page
 }
 
-/// The prototype's buckets, sooner than core's day by day labels.
+/// Coarse buckets, sooner than core's day by day labels.
 fn upcoming_groups(store: &TuiStore, now: DateTime<Local>) -> Vec<Group> {
     let names = ["Tomorrow or sooner", "Next 7 days", "Later"];
     let bucket = |item: &TaskListItem| {
@@ -1233,7 +1230,7 @@ fn view_info(store: &TuiStore, arrange: &Arrange) -> ViewInfo {
     }
 }
 
-/// Reads the store's projection. `now` formats dates, so scene runs pass their anchor.
+/// Reads the store's projection. `now` formats dates.
 pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
     arranged_snapshot(store, now, &Arrange::default())
 }
@@ -1343,7 +1340,6 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
     }
 }
 
-/// Matches the prototype's `rel`.
 pub fn relative_time(stamp: &str, now: DateTime<Local>) -> String {
     let hours = local_time(stamp).map_or(0, |at| (now - at).num_minutes()) as f64 / 60.;
     if hours < 1. {
@@ -2588,7 +2584,7 @@ impl Actor {
         }
     }
 
-    /// Keeps each view's column choice, as the prototype's `layouts` does.
+    /// Keeps each view's column choice.
     async fn show_view(&mut self, query: TaskQuery) -> Result<()> {
         if self.store.view_state.layout == TaskLayout::Columns {
             let current = self.store.view_state.query;
@@ -3840,36 +3836,6 @@ async fn recovery_target(
     None
 }
 
-/// A generated list for layout measurement.
-#[cfg(feature = "capture")]
-pub fn bench_snapshot(tasks: usize, groups: Vec<Group>) -> Snapshot {
-    Snapshot {
-        workspace: "Bench".to_string(),
-        tasks: (0..tasks)
-            .map(|index| TaskRow {
-                id: TaskId::new(),
-                reference: format!("BEN-{index:04}"),
-                project: "BEN".to_string(),
-                title: format!("Generated task number {index}"),
-                status: TaskStatus::Todo,
-                priority: TaskPriority::None,
-                reason: None,
-                blocked: false,
-                recurring: false,
-                progress: None,
-                epic: None,
-                labels: vec!["bench".to_string()],
-                due: String::new(),
-                date_tone: DateTone::Plain,
-                deleted: false,
-                is_epic: false,
-            })
-            .collect(),
-        groups,
-        ..Snapshot::default()
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ThemePref {
     Dark,
@@ -5032,7 +4998,7 @@ mod tests {
     }
 
     #[test]
-    fn due_text_matches_the_prototype_around_today() {
+    fn due_text_names_the_days_around_today() {
         let today = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
         for (due, expected) in [
             ("2026-10-14", "Today"),
