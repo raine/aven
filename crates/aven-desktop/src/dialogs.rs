@@ -45,6 +45,7 @@ const SEARCH_LIST_HEIGHT: f32 = 312.;
 const SEARCH_ROW_HEIGHT: f32 = 50.;
 
 type Save = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
+type ScheduleWrites = (Option<Option<String>>, Option<Option<String>>);
 
 const HELP: [(&str, &[(&str, &str)]); 6] = [
     (
@@ -606,10 +607,7 @@ impl Root {
     }
 
     /// The writes the schedule fields ask for, or why they cannot be made.
-    fn schedule_writes(
-        &self,
-        cx: &Context<Self>,
-    ) -> Option<Result<(Option<Option<String>>, Option<Option<String>>), String>> {
+    fn schedule_writes(&self, cx: &Context<Self>) -> Option<Result<ScheduleWrites, String>> {
         let Dialog::Schedule {
             text,
             available,
@@ -711,6 +709,7 @@ impl Root {
         editor.update(cx, |editor, cx| editor.set_text(value, cx));
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_prompt(
         &mut self,
         title: String,

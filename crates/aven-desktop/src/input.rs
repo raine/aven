@@ -1227,10 +1227,11 @@ impl Editor {
                 top += line_height;
                 row_start = boundary;
             }
-            if let Some(gap) = self.paragraph_gap {
-                if ix + 1 < sources.len() && !self.tight.contains(&ix) {
-                    top += gap;
-                }
+            if let Some(gap) = self.paragraph_gap
+                && ix + 1 < sources.len()
+                && !self.tight.contains(&ix)
+            {
+                top += gap;
             }
             paras.push(Para {
                 start,

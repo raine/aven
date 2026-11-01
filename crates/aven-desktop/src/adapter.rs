@@ -1112,7 +1112,8 @@ fn flat_groups(store: &TuiStore, rows: Vec<usize>, group: GroupBy) -> Vec<Group>
             first.to_uppercase().chain(letters).collect()
         })
     };
-    let (names, slot): (Vec<String>, Box<dyn Fn(&TaskListItem) -> usize>) = match group {
+    type Slot<'a> = Box<dyn Fn(&TaskListItem) -> usize + 'a>;
+    let (names, slot): (Vec<String>, Slot<'_>) = match group {
         GroupBy::None => (vec![String::new()], Box::new(|_| 0)),
         GroupBy::Status => (
             STATUSES
@@ -2527,7 +2528,7 @@ impl Actor {
         let blob_dir = self.blob_dir();
         let report = match blob_dir {
             Ok(blob_dir) => self.store.task_full_report(&blob_dir, id).await,
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         };
         let report = match report {
             Ok(Some(report)) => report,

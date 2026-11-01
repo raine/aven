@@ -1732,8 +1732,10 @@ mod tests {
         let mut motion = Motion::default();
         motion.arrived(2);
         assert_eq!(motion.pulse().map(|(changes, _)| changes), Some(2));
-        let mut still = Motion::default();
-        still.reduced = true;
+        let mut still = Motion {
+            reduced: true,
+            ..Default::default()
+        };
         still.arrived(2);
         assert_eq!(still.pulse(), None);
     }

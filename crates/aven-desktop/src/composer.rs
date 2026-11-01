@@ -453,13 +453,13 @@ impl Root {
             .composer_draft(cx)
             .map(|draft| draft.labels)
             .unwrap_or_default();
-        let save: Rc<dyn Fn(&mut Root, &mut Context<Root>)> = Rc::new(|root, cx| {
+        type Save = Rc<dyn Fn(&mut Root, &mut Context<Root>)>;
+        let save: Save = Rc::new(|root, cx| {
             let labels = root.menu_checked();
             root.update_draft(cx, |draft| draft.labels = labels);
         });
-        let entry = move |label: String, save: Rc<dyn Fn(&mut Root, &mut Context<Root>)>| {
-            Entry::new(label, move |root, _, cx| save(root, cx))
-        };
+        let entry =
+            move |label: String, save: Save| Entry::new(label, move |root, _, cx| save(root, cx));
         let mut labels = self.session.snapshot.labels.clone();
         labels.extend(held.iter().cloned());
         labels.sort();

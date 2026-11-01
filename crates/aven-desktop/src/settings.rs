@@ -395,6 +395,7 @@ impl Root {
         ]
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn open_confirm(
         &mut self,
         title: String,
@@ -1433,6 +1434,7 @@ impl Root {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn option_row(
         &self,
         id: &'static str,
@@ -1911,6 +1913,7 @@ impl Root {
         ]
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn sync_confirm(
         &self,
         kind: SyncKind,
