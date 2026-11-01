@@ -72,7 +72,9 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --release --locked --target "${{ matrix.target }}"
+          # The baseline revision predates the `desktop` feature.
+          features="${{ matrix.revision == 'candidate' && '--features desktop' || '' }}"
+          cargo build --release --locked --target "${{ matrix.target }}" $features
           mkdir unsigned
           cp "target/${{ matrix.target }}/release/${BIN_NAME}" "unsigned/${BIN_NAME}"
           git rev-parse HEAD > unsigned/commit-sha

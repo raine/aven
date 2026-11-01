@@ -9,6 +9,7 @@ license = "MIT"
 [[bin]]
 name = "aven-desktop"
 path = "src/main.rs"
+required-features = ["dev"]
 
 [[bin]]
 name = "aven-desktop-capture"
@@ -16,7 +17,12 @@ path = "src/bin/capture.rs"
 required-features = ["capture"]
 
 [features]
+default = ["dev"]
+# The development launcher: the isolation guard, disposable roots and launch
+# records. `aven` depends on this crate without it, so none of it ships.
+dev = []
 capture = [
+    "dev",
     "aven-core/test-support",
     "dep:base64",
     "dep:image",
@@ -25,7 +31,7 @@ capture = [
     "gpui_platform/test-support",
 ]
 
-[dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 accesskit = "0.24"
 anyhow = "1"
 aven-core = { path = "../aven-core" }
@@ -47,25 +53,11 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 tempfile = { version = "3.14", optional = true }
 tokio = { version = "1.45", features = ["macros", "rt-multi-thread", "sync", "time"] }
 toml = "0.9"
+tracing = "0.1"
 unicode-segmentation = "1"
 zeroize = "1"
 
-[dev-dependencies]
+[target.'cfg(target_os = "macos")'.dev-dependencies]
 aven-host = { path = "../aven-host", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3.14"
-
-[patch.crates-io]
-async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
-
-[profile.dev]
-opt-level = 1
-debug = 1
-
-[profile.dev.package."*"]
-opt-level = 2
-debug = false
-
-[workspace]

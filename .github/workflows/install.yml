@@ -46,7 +46,7 @@ jobs:
       - name: Build
         env:
           SQLX_OFFLINE: 'true'
-        run: cargo build --release --locked --target "$TARGET"
+        run: cargo build --release --locked --target "$TARGET" --features desktop
       - name: Package
         env:
           COMMIT_SHA: ${{ inputs.commit_sha }}

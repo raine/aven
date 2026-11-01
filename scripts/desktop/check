@@ -126,12 +126,14 @@ echo "== capabilities"
 
 echo "== root workspace"
 cd "$desktop_repo"
-if rg -q '^name = "gpui' Cargo.lock; then
-  echo "GPUI is in the root lockfile" >&2
-  exit 1
-fi
-if cargo metadata --format-version 1 --locked --no-deps | rg -q aven-desktop; then
-  echo "aven-desktop is a root workspace member" >&2
+for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-musl; do
+  if cargo tree --locked --workspace --all-features --target "$target" -e normal,build | rg -q '^.*\bgpui'; then
+    echo "GPUI is in the $target build" >&2
+    exit 1
+  fi
+done
+if cargo tree --locked --package aven --target aarch64-apple-darwin | rg -q '\bgpui'; then
+  echo "GPUI is in the default macOS build" >&2
   exit 1
 fi
 cargo machete

@@ -23,13 +23,12 @@ done
 
 root=${AVEN_DESKTOP_ROOT:-$(mktemp -d "${TMPDIR:-/tmp}/aven-desktop.XXXXXX")}
 bundle=$("$desktop_repo/scripts/desktop/bundle")
-executable="$bundle/Contents/MacOS/aven-desktop"
 
 # Asking for a path runs the guard, so it passes before anything is written.
 errors=$(isolation_path "$root" launch_errors)
 record=$(isolation_path "$root" launch_record)
 write_isolated_config "$root"
-run_isolated "$root" "$executable" --check-isolation
+run_isolated "$root" "$desktop_bin/aven-desktop" --check-isolation
 if ((seed)); then
   "$desktop_repo/scripts/desktop/cargo" build --features capture --bin aven-desktop-capture >&2
   run_isolated "$root" "$desktop_bin/aven-desktop-capture" seed >&2

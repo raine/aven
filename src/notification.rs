@@ -93,6 +93,9 @@ pub(crate) fn send_notification(title: &str, message: &str) -> anyhow::Result<()
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) use macos::bundle_identifier;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::Path;
     use std::sync::OnceLock;
@@ -159,7 +162,7 @@ mod macos {
         }
     }
 
-    pub(super) fn bundle_identifier(bundle: &Path) -> Option<String> {
+    pub(crate) fn bundle_identifier(bundle: &Path) -> Option<String> {
         let url = CFURL::from_path(bundle, true)?;
         let info = CFBundle::new(url)?.info_dictionary();
         info.find(CFString::from_static_string("CFBundleIdentifier"))?

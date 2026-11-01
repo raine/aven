@@ -73,6 +73,8 @@ jobs:
         run: |
           if [ "${{ matrix.use_cross }}" == "true" ]; then
             cross build --release --locked --target "${{ matrix.target }}"
+          elif [ "${{ runner.os }}" == "macOS" ]; then
+            cargo build --release --locked --target "${{ matrix.target }}" --features desktop
           else
             cargo build --release --locked --target "${{ matrix.target }}"
           fi
@@ -149,6 +151,15 @@ jobs:
           shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
           tar --no-mac-metadata -C unsigned-app -czf "${{ matrix.artifact }}-app.tar.gz" Aven.app
           shasum -a 256 "${{ matrix.artifact }}-app.tar.gz" > "${{ matrix.artifact }}-app.sha256"
+      # `aven update` in every installed version refuses larger archives.
+      - name: Check archive sizes
+        run: |
+          for archive in "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}-app.tar.gz"; do
+            if (( $(stat -f %z "$archive") > 64 * 1024 * 1024 )); then
+              echo "::error::$archive exceeds the 64 MiB update limit"
+              exit 1
+            fi
+          done
       - name: Smoke test packaged binary
         run: |
           package_dir="package-${{ matrix.artifact }}"

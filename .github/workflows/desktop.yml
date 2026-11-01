@@ -33,8 +33,9 @@ jobs:
           toolchain: 1.99.0
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/aven-desktop
           cache-directories: ~/Library/Caches/aven-desktop/target
       # Capture needs the prototype in history/, which is not in the repository.
       - name: Test
         run: scripts/desktop/cargo test --locked --features capture
+      - name: Check the shipped build
+        run: scripts/desktop/cargo check --locked -p aven --features desktop

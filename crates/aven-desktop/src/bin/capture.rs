@@ -422,7 +422,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         let launch = adapter::Launch {
             database,
             config: offline_config(),
-            storage: isolation.protected_storage(),
+            storage: Some(isolation.protected_storage()),
         };
         let store = adapter::start(runtime.handle().clone(), launch)?;
         let gpui_boxes = render_gpui(&mut cx, scene, store, &seeded.ids, output)?;
@@ -854,7 +854,7 @@ fn sync_drive(args: &[&str]) -> Result<bool> {
     let launch = adapter::Launch {
         database: isolation.database.clone(),
         config,
-        storage: isolation.protected_storage(),
+        storage: Some(isolation.protected_storage()),
     };
     let (mut session, mut replies) = adapter::start(runtime.handle().clone(), launch)?;
     let mut wait = |session: &mut Session, done: &mut dyn FnMut(&SyncEvent) -> Option<bool>| {

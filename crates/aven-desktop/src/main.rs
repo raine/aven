@@ -1,14 +1,16 @@
-use std::process::ExitCode;
+//! The development launcher's guard: path listings and isolation checks for
+//! scripts. The app itself always starts through `aven`.
+#[cfg(target_os = "macos")]
+fn main() -> std::process::ExitCode {
+    use std::process::ExitCode;
 
-use aven_desktop::{app, isolation::Isolation};
+    use aven_desktop::isolation::Isolation;
 
-fn main() -> ExitCode {
-    let print_paths = std::env::args().any(|argument| argument == "--print-paths");
-    let paths_only = print_paths || std::env::args().any(|argument| argument == "--check-paths");
-    let validated = if paths_only {
-        Isolation::paths_from_process()
-    } else {
+    let has = |flag: &str| std::env::args().any(|argument| argument == flag);
+    let validated = if has("--check-isolation") {
         Isolation::from_process()
+    } else {
+        Isolation::paths_from_process()
     };
     let isolation = match validated {
         Ok(isolation) => isolation,
@@ -17,17 +19,11 @@ fn main() -> ExitCode {
             return ExitCode::from(78);
         }
     };
-    if print_paths {
+    if has("--print-paths") {
         print!("{}", isolation.path_listing());
     }
-    if paths_only || std::env::args().any(|argument| argument == "--check-isolation") {
-        return ExitCode::SUCCESS;
-    }
-    match app::run(isolation) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("aven-desktop failed: {error:#}");
-            ExitCode::FAILURE
-        }
-    }
+    ExitCode::SUCCESS
 }
+
+#[cfg(not(target_os = "macos"))]
+fn main() {}

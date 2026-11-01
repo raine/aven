@@ -25,9 +25,9 @@
 
             cargoLock = {
               lockFile = ./Cargo.lock;
-              outputHashes = {
-                "crossterm-0.29.0" = "sha256-rfAaqGylDaxx3bjmofifnzSh7Hmh21BzHp5fS/w2Z6I=";
-              };
+              # The lockfile holds every Git source the macOS app needs, though
+              # this build enables no `desktop` feature and compiles none of them.
+              allowBuiltinFetchGit = true;
             };
             cargoBuildFlags = [ "--ignore-rust-version" ];
 

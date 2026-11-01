@@ -833,7 +833,9 @@ pub struct Reply {
 pub struct Launch {
     pub database: PathBuf,
     pub config: AppConfig,
-    pub storage: Arc<dyn ProtectedStorage>,
+    /// Replaces the installation's protected key storage. `None` keeps it, so
+    /// each host mode decides on Keychain access itself.
+    pub storage: Option<Arc<dyn ProtectedStorage>>,
 }
 
 pub type Replies = mpsc::UnboundedReceiver<Reply>;
@@ -1659,7 +1661,7 @@ struct Actor {
     replies: mpsc::UnboundedSender<Reply>,
     sync_wake: Arc<Notify>,
     sync_stop: Arc<Notify>,
-    storage: Arc<dyn ProtectedStorage>,
+    storage: Option<Arc<dyn ProtectedStorage>>,
     /// The launch database's config, which other databases start from.
     launch_config: AppConfig,
     launch_path: PathBuf,
@@ -1730,7 +1732,7 @@ impl Actor {
         config: AppConfig,
         replies: mpsc::UnboundedSender<Reply>,
         sync_wake: Arc<Notify>,
-        storage: Arc<dyn ProtectedStorage>,
+        storage: Option<Arc<dyn ProtectedStorage>>,
     ) -> Self {
         Self {
             store,
@@ -3646,14 +3648,14 @@ impl Actor {
 async fn run_sync(
     database: Database,
     config: AppConfig,
-    storage: Arc<dyn ProtectedStorage>,
+    storage: Option<Arc<dyn ProtectedStorage>>,
     wake: Arc<Notify>,
     stop: Arc<Notify>,
     replies: mpsc::UnboundedSender<Reply>,
 ) {
     let interval = Duration::from_secs(config.sync_interval_seconds());
     let mut scheduler = SyncScheduler::new(interval, Instant::now());
-    let mut sync = DaemonSync::with_storage(storage);
+    let mut sync = storage.map_or_else(DaemonSync::default, DaemonSync::with_storage);
     let report = |health: SyncHealth| {
         let _ = replies.send(Reply {
             request: 0,
@@ -4022,8 +4024,10 @@ mod tests {
         actor.background_sync = Some(tokio::spawn(run_sync(
             actor.store.database(),
             AppConfig::default(),
-            Arc::new(aven_core::sync::client::keys::FileProtectedStorage::new(
-                directory.path().join("keys"),
+            Some(Arc::new(
+                aven_core::sync::client::keys::FileProtectedStorage::new(
+                    directory.path().join("keys"),
+                ),
             )),
             Arc::new(Notify::new()),
             actor.sync_stop.clone(),
@@ -4148,8 +4152,10 @@ mod tests {
         let launch = Launch {
             database: path.clone(),
             config: AppConfig::default(),
-            storage: Arc::new(aven_core::sync::client::keys::FileProtectedStorage::new(
-                directory.path().join("keys"),
+            storage: Some(Arc::new(
+                aven_core::sync::client::keys::FileProtectedStorage::new(
+                    directory.path().join("keys"),
+                ),
             )),
         };
         let (mut session, mut replies) = start(runtime.handle().clone(), launch).unwrap();
@@ -4257,8 +4263,10 @@ mod tests {
             AppConfig::default(),
             replies,
             Arc::new(Notify::new()),
-            Arc::new(aven_core::sync::client::keys::FileProtectedStorage::new(
-                directory.path().join("keys"),
+            Some(Arc::new(
+                aven_core::sync::client::keys::FileProtectedStorage::new(
+                    directory.path().join("keys"),
+                ),
             )),
         );
         (directory, actor, received)

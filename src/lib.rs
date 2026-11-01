@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+use std::process::ExitCode;
+
 use anyhow::Result;
 
 use aven_core::{change_log, choices, db, ids, labels, query, queue, refs, task_fields, types};
@@ -15,6 +18,8 @@ mod due;
 pub mod encrypted_tail_http;
 mod http_admission;
 mod input;
+#[cfg(target_os = "macos")]
+mod launch_mode;
 mod logging;
 mod mcp;
 mod notification;
@@ -64,31 +69,37 @@ use sync::run_server;
 use workspaces::resolve_active_workspace_with_routing;
 
 pub async fn run_cli() -> Result<()> {
-    #[cfg(target_os = "macos")]
-    if launched_as_bare_app() {
-        return Ok(());
-    }
     run_cli_from(std::env::args_os()).await
 }
 
-/// Launch Services starts Aven.app's executable with no arguments and no
-/// terminal when a notification is clicked or the app is opened. There is
-/// nothing to show, so the launch exits quietly instead of failing to start
-/// the TUI.
+/// Runs a launch of the app bundle to its end, or returns `None` for a command.
+/// Comes before any async runtime, because the app needs the main thread.
 #[cfg(target_os = "macos")]
-fn launched_as_bare_app() -> bool {
-    let no_arguments = std::env::args_os()
-        .skip(1)
-        .all(|arg| arg.to_string_lossy().starts_with("-psn_"));
-    no_arguments
-        && std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .is_err()
-        && std::env::current_exe()
-            .and_then(std::fs::canonicalize)
-            .is_ok_and(|executable| app_bundle::enclosing_bundle(&executable).is_some())
+pub fn run_bundle_launch() -> Option<ExitCode> {
+    match launch_mode::current() {
+        launch_mode::LaunchMode::Cli => None,
+        launch_mode::LaunchMode::Idle => Some(ExitCode::SUCCESS),
+        launch_mode::LaunchMode::App => Some(run_app()),
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "desktop"))]
+fn run_app() -> ExitCode {
+    let started = logging::init(logging::LogMode::Tui).and_then(|()| aven_desktop::launch());
+    match started {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(error = %format_args!("{error:#}"), "the app could not start");
+            eprintln!("aven: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// A build without the app has nothing to open.
+#[cfg(all(target_os = "macos", not(feature = "desktop")))]
+fn run_app() -> ExitCode {
+    ExitCode::SUCCESS
 }
 
 pub fn report_cli_error(error: &anyhow::Error) {

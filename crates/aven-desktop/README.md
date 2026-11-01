@@ -1,8 +1,40 @@
 # aven-desktop
 
-The GPUI desktop app, and the harness every desktop phase works in. This crate is
-its own Cargo workspace, excluded from the root, so the root lockfile, CI, Nix and
-`cargo-deny` do not see GPUI.
+The GPUI desktop app, and the harness it is developed in. This crate is a macOS-only
+member of the root workspace and a library: `aven` links it behind the `desktop`
+feature and starts it when Launch Services opens the bundle. On other platforms the
+crate is empty, and root default builds and `just` checks leave it out.
+
+## Builds
+
+| Build | Command | Contents |
+| --- | --- | --- |
+| Shipped | `cargo build --release --features desktop` | The app, on the owner's real data, with no isolation guard |
+| Development | `scripts/desktop/bundle` (feature `desktop-dev`) | The same binary as `Aven Dev.app`, which refuses to run without a disposable root |
+| CLI only | `cargo build` | No GPUI |
+
+The crate's default `dev` feature owns the guard, launch records and the capture
+tools. `aven` depends on the crate without default features, and
+`scripts/verify-macos-release` refuses a binary containing the guard.
+
+## Mode selection
+
+`src/launch_mode.rs` chooses before anything else runs. Arguments or a terminal mean
+the CLI. With neither, inside a bundle, the process is the app only if launchd is its
+parent and its job is named `application.<bundle identifier>.…`, which is how Launch
+Services runs an app. Any other bare caller, such as cron or `ssh -T` through the bin
+symlink, exits quietly. A clicked notification opens the app.
+
+GPUI's load-time constructors register Objective-C subclasses in every process, and
+the binary links AppKit, but only the app creates `NSApplication` or reaches the
+window server.
+
+## Updates
+
+Whatever replaces the bundle, `aven update` or `scripts/install`, the running app
+notices that its executable's path now holds a different file. It quits normally and
+reopens the next time it is not the active app. Homebrew installs to a new versioned
+path, so there the app runs the old version until it is reopened.
 
 ## Commands
 
@@ -30,8 +62,8 @@ so concurrent worktrees wait for each other.
 
 ## Isolation
 
-`src/isolation.rs` is the guard. The app runs it before anything else, so it also
-refuses when started without the launcher. Everything sits under
+`src/isolation.rs` is the guard, in development builds only. The app runs it before
+anything else, so `Aven Dev.app` refuses when started without the launcher. Everything sits under
 `AVEN_DESKTOP_ROOT`: state, config, database, blobs, logs, server storage and
 file-backed keys. The guard exits with status 78 when a resolved path overlaps the
 owner's data, when a path contains `.aven`, when the root contains `..`, when the
@@ -64,7 +96,7 @@ exist yet compare by name, ignoring case.
 `--check-paths` runs the path checks alone, and `--check-isolation` adds the config.
 Neither writes anything.
 
-Never run the desktop against the owner's database, Keychain, daemon, `Aven.app` or
+Agents never run the desktop against the owner's database, Keychain, daemon, `Aven.app` or
 `fi.zendit.Aven`.
 
 ## Scenes

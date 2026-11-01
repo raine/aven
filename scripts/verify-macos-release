@@ -53,6 +53,11 @@ if [[ -n $architecture ]]; then
   fi
 fi
 
+if /usr/bin/grep -qa AVEN_DESKTOP_ROOT "$executable"; then
+  echo "release binary contains development tooling: $executable" >&2
+  exit 1
+fi
+
 codesign --verify --strict --verbose=2 "$binary"
 signature=$(codesign -d -r- --verbose=4 "$binary" 2>&1)
 actual_identifier=$(sed -n 's/^Identifier=//p' <<<"$signature")

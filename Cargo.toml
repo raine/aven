@@ -1,7 +1,7 @@
 [workspace]
-members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance"]
-# Keeps GPUI out of the root lockfile, CI, Nix and cargo-deny.
-exclude = ["crates/aven-desktop"]
+members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance", "crates/aven-desktop"]
+# GPUI builds only for the macOS app, through the `desktop` feature.
+default-members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -44,6 +44,12 @@ repository = "https://github.com/raine/aven"
 license = "MIT"
 # Website, app bundle, and README media are not needed to build the crate.
 exclude = ["docs/", "macos/", "meta/"]
+
+[features]
+# Links the app into `aven`. Only macOS has anything to link.
+desktop = ["dep:aven-desktop"]
+# The same binary for `Aven Dev.app`, which runs only behind the isolation guard.
+desktop-dev = ["desktop", "aven-desktop/dev"]
 
 [dependencies]
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
@@ -90,6 +96,7 @@ schemars = "1.2"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+aven-desktop = { path = "crates/aven-desktop", version = "=0.0.0", default-features = false, optional = true }
 core-foundation = "0.10"
 mac-notification-sys = "0.6"
 
@@ -112,6 +119,10 @@ sqlx = { workspace = true, features = ["sqlite"] }
 
 [patch.crates-io]
 crossterm = { git = "https://github.com/raine/crossterm", rev = "f99eeae405e28fa8cb353a6c6e36c493e72891bd" }
+# GPUI needs Zed's forks of these.
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 
 [profile.dev]
 opt-level = 1

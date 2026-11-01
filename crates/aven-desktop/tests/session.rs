@@ -1,4 +1,5 @@
 //! Behaviour of the session over a real store on a temporary database.
+#![cfg(target_os = "macos")]
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -312,7 +313,9 @@ async fn writes_run_in_order_and_outside_writes_arrive() {
     let launch = adapter::Launch {
         database: path.clone(),
         config: AppConfig::default(),
-        storage: Arc::new(FileProtectedStorage::new(directory.path().join("keys"))),
+        storage: Some(Arc::new(FileProtectedStorage::new(
+            directory.path().join("keys"),
+        ))),
     };
     let (mut session, mut replies) =
         adapter::start(tokio::runtime::Handle::current(), launch).unwrap();
@@ -599,7 +602,7 @@ async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
     let launch = adapter::Launch {
         database: path,
         config: AppConfig::default(),
-        storage,
+        storage: Some(storage),
     };
     let (mut session, mut replies) =
         adapter::start(tokio::runtime::Handle::current(), launch).unwrap();

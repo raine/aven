@@ -1,5 +1,8 @@
 # One `Aven.app`, one binary: findings for integration
 
+Applied. The README's Builds, Mode selection and Updates sections describe the
+result. This file records why.
+
 Decision 18 ships the desktop inside the existing bundle, with one executable,
 `Contents/MacOS/aven`, that starts the GUI when launched as an app. Checked
 against `aven update`, `scripts/install`, Homebrew and `crates/aven-host/src/daemon/service.rs`.
@@ -72,7 +75,7 @@ bundle change. Integration has to make the five changes under "Required".
 
 - **A running GUI during update.** The swap keeps the old executable mapped, so
   the app runs old code until relaunched while bundle resources on disk are the
-  new ones. Nothing relaunches it. The GUI should load no bundle resources
-  lazily, or should notice the version change and offer a restart.
+  new ones. The app notices the replaced executable and relaunches itself when
+  it is not the active app.
 - **Downgrade refusal.** `scripts/install` refuses to put a bare binary over a
   bundle install, which also protects a GUI install.

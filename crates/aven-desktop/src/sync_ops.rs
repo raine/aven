@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use zeroize::Zeroizing;
 
 use crate::adapter::{Reply, ReplyBody};
-use crate::isolation;
+use crate::require_allowed;
 
 /// An invitation's text. It grants access to synced data, so `Debug` hides it.
 #[derive(Clone, PartialEq, Eq)]
@@ -209,7 +209,7 @@ pub struct SyncWork {
     pub database: Database,
     pub path: PathBuf,
     pub config: AppConfig,
-    pub storage: Arc<dyn ProtectedStorage>,
+    pub storage: Option<Arc<dyn ProtectedStorage>>,
     pub replies: mpsc::UnboundedSender<Reply>,
     pub request: u64,
 }
@@ -222,7 +222,11 @@ impl SyncWork {
     }
 
     fn host_with(&self, config: &AppConfig) -> DesktopHost {
-        DesktopHost::new(config, HostMode::UserStarted).with_storage(self.storage.clone())
+        let host = DesktopHost::new(config, HostMode::UserStarted);
+        match &self.storage {
+            Some(storage) => host.with_storage(storage.clone()),
+            None => host,
+        }
     }
 
     pub fn send(&self, event: SyncEvent) {
@@ -342,7 +346,7 @@ impl SyncWork {
         let path = fresh_path(&self.path, "joined", "sqlite");
         let config = own_blobs(&self.config);
         let attempt = async {
-            isolation::require_outside_owner("joined database", &path)?;
+            require_allowed("joined database", &path)?;
             let database = Database::open(&path).await?;
             let result = self
                 .join(&database, &self.host_with(&config), invitation)
@@ -624,9 +628,9 @@ fn remove_database(path: &Path) {
 /// Restores `archive` to a new database beside `current`, which stays as it
 /// was, and returns the new path. Nothing is left behind on failure.
 pub async fn restore_to_new(current: &Path, config: &AppConfig, archive: &Path) -> Result<PathBuf> {
-    isolation::require_outside_owner("backup archive", archive)?;
+    require_allowed("backup archive", archive)?;
     let path = fresh_path(current, "restored", "sqlite");
-    isolation::require_outside_owner("restored database", &path)?;
+    require_allowed("restored database", &path)?;
     let blob_dir = resolve_blob_dir(&path, &own_blobs(config))?;
     let restored = if is_backup_archive(archive)? {
         restore_backup_archive(&path, &blob_dir, archive).await
@@ -645,7 +649,7 @@ pub async fn restore_to_new(current: &Path, config: &AppConfig, archive: &Path) 
 /// Writes a backup archive beside `current`, including its images.
 pub async fn write_backup(database: &Database, current: &Path, blob_dir: &Path) -> Result<PathBuf> {
     let path = fresh_path(current, "aven-backup", "aven-backup.tar.zst");
-    isolation::require_outside_owner("backup archive", &path)?;
+    require_allowed("backup archive", &path)?;
     database.create_backup_archive(blob_dir, &path).await?;
     Ok(path)
 }
@@ -653,7 +657,7 @@ pub async fn write_backup(database: &Database, current: &Path, blob_dir: &Path) 
 /// Writes a JSON export beside `current`, without image files.
 pub async fn write_export(database: &Database, current: &Path) -> Result<PathBuf> {
     let path = fresh_path(current, "aven-export", "json");
-    isolation::require_outside_owner("export", &path)?;
+    require_allowed("export", &path)?;
     let export = database.export_data(aven_core::ids::now()).await?;
     let text = serde_json::to_vec(&export).context("could not serialize export")?;
     write_export_file(&path, &text)?;
@@ -665,7 +669,7 @@ pub fn check_database_path(path: &Path) -> Result<()> {
     if !path.is_absolute() {
         bail!("Use a full path");
     }
-    isolation::require_outside_owner("database", path)?;
+    require_allowed("database", path)?;
     // SQLite's URL form would read these as a different path from the one checked.
     if path.to_string_lossy().contains(['%', '?']) {
         bail!("Use a path without % or ?");
@@ -675,7 +679,7 @@ pub fn check_database_path(path: &Path) -> Result<()> {
     }
     let mut blobs = path.as_os_str().to_os_string();
     blobs.push(".blobs");
-    isolation::require_outside_owner("database images", Path::new(&blobs))
+    require_allowed("database images", Path::new(&blobs))
 }
 
 /// Stages of a kind's progress, in order, with how each reads now and after.
@@ -737,7 +741,7 @@ mod tests {
             database: database.clone(),
             path: path.to_path_buf(),
             config: AppConfig::default(),
-            storage: Arc::new(storage),
+            storage: Some(Arc::new(storage)),
             replies,
             request: 1,
         };
@@ -763,7 +767,7 @@ mod tests {
         assert_eq!(operations.matches("HostMode::").count(), 2);
         assert_eq!(operations.matches("HostMode::UserStarted").count(), 2);
         let adapter = include_str!("adapter.rs");
-        assert!(adapter.contains("DaemonSync::with_storage(storage)"));
+        assert!(adapter.contains("DaemonSync::with_storage"));
         for source in [operations, adapter] {
             assert!(!source.contains("record_daemon_sync_round"));
         }

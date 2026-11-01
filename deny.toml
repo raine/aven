@@ -14,6 +14,10 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant is required by notify-rust's zbus 5 backend" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names is required by notify-rust's zbus 5 backend" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is required by notify-rust's zbus 5 backend" },
+    # Unmaintained, not vulnerable; only the macOS app reaches them, through GPUI.
+    { id = "RUSTSEC-2024-0436", reason = "paste is required by GPUI's dependencies" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is required by GPUI's text stack" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz is required by GPUI's text stack" },
 ]
 
 [licenses]
@@ -21,6 +25,7 @@ version = 2
 confidence-threshold = 0.8
 allow = [
     "Apache-2.0",
+    "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "MIT",
@@ -62,4 +67,14 @@ skip = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/raine/crossterm"]
+allow-git = [
+    "https://github.com/raine/crossterm",
+    # GPUI's pinned revision and the forks and wgpu revision it depends on.
+    "https://github.com/gfx-rs/wgpu",
+    "https://github.com/zed-industries/async-process.git",
+    "https://github.com/zed-industries/async-task.git",
+    "https://github.com/zed-industries/calloop",
+    "https://github.com/zed-industries/font-kit",
+    "https://github.com/zed-industries/oo7",
+    "https://github.com/zed-industries/zed",
+]

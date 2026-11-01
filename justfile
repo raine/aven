@@ -81,15 +81,15 @@ clippy:
 
 # Auto-fix clippy warnings
 clippy-fix:
-    @scripts/quiet-check clippy-fix cargo clippy --workspace --fix --allow-dirty --target-dir target/clippy --all-targets -- -D warnings -W clippy::all
+    @scripts/quiet-check clippy-fix cargo clippy --fix --allow-dirty --target-dir target/clippy --all-targets -- -D warnings -W clippy::all
 
 # Build the project
 build:
-    @scripts/quiet-check build cargo build --all --locked
+    @scripts/quiet-check build cargo build --locked
 
 # Type-check all targets without producing final artifacts
 check-types:
-    @scripts/quiet-check check-types cargo check --workspace --all-targets --locked
+    @scripts/quiet-check check-types cargo check --all-targets --locked
 
 # Compile the committed Aven.app icon resources from macos/Aven.icon (needs Xcode 26)
 macos-icon:

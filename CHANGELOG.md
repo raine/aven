@@ -5,6 +5,8 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- New: Aven.app on macOS now includes a desktop app. Open it from Finder or the Dock; `aven` in a terminal and the background daemon work as before. An update relaunches the app once it is in the background.
+- UX: Clicking an Aven notification on macOS opens the desktop app.
 - Fix: Refuse project path conflicts instead of silently evicting the existing owner. Use `aven project path add --move` to explicitly reassign a managed mapping. ([#40](https://github.com/raine/aven/issues/40))
 
 ## v0.1.52 (2026-10-31)
