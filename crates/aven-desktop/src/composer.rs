@@ -6,8 +6,8 @@ use std::time::Duration;
 use accesskit::Role;
 use aven_core::choices::TaskStatus;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, Entity, ExternalPaths, FocusHandle, MouseButton,
-    MouseDownEvent, Subscription, Window, div, prelude::*, px,
+    Animation, AnimationExt, AnyElement, Context, Entity, ExternalPaths, FocusHandle, KeyDownEvent,
+    MouseButton, MouseDownEvent, Subscription, Window, div, prelude::*, px,
 };
 
 use crate::actions::*;
@@ -35,6 +35,10 @@ pub struct Composer {
     title: Entity<Editor>,
     schedule: Entity<Editor>,
     body: Entity<Editor>,
+    /// Where a refusal about the status sends focus.
+    status: FocusHandle,
+    /// Where a refusal about being an epic sends focus.
+    epic: FocusHandle,
     prior: Option<FocusHandle>,
     run: usize,
     pub closing: bool,
@@ -105,6 +109,8 @@ impl Root {
             title,
             schedule,
             body,
+            status: cx.focus_handle(),
+            epic: cx.focus_handle(),
             prior: window.focused(cx),
             run: self.session.motion.next_run(),
             closing: false,
@@ -213,10 +219,21 @@ impl Root {
                     self.close_composer(None, window, cx);
                 }
             }
-            Err(DraftProblem::Title) => {
-                self.session.show_toast("Add a title".to_string(), None);
-                self.arm_toast(cx);
-                cx.notify();
+            Err(problem @ DraftProblem::Title) => self.refuse_draft(problem, None, window, cx),
+            Err(problem @ DraftProblem::RecurringAttachments) => {
+                self.update_draft(cx, |draft| draft.more = true);
+                self.refuse_draft(problem, None, window, cx);
+            }
+            Err(problem @ DraftProblem::RecurringEpic) => {
+                let epic = self.composer.as_ref().map(|composer| composer.epic.clone());
+                self.refuse_draft(problem, epic, window, cx);
+            }
+            Err(problem @ DraftProblem::RecurringStatus) => {
+                let status = self
+                    .composer
+                    .as_ref()
+                    .map(|composer| composer.status.clone());
+                self.refuse_draft(problem, status, window, cx);
             }
             Err(DraftProblem::Schedule) => {
                 if let Some(composer) = self.composer.as_mut() {
@@ -227,6 +244,21 @@ impl Root {
                 cx.notify();
             }
         }
+    }
+
+    fn refuse_draft(
+        &mut self,
+        problem: DraftProblem,
+        focus: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.session.show_toast(problem.message().to_string(), None);
+        self.arm_toast(cx);
+        if let Some(focus) = focus {
+            window.focus(&focus, cx);
+        }
+        cx.notify();
     }
 
     pub(crate) fn create_task(
@@ -316,6 +348,7 @@ impl Root {
                     (pasted_image(pasted.clone()), self.composer.as_mut())
                 {
                     composer.draft.add_image(image);
+                    composer.draft.more = true;
                     cx.notify();
                 }
             }
@@ -356,13 +389,24 @@ impl Root {
         );
     }
 
+    fn toggle_composer_epic(&mut self, cx: &mut Context<Self>) {
+        self.update_draft(cx, |draft| {
+            draft.is_epic = !draft.is_epic;
+            if draft.is_epic && draft.status == Some(TaskStatus::Inbox) {
+                draft.status = None;
+            }
+        });
+    }
+
     fn pick_composer_status(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let is_epic = self.composer_draft(cx).is_some_and(|draft| draft.is_epic);
         let mut entries = vec![Entry::new("Auto", |root, _, cx| {
             root.update_draft(cx, |draft| draft.status = None);
         })];
-        let open = STATUSES.iter().take(4);
-        for (status, name) in open.filter(|(status, _)| !is_epic || *status != TaskStatus::Inbox) {
+        for (status, name) in STATUSES
+            .iter()
+            .filter(|(status, _)| !is_epic || *status != TaskStatus::Inbox)
+        {
             let status = *status;
             entries.push(
                 Entry::new(*name, move |root, _, cx| {
@@ -510,6 +554,7 @@ impl Root {
     fn drop_on_composer(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
         let images: Vec<_> = paths.iter().filter_map(|path| read_image(path)).collect();
         self.update_draft(cx, |draft| {
+            draft.more |= !images.is_empty();
             for image in images {
                 draft.add_image(image);
             }
@@ -590,7 +635,19 @@ impl Root {
                     anchors,
                     &t,
                 )
-                .on_click(cx.listener(|this, _, window, cx| this.pick_composer_status(window, cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.pick_composer_status(window, cx)))
+                .track_focus(&composer.status)
+                .when(composer.status.is_focused(window), |chip| {
+                    chip.shadow(vec![t.ring(t.accent)])
+                })
+                .on_key_down(cx.listener(
+                    |this, event: &KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            cx.stop_propagation();
+                            this.pick_composer_status(window, cx);
+                        }
+                    },
+                )),
             )
             .child(
                 Self::chip(
@@ -643,13 +700,16 @@ impl Root {
                             chip.text_color(t.accent)
                                 .shadow(vec![t.inset_ring(t.tint_line)])
                         })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.update_draft(cx, |draft| {
-                                draft.is_epic = !draft.is_epic;
-                                if draft.is_epic && draft.status == Some(TaskStatus::Inbox) {
-                                    draft.status = None;
-                                }
-                            });
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_composer_epic(cx)))
+                        .track_focus(&composer.epic)
+                        .when(composer.epic.is_focused(window), |chip| {
+                            chip.shadow(vec![t.ring(t.accent)])
+                        })
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                cx.stop_propagation();
+                                this.toggle_composer_epic(cx);
+                            }
                         })),
                 )
             })

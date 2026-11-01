@@ -726,3 +726,21 @@ async fn a_saved_write_offers_undo_and_its_way_there() {
     let commands: Vec<_> = h.take_requests().into_iter().map(|r| r.command).collect();
     assert_eq!(commands, [Command::Undo]);
 }
+
+#[tokio::test]
+async fn natural_add_falls_back_to_the_project_in_scope() {
+    let mut h = harness(&["First"]).await;
+    h.session.snapshot.view.project = Some("scoped".to_string());
+    h.session.intake("Rough notes".to_string(), None);
+    h.session
+        .intake("Rough notes".to_string(), Some("chosen".to_string()));
+    let projects: Vec<_> = h
+        .take_requests()
+        .into_iter()
+        .filter_map(|request| match request.command {
+            Command::Intake { project, .. } => project,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(projects, ["scoped", "chosen"]);
+}

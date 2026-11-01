@@ -409,6 +409,7 @@ impl Session {
     }
 
     pub fn intake(&mut self, input: String, project: Option<String>) {
+        let project = project.or_else(|| self.snapshot.view.project.clone());
         self.send(Command::Intake { input, project });
     }
 

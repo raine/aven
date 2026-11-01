@@ -281,6 +281,9 @@ impl Draft {
         if !preview.valid {
             return Err(DraftProblem::Schedule);
         }
+        if preview.repeats && self.is_epic {
+            return Err(DraftProblem::RecurringEpic);
+        }
         let mut labels = self.labels.clone();
         for label in parts.labels {
             if !labels.contains(&label) {
@@ -291,6 +294,12 @@ impl Draft {
         let status = self
             .status
             .unwrap_or_else(|| automatic_status(priority, preview.repeats, self.is_epic));
+        if preview.repeats && !status.is_open() {
+            return Err(DraftProblem::RecurringStatus);
+        }
+        if preview.repeats && !self.images.is_empty() {
+            return Err(DraftProblem::RecurringAttachments);
+        }
         Ok(NewTask {
             title: parts.title,
             description: self.body.clone(),
@@ -366,6 +375,26 @@ impl Draft {
 pub enum DraftProblem {
     Title,
     Schedule,
+    RecurringEpic,
+    RecurringStatus,
+    RecurringAttachments,
+}
+
+impl DraftProblem {
+    /// What the terminal app says when it refuses the same draft.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Title => "Add a title",
+            Self::Schedule => "Check the schedule",
+            Self::RecurringEpic => "recurring tasks cannot be epic containers",
+            Self::RecurringStatus => {
+                "recurring tasks require an open initial status: inbox, backlog, todo, or active"
+            }
+            Self::RecurringAttachments => {
+                "create the recurring task before adding occurrence attachments"
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -409,6 +438,41 @@ mod tests {
             automatic_status(TaskPriority::None, false, true),
             TaskStatus::Todo
         );
+    }
+
+    #[test]
+    fn a_recurring_draft_refuses_what_the_terminal_app_refuses() {
+        let mut draft = Draft {
+            title: "Pay rent".to_string(),
+            schedule: "every friday at 09:00".to_string(),
+            is_epic: true,
+            ..Draft::default()
+        };
+        let problem = draft.task().unwrap_err();
+        assert_eq!(problem, DraftProblem::RecurringEpic);
+        assert_eq!(
+            problem.message(),
+            "recurring tasks cannot be epic containers"
+        );
+
+        draft.is_epic = false;
+        draft.status = Some(TaskStatus::Done);
+        assert_eq!(draft.task(), Err(DraftProblem::RecurringStatus));
+
+        draft.status = None;
+        draft.add_image(PendingImage {
+            name: "receipt.png".to_string(),
+            bytes: Arc::new(vec![1]),
+        });
+        let problem = draft.task().unwrap_err();
+        assert_eq!(problem, DraftProblem::RecurringAttachments);
+        assert_eq!(
+            problem.message(),
+            "create the recurring task before adding occurrence attachments"
+        );
+
+        draft.schedule = "tomorrow".to_string();
+        assert!(draft.task().is_ok());
     }
 
     #[test]
