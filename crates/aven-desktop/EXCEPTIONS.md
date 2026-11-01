@@ -28,3 +28,6 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Metadata and Epic composer chips | Composer | The terminal add form offers both, so More details adds them for parity. | `composer-more.gpui.png` |
 | Search result order | Search | Order comes from core's `search_tasks`, and the prototype scores its simulated data its own way. | `search-results.gpui.png` |
 | Recent entries | Recent actions | The list reads core's history, which on the fixture holds the seeding writes, where the prototype lists two sample entries. | `views-recent.gpui.png` |
+| Fixture note and activity times | Details | The seed writes notes and history at seeding time, so they read `just now` and tie on time, where the prototype shows sample ages. Real notes order by their stored time. | `detail-notes.gpui.png` |
+| Status menu anchor from the keyboard | Status menu | `s` opens the menu at the Status property, beside the value it changes, where the prototype opens it under the row. | `menu-status.gpui.png` |
+| Completions landing in one list | Done group | Tasks completed faster than a list refresh keep list order among themselves, because the group orders by when each list first shows a task closed. | `src/session.rs` |

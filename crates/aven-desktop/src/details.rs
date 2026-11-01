@@ -593,7 +593,7 @@ impl Root {
                     .child(
                         div()
                             .flex_none()
-                            .mb(px(2.))
+                            .mb(px(4.))
                             .size(px(5.))
                             .rounded_full()
                             .bg(t.faint),
