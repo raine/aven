@@ -162,7 +162,6 @@ pub struct Root {
     list: ListState,
     bounce: Rc<RefCell<Bounce>>,
     glide: Option<Glide>,
-    pub(crate) detail_changes: usize,
     pub(crate) details_open: bool,
     nav_open: bool,
     narrow: Option<bool>,
@@ -245,7 +244,6 @@ impl Root {
             list: ListState::new(0, ListAlignment::Top, px(300.)).measure_all(),
             bounce: Rc::default(),
             glide: None,
-            detail_changes: 0,
             details_open: true,
             nav_open: true,
             narrow: None,
@@ -573,7 +571,6 @@ impl Root {
         self.keep_note_draft(cx);
         self.start_glide(&id);
         self.session.select(id);
-        self.detail_changes += 1;
         self.load_selection(window, cx);
         self.reveal_selection();
         cx.notify();
@@ -1514,7 +1511,6 @@ impl Render for Root {
         let detail = self
             .details_open
             .then(|| self.render_detail(detail_width, window, cx));
-        let detail_change = self.detail_changes;
         let menu = self.render_menu(window, cx);
         let composer = self.render_composer(window, cx);
         let toast = self.render_toast(cx);
@@ -1608,23 +1604,14 @@ impl Render for Root {
                     .shadow(t.sheet_shadow())
                     .overflow_hidden()
                     .child(top)
-                    .child(div().flex_1().min_h_0().flex().child(list_el).when_some(
-                        detail,
-                        |body, detail| {
-                            body.child(
-                                div()
-                                    .flex()
-                                    .flex_none()
-                                    .h_full()
-                                    .child(detail)
-                                    .with_animation(
-                                        ("detail-change", detail_change),
-                                        Animation::new(Duration::from_millis(150)),
-                                        |panel, delta| panel.opacity(0.35 + 0.65 * delta),
-                                    ),
-                            )
-                        },
-                    )),
+                    .child(
+                        div().flex_1().min_h_0().flex().child(list_el).when_some(
+                            detail,
+                            |body, detail| {
+                                body.child(div().flex().flex_none().h_full().child(detail))
+                            },
+                        ),
+                    ),
             )
             .when(nav_open, |root| {
                 root.child(
