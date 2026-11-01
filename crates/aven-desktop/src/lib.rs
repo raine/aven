@@ -15,6 +15,7 @@ mod dialogs;
 mod draft;
 mod input;
 mod kit;
+mod lazy_row;
 mod markdown;
 mod overlays;
 mod platform;

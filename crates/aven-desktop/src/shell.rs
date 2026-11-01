@@ -29,6 +29,7 @@ use crate::dialogs::Layer;
 use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
+use crate::lazy_row::LazyRow;
 use crate::markdown;
 use crate::overlays::{Menu, TOAST_DURATION};
 use crate::platform;
@@ -1315,6 +1316,24 @@ impl Root {
         window.toggle_fullscreen();
     }
 
+    /// An entry for the list. Rows wait until they are painted, because
+    /// `measure_all` asks for every entry and a row's height is fixed.
+    fn render_entry(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if !matches!(self.items[ix], Item::Row { .. }) {
+            return self.render_item(ix, window, cx);
+        }
+        let this = cx.entity();
+        LazyRow::new(row_height(), move |window, cx| {
+            this.update(cx, |this, cx| this.render_item(ix, window, cx))
+        })
+        .into_any_element()
+    }
+
     fn render_item(
         &mut self,
         ix: usize,
@@ -2537,7 +2556,7 @@ impl Root {
                 "list-bounce",
                 self.bounce.clone(),
                 self.list.clone(),
-                list(self.list.clone(), cx.processor(Self::render_item)).size_full(),
+                list(self.list.clone(), cx.processor(Self::render_entry)).size_full(),
             ))
             .when_some(thumb, |el, (top, height)| {
                 el.child(
