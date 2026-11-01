@@ -1,6 +1,7 @@
 //! The composer's rules, free of GPUI so they can be tested on their own.
 use anyhow::{Context as _, Result, bail};
 use aven_core::choices::{TaskPriority, TaskStatus};
+use aven_core::labels::normalize_label;
 use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceSchedule};
 use aven_host::recurrence_input::{
     RecurrenceClock, RecurrenceDraft, natural_rule_label, upcoming_slots,
@@ -67,16 +68,6 @@ pub struct TitleParts {
     pub title: String,
     pub labels: Vec<String>,
     pub priority: Option<TaskPriority>,
-}
-
-pub fn normalize_label(text: &str) -> String {
-    let joined = text
-        .to_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    joined
 }
 
 fn priority_token(word: &str) -> Option<TaskPriority> {

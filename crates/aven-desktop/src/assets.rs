@@ -22,7 +22,6 @@ impl AssetSource for Assets {
             "icons/ic-labels.svg" => include_bytes!("../assets/icons/ic-labels.svg"),
             "icons/ic-copy.svg" => include_bytes!("../assets/icons/ic-copy.svg"),
             "icons/ic-trash.svg" => include_bytes!("../assets/icons/ic-trash.svg"),
-            "icons/ic-gist.svg" => include_bytes!("../assets/icons/ic-gist.svg"),
             "icons/ic-blocked.svg" => include_bytes!("../assets/icons/ic-blocked.svg"),
             "icons/ic-conflicts.svg" => include_bytes!("../assets/icons/ic-conflicts.svg"),
             "icons/ic-details.svg" => include_bytes!("../assets/icons/ic-details.svg"),

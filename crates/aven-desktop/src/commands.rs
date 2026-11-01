@@ -10,7 +10,7 @@ use gpui::{Bounds, ClipboardItem, Context, Pixels, Window, px, size};
 
 use crate::actions::*;
 use crate::adapter::{
-    Command, CopyKind, DeletedFilter, GroupBy, MetaFilter, PendingImage, TaskRow, ViewOrder,
+    Command, DeletedFilter, GroupBy, MetaFilter, PendingImage, TaskRow, ViewOrder,
 };
 use crate::input::{self, PastedImage, clipboard_image};
 use crate::kit::*;
@@ -50,13 +50,16 @@ pub fn view_name(query: TaskQuery) -> &'static str {
     }
 }
 
-pub fn is_image(path: &Path) -> bool {
+fn is_image(path: &Path) -> bool {
     let extension = path.extension().and_then(|extension| extension.to_str());
     extension.is_some_and(|extension| IMAGE_EXTENSIONS.contains(&extension.to_lowercase().as_str()))
 }
 
-/// Reads an image from disk, by the name it will keep.
+/// Reads an image from disk, by the name it will keep. Other files read as nothing.
 pub fn read_image(path: &Path) -> Option<PendingImage> {
+    if !is_image(path) {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
     let name = path.file_name()?.to_string_lossy().to_string();
     Some(PendingImage {
@@ -68,7 +71,7 @@ pub fn read_image(path: &Path) -> Option<PendingImage> {
 /// The image a paste carries, named as the prototype names a pasted one.
 pub fn pasted_image(pasted: PastedImage) -> Option<PendingImage> {
     match pasted {
-        PastedImage::Path(path) => is_image(&path).then(|| read_image(&path)).flatten(),
+        PastedImage::Path(path) => read_image(&path),
         PastedImage::Bytes(image) => Some(PendingImage {
             name: "pasted.png".to_string(),
             bytes: Arc::new(image.bytes),
@@ -487,11 +490,10 @@ impl Root {
             .iter()
             .filter(|task| task.id != id)
             .filter(|task| {
-                let open = !matches!(task.status, TaskStatus::Done | TaskStatus::Canceled);
                 if removing {
                     linked(&task.id)
                 } else {
-                    open || linked(&task.id)
+                    task.status.is_open() || linked(&task.id)
                 }
             })
             .map(|task| {
@@ -1004,7 +1006,7 @@ impl Root {
 
     pub(crate) fn copy_report(&mut self, _: &CopyReport, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.target_id() {
-            self.session.write(Command::Copy(id, CopyKind::Report));
+            self.session.write(Command::CopyReport(id));
             cx.notify();
         }
     }
@@ -1106,15 +1108,21 @@ impl Root {
         let Some(id) = self.target_id() else {
             return;
         };
-        for path in paths.iter().filter(|path| is_image(path)) {
-            if let Some(image) = read_image(path) {
-                self.session.write(Command::AddImage(id.clone(), image));
-            }
+        for image in paths.iter().filter_map(|path| read_image(path)) {
+            self.session.write(Command::AddImage(id.clone(), image));
         }
         cx.notify();
     }
 
     pub(crate) fn add_image_from_disk(&mut self, cx: &mut Context<Self>) {
+        self.prompt_for_images(cx, Self::attach_paths);
+    }
+
+    pub(crate) fn prompt_for_images(
+        &mut self,
+        cx: &mut Context<Self>,
+        then: fn(&mut Self, &[PathBuf], &mut Context<Self>),
+    ) {
         let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -1123,8 +1131,7 @@ impl Root {
         });
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = receiver.await {
-                this.update(cx, |this, cx| this.attach_paths(&paths, cx))
-                    .ok();
+                this.update(cx, |this, cx| then(this, &paths, cx)).ok();
             }
         })
         .detach();

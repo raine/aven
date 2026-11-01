@@ -1036,7 +1036,7 @@ impl Root {
             .child(editor.clone())
     }
 
-    fn quick_row(
+    pub(crate) fn quick_row(
         &self,
         id: &'static str,
         editor: &Entity<Editor>,

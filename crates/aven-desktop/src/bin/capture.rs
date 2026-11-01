@@ -207,24 +207,11 @@ fn seed_only() -> Result<()> {
 }
 
 /// What the window shows at launch, read the way the app reads it.
-fn load_state(
-    isolation: &Isolation,
-    now: DateTime<Local>,
-) -> Result<(Snapshot, Option<adapter::Detail>)> {
+fn load_state(isolation: &Isolation, now: DateTime<Local>) -> Result<Snapshot> {
     tokio::runtime::Runtime::new()?.block_on(async {
         let config = AppConfig::default();
         let store = adapter::open_store(&isolation.database, &config).await?;
-        let snapshot = adapter::snapshot(&store, now);
-        let first = snapshot.ordered().next();
-        let id = first.map(|task| snapshot.tasks[task].id.clone());
-        let detail = match id {
-            Some(id) => store.load_task_item(&id).await?,
-            None => None,
-        };
-        Ok((
-            snapshot,
-            detail.as_ref().map(|item| adapter::detail(item, now)),
-        ))
+        Ok(adapter::snapshot(&store, now))
     })
 }
 
@@ -357,7 +344,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         let comparisons = measure::compare(&manifest.expectations(scene)?, &boxes, &gpui_boxes);
         // Steps change the prototype's data, and the seeded state is what is compared.
         let parity = if scene.prototype_steps.is_empty() {
-            data_parity(&page["queue"], &state.0)
+            data_parity(&page["queue"], &state)
         } else {
             Vec::new()
         };

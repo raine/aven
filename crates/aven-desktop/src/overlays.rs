@@ -10,12 +10,12 @@ use gpui::{
     Window, div, prelude::*, px, relative,
 };
 
-use crate::draft::normalize_label;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::session::ToastAction;
 use crate::shell::Root;
 use crate::theme::theme;
+use aven_core::labels::normalize_label;
 
 pub const TOAST_DURATION: Duration = Duration::from_secs(5);
 const MENU_ENTER: Duration = Duration::from_millis(140);

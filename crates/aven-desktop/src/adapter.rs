@@ -99,7 +99,6 @@ pub struct TaskRow {
     pub date_tone: DateTone,
     pub deleted: bool,
     pub is_epic: bool,
-    pub project_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -389,7 +388,7 @@ pub enum Command {
         input: String,
         project: Option<String>,
     },
-    Copy(TaskId, CopyKind),
+    CopyReport(TaskId),
     ShowView(TaskQuery),
     ShowProject(Option<String>),
     SwitchWorkspace(String),
@@ -432,11 +431,6 @@ pub enum Command {
 }
 
 /// The task fields that can be copied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CopyKind {
-    Report,
-}
-
 impl Command {
     /// Whether lists from before this command must be dropped.
     pub fn is_mutation(&self) -> bool {
@@ -447,7 +441,7 @@ impl Command {
                 | Self::Peek(_)
                 | Self::Preview(_)
                 | Self::Intake { .. }
-                | Self::Copy(..)
+                | Self::CopyReport(..)
                 | Self::SaveImage(..)
         )
     }
@@ -475,7 +469,7 @@ pub enum ReplyBody {
     Catalog(Vec<CatalogTask>),
     Search(SearchResults),
     /// Text a task's report or similar produced for the clipboard.
-    Copied(String, &'static str),
+    Copied(String),
     /// A draft to fill the composer with.
     Intake(Box<NewTask>),
     /// Natural language input that produced no draft.
@@ -562,7 +556,7 @@ fn local_clock(stamp: &str) -> Option<String> {
 fn date_tone(item: &TaskListItem, today: NaiveDate) -> DateTone {
     let due = item.task.due_on.as_deref();
     let due = due.and_then(|due| NaiveDate::parse_from_str(due, "%Y-%m-%d").ok());
-    let closed = matches!(item.task.status, TaskStatus::Done | TaskStatus::Canceled);
+    let closed = item.task.status.is_terminal();
     match due.filter(|_| !closed).map(|due| (due - today).num_days()) {
         Some(days) if days < 0 => DateTone::Late,
         Some(days) if days <= 1 => DateTone::Soon,
@@ -581,10 +575,6 @@ pub fn available_text(stamp: &str, today: NaiveDate) -> String {
 fn is_deferred(item: &TaskListItem, now: DateTime<Local>) -> bool {
     let at = item.task.available_at.as_deref().and_then(local_time);
     at.is_some_and(|at| at > now)
-}
-
-fn is_closed(status: TaskStatus) -> bool {
-    matches!(status, TaskStatus::Done | TaskStatus::Canceled)
 }
 
 fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
@@ -613,7 +603,6 @@ fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
         date_tone: date_tone(item, today),
         deleted: task.deleted,
         is_epic: task.is_epic,
-        project_key: task.project_key.clone(),
     }
 }
 
@@ -775,19 +764,16 @@ fn flat_groups(store: &TuiStore, rows: Vec<usize>, group: GroupBy) -> Vec<Group>
 fn list_groups(store: &TuiStore, now: DateTime<Local>, arrange: &Arrange) -> Vec<Group> {
     let filters = &store.view_state.filter_modifiers;
     if store.view_state.layout == TaskLayout::Columns {
-        return store
-            .column_board()
+        let board = store.column_board();
+        return board
             .columns
             .iter()
-            .map(|column| Group {
+            .enumerate()
+            .map(|(index, column)| Group {
                 name: column.config.name.clone(),
                 hint: String::new(),
                 rows: column.task_indices.clone(),
-                lane: column
-                    .config
-                    .statuses
-                    .first()
-                    .and_then(|status| TaskStatus::parse(status).ok()),
+                lane: board.lane_entry_status(index),
             })
             .collect();
     }
@@ -1528,7 +1514,7 @@ impl Actor {
         }
         let home = if is_deferred(&item, Local::now()) {
             TaskQuery::Upcoming
-        } else if is_closed(item.task.status) {
+        } else if item.task.status.is_terminal() {
             TaskQuery::Done
         } else {
             TaskQuery::Queue
@@ -2108,8 +2094,8 @@ impl Actor {
             Command::Peek(id) => self.send_detail(&id).await,
             Command::Preview(input) => self.preview(input),
             Command::Intake { input, project } => self.intake(input, project),
-            Command::Copy(id, CopyKind::Report) => match self.copy_report(&id).await {
-                Ok(text) => self.send(ReplyBody::Copied(text, "task report")),
+            Command::CopyReport(id) => match self.copy_report(&id).await {
+                Ok(text) => self.send(ReplyBody::Copied(text)),
                 Err(error) => self.send(ReplyBody::Notice(error.to_string())),
             },
             Command::SaveImage(image, path) => {
@@ -2342,7 +2328,6 @@ pub fn bench_snapshot(tasks: usize, groups: Vec<Group>) -> Snapshot {
                 date_tone: DateTone::Plain,
                 deleted: false,
                 is_epic: false,
-                project_key: "bench".to_string(),
             })
             .collect(),
         groups,

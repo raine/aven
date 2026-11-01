@@ -641,6 +641,8 @@ async fn canceled_rows_join_the_same_end_group_as_done_rows() {
     let first = row(&h.session.snapshot, "First");
     let second = row(&h.session.snapshot, "Second");
     h.session.set_status(&first, TaskStatus::Done);
+    let list = with_status(&h, &first, TaskStatus::Done);
+    answer(&mut h, list);
     h.session.set_status(&second, TaskStatus::Canceled);
     let mut list = with_status(&h, &first, TaskStatus::Done);
     let at = list.tasks.iter().position(|task| task.id == second);

@@ -420,7 +420,7 @@ impl Root {
     ) -> Vec<Div> {
         let mut sections = Vec::new();
         if let Some(epic) = &detail.epic {
-            let closed = matches!(epic.status, TaskStatus::Done | TaskStatus::Canceled);
+            let closed = epic.status.is_terminal();
             let head = if closed { "Epic closed" } else { "Epic" };
             sections.push(
                 div()

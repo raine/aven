@@ -620,7 +620,7 @@ impl Root {
         if applied.intake_failed {
             self.read_notes_back(None, cx);
         }
-        if let Some((text, _)) = applied.copy {
+        if let Some(text) = applied.copy {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
         if applied.draft
@@ -1164,7 +1164,7 @@ impl Root {
         deleted: bool,
         t: &Theme,
     ) -> AnyElement {
-        let closed = matches!(status, TaskStatus::Done | TaskStatus::Canceled);
+        let closed = status.is_terminal();
         let (ink, faint) = (t.ink, t.faint);
         let label = div()
             .min_w_0()

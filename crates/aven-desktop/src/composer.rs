@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use crate::actions::*;
-use crate::commands::{is_image, pasted_image, read_image};
+use crate::commands::{pasted_image, read_image};
 use crate::draft::{Draft, DraftProblem, schedule_preview, token_preview};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
@@ -188,9 +188,6 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.composer_open() {
-            return self.kept_draft = draft;
-        }
         self.kept_draft = draft;
         self.open_composer(window, cx);
     }
@@ -510,28 +507,8 @@ impl Root {
         );
     }
 
-    fn add_composer_image(&mut self, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: Some("Add Image".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                this.update(cx, |this, cx| this.drop_on_composer(&paths, cx))
-                    .ok();
-            }
-        })
-        .detach();
-    }
-
     fn drop_on_composer(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
-        let images: Vec<_> = paths
-            .iter()
-            .filter(|path| is_image(path))
-            .filter_map(|path| read_image(path))
-            .collect();
+        let images: Vec<_> = paths.iter().filter_map(|path| read_image(path)).collect();
         self.update_draft(cx, |draft| {
             for image in images {
                 draft.add_image(image);
@@ -733,25 +710,17 @@ impl Root {
                     .text_color(t.ink)
                     .child(composer.schedule.clone()),
             )
-            .child({
-                let mut quick = div().flex().flex_wrap().gap(px(5.)).mt(px(6.));
-                for (ix, (label, value)) in QUICK_SCHEDULES.into_iter().enumerate() {
-                    let editor = composer.schedule.clone();
-                    quick = quick.child(
-                        btn(("c-quick", ix), label, &t)
-                            .h(px(24.))
-                            .px(px(8.))
-                            .text_size(px(12.))
-                            .shadow(vec![t.inset_ring(t.line)])
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                editor.update(cx, |editor, cx| editor.set_text(value, cx));
-                                cx.notify();
-                            }))
-                            .child(label),
-                    );
-                }
-                quick
-            })
+            .child(
+                self.quick_row(
+                    "c-quick",
+                    &composer.schedule,
+                    QUICK_SCHEDULES
+                        .map(|(label, value)| (label, value.to_string()))
+                        .to_vec(),
+                    cx,
+                    &t,
+                ),
+            )
             .when(!draft.schedule.trim().is_empty(), |more| {
                 more.child(
                     div()
@@ -789,8 +758,9 @@ impl Root {
                     .items_center()
                     .gap(px(8.))
                     .child(
-                        line_btn("c-add-image", "Add image", &t)
-                            .on_click(cx.listener(|this, _, _, cx| this.add_composer_image(cx))),
+                        line_btn("c-add-image", "Add image", &t).on_click(cx.listener(
+                            |this, _, _, cx| this.prompt_for_images(cx, Self::drop_on_composer),
+                        )),
                     )
                     .child(
                         small(12.)

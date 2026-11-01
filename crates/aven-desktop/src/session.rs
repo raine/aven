@@ -132,8 +132,7 @@ pub struct Applied {
     pub intake: Option<Box<NewTask>>,
     pub intake_failed: bool,
     /// Text for the clipboard, with what to call it.
-    pub copy: Option<(String, &'static str)>,
-    pub search: bool,
+    pub copy: Option<String>,
     /// The task whose local write produced this list, so the list may animate.
     pub moved: Option<TaskId>,
 }
@@ -181,10 +180,6 @@ pub struct Session {
 pub struct Trail {
     pub peek: Option<TaskId>,
     pub label: String,
-}
-
-fn is_closed(status: TaskStatus) -> bool {
-    matches!(status, TaskStatus::Done | TaskStatus::Canceled)
 }
 
 impl Session {
@@ -495,12 +490,11 @@ impl Session {
             ReplyBody::Search(results) => {
                 if reply.request == self.last_search {
                     self.search = results;
-                    applied.search = true;
                 }
             }
-            ReplyBody::Copied(text, what) => {
-                self.copied_toast(what);
-                applied.copy = Some((text, what));
+            ReplyBody::Copied(text) => {
+                self.copied_toast("task report");
+                applied.copy = Some(text);
             }
             ReplyBody::Intake(task) => applied.intake = Some(task),
             ReplyBody::IntakeFailed(message) => {
@@ -575,11 +569,11 @@ impl Session {
             return;
         }
         self.done
-            .retain(|id| list.row(id).is_none_or(|row| is_closed(row.status)));
+            .retain(|id| list.row(id).is_none_or(|row| row.status.is_terminal()));
         for group in &mut list.groups {
             group.rows.retain(|task| {
                 let row = &list.tasks[*task];
-                if !is_closed(row.status) {
+                if !row.status.is_terminal() {
                     return true;
                 }
                 if !self.done.contains(&row.id) {
