@@ -13,13 +13,13 @@ use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle,
     Focusable, FontWeight, KeyContext, ListAlignment, ListOffset, ListState, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Subscription, Window, div,
-    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, px, relative, svg,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, relative, svg,
 };
 
 use crate::actions::*;
 use crate::adapter::{
-    Bulk, Command, DateTone, DeletedFilter, Note, Prefs, Replies, Reply, SyncHealth, TaskRow,
-    supports_columns,
+    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, Note, Prefs, Replies, Reply, TaskRow,
+    ThemePref, supports_columns,
 };
 use crate::bounce::{Bounce, ListBounce};
 use crate::commands::view_name;
@@ -32,7 +32,10 @@ use crate::markdown;
 use crate::measure::measured;
 use crate::overlays::{Menu, TOAST_DURATION};
 use crate::platform;
-use crate::session::{Applied, PRIORITY_DURATION, SETTLE_DURATION, Session};
+use crate::session::{
+    Applied, PRIORITY_DURATION, PULSE_DURATION, SETTLE_DURATION, Session, SyncTone, count_text,
+};
+use crate::settings::sync_icon;
 use crate::theme::{Theme, mix, theme};
 use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
@@ -56,6 +59,15 @@ const DETAIL_MIN_WINDOW_WIDTH: f32 = 1180.;
 /// A section heading, whose 16.8px line GPUI cannot place exactly.
 const SECTION_HEIGHT: f32 = 32.8;
 const ROW_HEIGHT: f32 = 31.;
+const COMPACT_ROW_HEIGHT: f32 = 26.;
+
+fn row_height() -> f32 {
+    if compact() {
+        COMPACT_ROW_HEIGHT
+    } else {
+        ROW_HEIGHT
+    }
+}
 const GLIDE_DURATION: Duration = Duration::from_millis(140);
 /// The farthest the highlight glides, enough for a neighbour across a section
 /// header. A longer jump lands at once.
@@ -119,7 +131,7 @@ impl Item {
     fn height(&self) -> f32 {
         match self {
             Self::Pad(height) | Self::Section { height, .. } => *height,
-            Self::Row { .. } => ROW_HEIGHT,
+            Self::Row { .. } => row_height(),
             Self::Log(_) => LOG_HEIGHT,
             Self::Empty => 0.,
             Self::AllClear => ALL_CLEAR_HEIGHT,
@@ -241,7 +253,7 @@ impl ListMotion {
         for item in old {
             if let Item::Row { id, .. } = item
                 && let Some(row) = left.iter().find(|row| row.id == *id)
-                && top - scrolled + ROW_HEIGHT >= 0.
+                && top - scrolled + row_height() >= 0.
                 && top - scrolled <= viewport
             {
                 let row = LeftRow {
@@ -381,6 +393,7 @@ pub struct Root {
     list_refs: bool,
     pub(crate) prefs: Prefs,
     prefs_path: PathBuf,
+    pub(crate) new_label: Entity<Editor>,
     split_drag: Option<Split>,
     pub(crate) title: Entity<Editor>,
     /// The task the title editor holds, which may not be the selection yet.
@@ -475,6 +488,8 @@ impl Root {
         .detach();
         let focus = cx.focus_handle();
         let prefs = Prefs::load(&prefs_path);
+        set_scale(prefs.zoom, prefs.compact);
+        let new_label = cx.new(|cx| Editor::new(Mode::Single, "New label", window, cx));
         let mut this = Self {
             always_active: false,
             focus,
@@ -490,6 +505,7 @@ impl Root {
             list_wide: true,
             list_refs: true,
             prefs,
+            new_label,
             prefs_path,
             split_drag: None,
             title,
@@ -540,15 +556,47 @@ impl Root {
         cx.set_reduce_motion(reduced);
         self.session.motion.set_reduced(reduced);
         if self.active(window) || !cx.has_global::<Theme>() {
-            let dark = matches!(
-                window.appearance(),
-                gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
-            );
-            if !cx.has_global::<Theme>() || theme(cx).dark != dark {
-                cx.set_global(if dark { Theme::dark() } else { Theme::light() });
-            }
+            self.apply_theme(window, cx);
         }
         cx.notify();
+    }
+
+    pub(crate) fn apply_theme(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let dark = match self.prefs.theme {
+            ThemePref::Dark => true,
+            ThemePref::Light => false,
+            ThemePref::System => matches!(
+                window.appearance(),
+                gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+            ),
+        };
+        if !cx.has_global::<Theme>() || theme(cx).dark != dark {
+            cx.set_global(if dark { Theme::dark() } else { Theme::light() });
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn apply_scale(&mut self, cx: &mut Context<Self>) {
+        set_scale(self.prefs.zoom, self.prefs.compact);
+        self.rebuild(false, &[]);
+        cx.notify();
+    }
+
+    pub(crate) fn save_prefs(&self) {
+        if let Err(error) = self.prefs.save(&self.prefs_path) {
+            eprintln!("aven-desktop: {error:#}");
+        }
+    }
+
+    /// Every database stays known, so one in use is there after a relaunch.
+    fn database_opened(&mut self, opened: KnownDatabase, previous: Option<KnownDatabase>) {
+        for known in [Some(opened), previous].into_iter().flatten() {
+            self.prefs
+                .databases
+                .retain(|other| other.path != known.path);
+            self.prefs.databases.push(known);
+        }
+        self.save_prefs();
     }
 
     /// The list's scroll extent, for layout measurement.
@@ -691,6 +739,9 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some((opened, previous)) = applied.opened {
+            self.database_opened(opened, previous);
+        }
         if applied.list {
             self.rebuild(applied.moved.is_some(), &applied.left);
             if !applied.left.is_empty() {
@@ -977,7 +1028,7 @@ impl Root {
                     .as_ref()
                     .and_then(|sel| self.row_top(sel))
             })
-            .filter(|top| (offset - ROW_HEIGHT..offset + viewport).contains(top));
+            .filter(|top| (offset - row_height()..offset + viewport).contains(top));
         let target = from.zip(self.row_top(id));
         let near = target.filter(|(from, to)| (from - to).abs() <= GLIDE_REACH);
         self.glide = near.map(|(from, to)| Glide {
@@ -1010,13 +1061,14 @@ impl Root {
         self.step(-1, window, cx);
     }
 
-    fn toggle_theme(&mut self, _: &ToggleTheme, _: &mut Window, cx: &mut Context<Self>) {
-        cx.set_global(if theme(cx).dark {
-            Theme::light()
+    fn toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
+        self.prefs.theme = if theme(cx).dark {
+            ThemePref::Light
         } else {
-            Theme::dark()
-        });
-        cx.notify();
+            ThemePref::Dark
+        };
+        self.save_prefs();
+        self.apply_theme(window, cx);
     }
 
     pub(crate) fn toggle_details(
@@ -1348,7 +1400,7 @@ impl Root {
             .role(Role::ListItem)
             .aria_label(format!("{} {}", data.reference, data.title))
             .aria_selected(selected)
-            .h(px(ROW_HEIGHT))
+            .h(px(row_height()))
             .px(px(8.))
             .flex()
             .items_center()
@@ -1595,13 +1647,8 @@ impl Root {
                     .child(nav_count(project.count.to_string(), false, &t)),
             );
         }
-        let (sync_color, sync_label) = match &self.session.sync {
-            Some(SyncHealth::Synced) => (t.good, "Synced".to_string()),
-            Some(SyncHealth::Waiting) => (t.warn, "Sync waiting".to_string()),
-            Some(SyncHealth::Failed(error)) => (t.bad, format!("Sync failed: {error}")),
-            Some(SyncHealth::VaultDeleted) => (t.bad, "Sync vault deleted".to_string()),
-            Some(SyncHealth::NotSetUp) | None => (t.faint, "Sync is not set up".to_string()),
-        };
+        let (sync_tone, _) = self.session.sync_line();
+        let sync_problem = matches!(sync_tone, SyncTone::Warn | SyncTone::Bad);
         measured(div(), "nav")
             .flex_none()
             .w(px(self.prefs.nav_width))
@@ -1617,13 +1664,22 @@ impl Root {
                     .pt(px(4.))
                     .pb(px(8.))
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap(px(2.))
                     .text_size(px(12.))
                     .line_height(px(16.8))
+                    .when(sync_problem, |footer| {
+                        footer.child(self.render_sync_state(cx).w_full())
+                    })
                     .child(
                         nav_item("settings", &t)
+                            .role(Role::Button)
+                            .aria_label("Settings")
                             .w_auto()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_settings(&OpenSettings, window, cx);
+                            }))
                             .h(px(28.))
                             .mb_0()
                             .text_color(t.muted)
@@ -1631,14 +1687,9 @@ impl Root {
                             .child("Settings"),
                     )
                     .child(div().flex_1())
-                    .child(
-                        div()
-                            .id("sync-state")
-                            .role(Role::Image)
-                            .aria_label(sync_label)
-                            .px(px(6.))
-                            .child(icon("icons/cloud.svg", sync_color)),
-                    ),
+                    .when(!sync_problem, |footer| {
+                        footer.child(self.render_sync_state(cx))
+                    }),
             )
     }
 
@@ -1692,7 +1743,9 @@ impl Root {
         };
         let view = &snapshot.view;
         let query = view.query;
-        let name = if self.session.review.is_some() {
+        let name = if self.session.settings.is_some() {
+            "Settings"
+        } else if self.session.review.is_some() {
             "Triage"
         } else {
             view_name(query)
@@ -1715,19 +1768,21 @@ impl Root {
             .map(|row| row.reference.clone());
         let fixed = matches!(query, TaskQuery::Queue | TaskQuery::Upcoming);
         let logged = query == TaskQuery::RecentActions;
-        let filterable = !logged && query != TaskQuery::Conflicts;
-        let can_columns = supports_columns(query) && self.session.review.is_none();
+        let settings = self.session.settings.is_some();
+        let filterable = !settings && !logged && query != TaskQuery::Conflicts;
+        let can_columns = !settings && supports_columns(query) && self.session.review.is_none();
         let columns = view.columns;
         let reviewing = self.session.review.is_some();
-        let orderable = !fixed && !logged && !reviewing;
-        let groupable = !fixed
+        let orderable = !settings && !fixed && !logged && !reviewing;
+        let groupable = !settings
+            && !fixed
             && !logged
             && !reviewing
             && !columns
             && !matches!(query, TaskQuery::Epics | TaskQuery::Conflicts);
         let width = window.viewport_size().width;
         let hints = width > px(HEADER_HINTS_MIN_WINDOW_WIDTH);
-        let crumbs = width > px(CRUMBS_MIN_WINDOW_WIDTH);
+        let crumbs = !settings && width > px(CRUMBS_MIN_WINDOW_WIDTH);
         measured(div(), "main-header")
             .flex_none()
             .h(px(44.))
@@ -1804,7 +1859,7 @@ impl Root {
                             .child(div().text_color(t.muted).child(reference))
                     }),
             )
-            .when(hints && !expanded && !logged, |top| {
+            .when(hints && !expanded && !logged && !settings, |top| {
                 top.child(
                     div()
                         .flex_none()
@@ -1818,10 +1873,13 @@ impl Root {
                     .min_w_0()
                     .truncate()
                     .text_color(t.faint)
-                    .when(hints && !expanded, |hint| hint.child(subtitle)),
+                    .when(hints && !expanded && !settings, |hint| hint.child(subtitle)),
             )
             .when(
-                matches!(query, TaskQuery::Inbox | TaskQuery::Queue) && !expanded && !reviewing,
+                matches!(query, TaskQuery::Inbox | TaskQuery::Queue)
+                    && !expanded
+                    && !reviewing
+                    && !settings,
                 |top| {
                     top.child(
                         line_btn("review-tasks", "Review tasks", &t)
@@ -1832,7 +1890,7 @@ impl Root {
                     )
                 },
             )
-            .when(query == TaskQuery::Epics && !expanded, |top| {
+            .when(query == TaskQuery::Epics && !expanded && !settings, |top| {
                 let closed = if view.closed {
                     "Hide closed"
                 } else {
@@ -1853,7 +1911,7 @@ impl Root {
                         .child("New epic"),
                 )
             })
-            .when(query == TaskQuery::Recurring, |top| {
+            .when(query == TaskQuery::Recurring && !settings, |top| {
                 top.child(
                     btn("new-recurring", "New recurring task", &t)
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -1909,16 +1967,19 @@ impl Root {
                         .child(label),
                 )
             })
-            .when(!expanded && query != TaskQuery::RecentActions, |top| {
-                top.child(
-                    btn("details", "Toggle details", &t)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_details(&ToggleDetails, window, cx)
-                        }))
-                        .child(icon("icons/ic-details.svg", t.body))
-                        .child("Details"),
-                )
-            })
+            .when(
+                !expanded && !settings && query != TaskQuery::RecentActions,
+                |top| {
+                    top.child(
+                        btn("details", "Toggle details", &t)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_details(&ToggleDetails, window, cx)
+                            }))
+                            .child(icon("icons/ic-details.svg", t.body))
+                            .child("Details"),
+                    )
+                },
+            )
             .child(
                 btn("search", "Search", &t)
                     .shadow(vec![t.inset_ring(t.line)])
@@ -2287,7 +2348,7 @@ impl Root {
                     .absolute()
                     .left(px(8.))
                     .right(px(8.))
-                    .h(px(ROW_HEIGHT))
+                    .h(px(row_height()))
                     .rounded(px(6.))
                     .bg(glide_bg)
                     .shadow(vec![t.ring(glide_ring)])
@@ -2335,7 +2396,7 @@ impl Root {
                     .top(px(row.top))
                     .left(px(8.))
                     .right(px(8.))
-                    .h(px(ROW_HEIGHT))
+                    .h(px(row_height()))
                     .overflow_hidden()
                     .flex()
                     .items_center()
@@ -2349,7 +2410,7 @@ impl Root {
                         ("row-leave", run),
                         Animation::new(LEAVE_DURATION).with_easing(ease_in_out),
                         |row, delta| {
-                            row.h(px(ROW_HEIGHT * (1. - delta)))
+                            row.h(px(row_height() * (1. - delta)))
                                 .opacity(1. - (delta / 0.7).min(1.))
                         },
                     ),
@@ -2508,8 +2569,50 @@ impl Focusable for Root {
     }
 }
 
+impl Root {
+    fn render_sync_state(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let t = theme(cx);
+        let (tone, label) = self.session.sync_line();
+        let color = sync_icon(&t, tone);
+        let problem = matches!(tone, SyncTone::Warn | SyncTone::Bad);
+        let raised = t.raised;
+        div()
+            .id("sync-state")
+            .role(Role::Button)
+            .aria_label(label.clone())
+            .min_w_0()
+            .h(px(28.))
+            .px(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(6.))
+            .text_color(color)
+            .hover(move |style| style.bg(raised))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.open_sync(&OpenSync, window, cx);
+            }))
+            .when_some(self.session.motion.pulse(), |state, (changes, run)| {
+                state.child(sync_pulse(changes, run, &t))
+            })
+            .child(icon("icons/cloud.svg", color))
+            .when(problem, |state| {
+                state.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(label),
+                )
+            })
+    }
+}
+
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focus_sync_page(window, cx);
         let t = theme(cx);
         let narrow = window.viewport_size().width <= px(DETAIL_MIN_WINDOW_WIDTH);
         if self.narrow != Some(narrow) {
@@ -2518,6 +2621,9 @@ impl Render for Root {
         }
         let mut key_context = KeyContext::default();
         key_context.add("Aven");
+        if self.session.settings.is_some() {
+            key_context.add("Settings");
+        }
         if self.session.review.is_some() {
             key_context.add("Review");
         }
@@ -2558,6 +2664,11 @@ impl Render for Root {
             }
         });
         let review = reviewing.then(|| self.render_review(cx));
+        let settings = self
+            .session
+            .settings
+            .is_some()
+            .then(|| self.render_settings(window, cx));
         let strips = self.render_strips(cx);
         let chord = self.render_chord(cx);
         let dialog = self.render_dialog(window, cx);
@@ -2569,6 +2680,27 @@ impl Render for Root {
         let nav_open = self.nav_open;
         let nav_handle = self.split_handle(Split::Nav, cx);
         let detail_handle = self.split_handle(Split::Detail, cx);
+        if self.session.database_error.is_some() {
+            let gate = self.render_database_gate(cx);
+            let dialog = self.render_dialog(window, cx);
+            let toast = self.render_toast(cx);
+            return measured(div(), "app")
+                .relative()
+                .size_full()
+                .flex()
+                .bg(t.page)
+                .text_color(t.ink)
+                .font_family(".SystemUIFont")
+                .text_size(px(13.))
+                .line_height(px(UI_LINE_HEIGHT))
+                .track_focus(&self.focus)
+                .on_action(cx.listener(Self::next_field))
+                .on_action(cx.listener(Self::previous_field))
+                .on_action(cx.listener(Self::dismiss))
+                .child(gate)
+                .children(dialog)
+                .children(toast);
+        }
         measured(div(), "app")
             .relative()
             .size_full()
@@ -2583,6 +2715,10 @@ impl Render for Root {
             .on_action(cx.listener(Self::move_down))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::toggle_theme))
+            .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::close_settings))
+            .on_action(cx.listener(Self::open_sync))
+            .on_action(cx.listener(Self::sync_now))
             .on_action(cx.listener(Self::toggle_details))
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::mark_done))
@@ -2714,21 +2850,21 @@ impl Render for Root {
                     .overflow_hidden()
                     .child(top)
                     .children(strips)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .when_some(doc, |body, doc| body.child(doc))
-                            .when_some(review, |body, review| body.child(review))
-                            .when(!expanded && !reviewing, |body| match board {
-                                Some(board) => body.child(board),
-                                None => body.child(list_el),
-                            })
-                            .when_some(detail, |body, detail| {
-                                body.child(div().flex().flex_none().h_full().child(detail))
-                            }),
-                    ),
+                    .child(div().flex_1().min_h_0().flex().map(|body| {
+                        match settings {
+                            Some(settings) => body.child(settings),
+                            None => body
+                                .when_some(doc, |body, doc| body.child(doc))
+                                .when_some(review, |body, review| body.child(review))
+                                .when(!expanded && !reviewing, |body| match board {
+                                    Some(board) => body.child(board),
+                                    None => body.child(list_el),
+                                })
+                                .when_some(detail, |body, detail| {
+                                    body.child(div().flex().flex_none().h_full().child(detail))
+                                }),
+                        }
+                    })),
             )
             .when(nav_open, |root| {
                 root.child(
@@ -2757,6 +2893,51 @@ impl Render for Root {
             .when_some(menu, |root, menu| root.child(menu))
             .when_some(toast, |root, toast| root.child(toast))
     }
+}
+
+/// A change arrived: a ring leaves the status dot and the count fades through.
+fn sync_pulse(changes: usize, run: usize, t: &Theme) -> impl IntoElement + use<> {
+    let good = t.good;
+    let count = count_text(changes, "change");
+    div()
+        .flex()
+        .items_center()
+        .gap(px(11.))
+        .text_color(t.faint)
+        .whitespace_nowrap()
+        .child(
+            div()
+                .flex_none()
+                .size(px(7.))
+                .rounded_full()
+                .bg(good)
+                .relative()
+                .with_animation(
+                    ("sync-pulse-ring", run),
+                    Animation::new(PULSE_DURATION),
+                    move |dot, delta| {
+                        let spread = 1. - (1. - (delta / 0.65).min(1.)).powi(3);
+                        let ring = 7. + 15. * spread;
+                        dot.when(delta < 0.65, |dot| {
+                            dot.child(
+                                div()
+                                    .absolute()
+                                    .top(px(3.5 - ring / 2.))
+                                    .left(px(3.5 - ring / 2.))
+                                    .size(px(ring))
+                                    .rounded_full()
+                                    .border_1()
+                                    .border_color(good.opacity((1. - spread) * 0.6)),
+                            )
+                        })
+                    },
+                ),
+        )
+        .child(div().child(count).with_animation(
+            ("sync-pulse-count", run),
+            Animation::new(PULSE_DURATION),
+            |count, delta| count.opacity(1. - ((delta - 0.75) / 0.25).clamp(0., 1.)),
+        ))
 }
 
 #[cfg(test)]

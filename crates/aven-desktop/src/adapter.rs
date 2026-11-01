@@ -9,6 +9,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -33,9 +34,11 @@ use aven_core::recurrence::{
     RecurrenceDuePolicy, RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
     next_slot_after,
 };
+use aven_core::sync::client::engine::{LocalPhase, local_phase};
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
-use aven_host::config::{AppConfig, resolve_blob_dir};
+use aven_host::config::{AppConfig, RemindersConfig, config_file_path, resolve_blob_dir};
+use aven_host::config_edit;
 use aven_host::recurrence_input::natural_rule_label;
 use aven_host::schedule_input::{ParsedScheduleInput, format_schedule_input, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
@@ -46,15 +49,20 @@ use aven_host::store::{
     TuiStore, mutation_committed, recurrence_draft, task_creation_committed,
 };
 use aven_host::sync::encrypted::{DaemonRound, DaemonSync};
+use aven_host::sync::error_explanations::ErrorAction;
 use aven_host::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
 use chrono::{DateTime, Local, NaiveDate};
 use sqlx::ConnectOptions as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use tokio::sync::{Notify, mpsc};
+use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval, sleep, sleep_until};
 
 use crate::session::Session;
+use crate::sync_ops::{self, SyncEvent, SyncOp, SyncRequest, SyncWork};
 
+const SYNC_BUSY: &str = "Sync is busy. Try again when it finishes";
+const JOIN_PAUSE: &str = "Joining sync: local changes wait until synced tasks are downloaded";
 /// How often outside writes are looked for.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Dates and availability change with the clock, with no write to notice.
@@ -371,6 +379,103 @@ pub struct Snapshot {
     pub labels: Vec<String>,
     pub fields: Vec<String>,
     pub recent: Vec<RecentAction>,
+    pub sync: SyncView,
+}
+
+/// What the store knows about sync, merged from this database's state and the
+/// daemon's record, which the app only reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncView {
+    pub phase: SyncPhase,
+    pub pending: usize,
+    pub conflicts: usize,
+    /// Unix seconds of the daemon's last completed round.
+    pub daemon_synced_at: Option<i64>,
+    pub access_refused: bool,
+    pub vault_deleted: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SyncPhase {
+    #[default]
+    Local,
+    SetupIncomplete,
+    JoinIncomplete,
+    SetUp,
+}
+
+impl From<LocalPhase> for SyncPhase {
+    fn from(phase: LocalPhase) -> Self {
+        match phase {
+            LocalPhase::NotSetUp => Self::Local,
+            LocalPhase::SetupIncomplete => Self::SetupIncomplete,
+            LocalPhase::JoinIncomplete => Self::JoinIncomplete,
+            LocalPhase::SetUp => Self::SetUp,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceEntry {
+    pub key: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectEntry {
+    pub key: String,
+    pub name: String,
+    pub prefix: String,
+}
+
+/// Rows of a settings tab, read when settings open and after each edit.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SettingsData {
+    pub workspaces: Vec<WorkspaceEntry>,
+    pub projects: Vec<ProjectEntry>,
+    pub labels: Vec<(String, usize)>,
+    pub fields: Vec<(String, usize)>,
+    pub commands: Vec<(String, String)>,
+    pub reminders: Reminders,
+}
+
+/// The shared config's reminder settings, as the Reminders tab edits them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reminders {
+    pub enabled: bool,
+    pub digest_time: String,
+    pub due_digest: bool,
+    pub available: bool,
+}
+
+impl From<&RemindersConfig> for Reminders {
+    fn from(config: &RemindersConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            digest_time: config.digest_time.clone(),
+            due_digest: config.due_digest,
+            available: config.available,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsEdit {
+    NewWorkspace(String),
+    RenameWorkspace(String, String),
+    NewProject {
+        name: String,
+        prefix: String,
+    },
+    EditProject {
+        key: String,
+        name: String,
+        prefix: String,
+    },
+    NewLabel(String),
+    RenameLabel(String, String),
+    RenameField(String, String),
+    Reminders(Reminders),
 }
 
 impl Snapshot {
@@ -598,6 +703,16 @@ pub enum Command {
     Keep(TaskId),
     Unkeep(TaskId),
     PublishGist(TaskId),
+    /// Sync work a person started. Never goes through a retry toast, which
+    /// would keep invitation text around.
+    Sync(SyncRequest),
+    LoadSettings,
+    Settings(SettingsEdit),
+    Backup,
+    Export,
+    /// Restores an archive to a new database and opens it.
+    Restore(PathBuf),
+    OpenDatabase(PathBuf),
 }
 
 /// The task fields that can be copied.
@@ -616,6 +731,13 @@ impl Command {
                 | Self::LoadSeries(_)
                 | Self::StartReview(_)
                 | Self::PublishGist(_)
+                | Self::Sync(_)
+                | Self::LoadSettings
+                | Self::Settings(_)
+                | Self::Backup
+                | Self::Export
+                | Self::Restore(_)
+                | Self::OpenDatabase(_)
         )
     }
 }
@@ -671,6 +793,18 @@ pub enum ReplyBody {
     SavedRefreshFailed(String),
     RefreshFailed(String),
     Sync(SyncHealth),
+    /// A background round brought changes in.
+    SyncArrived(usize),
+    SyncEvent(SyncEvent),
+    Settings(Box<SettingsData>),
+    /// Another database is open now, with how many tasks the last one held.
+    DatabaseOpened {
+        path: PathBuf,
+        tasks: usize,
+        previous: Option<(PathBuf, usize)>,
+    },
+    /// The database did not open. The one before it, if any, stays open.
+    DatabaseFailed(PathBuf, String),
     /// The published gist's URL, or why there is none.
     Gist(Result<String, String>),
 }
@@ -1092,6 +1226,18 @@ pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
     arranged_snapshot(store, now, &Arrange::default())
 }
 
+fn sync_view(store: &TuiStore) -> SyncView {
+    let status = &store.sync_status;
+    SyncView {
+        phase: status.phase.into(),
+        pending: status.pending_changes.try_into().unwrap_or(usize::MAX),
+        conflicts: status.conflicts.try_into().unwrap_or(usize::MAX),
+        daemon_synced_at: status.daemon_sync.last_success_at,
+        access_refused: status.access_refused_at.is_some(),
+        vault_deleted: status.vault_deleted_at.is_some(),
+    }
+}
+
 fn recent_actions(store: &TuiStore, now: DateTime<Local>) -> Vec<RecentAction> {
     store
         .recent_actions
@@ -1181,6 +1327,7 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
         labels: store.labels.clone(),
         fields: Vec::new(),
         recent: recent_actions(store, now),
+        sync: sync_view(store),
     }
 }
 
@@ -1492,6 +1639,14 @@ struct Actor {
     config: AppConfig,
     replies: mpsc::UnboundedSender<Reply>,
     sync_wake: Arc<Notify>,
+    storage: Arc<dyn ProtectedStorage>,
+    /// The launch database's config, which other databases start from.
+    launch_config: AppConfig,
+    launch_path: PathBuf,
+    background_sync: Option<JoinHandle<()>>,
+    /// Set while user-started work holds the sync slot.
+    sync_busy: Arc<AtomicBool>,
+    invitation: Option<JoinHandle<()>>,
     handled: u64,
     /// The task the view has selected, which refreshes keep in the list.
     selected: Option<TaskId>,
@@ -1555,13 +1710,20 @@ impl Actor {
         config: AppConfig,
         replies: mpsc::UnboundedSender<Reply>,
         sync_wake: Arc<Notify>,
+        storage: Arc<dyn ProtectedStorage>,
     ) -> Self {
         Self {
             store,
+            launch_path: database.clone(),
             database,
+            launch_config: config.clone(),
             config,
             replies,
             sync_wake,
+            storage,
+            background_sync: None,
+            sync_busy: Arc::new(AtomicBool::new(false)),
+            invitation: None,
             handled: 0,
             selected: None,
             arrange: Arrange::default(),
@@ -1576,6 +1738,284 @@ impl Actor {
             request: self.handled,
             body,
         });
+    }
+
+    fn spawn_background_sync(&mut self) {
+        if self.config.sync_is_allowed() {
+            self.background_sync = Some(tokio::spawn(run_sync(
+                self.store.database(),
+                self.config.clone(),
+                self.storage.clone(),
+                self.sync_wake.clone(),
+                self.replies.clone(),
+            )));
+        }
+    }
+
+    fn sync_work(&self) -> SyncWork {
+        SyncWork {
+            database: self.store.database(),
+            path: self.database.clone(),
+            config: self.config.clone(),
+            storage: self.storage.clone(),
+            replies: self.replies.clone(),
+            request: self.handled,
+        }
+    }
+
+    async fn sync_request(&mut self, request: SyncRequest) {
+        let work = self.sync_work();
+        match request {
+            SyncRequest::Run(op) => self.run_sync_op(work, op),
+            SyncRequest::Preview => {
+                tokio::spawn(async move { work.preview().await });
+            }
+            SyncRequest::CheckJoin => {
+                tokio::spawn(async move { work.check_join().await });
+            }
+            SyncRequest::LoadDevices => {
+                tokio::spawn(async move { work.load_devices().await });
+            }
+            SyncRequest::Invite => {
+                if !self
+                    .invitation
+                    .as_ref()
+                    .is_some_and(|task| !task.is_finished())
+                {
+                    self.invitation = Some(tokio::spawn(async move { work.invite().await }));
+                }
+            }
+            SyncRequest::CancelInvitation => {
+                if work.cancel_invitation().await
+                    && let Some(task) = self.invitation.take()
+                {
+                    task.abort();
+                }
+            }
+        }
+    }
+
+    fn run_sync_op(&mut self, work: SyncWork, op: SyncOp) {
+        if self.sync_busy.swap(true, Ordering::SeqCst) {
+            self.send(ReplyBody::Notice(SYNC_BUSY.to_string()));
+            return;
+        }
+        let busy = self.sync_busy.clone();
+        tokio::spawn(async move {
+            let finished = work.run(op).await;
+            busy.store(false, Ordering::SeqCst);
+            work.send(finished);
+        });
+    }
+
+    async fn settings_data(&self) -> Result<SettingsData> {
+        let database = self.store.database();
+        Ok(SettingsData {
+            workspaces: database
+                .list_workspaces()
+                .await?
+                .into_iter()
+                .map(|workspace| WorkspaceEntry {
+                    key: workspace.key,
+                    name: workspace.name,
+                })
+                .collect(),
+            projects: self
+                .store
+                .projects
+                .iter()
+                .map(|project| ProjectEntry {
+                    key: project.key.clone(),
+                    name: project.name.clone(),
+                    prefix: project.prefix.clone(),
+                })
+                .collect(),
+            labels: self
+                .store
+                .label_usage()
+                .await?
+                .into_iter()
+                .map(|usage| (usage.name, usage.task_count))
+                .collect(),
+            fields: database
+                .list_metadata_fields(&self.store.active_workspace.id)
+                .await?
+                .into_iter()
+                .map(|usage| (usage.field.key, usage.task_count))
+                .collect(),
+            commands: self
+                .config
+                .tui
+                .commands
+                .iter()
+                .map(|command| (command.name.clone(), command.description.clone()))
+                .collect(),
+            reminders: (&self.config.reminders).into(),
+        })
+    }
+
+    async fn send_settings(&self) {
+        match self.settings_data().await {
+            Ok(data) => self.send(ReplyBody::Settings(Box::new(data))),
+            Err(error) => self.send(ReplyBody::Notice(error.to_string())),
+        }
+    }
+
+    async fn edit_settings(&mut self, edit: SettingsEdit) -> Result<String> {
+        let database = self.store.database();
+        Ok(match edit {
+            SettingsEdit::NewWorkspace(name) => {
+                let workspace = database.create_workspace(&name).await?;
+                format!("Created workspace {}", workspace.name)
+            }
+            SettingsEdit::RenameWorkspace(key, name) => {
+                let workspace = database.rename_workspace(&key, &name).await?;
+                format!("Renamed workspace to {}", workspace.name)
+            }
+            SettingsEdit::NewProject { name, prefix } => {
+                let prefix = (!prefix.is_empty()).then_some(prefix.as_str());
+                let outcome = (self.store.database())
+                    .create_project(&self.store.active_workspace, &name, prefix)
+                    .await?;
+                if !outcome.created {
+                    return Err(anyhow!("Project {name} already exists"));
+                }
+                self.sync_wake.notify_one();
+                self.store.refresh(None).await?;
+                format!("Created project {name}")
+            }
+            SettingsEdit::EditProject { key, name, prefix } => {
+                self.store.rename_project(&key, &name, &prefix).await?;
+                format!("Saved project {name}")
+            }
+            SettingsEdit::NewLabel(name) => {
+                self.store.create_label(name).await?;
+                "Label created".to_string()
+            }
+            SettingsEdit::RenameLabel(old, new) => {
+                self.store.rename_label(&old, new.clone()).await?;
+                format!("Renamed label to {new}")
+            }
+            SettingsEdit::RenameField(old, new) => {
+                database
+                    .rename_metadata_field(&self.store.active_workspace, &old, &new)
+                    .await?;
+                format!("Renamed field to {new}")
+            }
+            SettingsEdit::Reminders(reminders) => {
+                let config = RemindersConfig {
+                    enabled: reminders.enabled,
+                    digest_time: reminders.digest_time.clone(),
+                    due_digest: reminders.due_digest,
+                    available: reminders.available,
+                };
+                config.digest_time()?;
+                let path = config_file_path()?;
+                let current = &self.config.reminders;
+                let bool_text = |value: bool| if value { "true" } else { "false" };
+                for (key, old, new) in [
+                    ("enabled", current.enabled, reminders.enabled),
+                    ("due_digest", current.due_digest, reminders.due_digest),
+                    ("available", current.available, reminders.available),
+                ] {
+                    if old != new {
+                        config_edit::set_scalar(&path, "reminders", key, bool_text(new))?;
+                    }
+                }
+                if current.digest_time != reminders.digest_time {
+                    let quoted = format!("\"{}\"", reminders.digest_time);
+                    config_edit::set_scalar(&path, "reminders", "digest_time", &quoted)?;
+                }
+                self.config.reminders = config.clone();
+                self.launch_config.reminders = config;
+                "Reminders saved".to_string()
+            }
+        })
+    }
+
+    /// Replaces the open database. The old one stays open if the new one fails.
+    async fn switch_database(&mut self, path: PathBuf) -> Result<()> {
+        if self.sync_busy.load(Ordering::SeqCst) {
+            return Err(anyhow!(SYNC_BUSY));
+        }
+        let config = sync_ops::config_for(&path, &self.launch_path, &self.launch_config);
+        let store = open_store(&path, &config).await?;
+        if let Some(task) = self.background_sync.take() {
+            task.abort();
+        }
+        if let Some(task) = self.invitation.take() {
+            task.abort();
+        }
+        let previous = (self.database.clone(), self.store.tasks.len());
+        self.store.database().close().await;
+        self.store = store;
+        self.database = path.clone();
+        self.config = config;
+        self.selected = None;
+        self.arrange = Arrange::default();
+        self.undoable.clear();
+        self.kept.clear();
+        self.spawn_background_sync();
+        self.send(ReplyBody::DatabaseOpened {
+            path,
+            tasks: self.store.tasks.len(),
+            previous: Some(previous),
+        });
+        Ok(())
+    }
+
+    async fn open_database(&mut self, path: PathBuf) -> bool {
+        let opened = match sync_ops::check_database_path(&path) {
+            Ok(()) => self.switch_database(path.clone()).await,
+            Err(error) => Err(error),
+        };
+        match opened {
+            Ok(()) => {
+                self.outside_change().await;
+                self.send_settings().await;
+                true
+            }
+            Err(error) => {
+                self.send(ReplyBody::DatabaseFailed(path, error.to_string()));
+                false
+            }
+        }
+    }
+
+    async fn restore(&mut self, archive: PathBuf) {
+        if self.sync_busy.load(Ordering::SeqCst) {
+            self.send(ReplyBody::Notice(SYNC_BUSY.to_string()));
+            return;
+        }
+        match sync_ops::restore_to_new(&self.database, &self.launch_config, &archive).await {
+            Ok(path) => {
+                if self.open_database(path).await {
+                    self.send(ReplyBody::Notice("Backup restored".to_string()));
+                }
+            }
+            Err(error) => self.send(ReplyBody::Notice(format!("Could not restore: {error}"))),
+        }
+    }
+
+    async fn backup(&self) -> Result<String> {
+        let path =
+            sync_ops::write_backup(&self.store.database(), &self.database, &self.blob_dir()?)
+                .await?;
+        Ok(format!("Backup archive written to {}", path.display()))
+    }
+
+    async fn export(&self) -> Result<String> {
+        let path = sync_ops::write_export(&self.store.database(), &self.database).await?;
+        Ok(format!("JSON export written to {}", path.display()))
+    }
+
+    /// Edits made before joined tasks are installed would make the engine
+    /// refuse the installation, so joining pauses them.
+    async fn paused_by_join(&self) -> bool {
+        matches!(
+            local_phase(&self.store.database()).await,
+            Ok(LocalPhase::JoinIncomplete)
+        )
     }
 
     async fn metadata_matches(&self, filter: &MetaFilter) -> Result<HashSet<TaskId>> {
@@ -2507,6 +2947,9 @@ impl Actor {
     /// Runs a write and reports what it did. An error that `mutation_committed`
     /// or `task_creation_committed` accepts means the write stands.
     async fn mutate(&mut self, command: &Command) -> Result<Outcome> {
+        if self.paused_by_join().await {
+            anyhow::bail!(JOIN_PAUSE);
+        }
         let outcome = match command {
             Command::Bulk(ids, bulk) => self.bulk(ids, bulk).await?,
             Command::CreateChild(epic, title) => {
@@ -2964,6 +3407,42 @@ impl Actor {
                 Err(error) => self.send(ReplyBody::Notice(error.to_string())),
             },
             Command::PublishGist(id) => self.publish_gist(&id).await,
+            Command::Sync(request) => self.sync_request(request).await,
+            Command::LoadSettings => self.send_settings().await,
+            Command::Backup => {
+                let message = match self.backup().await {
+                    Ok(message) => message,
+                    Err(error) => format!("Could not back up: {error}"),
+                };
+                self.send(ReplyBody::Notice(message));
+            }
+            Command::Export => {
+                let message = match self.export().await {
+                    Ok(message) => message,
+                    Err(error) => format!("Could not export: {error}"),
+                };
+                self.send(ReplyBody::Notice(message));
+            }
+            Command::Restore(archive) => self.restore(archive).await,
+            Command::OpenDatabase(path) => {
+                self.open_database(path).await;
+            }
+            Command::Settings(_) if self.paused_by_join().await => {
+                self.send(ReplyBody::Notice(JOIN_PAUSE.to_string()));
+            }
+            Command::Settings(edit) => {
+                match self.edit_settings(edit).await {
+                    Ok(message) => {
+                        self.outside_change().await;
+                        self.send_settings().await;
+                        self.send(ReplyBody::Notice(message));
+                    }
+                    Err(error) => {
+                        self.send(ReplyBody::Notice(format!("Could not save: {error}")));
+                    }
+                }
+                self.sync_wake.notify_one();
+            }
             Command::CopyReport(id) => match self.copy_report(&id).await {
                 Ok(text) => self.send(ReplyBody::Copied(text)),
                 Err(error) => self.send(ReplyBody::Notice(error.to_string())),
@@ -3067,6 +3546,7 @@ impl Actor {
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
         self.send_catalog().await;
         let mut writes = OutsideWrites::open(&self.database).await.ok();
+        let mut watched = self.database.clone();
         let mut poll = interval(POLL_INTERVAL);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut clock = interval(CLOCK_INTERVAL);
@@ -3076,6 +3556,10 @@ impl Actor {
                 request = requests.recv() => {
                     let Some(request) = request else { break };
                     self.handle(request).await;
+                    if watched != self.database {
+                        watched = self.database.clone();
+                        writes = OutsideWrites::open(&watched).await.ok();
+                    }
                 }
                 _ = clock.tick() => self.outside_change().await,
                 _ = poll.tick() => {
@@ -3121,6 +3605,12 @@ async fn run_sync(
                     Ok(DaemonRound::Completed(outcome)) => {
                         scheduler.completed(outcome.more_work_ready(), now);
                         report(SyncHealth::Synced);
+                        if outcome.received_changes > 0 {
+                            let _ = replies.send(Reply {
+                                request: 0,
+                                body: ReplyBody::SyncArrived(outcome.received_changes),
+                            });
+                        }
                     }
                     Ok(DaemonRound::NotSetUp) => {
                         scheduler.not_set_up(now);
@@ -3136,7 +3626,11 @@ async fn run_sync(
                     }
                     Err(error) => {
                         scheduler.failed(now);
-                        report(SyncHealth::Failed(error.to_string()));
+                        report(SyncHealth::Failed(sync_ops::explain(
+                            ErrorAction::General,
+                            &error,
+                            "Sync couldn't finish. Try again.",
+                        )));
                     }
                 }
             }
@@ -3145,41 +3639,124 @@ async fn run_sync(
 }
 
 /// Opens the store on its thread, starts sync, and returns the first snapshot's
-/// session.
+/// session. A database that does not open still gives a session, whose view
+/// offers ways out, and the thread waits for one.
 pub fn start(handle: tokio::runtime::Handle, launch: Launch) -> Result<(Session, Replies)> {
-    let (requests_tx, requests_rx) = mpsc::unbounded_channel();
+    let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
     let (replies_tx, replies_rx) = mpsc::unbounded_channel();
     let (opened_tx, opened_rx) = std::sync::mpsc::channel();
     let sync_wake = Arc::new(Notify::new());
     let runtime = handle.clone();
+    let database = launch.database.clone();
     std::thread::Builder::new()
         .name("aven-store".to_string())
         .spawn(move || {
-            runtime.clone().block_on(async move {
-                let store = match open_store(&launch.database, &launch.config).await {
-                    Ok(store) => store,
-                    Err(error) => {
-                        let _ = opened_tx.send(Err(error));
-                        return;
+            runtime.block_on(async move {
+                let mut path = launch.database.clone();
+                let mut config = launch.config.clone();
+                let mut opened = Some(opened_tx);
+                let store = loop {
+                    let error = match open_store(&path, &config).await {
+                        Ok(store) => break store,
+                        Err(error) => error,
+                    };
+                    let failure = (path.clone(), format!("{error:#}"));
+                    match opened.take() {
+                        Some(opened) => {
+                            let _ = opened.send(Err(failure));
+                        }
+                        None => {
+                            let _ = replies_tx.send(Reply {
+                                request: 0,
+                                body: ReplyBody::DatabaseFailed(failure.0, failure.1),
+                            });
+                        }
                     }
+                    let Some(next) = recovery_target(&mut requests_rx, &launch, &replies_tx).await
+                    else {
+                        return;
+                    };
+                    config = sync_ops::config_for(&next, &launch.database, &launch.config);
+                    path = next;
                 };
-                if launch.config.sync_is_allowed() {
-                    runtime.spawn(run_sync(
-                        store.database(),
-                        launch.config.clone(),
-                        launch.storage.clone(),
-                        sync_wake.clone(),
-                        replies_tx.clone(),
-                    ));
+                match opened.take() {
+                    Some(opened) => {
+                        let _ = opened.send(Ok(snapshot(&store, Local::now())));
+                    }
+                    None => {
+                        let _ = replies_tx.send(Reply {
+                            request: 0,
+                            body: ReplyBody::DatabaseOpened {
+                                path: path.clone(),
+                                tasks: store.tasks.len(),
+                                previous: None,
+                            },
+                        });
+                    }
                 }
-                let _ = opened_tx.send(Ok(snapshot(&store, Local::now())));
-                Actor::new(store, launch.database, launch.config, replies_tx, sync_wake)
-                    .run(requests_rx)
-                    .await;
+                let launch_config = launch.config;
+                let mut actor = Actor::new(
+                    store,
+                    launch.database,
+                    launch_config,
+                    replies_tx,
+                    sync_wake,
+                    launch.storage,
+                );
+                actor.database = path;
+                actor.config = config;
+                actor.spawn_background_sync();
+                actor.send_list().await;
+                actor.run(requests_rx).await;
             });
         })?;
-    let first = opened_rx.recv().context("the store thread stopped")??;
-    Ok((Session::new(first, requests_tx), replies_rx))
+    match opened_rx.recv().context("the store thread stopped")? {
+        Ok(first) => {
+            let mut session = Session::new(first, requests_tx);
+            session.database = database;
+            Ok((session, replies_rx))
+        }
+        Err((path, message)) => {
+            let mut session = Session::new(Snapshot::default(), requests_tx);
+            session.database_failed(path, message);
+            Ok((session, replies_rx))
+        }
+    }
+}
+
+/// Waits, with no database open, for the view to name one to try.
+async fn recovery_target(
+    requests: &mut mpsc::UnboundedReceiver<Request>,
+    launch: &Launch,
+    replies: &mpsc::UnboundedSender<Reply>,
+) -> Option<PathBuf> {
+    while let Some(request) = requests.recv().await {
+        match request.command {
+            Command::OpenDatabase(path) if path == launch.database => return Some(path),
+            Command::OpenDatabase(path) => match sync_ops::check_database_path(&path) {
+                Ok(()) => return Some(path),
+                Err(error) => {
+                    let _ = replies.send(Reply {
+                        request: request.id,
+                        body: ReplyBody::DatabaseFailed(path, error.to_string()),
+                    });
+                }
+            },
+            Command::Restore(archive) => {
+                match sync_ops::restore_to_new(&launch.database, &launch.config, &archive).await {
+                    Ok(path) => return Some(path),
+                    Err(error) => {
+                        let _ = replies.send(Reply {
+                            request: request.id,
+                            body: ReplyBody::Notice(format!("Could not restore: {error}")),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A generated list for layout measurement.
@@ -3212,10 +3789,30 @@ pub fn bench_snapshot(tasks: usize, groups: Vec<Group>) -> Snapshot {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ThemePref {
+    Dark,
+    Light,
+    #[default]
+    System,
+}
+
+/// A database opened earlier, with how many tasks it listed when it was left.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KnownDatabase {
+    pub path: PathBuf,
+    pub tasks: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Prefs {
     pub nav_width: f32,
     pub detail_width: f32,
+    pub theme: ThemePref,
+    pub compact: bool,
+    pub zoom: f32,
+    pub databases: Vec<KnownDatabase>,
 }
 
 impl Default for Prefs {
@@ -3223,6 +3820,10 @@ impl Default for Prefs {
         Self {
             nav_width: 228.,
             detail_width: 380.,
+            theme: ThemePref::default(),
+            compact: false,
+            zoom: 1.,
+            databases: Vec::new(),
         }
     }
 }
@@ -3265,6 +3866,121 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prefs_from_before_settings_still_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prefs.json");
+        std::fs::write(&path, r#"{"nav_width":240.0}"#).unwrap();
+        let prefs = Prefs::load(&path);
+        assert_eq!(prefs.nav_width, 240.);
+        assert_eq!(prefs.theme, ThemePref::System);
+        assert_eq!(prefs.zoom, 1.);
+    }
+
+    #[test]
+    fn a_damaged_database_opens_the_gate_and_stays_as_it_was() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        std::fs::write(&path, "not a database, and not empty either").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let launch = Launch {
+            database: path.clone(),
+            config: AppConfig::default(),
+            storage: Arc::new(aven_core::sync::client::keys::FileProtectedStorage::new(
+                directory.path().join("keys"),
+            )),
+        };
+        let (session, _replies) = start(runtime.handle().clone(), launch).unwrap();
+        assert_eq!(session.database_error.as_ref().unwrap().path, path);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn settings_edits_refuse_a_bad_digest_time() {
+        let (_directory, mut actor, mut replies) = actor("One").await;
+        let reminders = Reminders {
+            digest_time: "25:00".to_string(),
+            ..Reminders::default()
+        };
+        run(
+            &mut actor,
+            Command::Settings(SettingsEdit::Reminders(reminders)),
+        )
+        .await;
+        assert!(
+            bodies(&mut replies)
+                .iter()
+                .any(|body| matches!(body, ReplyBody::Notice(_)))
+        );
+        assert_ne!(actor.config.reminders.digest_time, "25:00");
+    }
+
+    #[tokio::test]
+    async fn a_new_project_takes_its_prefix_or_leaves_nothing() {
+        let (_directory, mut actor, mut replies) = actor("One").await;
+        let new = |name: &str, prefix: &str| {
+            Command::Settings(SettingsEdit::NewProject {
+                name: name.to_string(),
+                prefix: prefix.to_string(),
+            })
+        };
+        run(&mut actor, new("Website", "WEB")).await;
+        run(&mut actor, new("Mobile", "")).await;
+        let prefix_of = |actor: &Actor, name: &str| {
+            let project = actor
+                .store
+                .projects
+                .iter()
+                .find(|project| project.name == name);
+            project.map(|project| project.prefix.clone())
+        };
+        assert_eq!(prefix_of(&actor, "Website").as_deref(), Some("WEB"));
+        assert!(prefix_of(&actor, "Mobile").is_some());
+        bodies(&mut replies);
+        run(&mut actor, new("Website", "ZZ")).await;
+        run(&mut actor, new("Other", "WEB")).await;
+        run(&mut actor, new("Bad", "!")).await;
+        assert_eq!(prefix_of(&actor, "Website").as_deref(), Some("WEB"));
+        assert_eq!(prefix_of(&actor, "Other"), None);
+        assert_eq!(prefix_of(&actor, "Bad"), None);
+    }
+
+    #[tokio::test]
+    async fn a_restore_waits_for_a_running_sync_operation() {
+        let (directory, mut actor, mut replies) = actor("One").await;
+        actor.sync_busy.store(true, Ordering::SeqCst);
+        let archive = directory.path().join("backup.sqlite");
+        run(&mut actor, Command::Restore(archive)).await;
+        let found = bodies(&mut replies);
+        assert!(
+            found
+                .iter()
+                .any(|body| matches!(body, ReplyBody::Notice(text) if text == SYNC_BUSY))
+        );
+        let names = std::fs::read_dir(directory.path()).unwrap();
+        let names: Vec<_> = names.map(|entry| entry.unwrap().file_name()).collect();
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.to_string_lossy().contains("restored"))
+        );
+    }
+
+    #[tokio::test]
+    async fn settings_edits_reach_the_store() {
+        let (_directory, mut actor, mut replies) = actor("One").await;
+        let edit = SettingsEdit::NewLabel("Needs Review".to_string());
+        run(&mut actor, Command::Settings(edit)).await;
+        bodies(&mut replies);
+        let data = actor.settings_data().await.unwrap();
+        assert!(
+            data.labels.iter().any(|(name, _)| name == "needs-review"),
+            "{:?}",
+            data.labels
+        );
+    }
+
     async fn actor(title: &str) -> (tempfile::TempDir, Actor, mpsc::UnboundedReceiver<Reply>) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite");
@@ -3277,6 +3993,9 @@ mod tests {
             AppConfig::default(),
             replies,
             Arc::new(Notify::new()),
+            Arc::new(aven_core::sync::client::keys::FileProtectedStorage::new(
+                directory.path().join("keys"),
+            )),
         );
         (directory, actor, received)
     }

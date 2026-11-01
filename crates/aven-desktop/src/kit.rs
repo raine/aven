@@ -2,17 +2,37 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use accesskit::Role;
 use aven_core::choices::{TaskPriority, TaskStatus};
 use gpui::{
     Animation, AnimationExt, App, Bounds, BoxShadow, Div, ElementId, Hsla, IntoElement,
     MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, Svg, Transformation, Window,
-    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, svg,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, size, svg,
 };
 
 use crate::session::POP_DURATION;
 use crate::theme::Theme;
+
+/// The text size setting, as thousandths. Drawing goes through [`px`], so the
+/// whole window scales the way the prototype's page zoom does.
+static ZOOM: AtomicU32 = AtomicU32::new(1000);
+static COMPACT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_scale(zoom: f32, compact: bool) {
+    ZOOM.store((zoom * 1000.).round() as u32, Ordering::Relaxed);
+    COMPACT.store(compact, Ordering::Relaxed);
+}
+
+pub fn compact() -> bool {
+    COMPACT.load(Ordering::Relaxed)
+}
+
+/// Logical pixels at the current text size.
+pub fn px(value: f32) -> Pixels {
+    gpui::px(value * ZOOM.load(Ordering::Relaxed) as f32 / 1000.)
+}
 
 pub const MONO: &str = "JetBrains Mono";
 pub const UI_LINE_HEIGHT: f32 = 18.2;
@@ -93,7 +113,7 @@ pub fn nav_item(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
         .items_center()
         .gap(px(9.))
         .w_full()
-        .h(px(27.))
+        .h(px(if compact() { 24. } else { 27. }))
         .mb(px(2.))
         .px(px(8.))
         .rounded(px(6.))

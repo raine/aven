@@ -24,6 +24,8 @@ pub mod prototype;
 #[cfg(feature = "capture")]
 pub mod scene;
 pub mod session;
+mod settings;
 pub mod shell;
+pub mod sync_ops;
 pub mod theme;
 mod workflows;

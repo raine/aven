@@ -14,6 +14,10 @@ actions!(
         ToggleSidebar,
         ToggleDetails,
         ToggleTheme,
+        OpenSettings,
+        CloseSettings,
+        OpenSync,
+        SyncNow,
         MoveDown,
         MoveUp,
         Expand,
@@ -285,7 +289,9 @@ pub const CHORDS: [(&str, &[(&str, &str)]); 6] = [
 ];
 
 pub fn key_bindings() -> Vec<KeyBinding> {
-    let main = Some("Aven && !TextInput && !Overlay && !Review");
+    let main = Some("Aven && !TextInput && !Overlay && !Review && !Settings");
+    let settings = Some("Settings && !TextInput && !Overlay");
+    let anywhere = Some("Aven && !TextInput && !Overlay && !Review");
     let review = Some("Review && !TextInput && !Overlay");
     let dialog = Some("Dialog");
     let composer = Some("Composer");
@@ -297,6 +303,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-n", NewTask, None),
         KeyBinding::new("cmd-k", OpenPalette, Some("Aven && !Overlay")),
         KeyBinding::new("a", NewTask, main),
+        KeyBinding::new("shift-s", SyncNow, anywhere),
+        KeyBinding::new("cmd-,", OpenSettings, Some("Aven && !Overlay")),
+        KeyBinding::new("escape", CloseSettings, settings),
         KeyBinding::new("j", MoveDown, main),
         KeyBinding::new("k", MoveUp, main),
         KeyBinding::new("down", MoveDown, main),

@@ -25,6 +25,14 @@ name = "list"
 selector = ".list"
 
 [[element]]
+name = "settings-nav"
+selector = ".set-nav"
+
+[[element]]
+name = "settings-page"
+selector = ".set-in"
+
+[[element]]
 name = "detail"
 selector = ".detail"
 
@@ -573,4 +581,196 @@ height = 900
 gpui_keys = ["v i"]
 gpui_click = [783.0, 28.0]
 prototype_steps = ["state.view='inbox'", "startTriage()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "settings-general"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "general"
+prototype_steps = ["state.screen='settings'", "state.setTab='general'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav", "settings-page"]
+
+[[scene]]
+name = "settings-sync"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "sync"
+gpui_sync = "tab-devices"
+prototype_steps = ["state.screen='settings'", "state.setTab='sync'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav"]
+
+[[scene]]
+name = "settings-reminders"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "reminders"
+prototype_steps = ["state.screen='settings'", "state.setTab='reminders'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav", "settings-page"]
+
+[[scene]]
+name = "settings-workspaces"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "workspaces"
+prototype_steps = ["state.screen='settings'", "state.setTab='workspaces'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav"]
+
+[[scene]]
+name = "settings-projects"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "projects"
+prototype_steps = ["state.screen='settings'", "state.setTab='projects'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav", "settings-page"]
+
+[[scene]]
+name = "settings-labels"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "labels"
+prototype_steps = ["state.screen='settings'", "state.setTab='labels'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav", "settings-page"]
+
+[[scene]]
+name = "settings-fields"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "fields"
+prototype_steps = ["state.screen='settings'", "state.setTab='fields'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav"]
+
+[[scene]]
+name = "settings-commands"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "commands"
+prototype_steps = ["state.screen='settings'", "state.setTab='commands'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav"]
+
+[[scene]]
+name = "data-recovery"
+theme = "dark"
+width = 1440
+height = 900
+gpui_settings = "data"
+prototype_steps = ["state.screen='settings'", "state.setTab='data'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav"]
+
+[[scene]]
+name = "sync-local"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "home"
+prototype_steps = ["Object.assign(state.sync, localSync())", "mount()", "openSync()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "sync-status"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "status"
+prototype_steps = ["openSync()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "sync-setup"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "setup"
+prototype_steps = ["Object.assign(state.sync, localSync())", "mount()", "askInvitation('setup', finishSetup)"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "sync-join"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "join"
+prototype_steps = ["Object.assign(state.sync, localSync())", "mount()", "askInvitation('join', finishJoin)"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "sync-confirm"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "confirm"
+prototype_steps = ["Object.assign(state.sync, localSync())", "mount()", "confirmSync('setup', finishSetup)"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "sync-add-device"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "add-device"
+prototype_steps = ["addDevice()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "sync-pulse"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "pulse"
+gpui_frame_ms = 350
+prototype_steps = []
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "data-recovery-gate"
+theme = "dark"
+width = 1440
+height = 900
+gpui_sync = "gate"
+prototype_steps = ["state.dbError='damaged'", "mount()"]
+measure = ["app"]
+
+[[scene]]
+name = "settings-sync-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_settings = "sync"
+gpui_sync = "tab-devices"
+prototype_steps = ["state.screen='settings'", "state.setTab='sync'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav"]
+
+[[scene]]
+name = "sync-status-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_sync = "status"
+prototype_steps = ["openSync()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "settings-opened-by-click"
+theme = "dark"
+width = 1440
+height = 900
+gpui_click = [63.0, 878.0]
+prototype_steps = ["state.screen='settings'", "state.setTab='general'", "mount()"]
+measure = ["app", "nav", "main", "main-header", "settings-nav", "settings-page"]
+
+[[scene]]
+name = "settings-closed-by-escape"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["cmd-,", "escape"]
+prototype_steps = ["state.screen=null", "mount()"]
 measure = ["app", "nav", "main", "main-header"]

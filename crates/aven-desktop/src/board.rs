@@ -4,7 +4,7 @@ use aven_core::choices::TaskStatus;
 use aven_core::ids::TaskId;
 use gpui::{
     Context, FontWeight, MouseButton, MouseDownEvent, Pixels, Point, Render, Window, div,
-    prelude::*, px,
+    prelude::*,
 };
 
 use crate::adapter::{Group, TaskRow};

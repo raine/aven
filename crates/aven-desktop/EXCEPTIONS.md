@@ -17,7 +17,7 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Rows measured to row 18 | Scenes | The list is virtual, so rows below the fold are never painted. `row-18` is the last fully visible measured row at 1440x900. | `scenes/manifest.toml` |
 | Narrow header alignment | Header | Header actions stay right-aligned at every width. The prototype packs them beside the title once the crumbs hide, which reads as an artefact of its collapsed spacer. | `queue-narrow.gpui.png` |
 | Done group in the queue | Queue list | The prototype drops a completed row at once. The app keeps it in a Done group at the end of the list until the user refreshes the view, by owner direction. | `queue-completed.gpui.png` beside `queue-completed.prototype.png` |
-| Controls owned by later phases | Header, palette, overflow menu | Settings, Sync and About arrive with their phases. The capability map assigns each one. | `capabilities.toml` |
+| Controls owned by later phases | Header, palette, overflow menu | About arrives with its phase. The capability map assigns it. | `capabilities.toml` |
 | Schedule dates are text fields | Schedule dialog | The kit has no native date picker. Each field accepts `YYYY-MM-DD` and the quick choices fill them in. | `schedule.gpui.png` |
 | Schedule saves in two writes | Schedule dialog | Core stores availability and due date through separate undoable writes, so one undo reverts the last of them. | `src/dialogs.rs` |
 | One label and one priority filter | Filter menu | Core's `TaskFilters` holds one of each, where the prototype keeps lists. | `queue-filtered.gpui.png` |
@@ -38,3 +38,13 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Conflict sides name no device or time | Resolve dialog | Core keeps which side is local and a change token, with no device name or time on the conflict, so sides read `This device` and `Other device`. | `conflict-resolve.gpui.png` |
 | No word-level diff in conflicts | Resolve dialog | The sides show each whole value. The dialog keeps both values in full, so the choice stays readable without the highlight. | `conflict-resolve.gpui.png` |
 | Review keys are modal | Triage | While a review runs only its own keys are live, so `t`, `d` or `a` cannot reach the list behind the card. | `src/actions.rs` |
+| Settings and Sync focus the first control | Sync dialog | Opening a dialog puts keyboard focus on a control, so the prototype's dialog-wide focus ring does not appear. | `sync-local.gpui.png` |
+| Devices show no last seen | Sync tab, Sync dialog | Core's device list has no last-seen time and adding one is a stored format change. Device icons are one generic icon, because a device carries only its label. | `settings-sync.gpui.png` |
+| Project dots stay derived | Nav, Projects tab | The store holds no project colour, so New project has no colour field and a dot comes from the prefix. | `settings-projects.gpui.png` |
+| No Define field | Metadata fields tab | Core has no field without a value, so a field appears once a task carries it. The tab renames existing fields. | `settings-fields.gpui.png` |
+| Custom commands are listed from config | Custom commands tab | Commands come from the shared config, which scenes leave empty, and the tab has no editor in the prototype either. | `settings-commands.gpui.png` |
+| Fixture sync facts | Sync scenes | Scenes run offline, so the capture sets the status and device list. Setup, join, removal and Sync now are shown against a real server by `scripts/desktop/app-proof drive`. | `src/bin/capture.rs` |
+| Join cannot be abandoned | Sync dialog | Core refuses a reset during a join, so the interrupted join offers Resume and a new invitation in place of Abandon. The earlier database stays listed under Data and recovery. | `src/settings.rs` |
+| Sample data row replaced | Data and recovery | The prototype's Restore sample data has no product meaning. That section holds Reset sync data, with the reset the TUI offers. | `data-recovery.gpui.png` |
+| Database gate names one failure | Database gate | The app shows core's message with one body, where the prototype words each simulated failure. | `data-recovery-gate.gpui.png` |
+| Chosen database lasts for the session | Data and recovery | A launch finds its database the way the CLI does, so a joined or opened database is listed under Other database and reopened from there. | `src/adapter.rs` |

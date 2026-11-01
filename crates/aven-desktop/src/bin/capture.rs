@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
-use aven_desktop::adapter::{self, Snapshot};
+use aven_core::sync::client::engine::Stage;
+use aven_core::sync::client::invitation::SetupInvitation;
+use aven_desktop::adapter::{self, ReplyBody, Snapshot, SyncPhase};
 use aven_desktop::assets::{Assets, load_fonts};
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
@@ -17,8 +19,11 @@ use aven_desktop::isolation::{self, Isolation};
 use aven_desktop::measure::{self, MeasuredBounds, NamedBounds};
 use aven_desktop::prototype::{Prototype, Render};
 use aven_desktop::scene::{Manifest, Scene, Theme};
-use aven_desktop::session::Session;
+use aven_desktop::session::{OpenInvitation, Session, SettingsTab, SyncPage, SyncRun};
 use aven_desktop::shell::Root;
+use aven_desktop::sync_ops::{
+    DeviceList, DeviceRow, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
+};
 use aven_desktop::{actions, input};
 use aven_host::config::AppConfig;
 use chrono::{DateTime, Local, TimeZone};
@@ -68,6 +73,7 @@ fn dispatch(args: &[String]) -> Result<bool> {
             Ok(true)
         }
         ["check-capabilities"] => check_capabilities().map(|()| true),
+        ["sync-drive", ref rest @ ..] => sync_drive(rest),
         ["keychain-probe"] => keychain_probe().map(|()| true),
         ["list-bench", tasks] => list_bench(tasks.parse()?).map(|()| true),
         ["run", output] => run(Path::new(output), None),
@@ -604,6 +610,273 @@ fn scene_image() -> adapter::PendingImage {
     }
 }
 
+fn settings_tab(name: &str) -> Result<SettingsTab> {
+    Ok(match name {
+        "general" => SettingsTab::General,
+        "sync" => SettingsTab::Sync,
+        "reminders" => SettingsTab::Reminders,
+        "workspaces" => SettingsTab::Workspaces,
+        "projects" => SettingsTab::Projects,
+        "labels" => SettingsTab::Labels,
+        "fields" => SettingsTab::Fields,
+        "commands" => SettingsTab::Commands,
+        "data" => SettingsTab::Data,
+        other => bail!("unknown settings tab {other}"),
+    })
+}
+
+/// Puts the session where a real sync round would leave it. Scenes run offline,
+/// so sync facts come from here rather than from a server.
+fn show_sync_state(
+    root: &mut Root,
+    state: &str,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Root>,
+) {
+    let session = root.session_mut();
+    let devices = |names: &[&str]| DeviceList {
+        devices: (names.iter().enumerate())
+            .map(|(index, name)| DeviceRow {
+                id: [index as u8; 32],
+                label: (*name).to_string(),
+                current: index == 0,
+            })
+            .collect(),
+        removal_unfinished: false,
+    };
+    let invitation =
+        || Secret::new("AVEN:AEDXG43TMNZW6Y3PORUXK5DFMJQWS4TBNBSW4ZLTOR2XMZTHNFVGW3DP");
+    match state {
+        "home" => {}
+        "status" => {
+            session.snapshot.sync.phase = SyncPhase::SetUp;
+            session.snapshot.sync.pending = 0;
+            session.synced_at = Some(Local::now().timestamp() - 120);
+            session.devices = Some(Ok(devices(&["This Mac", "iPhone"])));
+        }
+        "setup" | "join" => {
+            session.sync_page = SyncPage::Invitation {
+                kind: if state == "setup" {
+                    SyncKind::Setup
+                } else {
+                    SyncKind::Join
+                },
+                new_database: false,
+            };
+        }
+        "confirm" => {
+            let setup = SetupInvitation {
+                server: "https://sync.example.com".to_string(),
+                setup_id: [7; 32],
+                secret: aven_core::sync::seed_claim::Secret::new([4; 32]),
+            };
+            session.sync_page = SyncPage::Confirm {
+                kind: SyncKind::Setup,
+                invitation: Secret::new(
+                    setup.encode().expect("a scene invitation encodes").as_str(),
+                ),
+                new_database: false,
+                facts: Some(SetupFacts {
+                    workspaces: 2,
+                    tasks: 48,
+                    missing_images: 0,
+                    leaves_unencrypted_server: false,
+                }),
+            };
+        }
+        "non-empty" => session.sync_page = SyncPage::NonEmpty(42),
+        "running" => {
+            session.sync_run = Some(SyncRun {
+                op: SyncOp::Join {
+                    invitation: None,
+                    new_database: false,
+                },
+                stage: Some(Stage::CatchingUp),
+                amount: None,
+            });
+            session.sync_page = SyncPage::Running;
+        }
+        "done" => {
+            session.sync_page = SyncPage::Done {
+                kind: SyncKind::Setup,
+                note: String::new(),
+            };
+        }
+        "interrupted" => session.snapshot.sync.phase = SyncPhase::SetupIncomplete,
+        "add-device" => {
+            session.snapshot.sync.phase = SyncPhase::SetUp;
+            session.invitation = Some(OpenInvitation {
+                text: invitation(),
+                expires_at: (Local::now().timestamp() + 600) as u64,
+            });
+            session.sync_page = SyncPage::AddDevice;
+        }
+        "tab-devices" => {
+            session.snapshot.sync.phase = SyncPhase::SetUp;
+            session.snapshot.sync.pending = 0;
+            session.synced_at = Some(Local::now().timestamp() - 120);
+            session.devices = Some(Ok(devices(&["This Mac", "iPhone"])));
+            root.close_dialog(window, cx);
+        }
+        "gate" => {
+            session.database_failed(
+                PathBuf::from("/tmp/aven/db.sqlite"),
+                "file is not a database".to_string(),
+            );
+            root.close_dialog(window, cx);
+        }
+        "pulse" => {
+            session.motion.arrived(3);
+            root.close_dialog(window, cx);
+        }
+        other => panic!("unknown sync state {other}"),
+    }
+    cx.notify();
+}
+
+fn short_id(id: &[u8; 32]) -> String {
+    id[..8].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+type Waiter<'a> =
+    dyn FnMut(&mut Session, &mut dyn FnMut(&SyncEvent) -> Option<bool>) -> Result<bool> + 'a;
+
+fn replies_until(
+    runtime: &tokio::runtime::Runtime,
+    replies: &mut adapter::Replies,
+    session: &mut Session,
+    done: &mut dyn FnMut(&SyncEvent) -> Option<bool>,
+) -> Result<bool> {
+    runtime.block_on(async {
+        loop {
+            let reply = tokio::time::timeout(Duration::from_secs(120), replies.recv())
+                .await
+                .context("timed out")?
+                .context("the store stopped")?;
+            let verdict = match &reply.body {
+                ReplyBody::SyncEvent(event) => done(event),
+                _ => None,
+            };
+            session.apply(reply);
+            if let Some(verdict) = verdict {
+                return Ok(verdict);
+            }
+        }
+    })
+}
+
+/// Drives the app's store and session against a real server, the way the Sync
+/// dialog does. Prints what a person would read, and exits non-zero on failure.
+fn sync_drive(args: &[&str]) -> Result<bool> {
+    let isolation = Isolation::from_process()?;
+    let runtime = tokio::runtime::Runtime::new()?;
+    let config = AppConfig::load()?;
+    let launch = adapter::Launch {
+        database: isolation.database.clone(),
+        config,
+        storage: isolation.protected_storage(),
+    };
+    let (mut session, mut replies) = adapter::start(runtime.handle().clone(), launch)?;
+    let mut wait = |session: &mut Session, done: &mut dyn FnMut(&SyncEvent) -> Option<bool>| {
+        replies_until(&runtime, &mut replies, session, done)
+    };
+    let wait: &mut Waiter = &mut wait;
+    let mut finished = |event: &SyncEvent| match event {
+        SyncEvent::Finished(finished) => {
+            match &finished.result {
+                Ok(message) => println!("ok: {message}"),
+                Err(message) => println!("failed: {message}"),
+            }
+            Some(finished.result.is_ok())
+        }
+        _ => None,
+    };
+    let invitation = || -> Result<Secret> {
+        let mut text = String::new();
+        std::io::stdin().read_line(&mut text)?;
+        Ok(Secret::new(text.trim()))
+    };
+    let device_list = |session: &mut Session, wait: &mut Waiter| -> Result<DeviceList> {
+        session.load_devices();
+        wait(session, &mut |event| {
+            matches!(event, SyncEvent::Devices(_)).then_some(true)
+        })?;
+        match session.devices.clone() {
+            Some(Ok(list)) => Ok(list),
+            Some(Err(message)) => bail!(message),
+            None => bail!("no device list arrived"),
+        }
+    };
+    let outcome = match args {
+        ["setup"] => {
+            session.run_sync(SyncOp::Setup(invitation()?));
+            wait(&mut session, &mut finished)
+        }
+        [kind @ ("join" | "join-new")] => {
+            let op = SyncOp::Join {
+                invitation: Some(invitation()?),
+                new_database: *kind == "join-new",
+            };
+            session.run_sync(op);
+            wait(&mut session, &mut finished)
+        }
+        ["now"] => {
+            session.sync_now();
+            let synced = wait(&mut session, &mut finished)?;
+            let (_, line) = session.sync_line();
+            println!("status: {line}");
+            Ok(synced)
+        }
+        ["devices"] => {
+            for device in device_list(&mut session, wait)?.devices {
+                let id = short_id(&device.id);
+                let mark = if device.current { "current" } else { "other" };
+                println!("device: {id} {mark} {}", device.label);
+            }
+            Ok(true)
+        }
+        ["remove", id] => {
+            let list = device_list(&mut session, wait)?;
+            let device = (list.devices.iter())
+                .find(|device| short_id(&device.id) == *id)
+                .with_context(|| format!("no device {id}"))?;
+            session.run_sync(SyncOp::RemoveDevice {
+                id: device.id,
+                label: device.label.clone(),
+            });
+            wait(&mut session, &mut finished)
+        }
+        ["invite"] => {
+            session.request_sync(SyncRequest::Invite);
+            wait(&mut session, &mut |event| match event {
+                SyncEvent::Invitation { text, .. } => {
+                    println!("{}", text.text());
+                    None
+                }
+                SyncEvent::InvitationEnded(message) => {
+                    println!("ok: {message}");
+                    Some(true)
+                }
+                SyncEvent::InvitationFailed(message) => {
+                    println!("failed: {message}");
+                    Some(false)
+                }
+                _ => None,
+            })
+        }
+        _ => bail!("usage: sync-drive setup|join|join-new|now|devices|remove ID|invite"),
+    };
+    // The store thread keeps its timers until the process ends.
+    std::process::exit(match outcome {
+        Ok(true) => 0,
+        Ok(false) => 1,
+        Err(error) => {
+            eprintln!("sync-drive failed: {error:#}");
+            2
+        }
+    });
+}
+
 fn render_gpui(
     cx: &mut VisualTestAppContext,
     scene: &Scene,
@@ -665,6 +938,23 @@ fn render_gpui(
             });
         });
         settle(cx, any, &window_root, &mut replies, 30)?;
+    }
+    if let Some(tab) = &scene.gpui_settings {
+        let tab = settings_tab(tab)?;
+        cx.update(|cx| window_root.update(cx, |root, cx| root.show_settings(tab, cx)));
+        settle(cx, any, &window_root, &mut replies, 12)?;
+    }
+    if let Some(state) = &scene.gpui_sync {
+        cx.update_window(any, |_, window, cx| {
+            window_root.update(cx, |root, cx| {
+                root.open_sync(&actions::OpenSync, window, cx)
+            });
+        })?;
+        settle(cx, any, &window_root, &mut replies, 12)?;
+        cx.update_window(any, |_, window, cx| {
+            window_root.update(cx, |root, cx| show_sync_state(root, state, window, cx));
+        })?;
+        settle(cx, any, &window_root, &mut replies, 4)?;
     }
     if let Some([x, y]) = scene.gpui_pointer {
         cx.simulate_mouse_move(any, point(px(x), px(y)), None, Modifiers::default());

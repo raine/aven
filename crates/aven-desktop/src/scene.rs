@@ -52,6 +52,10 @@ pub struct Scene {
     pub gpui_image: bool,
     /// A description written from outside while the keys' edit is open.
     pub gpui_incoming: Option<String>,
+    /// A settings tab to show.
+    pub gpui_settings: Option<String>,
+    /// A sync, device or recovery state to show after the keys.
+    pub gpui_sync: Option<String>,
     /// Where to click after the keys.
     pub gpui_click: Option<[f32; 2]>,
     /// Element names, which must all exist on both sides.

@@ -7,7 +7,7 @@ use aven_core::choices::{TaskPriority, TaskStatus};
 use gpui::{
     Action, Animation, AnimationExt, App, Bounds, Context, Entity, FocusHandle, FontWeight,
     MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, SharedString, Subscription,
-    Window, div, prelude::*, px, relative,
+    Window, div, prelude::*, relative,
 };
 
 use crate::input::{Editor, EditorEvent, Mode};

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use aven_core::choices::TaskStatus;
 use aven_core::ids::TaskId;
 use aven_host::store::TaskQuery;
-use gpui::{Bounds, ClipboardItem, Context, Pixels, Window, px, size};
+use gpui::{Bounds, ClipboardItem, Context, Pixels, Window, size};
 
 use crate::actions::*;
 use crate::adapter::{
@@ -1149,6 +1149,9 @@ impl Root {
         entries.extend([
             Entry::head("App"),
             Entry::action("Keyboard shortcuts", "?", OpenHelp),
+            Entry::action("Sync now", "S", SyncNow),
+            Entry::action("Open sync", "", OpenSync),
+            Entry::action("Settings", "⌘,", OpenSettings),
             Entry::action(
                 if crate::theme::theme(cx).dark {
                     "Use light theme"

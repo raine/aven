@@ -5,7 +5,7 @@ use aven_core::choices::TaskStatus;
 use aven_core::ids::TaskId;
 use gpui::{
     Animation, AnimationExt, AnyElement, Context, Div, Entity, ExternalPaths, FontWeight,
-    ObjectFit, Stateful, Window, div, img, prelude::*, px,
+    ObjectFit, Stateful, Window, div, img, prelude::*,
 };
 
 use crate::actions::*;

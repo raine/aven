@@ -1,6 +1,7 @@
 //! Dialogs over the window: search, schedule, prompts, images, help and the
 //! incoming description. One shows at a time, above the composer, and focus goes
 //! back where it came from.
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use accesskit::Role;
@@ -15,14 +16,15 @@ use chrono::{DateTime, Local, Utc};
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, FontWeight, HighlightStyle, MouseButton,
     MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription, Window, div,
-    img, prelude::*, px,
+    img, prelude::*,
 };
 
 use crate::actions::*;
-use crate::adapter::{Bulk, Command, Image, SearchHit, SearchInput};
+use crate::adapter::{Bulk, Command, Image, SearchHit, SearchInput, SyncPhase};
 use crate::draft::{dates_preview, schedule_preview};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
+use crate::session::SyncPage;
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
 
@@ -187,6 +189,28 @@ pub enum Dialog {
         alt: Entity<Editor>,
     },
     Help,
+    /// Pages come from `Session::sync_page`; these outlive a page change.
+    Sync {
+        input: Entity<Editor>,
+        buttons: [FocusHandle; 2],
+        /// The page the Tab order was last built for.
+        page: Option<std::mem::Discriminant<SyncPage>>,
+    },
+    Confirm {
+        title: String,
+        body: String,
+        note: Option<&'static str>,
+        label: &'static str,
+        action: ConfirmAction,
+        /// Cancel and confirm, in Tab order.
+        buttons: [FocusHandle; 2],
+    },
+    Project {
+        key: Option<String>,
+        name: Entity<Editor>,
+        prefix: Entity<Editor>,
+        error: Option<&'static str>,
+    },
     Incoming {
         id: TaskId,
         mine: String,
@@ -194,11 +218,19 @@ pub enum Dialog {
     },
 }
 
+/// What a yes in a confirmation dialog does.
+#[derive(Clone)]
+pub enum ConfirmAction {
+    RemoveDevice { id: [u8; 32], label: String },
+    Restore(PathBuf),
+    Reset { unfinished_setup: bool },
+}
+
 pub struct Layer {
     pub dialog: Dialog,
     prior: Option<FocusHandle>,
     focus: FocusHandle,
-    fields: Vec<FocusHandle>,
+    pub(crate) fields: Vec<FocusHandle>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -279,8 +311,11 @@ impl Root {
         cx.notify();
     }
 
-    pub(crate) fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(layer) = self.dialog.take() {
+            if matches!(layer.dialog, Dialog::Sync { .. }) {
+                self.session.sync_closed();
+            }
             let focus = layer.prior.unwrap_or_else(|| self.focus.clone());
             window.focus(&focus, cx);
         }
@@ -307,7 +342,10 @@ impl Root {
             }
             EditorEvent::Up if searching => self.step_search(-1, cx),
             EditorEvent::Down if searching => self.step_search(1, cx),
-            EditorEvent::Changed => cx.notify(),
+            EditorEvent::Changed => {
+                self.uppercase_prefix(cx);
+                cx.notify();
+            }
             _ => {}
         }
     }
@@ -828,7 +866,10 @@ impl Root {
                 save(self, text, window, cx);
             }
             Dialog::Image { .. } => self.close_image(window, cx),
+            Dialog::Sync { .. } => self.sync_accept(window, cx),
+            Dialog::Project { .. } => self.save_project(window, cx),
             Dialog::Help
+            | Dialog::Confirm { .. }
             | Dialog::Incoming { .. }
             | Dialog::Stop { .. }
             | Dialog::Resolve { .. }
@@ -1098,7 +1139,21 @@ impl Root {
             .child(ref_label(&hit.reference, &hit.project, None, t))
     }
 
-    fn field_label(text: &'static str, t: &Theme) -> impl IntoElement + use<> {
+    /// Prefixes are capitals, so typing shows them as they will save.
+    fn uppercase_prefix(&mut self, cx: &mut Context<Self>) {
+        if let Some(Layer {
+            dialog: Dialog::Project { prefix, .. },
+            ..
+        }) = self.dialog.as_ref()
+        {
+            let upper = prefix.read(cx).text().to_uppercase();
+            if upper != prefix.read(cx).text() {
+                prefix.update(cx, |editor, cx| editor.set_text(&upper, cx));
+            }
+        }
+    }
+
+    pub(crate) fn field_label(text: &'static str, t: &Theme) -> impl IntoElement + use<> {
         small(12.)
             .mt(px(10.))
             .mb(px(4.))
@@ -1106,7 +1161,7 @@ impl Root {
             .child(text)
     }
 
-    fn field_box(editor: &Entity<Editor>, t: &Theme) -> impl IntoElement + use<> {
+    pub(crate) fn field_box(editor: &Entity<Editor>, t: &Theme) -> impl IntoElement + use<> {
         div()
             .h(px(30.))
             .px(px(9.))
@@ -1146,7 +1201,7 @@ impl Root {
         quick
     }
 
-    fn heading(text: String, t: &Theme) -> impl IntoElement + use<> {
+    pub(crate) fn heading(text: String, t: &Theme) -> impl IntoElement + use<> {
         div()
             .px(px(18.))
             .pt(px(14.))
@@ -1156,7 +1211,7 @@ impl Root {
             .child(text)
     }
 
-    fn footer(t: &Theme) -> gpui::Div {
+    pub(crate) fn footer(t: &Theme) -> gpui::Div {
         div()
             .flex()
             .justify_end()
@@ -1168,7 +1223,7 @@ impl Root {
             .border_color(t.line)
     }
 
-    fn cancel_and_accept(
+    pub(crate) fn cancel_and_accept(
         &self,
         label: &'static str,
         cx: &mut Context<Self>,
@@ -1484,6 +1539,28 @@ impl Root {
             Dialog::Prompt { .. } => ("Edit", NARROW_WIDTH, self.render_prompt(cx, &t), "Dialog"),
             Dialog::Stop { .. } => ("Stop", NARROW_WIDTH, self.render_stop(cx, &t), "Dialog"),
             Dialog::Gist { .. } => ("Gist", NARROW_WIDTH, self.render_gist(cx, &t), "Dialog"),
+            Dialog::Sync { .. } => {
+                let width = if self.session.sync_page == SyncPage::Home
+                    && self.session.snapshot.sync.phase != SyncPhase::Local
+                {
+                    DIALOG_WIDTH
+                } else {
+                    NARROW_WIDTH
+                };
+                ("Sync", width, self.render_sync(cx, &t), "Dialog")
+            }
+            Dialog::Confirm { .. } => (
+                "Confirm",
+                DIALOG_WIDTH,
+                self.render_confirm(cx, &t),
+                "Dialog",
+            ),
+            Dialog::Project { .. } => (
+                "Project",
+                DIALOG_WIDTH,
+                self.render_project(cx, &t),
+                "Dialog",
+            ),
             Dialog::Resolve { .. } => (
                 "Resolve conflict",
                 DIALOG_WIDTH,

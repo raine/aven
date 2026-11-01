@@ -13,7 +13,7 @@ use aven_host::store::ConflictTarget;
 use gpui::{
     Animation, AnimationExt, AnyElement, Bounds, Context, Div, Entity, FocusHandle, FontWeight,
     Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, SharedString, Stateful, Window, canvas,
-    div, point, prelude::*, px,
+    div, point, prelude::*,
 };
 
 use crate::actions::*;
@@ -84,7 +84,7 @@ fn hint(text: impl Into<SharedString>, t: &Theme) -> Div {
 }
 
 /// Puts a dialog button on the Tab order, where Enter does what a click does.
-fn tab_stop(
+pub(crate) fn tab_stop(
     button: Stateful<Div>,
     focus: &FocusHandle,
     t: &Theme,

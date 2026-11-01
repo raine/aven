@@ -1,17 +1,24 @@
 //! The app's state above the store: selection, drafts, request identity, messages
 //! and motion bookkeeping. It has no GPUI types, so behaviour tests need no window.
 use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::ids::TaskId;
 use aven_core::recurrence::RecurrenceSeriesId;
+use aven_core::sync::client::engine::Stage;
 use aven_host::store::TaskQuery;
+use chrono::Local;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::adapter::{
-    Bulk, CatalogTask, Command, Detail, Go, NewTask, Reply, ReplyBody, Request, ReviewCard,
-    SearchInput, SearchResults, SeriesDetail, Snapshot, SyncHealth, TaskRow, done_group,
+    Bulk, CatalogTask, Command, Detail, Go, KnownDatabase, NewTask, Reply, ReplyBody, Request,
+    ReviewCard, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot, SyncHealth,
+    SyncPhase, TaskRow, done_group,
+};
+use crate::sync_ops::{
+    DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
 };
 
 pub const POP_DURATION: Duration = Duration::from_millis(320);
@@ -20,6 +27,7 @@ pub const PRIORITY_DURATION: Duration = Duration::from_millis(200);
 pub const COPIED_DURATION: Duration = Duration::from_millis(1300);
 pub const RING_DURATION: Duration = Duration::from_millis(700);
 pub const ALL_CLEAR_DURATION: Duration = Duration::from_millis(1000);
+pub const PULSE_DURATION: Duration = Duration::from_millis(1100);
 const REVIEW_REPEAT_WINDOW: Duration = Duration::from_millis(500);
 
 /// Motions keyed on wall time. Each expires on its own, so a row scrolled back
@@ -34,6 +42,8 @@ pub struct Motion {
     /// Epics whose ring sweeps on from an earlier count.
     rings: HashMap<TaskId, (usize, usize, Instant)>,
     all_clear: Option<(usize, Instant)>,
+    /// Changes a background round brought in.
+    pulse: Option<(usize, usize, Instant)>,
 }
 
 impl Motion {
@@ -101,6 +111,18 @@ impl Motion {
     pub fn all_clear(&self) -> Option<usize> {
         let (run, at) = self.all_clear?;
         (at.elapsed() < ALL_CLEAR_DURATION).then_some(run)
+    }
+
+    pub fn arrived(&mut self, changes: usize) {
+        if !self.reduced {
+            self.pulse = Some((changes, self.next_run(), Instant::now()));
+        }
+    }
+
+    /// The changes a live Sync pulse announces, and its animation.
+    pub fn pulse(&self) -> Option<(usize, usize)> {
+        let (changes, run, at) = self.pulse?;
+        (at.elapsed() < PULSE_DURATION).then_some((changes, run))
     }
 
     pub fn copied(&mut self, id: &TaskId) {
@@ -177,6 +199,8 @@ pub struct Applied {
     pub stop: Option<RecurrenceSeriesId>,
     /// Rows a local write took off the list.
     pub left: Vec<TaskRow>,
+    /// A database opened, with the one left behind.
+    pub opened: Option<(KnownDatabase, Option<KnownDatabase>)>,
 }
 
 /// A change a review made, with the card it came from.
@@ -251,6 +275,19 @@ pub struct Session {
     pub note_drafts: HashMap<TaskId, String>,
     pub toast: Option<Toast>,
     pub sync: Option<SyncHealth>,
+    /// When this app last finished a round. Desktop-local, never the daemon's.
+    pub synced_at: Option<i64>,
+    pub sync_run: Option<SyncRun>,
+    pub sync_page: SyncPage,
+    /// The Sync dialog is on screen, so a result lands there, not in a toast.
+    pub sync_open: bool,
+    pub devices: Option<Result<DeviceList, String>>,
+    pub invitation: Option<OpenInvitation>,
+    pub settings: Option<SettingsTab>,
+    pub settings_data: SettingsData,
+    /// The open database's path.
+    pub database: PathBuf,
+    pub database_error: Option<DatabaseError>,
     pub motion: Motion,
     /// Tasks every write goes to, instead of the selected one.
     pub marks: BTreeSet<TaskId>,
@@ -277,6 +314,92 @@ pub struct Session {
     last_search: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsTab {
+    #[default]
+    General,
+    Sync,
+    Reminders,
+    Workspaces,
+    Projects,
+    Labels,
+    Fields,
+    Commands,
+    Data,
+}
+
+/// What the Sync dialog shows. Pages live here so replies can move them on
+/// while the dialog is closed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SyncPage {
+    #[default]
+    Home,
+    Invitation {
+        kind: SyncKind,
+        new_database: bool,
+    },
+    Confirm {
+        kind: SyncKind,
+        invitation: Secret,
+        new_database: bool,
+        facts: Option<SetupFacts>,
+    },
+    /// This database has tasks, so joining needs a new one.
+    NonEmpty(i64),
+    Running,
+    Done {
+        kind: SyncKind,
+        note: String,
+    },
+    Failed(String),
+    AddDevice,
+}
+
+/// User-started sync work on its way, as the dialog and sidebar show it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncRun {
+    pub op: SyncOp,
+    pub stage: Option<Stage>,
+    pub amount: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncTone {
+    Plain,
+    Good,
+    Busy,
+    Warn,
+    Bad,
+}
+
+/// An open invitation. The text stays in memory, for Add device alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenInvitation {
+    pub text: Secret,
+    pub expires_at: u64,
+}
+
+/// A database that did not open, while no other is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseError {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+/// How long ago a Unix time was, as sync status reads it.
+pub fn ago(at: i64, now: i64) -> String {
+    match (now - at).max(0) {
+        0..60 => "just now".to_string(),
+        seconds @ 60..3600 => format!("{}m ago", seconds / 60),
+        seconds @ 3600..86400 => format!("{}h ago", seconds / 3600),
+        seconds => format!("{}d ago", seconds / 86400),
+    }
+}
+
+pub(crate) fn count_text(count: usize, one: &str) -> String {
+    format!("{count} {one}{}", if count == 1 { "" } else { "s" })
+}
+
 /// A step back from a task opened from another one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trail {
@@ -300,6 +423,16 @@ impl Session {
             note_drafts: HashMap::new(),
             toast: None,
             sync: None,
+            synced_at: None,
+            sync_run: None,
+            sync_page: SyncPage::Home,
+            sync_open: false,
+            devices: None,
+            invitation: None,
+            settings: None,
+            settings_data: SettingsData::default(),
+            database: PathBuf::new(),
+            database_error: None,
             motion: Motion::default(),
             marks: BTreeSet::new(),
             series: None,
@@ -900,6 +1033,290 @@ impl Session {
         self.undo();
     }
 
+    pub fn database_failed(&mut self, path: PathBuf, message: String) {
+        self.database_error = Some(DatabaseError { path, message });
+    }
+
+    pub fn open_settings(&mut self, tab: SettingsTab) {
+        self.settings = Some(tab);
+        self.send(Command::LoadSettings);
+        if tab == SettingsTab::Sync {
+            self.load_devices();
+        }
+    }
+
+    pub fn close_settings(&mut self) {
+        self.settings = None;
+    }
+
+    pub fn load_devices(&mut self) {
+        if self.snapshot.sync.phase == SyncPhase::SetUp {
+            self.send(Command::Sync(SyncRequest::LoadDevices));
+        }
+    }
+
+    /// Where the Sync dialog opens: on the work under way, if any.
+    pub fn open_sync(&mut self) {
+        self.sync_open = true;
+        self.sync_page = if self
+            .sync_run
+            .as_ref()
+            .is_some_and(|run| run.op.kind().is_some())
+        {
+            SyncPage::Running
+        } else {
+            SyncPage::Home
+        };
+        self.load_devices();
+    }
+
+    /// Runs a round now. A database that has no sync yet returns false, and
+    /// the view opens the Sync dialog.
+    pub fn sync_now(&mut self) -> bool {
+        if self.snapshot.sync.phase != SyncPhase::SetUp {
+            return false;
+        }
+        if self.sync_run.is_none() {
+            self.run_sync(SyncOp::Now);
+        }
+        true
+    }
+
+    /// Forgets a page that holds an invitation once it leaves the screen.
+    pub fn sync_closed(&mut self) {
+        self.sync_open = false;
+        if matches!(self.sync_page, SyncPage::Confirm { .. }) {
+            self.sync_page = SyncPage::Home;
+        }
+    }
+
+    pub fn run_sync(&mut self, op: SyncOp) {
+        self.send(Command::Sync(SyncRequest::Run(op)));
+    }
+
+    pub fn request_sync(&mut self, request: SyncRequest) {
+        self.send(Command::Sync(request));
+    }
+
+    pub fn add_device(&mut self) {
+        self.sync_page = SyncPage::AddDevice;
+        if self.invitation.is_none() {
+            self.request_sync(SyncRequest::Invite);
+        }
+    }
+
+    /// The sidebar's status: how it reads and what tone it takes.
+    pub fn sync_line(&self) -> (SyncTone, String) {
+        let view = &self.snapshot.sync;
+        if let Some(run) = &self.sync_run {
+            let text = match run.op.kind() {
+                Some(SyncKind::Setup) => "Setting up sync…",
+                Some(SyncKind::Join) => "Joining sync…",
+                None => "Syncing…",
+            };
+            return (SyncTone::Busy, text.to_string());
+        }
+        let failed = matches!(
+            self.sync,
+            Some(SyncHealth::Failed(_) | SyncHealth::VaultDeleted)
+        );
+        match view.phase {
+            SyncPhase::SetupIncomplete => (SyncTone::Warn, "Finish setting up sync".to_string()),
+            SyncPhase::JoinIncomplete => (SyncTone::Warn, "Finish joining sync".to_string()),
+            SyncPhase::Local => (SyncTone::Plain, "Local only".to_string()),
+            SyncPhase::SetUp if failed || view.access_refused || view.vault_deleted => {
+                (SyncTone::Bad, "Sync needs attention".to_string())
+            }
+            SyncPhase::SetUp if view.pending > 0 => (
+                SyncTone::Warn,
+                format!("{} waiting", count_text(view.pending, "change")),
+            ),
+            SyncPhase::SetUp if self.sync == Some(SyncHealth::Waiting) => {
+                (SyncTone::Plain, "Sync waiting".to_string())
+            }
+            SyncPhase::SetUp => (
+                SyncTone::Good,
+                match self.last_synced() {
+                    Some(at) => format!("Synced {}", ago(at, Local::now().timestamp())),
+                    None => "Synced".to_string(),
+                },
+            ),
+        }
+    }
+
+    /// The newest finished round, this app's or the daemon's.
+    fn last_synced(&self) -> Option<i64> {
+        self.synced_at.max(self.snapshot.sync.daemon_synced_at)
+    }
+
+    /// The Sync dialog's headline and the line beneath it.
+    pub fn sync_hero(&self) -> (String, String) {
+        let view = &self.snapshot.sync;
+        if view.vault_deleted || self.sync == Some(SyncHealth::VaultDeleted) {
+            return (
+                "Sync stopped".to_string(),
+                "This sync's vault was deleted on the server, so automatic sync stopped. Local \
+                 tasks and unsynced changes stay here."
+                    .to_string(),
+            );
+        }
+        if view.access_refused {
+            return (
+                "Sync stopped".to_string(),
+                "The server refused this device. It may have been removed from sync; check \
+                 from another device. Local tasks and images stay here."
+                    .to_string(),
+            );
+        }
+        if let Some(SyncHealth::Failed(message)) = &self.sync {
+            return ("Sync stopped".to_string(), message.clone());
+        }
+        let head = if view.pending > 0 {
+            format!("{} waiting", count_text(view.pending, "change"))
+        } else if view.conflicts > 0 {
+            format!(
+                "Synced, {} to review",
+                count_text(view.conflicts, "conflict")
+            )
+        } else {
+            "Everything is synced".to_string()
+        };
+        let sub = match self.last_synced() {
+            Some(at) => format!(
+                "Last synced {}. End-to-end encrypted.",
+                ago(at, Local::now().timestamp())
+            ),
+            None => "End-to-end encrypted.".to_string(),
+        };
+        (head, sub)
+    }
+
+    fn sync_event(&mut self, event: SyncEvent) {
+        match event {
+            SyncEvent::Started(op) => {
+                if op.kind().is_some() {
+                    self.sync_page = SyncPage::Running;
+                }
+                self.sync_run = Some(SyncRun {
+                    op,
+                    stage: None,
+                    amount: None,
+                });
+            }
+            SyncEvent::Progress { stage, amount } => {
+                if let Some(run) = &mut self.sync_run {
+                    run.stage = Some(stage);
+                    run.amount = amount;
+                }
+            }
+            SyncEvent::Finished(finished) => self.sync_finished(*finished),
+            SyncEvent::Preview(Ok(facts)) => {
+                if let SyncPage::Confirm { facts: shown, .. } = &mut self.sync_page {
+                    *shown = Some(facts);
+                }
+            }
+            SyncEvent::Preview(Err(message)) => self.sync_page = SyncPage::Failed(message),
+            SyncEvent::JoinCheck(Ok(None)) => {
+                self.sync_page = SyncPage::Invitation {
+                    kind: SyncKind::Join,
+                    new_database: false,
+                };
+            }
+            SyncEvent::JoinCheck(Ok(Some(tasks))) => self.sync_page = SyncPage::NonEmpty(tasks),
+            SyncEvent::JoinCheck(Err(message)) => self.sync_page = SyncPage::Failed(message),
+            SyncEvent::Devices(devices) => self.devices = Some(devices),
+            SyncEvent::Invitation { text, expires_at } => {
+                self.invitation = Some(OpenInvitation { text, expires_at });
+            }
+            SyncEvent::InvitationEnded(message) => {
+                self.invitation = None;
+                if self.sync_page == SyncPage::AddDevice {
+                    self.sync_page = SyncPage::Home;
+                }
+                self.show_toast(message, None);
+                self.load_devices();
+                self.send(Command::Refresh);
+            }
+            SyncEvent::InvitationKept(message) => self.show_toast(message, None),
+            SyncEvent::InvitationFailed(message) => {
+                self.sync_page = SyncPage::Failed(message);
+            }
+        }
+    }
+
+    fn sync_finished(&mut self, finished: Finished) {
+        let Finished {
+            op,
+            result,
+            open,
+            needs_invitation,
+        } = finished;
+        self.sync_run = None;
+        if let Some(path) = open {
+            self.send(Command::OpenDatabase(path));
+        } else {
+            self.send(Command::Refresh);
+        }
+        self.load_devices();
+        if needs_invitation {
+            self.sync_page = SyncPage::Invitation {
+                kind: SyncKind::Setup,
+                new_database: false,
+            };
+            return;
+        }
+        if op == SyncOp::Now {
+            match &result {
+                Ok(_) => {
+                    self.sync = Some(SyncHealth::Synced);
+                    self.synced_at = Some(Local::now().timestamp());
+                }
+                Err(message) => self.sync = Some(SyncHealth::Failed(message.clone())),
+            }
+        }
+        let watching = self.sync_open;
+        match (result, op.kind()) {
+            (Ok(note), Some(kind)) if watching => {
+                self.sync_page = SyncPage::Done { kind, note };
+            }
+            (Err(message), Some(_)) if watching => self.sync_page = SyncPage::Failed(message),
+            (Ok(message) | Err(message), _) => {
+                self.show_toast(message, None);
+                if op.kind().is_some() {
+                    self.sync_page = SyncPage::Home;
+                }
+            }
+        }
+    }
+
+    fn database_opened(
+        &mut self,
+        path: PathBuf,
+        tasks: usize,
+        previous: Option<(PathBuf, usize)>,
+        applied: &mut Applied,
+    ) {
+        self.database_error = None;
+        self.database = path.clone();
+        self.settings = self
+            .settings
+            .or(previous.is_none().then_some(SettingsTab::Data));
+        self.selected = None;
+        self.peek = None;
+        self.detail = None;
+        self.marks.clear();
+        self.done.clear();
+        self.sync = None;
+        self.synced_at = None;
+        self.devices = None;
+        self.invitation = None;
+        self.show_toast(format!("Opened {}", path.display()), None);
+        applied.opened = Some((
+            KnownDatabase { path, tasks },
+            previous.map(|(path, tasks)| KnownDatabase { path, tasks }),
+        ));
+    }
+
     pub fn show_toast(&mut self, message: String, action: Option<ToastAction>) {
         let run = self.motion.next_run();
         self.toast = Some(Toast {
@@ -1035,7 +1452,32 @@ impl Session {
                     Some(ToastAction::Refresh),
                 );
             }
-            ReplyBody::Sync(health) => self.sync = Some(health),
+            ReplyBody::Sync(health) => {
+                if health == SyncHealth::Synced {
+                    self.synced_at = Some(Local::now().timestamp());
+                }
+                self.sync = Some(health);
+            }
+            ReplyBody::SyncArrived(changes) => self.motion.arrived(changes),
+            ReplyBody::SyncEvent(event) => self.sync_event(event),
+            ReplyBody::Settings(data) => self.settings_data = *data,
+            ReplyBody::DatabaseOpened {
+                path,
+                tasks,
+                previous,
+            } => {
+                self.database_opened(path, tasks, previous, &mut applied);
+            }
+            ReplyBody::DatabaseFailed(path, message) => {
+                if self.database_error.is_some() {
+                    self.database_failed(path, message);
+                } else {
+                    self.show_toast(
+                        format!("Could not open {}: {message}", path.display()),
+                        None,
+                    );
+                }
+            }
         }
         self.keep_card_open();
         applied
@@ -1202,4 +1644,65 @@ fn order(snapshot: &Snapshot) -> Vec<TaskId> {
 fn first_row(snapshot: &Snapshot) -> Option<TaskId> {
     let first = snapshot.ordered().next()?;
     Some(snapshot.tasks[first].id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::sync_ops::Secret;
+
+    fn session() -> Session {
+        let (requests, received) = mpsc::unbounded_channel();
+        std::mem::forget(received);
+        Session::new(Snapshot::default(), requests)
+    }
+
+    #[test]
+    fn sync_line_reports_the_worst_state_first() {
+        let mut session = session();
+        assert_eq!(session.sync_line().1, "Local only");
+        session.snapshot.sync.phase = SyncPhase::SetupIncomplete;
+        assert_eq!(session.sync_line().0, SyncTone::Warn);
+        session.snapshot.sync.phase = SyncPhase::SetUp;
+        session.snapshot.sync.pending = 1;
+        assert_eq!(session.sync_line().1, "1 change waiting");
+        session.snapshot.sync.access_refused = true;
+        assert_eq!(session.sync_line().0, SyncTone::Bad);
+    }
+
+    #[test]
+    fn closing_the_dialog_forgets_a_typed_invitation() {
+        let mut session = session();
+        session.sync_open = true;
+        session.sync_page = SyncPage::Confirm {
+            kind: SyncKind::Join,
+            invitation: Secret::new("AVEN:secret"),
+            new_database: false,
+            facts: None,
+        };
+        session.sync_closed();
+        assert!(!session.sync_open);
+        assert_eq!(session.sync_page, SyncPage::Home);
+    }
+
+    #[test]
+    fn sync_now_needs_a_set_up_database() {
+        let mut session = session();
+        assert!(!session.sync_now());
+        session.snapshot.sync.phase = SyncPhase::SetUp;
+        assert!(session.sync_now());
+    }
+
+    #[test]
+    fn the_pulse_honours_reduced_motion() {
+        let mut motion = Motion::default();
+        motion.arrived(2);
+        assert_eq!(motion.pulse().map(|(changes, _)| changes), Some(2));
+        let mut still = Motion::default();
+        still.reduced = true;
+        still.arrived(2);
+        assert_eq!(still.pulse(), None);
+    }
 }

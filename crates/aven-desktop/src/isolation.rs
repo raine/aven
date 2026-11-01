@@ -122,6 +122,9 @@ struct IsolatedConfig {
     daemon: DaemonSettings,
     #[serde(default)]
     local: LocalSettings,
+    /// The Reminders tab writes these, and none of them redirects storage.
+    #[serde(default, rename = "reminders")]
+    _reminders: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -945,6 +948,7 @@ mod tests {
             "local:\n  db_path: ROOT/state/aven/db.sqlite\n",
             "local:\n  blob_dir: ROOT/state/aven/db.sqlite.blobs\n",
             "local:\n  blob_dir: db.sqlite.blobs\n",
+            "reminders:\n  enabled: true\n  digest_time: \"08:00\"\n",
         ] {
             with_config(Some(&format!("{base}{allowed}")), owner.path()).unwrap();
         }
@@ -954,7 +958,6 @@ mod tests {
             "local:\n  blob_dir: ../blobs\n",
             "local:\n  image_optimization: {}\n",
             "agent:\n  task_intake:\n    command: /bin/sh\n",
-            "reminders:\n  enabled: true\n",
         ] {
             let error = with_config(Some(&format!("{base}{refused}")), owner.path());
             assert!(error.is_err(), "{refused}");

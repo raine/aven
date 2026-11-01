@@ -19,6 +19,7 @@ needs a worktree with that directory.
 | `scripts/desktop/capture OUTPUT [SCENE]` | Paired screenshots and box reports |
 | `scripts/desktop/sync-proof` | Two clients through a disposable server |
 | `scripts/desktop/app-proof start` | Disposable server and two clients to run the app against by hand; its docstring lists the other subcommands |
+| `scripts/desktop/app-proof drive` | Setup, join, Sync now and device removal through the app's store and session |
 | `crates/aven-desktop/target/bin/aven-desktop-capture check-capabilities` | Compare the capability map with the prototype |
 
 `scripts/desktop/cargo` keeps build artifacts in

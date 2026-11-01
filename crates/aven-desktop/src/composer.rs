@@ -7,7 +7,7 @@ use accesskit::Role;
 use aven_core::choices::TaskStatus;
 use gpui::{
     Animation, AnimationExt, AnyElement, Context, Entity, ExternalPaths, FocusHandle, KeyDownEvent,
-    MouseButton, MouseDownEvent, Subscription, Window, div, prelude::*, px,
+    MouseButton, MouseDownEvent, Subscription, Window, div, prelude::*,
 };
 
 use crate::actions::*;
