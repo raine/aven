@@ -2676,6 +2676,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn switching_workspace_shows_its_tasks_and_drops_the_filters() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        actor
+            .store
+            .create_workspace("Other".to_string())
+            .await
+            .unwrap();
+        let other = actor
+            .store
+            .workspaces
+            .iter()
+            .find(|space| space.name == "Other");
+        let key = other.unwrap().key.clone();
+        let filter = Command::FilterPriority(Some(TaskPriority::High));
+        run(&mut actor, filter).await;
+        run(&mut actor, Command::SwitchWorkspace(key)).await;
+        let seen = bodies(&mut replies);
+        let list = lists(&seen).pop().unwrap();
+        assert_eq!(list.workspace, "Other");
+        assert!(list.tasks.is_empty());
+        assert_eq!(list.view.priority, None);
+    }
+
+    #[tokio::test]
     async fn delete_shows_a_toast_undo_brings_it_back_and_a_filter_finds_it() {
         let (_directory, mut actor, mut replies) = actor("Stored").await;
         let id = task_id(&actor, "Stored");

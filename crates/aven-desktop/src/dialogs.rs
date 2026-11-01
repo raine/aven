@@ -831,10 +831,11 @@ impl Root {
                     }),
             );
         }
+        let workspace = &self.session.snapshot.workspace;
         let where_ = if *all {
-            "all projects".to_string()
+            format!("{workspace}, all projects")
         } else {
-            scope_name.clone().unwrap_or_default()
+            format!("{workspace}, {}", scope_name.clone().unwrap_or_default())
         };
         let count = if text.is_empty() {
             "Includes done and canceled tasks".to_string()

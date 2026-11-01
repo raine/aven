@@ -1516,7 +1516,7 @@ scenes = ["queue-completed"]
 id = "palette:About Aven"
 action = "About Aven"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "desktop-finish"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1548,7 +1548,7 @@ scenes = ["palette"]
 id = "palette:Add to epic"
 action = "Add to epic"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "workflows"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1580,7 +1580,7 @@ scenes = ["palette"]
 id = "palette:Clear marks"
 action = "Clear marks"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "workflows"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1660,7 +1660,7 @@ scenes = ["palette"]
 id = "palette:Mark all visible tasks"
 action = "Mark all visible tasks"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "workflows"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1692,7 +1692,7 @@ scenes = ["palette"]
 id = "palette:New epic"
 action = "New epic"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "workflows"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1708,7 +1708,7 @@ scenes = ["palette"]
 id = "palette:Open sync"
 action = "Open sync"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1716,7 +1716,7 @@ scenes = ["palette"]
 id = "palette:Publish report as secret gist"
 action = "Publish report as secret gist"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "workflows"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1740,7 +1740,7 @@ scenes = ["palette"]
 id = "palette:Review tasks"
 action = "Review tasks"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "workflows"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1748,7 +1748,7 @@ scenes = ["palette"]
 id = "palette:Settings"
 action = "Settings"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 
@@ -1756,7 +1756,7 @@ scenes = ["palette"]
 id = "palette:Sync now"
 action = "Sync now"
 operation = "action registry dispatching the same action as its key or button"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["palette"]
 [[capability]]
@@ -1835,7 +1835,7 @@ scenes = ["detail-blockers"]
 id = "dialog:ACT.c"
 action = "Cancel confirmation"
 operation = "session state"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["detail-menu"]
 
@@ -1843,7 +1843,7 @@ scenes = ["detail-menu"]
 id = "dialog:ACT.ok"
 action = "Confirm action"
 operation = "the action being confirmed"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["detail-menu"]
 
@@ -1913,7 +1913,7 @@ test_only = true
 id = "dialog:confirmDialog.c"
 action = "Cancel confirmation"
 operation = "session state"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["detail-menu"]
 
@@ -1921,7 +1921,7 @@ scenes = ["detail-menu"]
 id = "dialog:confirmDialog.ok"
 action = "Confirm action"
 operation = "the action being confirmed"
-phase = "core-screens"
+phase = "settings-sync"
 acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
 scenes = ["detail-menu"]
 
