@@ -387,6 +387,7 @@ fn without(h: &Harness, ids: &[&TaskId]) -> Snapshot {
         name: "Focus".to_string(),
         hint: String::new(),
         rows: (0..rows.len()).collect(),
+        lane: None,
     }];
     list.tasks = rows;
     list
@@ -622,6 +623,11 @@ async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
 
     session.set_status(&second, TaskStatus::Todo);
     until_done_group(&mut session, &mut replies, false).await;
+    // The toast's reply follows the list that ended the wait.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while let Ok(reply) = replies.try_recv() {
+        session.apply(reply);
+    }
     assert!(session.toast.unwrap().message.ends_with("moved to Todo"));
     assert_eq!(
         session.snapshot.row(&second).unwrap().status,

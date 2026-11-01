@@ -96,6 +96,8 @@ pub enum ToastAction {
     Refresh,
     /// Moves somewhere the write made interesting.
     Go(Go),
+    /// Brings a discarded draft back, which the window holds.
+    RestoreDraft,
 }
 
 impl ToastAction {
@@ -104,6 +106,7 @@ impl ToastAction {
             Self::Retry(_) => "Retry",
             Self::Refresh => "Refresh",
             Self::Go(go) => go.label,
+            Self::RestoreDraft => "Restore",
         }
     }
 }
@@ -149,6 +152,8 @@ pub struct Session {
     /// A task opened from another one, with the tasks it was reached through.
     pub peek: Option<TaskId>,
     pub trail: Vec<Trail>,
+    /// The target fills the window.
+    pub expanded: bool,
     pub detail: Option<Detail>,
     pub catalog: Vec<CatalogTask>,
     pub search: SearchResults,
@@ -190,6 +195,7 @@ impl Session {
             selected: None,
             peek: None,
             trail: Vec::new(),
+            expanded: false,
             detail: None,
             catalog: Vec::new(),
             search: SearchResults::default(),
@@ -304,6 +310,7 @@ impl Session {
     pub fn switch_view(&mut self, command: Command) {
         self.refresh_view();
         self.leave_peek();
+        self.expanded = false;
         if !matches!(command, Command::Goto(_)) {
             self.selected = None;
             self.detail = None;
@@ -345,6 +352,7 @@ impl Session {
 
     pub fn set_status(&mut self, id: &TaskId, status: TaskStatus) {
         let Some(row) = self.snapshot.tasks.iter_mut().find(|row| &row.id == id) else {
+            self.send(Command::SetStatus(id.clone(), status));
             return;
         };
         if row.status == status {
@@ -357,7 +365,8 @@ impl Session {
     }
 
     pub fn toggle_status(&mut self, id: &TaskId, status: TaskStatus) {
-        let Some(row) = self.snapshot.row(id) else {
+        let row = self.snapshot.row(id).or(self.target_row());
+        let Some(row) = row.filter(|row| row.id == *id) else {
             return;
         };
         let next = if row.status == status {
@@ -370,6 +379,7 @@ impl Session {
 
     pub fn set_priority(&mut self, id: &TaskId, priority: TaskPriority) {
         let Some(row) = self.snapshot.tasks.iter_mut().find(|row| &row.id == id) else {
+            self.send(Command::SetPriority(id.clone(), priority));
             return;
         };
         if row.priority == priority {
@@ -383,6 +393,7 @@ impl Session {
 
     pub fn set_title(&mut self, id: &TaskId, title: String) {
         let Some(row) = self.snapshot.tasks.iter_mut().find(|row| &row.id == id) else {
+            self.send(Command::SetTitle(id.clone(), title));
             return;
         };
         if row.title == title {
@@ -428,7 +439,7 @@ impl Session {
                 Command::Goto(id) => self.goto(id),
                 command => self.switch_view(command),
             },
-            None => {}
+            Some(ToastAction::RestoreDraft) | None => {}
         }
     }
 

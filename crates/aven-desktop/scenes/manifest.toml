@@ -116,3 +116,377 @@ width = 1440
 height = 900
 gpui_pointer = [600.0, 133.0]
 measure = ["app", "nav", "main", "main-header", "list", "detail"]
+
+[[scene]]
+name = "views"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v y"]
+prototype_steps = ["state.view='ready'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "views-recent"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v r"]
+prototype_steps = ["state.view='recent'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "views-empty"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v c"]
+prototype_steps = ["state.view='conflicts'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "views-columns"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v o", "v l"]
+prototype_steps = ["state.view='open'", "state.layout='board'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "queue-filtered"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["f x"]
+prototype_steps = ["state.filters.deleted='show'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "search-results"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["/", "s y n c"]
+prototype_steps = ["openSearch()", "const i=document.querySelector('.sr-top input');i.value='sync';i.dispatchEvent(new Event('input'))"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "palette"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["cmd-k"]
+prototype_steps = ["palette()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "help"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["?"]
+prototype_steps = ["openHelp()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["a"]
+prototype_steps = ["openComposer()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer-more"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["a", "f i x space i t space # s y n c space ! h i g h"]
+prototype_steps = ["openComposer({more:true})"]
+gpui_click = [945.0, 195.0]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer-ai"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["a", "ctrl-n"]
+prototype_steps = ["openComposer()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "schedule"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["e a"]
+prototype_steps = ["openSchedule()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "menu-status"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["s"]
+prototype_steps = ["pickStatus()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-menu"
+theme = "dark"
+width = 1440
+height = 900
+prototype_steps = ["overflowMenu(document.querySelector('.detail .top button:last-child'))"]
+gpui_click = [1416.0, 70.0]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-copied"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["y r"]
+prototype_steps = ["copy('x','ref')"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "undo"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["d", "u"]
+prototype_steps = ["setStatus('done')", "undo()", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "row-deleted"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["t shift-d", "f x"]
+prototype_steps = ["state.filters.deleted='show'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "workspace-switch"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["g w"]
+prototype_steps = ["switchWs('personal')"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "task-expanded"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["enter"]
+prototype_steps = ["expand()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-edit"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["e d"]
+prototype_steps = ["state.editBody=true", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-notes"
+theme = "dark"
+width = 1440
+height = 900
+prototype_steps = ["state.sel='7RMR'", "mount()"]
+gpui_select = "7RMR"
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-metadata"
+theme = "dark"
+width = 1440
+height = 900
+prototype_steps = ["state.sel='1CDE'", "mount()"]
+gpui_select = "1CDE"
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-related"
+theme = "dark"
+width = 1440
+height = 900
+prototype_steps = ["state.sel='7RMR'", "mount()"]
+gpui_select = "7RMR"
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-blockers"
+theme = "dark"
+width = 1440
+height = 900
+prototype_steps = ["state.sel='1CDE'", "mount()"]
+gpui_select = "1CDE"
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-images"
+theme = "dark"
+width = 1440
+height = 900
+prototype_steps = ["state.sel='7RMR'", "mount()"]
+gpui_select = "7RMR"
+gpui_image = true
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-incoming"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["e d"]
+prototype_steps = ["state.editBody=true", "mount()"]
+gpui_select = "7RMR"
+gpui_incoming = "A description that changed on another device."
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["a"]
+prototype_steps = ["openComposer()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer-more-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["a", "f i x space i t space # s y n c space ! h i g h"]
+prototype_steps = ["openComposer({more:true})"]
+gpui_click = [945.0, 195.0]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "palette-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["cmd-k"]
+prototype_steps = ["palette()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "search-results-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["/", "s y n c"]
+prototype_steps = ["openSearch()", "const i=document.querySelector('.sr-top input');i.value='sync';i.dispatchEvent(new Event('input'))"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "schedule-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["e a"]
+prototype_steps = ["openSchedule()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "task-expanded-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["enter"]
+prototype_steps = ["expand()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "views-columns-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["v o", "v l"]
+prototype_steps = ["state.view='open'", "state.layout='board'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "help-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["?"]
+prototype_steps = ["openHelp()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "detail-edit-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["e d"]
+prototype_steps = ["state.editBody=true", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "row-deleted-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["t shift-d", "f x"]
+prototype_steps = ["state.filters.deleted='show'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer-narrow"
+theme = "dark"
+width = 960
+height = 600
+gpui_keys = ["a"]
+prototype_steps = ["openComposer()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "palette-narrow"
+theme = "dark"
+width = 960
+height = 600
+gpui_keys = ["cmd-k"]
+prototype_steps = ["palette()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "search-results-narrow"
+theme = "dark"
+width = 960
+height = 600
+gpui_keys = ["/", "s y n c"]
+prototype_steps = ["openSearch()", "const i=document.querySelector('.sr-top input');i.value='sync';i.dispatchEvent(new Event('input'))"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "task-expanded-narrow"
+theme = "dark"
+width = 960
+height = 600
+gpui_keys = ["enter"]
+prototype_steps = ["expand()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "views-columns-narrow"
+theme = "dark"
+width = 960
+height = 600
+gpui_keys = ["v o", "v l"]
+prototype_steps = ["state.view='open'", "state.layout='board'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]

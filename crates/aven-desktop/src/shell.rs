@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use accesskit::Role;
 use aven_core::choices::TaskStatus;
 use aven_core::ids::TaskId;
+use aven_host::store::TaskQuery;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle,
     Focusable, FontWeight, KeyContext, ListAlignment, ListOffset, ListState, MouseButton,
@@ -16,12 +17,19 @@ use gpui::{
 };
 
 use crate::actions::*;
-use crate::adapter::{DateTone, Note, Prefs, Replies, Reply, SyncHealth};
+use crate::adapter::{
+    Command, DateTone, DeletedFilter, Note, Prefs, Replies, Reply, SyncHealth, supports_columns,
+};
 use crate::bounce::{Bounce, ListBounce};
+use crate::commands::view_name;
+use crate::composer::Composer;
+use crate::dialogs::Layer;
+use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
+use crate::markdown;
 use crate::measure::measured;
-use crate::overlays::{Composer, Menu, TOAST_DURATION};
+use crate::overlays::{Menu, TOAST_DURATION};
 use crate::platform;
 use crate::session::{Applied, PRIORITY_DURATION, SETTLE_DURATION, Session};
 use crate::theme::{Theme, mix, theme};
@@ -53,18 +61,27 @@ const GLIDE_REACH: f32 = 70.;
 /// How long a row takes to reach its new place, and a group to fade.
 const MOVE_DURATION: Duration = Duration::from_millis(200);
 
-const NAV_VIEWS: [(&str, &str, &str); 10] = [
-    ("queue", "Queue", "icons/ic-queue.svg"),
-    ("ready", "Ready", "icons/ic-ready.svg"),
-    ("inbox", "Inbox", "icons/ic-inbox.svg"),
-    ("upcoming", "Upcoming", "icons/ic-upcoming.svg"),
-    ("overdue", "Overdue", "icons/ic-overdue.svg"),
-    ("blocked", "Blocked", "icons/ic-blocked.svg"),
-    ("epics", "Epics", "icons/ic-epics.svg"),
-    ("recurring", "Recurring Tasks", "icons/ic-recurring.svg"),
-    ("done", "Done", "icons/ic-done.svg"),
-    ("conflicts", "Conflicts", "icons/ic-conflicts.svg"),
-];
+/// How many of the views the sidebar shows before More views.
+const PRIMARY_VIEWS: usize = 9;
+const LOG_HEIGHT: f32 = 31.;
+const LOG_TIME_WIDTH: f32 = 70.;
+
+/// The name a view's count goes by in the snapshot.
+fn count_key(query: TaskQuery) -> &'static str {
+    match query {
+        TaskQuery::Queue => "queue",
+        TaskQuery::Ready => "ready",
+        TaskQuery::Inbox => "inbox",
+        TaskQuery::Upcoming => "upcoming",
+        TaskQuery::Overdue => "overdue",
+        TaskQuery::Blocked => "blocked",
+        TaskQuery::Epics => "epics",
+        TaskQuery::Recurring => "recurring",
+        TaskQuery::Conflicts => "conflicts",
+        TaskQuery::Active => "active",
+        _ => "",
+    }
+}
 
 /// GPUI snaps lengths to device pixels. Headings carry the remainder from one
 /// to the next, so the rows below them do not drift down the list.
@@ -87,6 +104,7 @@ enum Item {
         row: usize,
         id: TaskId,
     },
+    Log(usize),
     Empty,
 }
 
@@ -95,6 +113,7 @@ impl Item {
         match self {
             Self::Pad(height) | Self::Section { height, .. } => *height,
             Self::Row { .. } => ROW_HEIGHT,
+            Self::Log(_) => LOG_HEIGHT,
             Self::Empty => 0.,
         }
     }
@@ -276,30 +295,12 @@ impl ListMotion {
     }
 }
 
-/// Paragraphs as the read-only editor shows them, without Markdown marks.
-fn body_text(body: &str) -> (String, Vec<std::ops::Range<usize>>) {
-    let mut text = String::new();
-    let mut bold = Vec::new();
-    for source in body.split('\n').filter(|line| !line.is_empty()) {
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        let source = match source.strip_prefix("- ") {
-            Some(rest) => {
-                text.push_str("•  ");
-                rest
-            }
-            None => source,
-        };
-        for (ix, part) in source.split("**").enumerate() {
-            let start = text.len();
-            text.push_str(&part.replace('`', ""));
-            if ix % 2 == 1 {
-                bold.push(start..text.len());
-            }
-        }
-    }
-    (text, bold)
+/// A description being written, and the stored text it started from.
+pub(crate) struct BodyEdit {
+    pub task: TaskId,
+    pub base: String,
+    /// A description that arrived from elsewhere during the edit.
+    pub incoming: Option<String>,
 }
 
 pub struct Root {
@@ -336,7 +337,16 @@ pub struct Root {
     pub(crate) detail_scroll: ScrollHandle,
     pub(crate) menu: Option<Menu>,
     pub(crate) composer: Option<Composer>,
-    pub(crate) composer_draft: String,
+    /// What the composer opens with.
+    pub(crate) kept_draft: Draft,
+    /// The draft Discard threw away, until the next discard.
+    pub(crate) discarded: Option<Draft>,
+    pub(crate) dialog: Option<Layer>,
+    pub(crate) body: Entity<Editor>,
+    pub(crate) body_edit: Option<BodyEdit>,
+    /// The keys of a chord under way, for the hint bar.
+    chord: Option<String>,
+    more_views: bool,
     pub(crate) anchors: Anchors,
     last_offset: Pixels,
     last_scroll: Option<Instant>,
@@ -367,10 +377,27 @@ impl Root {
             )
             .max_height(px(206.))
         });
+        let body = cx.new(|cx| {
+            Editor::new(
+                Mode::Multi,
+                "Add a description. Markdown works.",
+                window,
+                cx,
+            )
+            .enter_breaks()
+            .takes_images()
+        });
         let subscriptions = vec![
             cx.subscribe_in(&title, window, Self::on_title_event),
             cx.subscribe_in(&note, window, Self::on_note_event),
+            cx.subscribe_in(&body, window, Self::on_body_event),
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
+            cx.observe_pending_input(window, |this, window, cx| {
+                this.show_chord(window, cx);
+            }),
+            cx.observe_keystrokes(|this, event, window, cx| {
+                this.after_keystroke(event.action.is_some(), window, cx);
+            }),
         ];
         cx.spawn_in(window, async move |this, cx| {
             while let Some(reply) = replies.recv().await {
@@ -412,7 +439,13 @@ impl Root {
             detail_scroll: ScrollHandle::new(),
             menu: None,
             composer: None,
-            composer_draft: String::new(),
+            kept_draft: Draft::default(),
+            discarded: None,
+            dialog: None,
+            body,
+            body_edit: None,
+            chord: None,
+            more_views: false,
             anchors: Rc::default(),
             last_offset: px(0.),
             last_scroll: None,
@@ -463,12 +496,6 @@ impl Root {
         &mut self.session
     }
 
-    pub(crate) fn composer_open(&self) -> bool {
-        self.composer
-            .as_ref()
-            .is_some_and(|composer| !composer.closing)
-    }
-
     fn active(&self, window: &Window) -> bool {
         self.always_active || window.is_window_active()
     }
@@ -476,6 +503,14 @@ impl Root {
     fn build_items(&self) -> Vec<Item> {
         let snapshot = &self.session.snapshot;
         let mut items = vec![Item::Pad(4.)];
+        if snapshot.view.query == TaskQuery::RecentActions {
+            items.extend((0..snapshot.recent.len()).map(Item::Log));
+            if items.len() == 1 {
+                items.push(Item::Empty);
+            }
+            items.push(Item::Pad(40.));
+            return items;
+        }
         let mut row = 0;
         let mut carried = 0.;
         for (index, group) in snapshot.groups.iter().enumerate() {
@@ -576,10 +611,17 @@ impl Root {
         if applied.list {
             self.rebuild(applied.moved.is_some());
         }
-        if let Some(task) = applied.composer_draft
-            && self.composer_draft.is_empty()
-        {
-            self.composer_draft = task.title;
+        if let Some(task) = applied.composer_draft {
+            self.return_failed_draft(Draft::from_task(*task), window, cx);
+        }
+        if let Some(task) = applied.intake {
+            self.read_notes_back(Some(*task), cx);
+        }
+        if applied.intake_failed {
+            self.read_notes_back(None, cx);
+        }
+        if let Some((text, _)) = applied.copy {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
         if applied.draft
             && let Some(id) = self.session.selected.clone()
@@ -604,7 +646,7 @@ impl Root {
         cx.notify();
     }
 
-    fn arm_toast(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn arm_toast(&mut self, cx: &mut Context<Self>) {
         let Some(run) = self.session.toast.as_ref().map(|toast| toast.run) else {
             return;
         };
@@ -632,12 +674,7 @@ impl Root {
     /// Brings open editors up to date with stored data. Focused editors keep
     /// their text, with any IME composition inside it.
     fn sync_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let row = self
-            .session
-            .selected
-            .as_ref()
-            .and_then(|id| self.session.snapshot.row(id));
-        let title = row.map(|row| row.title.clone());
+        let title = self.session.target_row().map(|row| row.title.clone());
         if let Some(title) = title
             && !self.title.read(cx).focus.is_focused(window)
         {
@@ -646,12 +683,21 @@ impl Root {
         let Some(detail) = self.session.detail.clone() else {
             return;
         };
-        let (text, bold) = body_text(&detail.description);
-        if self.description.read(cx).text() != text {
-            self.description.update(cx, |editor, cx| {
-                editor.set_text(&text, cx);
-                editor.set_bold(bold);
-            });
+        if self.title_task.is_none() {
+            self.title_task = Some(detail.task_id.clone());
+        }
+        if let Some(edit) = self
+            .body_edit
+            .as_mut()
+            .filter(|edit| edit.task == detail.task_id)
+        {
+            let moved = detail.description != edit.base;
+            edit.incoming = moved.then(|| detail.description.clone());
+        }
+        let rendered = markdown::render(&detail.description);
+        if self.description.read(cx).text() != rendered.text {
+            self.description
+                .update(cx, |editor, cx| editor.set_rendered(rendered, cx));
         }
         let shown = self.note_views.iter().map(|(note, _)| note);
         if !shown.eq(detail.notes.iter()) {
@@ -672,13 +718,12 @@ impl Root {
     }
 
     fn note_view(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) -> Entity<Editor> {
-        let (text, bold) = body_text(text);
+        let rendered = markdown::render(text);
         cx.new(|cx| {
             let mut editor = Editor::new(Mode::Multi, "", window, cx)
                 .read_only()
                 .paragraph_gap(px(8.));
-            editor.set_text(&text, cx);
-            editor.set_bold(bold);
+            editor.set_rendered(rendered, cx);
             editor
         })
     }
@@ -686,8 +731,7 @@ impl Root {
     fn load_note_draft(&mut self, cx: &mut Context<Self>) {
         let draft = self
             .session
-            .selected
-            .as_ref()
+            .target()
             .and_then(|id| self.session.note_drafts.get(id))
             .cloned()
             .unwrap_or_default();
@@ -696,25 +740,19 @@ impl Root {
 
     /// Points the details editors at the current selection.
     pub(crate) fn load_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let row = self
-            .session
-            .selected
-            .as_ref()
-            .and_then(|id| self.session.snapshot.row(id));
-        self.title_task = row.map(|row| row.id.clone());
+        let row = self.session.target_row();
+        self.title_task = self.session.target().cloned();
         let title = row.map(|row| row.title.clone()).unwrap_or_default();
         self.show_title(title, cx);
         self.load_note_draft(cx);
         self.note_views.clear();
-        self.description.update(cx, |editor, cx| {
-            editor.set_text("", cx);
-            editor.set_bold(Vec::new());
-        });
+        self.description
+            .update(cx, |editor, cx| editor.set_text("", cx));
         self.detail_scroll.set_offset(point(px(0.), px(0.)));
         self.sync_editors(window, cx);
     }
 
-    fn commit_title(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn commit_title(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.title_task.clone() else {
             return;
         };
@@ -723,16 +761,16 @@ impl Root {
             return;
         }
         if text.is_empty() {
-            let saved = self.session.snapshot.row(&id).map(|row| row.title.clone());
-            self.show_title(saved.unwrap_or_default(), cx);
+            let saved = self.title_base.clone();
+            self.show_title(saved, cx);
         } else {
             self.title_base = text.clone();
             self.session.set_title(&id, text);
         }
     }
 
-    fn keep_note_draft(&mut self, cx: &App) {
-        let Some(id) = self.session.selected.clone() else {
+    pub(crate) fn keep_note_draft(&mut self, cx: &App) {
+        let Some(id) = self.session.target().cloned() else {
             return;
         };
         let draft = self.note.read(cx).text().to_string();
@@ -747,6 +785,7 @@ impl Root {
         if self.session.selected.as_ref() == Some(&id) {
             return;
         }
+        self.commit_description(cx);
         self.commit_title(cx);
         self.keep_note_draft(cx);
         self.start_glide(&id);
@@ -772,7 +811,40 @@ impl Root {
             .unwrap_or_default()
     }
 
-    fn reveal_selection(&self) {
+    pub(crate) fn list_to_top(&self) {
+        self.list.scroll_to(ListOffset::default());
+    }
+
+    pub(crate) fn is_narrow(&self) -> bool {
+        self.narrow == Some(true)
+    }
+
+    fn show_chord(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = window.pending_input_keystrokes();
+        let keys = pending
+            .and_then(|keys| keys.first())
+            .map(|key| key.key.clone());
+        if keys.is_some() {
+            self.chord = keys;
+            cx.notify();
+        }
+    }
+
+    /// Ends the hint bar, saying so when the key finished no command.
+    fn after_keystroke(&mut self, handled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_pending_keystrokes() || self.chord.is_none() {
+            return;
+        }
+        self.chord = None;
+        if !handled {
+            self.session
+                .show_toast("No command on that key".to_string(), None);
+            self.arm_toast(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn reveal_selection(&self) {
         if let Some(position) = self
             .session
             .selected
@@ -847,7 +919,12 @@ impl Root {
         cx.notify();
     }
 
-    fn toggle_details(&mut self, _: &ToggleDetails, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_details(
+        &mut self,
+        _: &ToggleDetails,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.details_open = !self.details_open;
         cx.notify();
     }
@@ -858,22 +935,17 @@ impl Root {
     }
 
     pub(crate) fn mark_done(&mut self, _: &MarkDone, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.session.selected.clone() {
+        if let Some(id) = self.session.target().cloned() {
             self.session.toggle_status(&id, TaskStatus::Done);
             self.after_status_motion(cx);
         }
     }
 
     fn cancel_task(&mut self, _: &CancelTask, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.session.selected.clone() {
+        if let Some(id) = self.session.target().cloned() {
             self.session.toggle_status(&id, TaskStatus::Canceled);
-            cx.notify();
+            self.after_status_motion(cx);
         }
-    }
-
-    fn refresh_view(&mut self, cx: &mut Context<Self>) {
-        self.session.refresh_view();
-        cx.notify();
     }
 
     pub(crate) fn after_status_motion(&mut self, cx: &mut Context<Self>) {
@@ -898,17 +970,17 @@ impl Root {
     }
 
     pub(crate) fn copy_ref(&mut self, _: &CopyRef, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self
-            .session
-            .selected
-            .as_ref()
-            .and_then(|id| self.session.snapshot.row(id))
-        else {
+        let Some(row) = self.session.target_row() else {
             return;
         };
         let (id, reference) = (row.id.clone(), row.reference.clone());
-        cx.write_to_clipboard(ClipboardItem::new_string(reference));
+        cx.write_to_clipboard(ClipboardItem::new_string(reference.clone()));
         self.session.motion.copied(&id);
+        // The header that confirms a copy only shows with the task.
+        if !self.details_open && !self.session.expanded {
+            self.session.show_toast(format!("Copied {reference}"), None);
+            self.arm_toast(cx);
+        }
         self.repaint_after(crate::session::COPIED_DURATION, cx);
         cx.notify();
     }
@@ -923,12 +995,8 @@ impl Root {
         match event {
             EditorEvent::Submit => window.focus(&self.focus, cx),
             EditorEvent::Cancel => {
-                let saved = self
-                    .title_task
-                    .as_ref()
-                    .and_then(|id| self.session.snapshot.row(id))
-                    .map(|row| row.title.clone());
-                self.show_title(saved.unwrap_or_default(), cx);
+                let saved = self.title_base.clone();
+                self.show_title(saved, cx);
                 window.focus(&self.focus, cx);
             }
             EditorEvent::Blur => {
@@ -950,7 +1018,7 @@ impl Root {
         match event {
             EditorEvent::Submit => {
                 let text = note.read(cx).text().trim().to_string();
-                let Some(id) = self.session.selected.clone().filter(|_| !text.is_empty()) else {
+                let Some(id) = self.session.target().cloned().filter(|_| !text.is_empty()) else {
                     return;
                 };
                 self.session.add_note(&id, text);
@@ -976,14 +1044,8 @@ impl Root {
         let t = theme(cx);
         match self.items[ix].clone() {
             Item::Pad(height) => div().h(px(height)).into_any_element(),
-            Item::Empty => div()
-                .w_full()
-                .pt(px(48.))
-                .flex()
-                .justify_center()
-                .text_size(px(15.))
-                .child("No tasks here")
-                .into_any_element(),
+            Item::Empty => self.render_empty(cx).into_any_element(),
+            Item::Log(entry) => self.render_log(entry, cx),
             Item::Section {
                 index,
                 name,
@@ -1094,13 +1156,21 @@ impl Root {
     }
 
     /// The row's title, dimming while the task has just been completed.
-    fn task_title(&self, id: &TaskId, title: String, status: TaskStatus, t: &Theme) -> AnyElement {
+    fn task_title(
+        &self,
+        id: &TaskId,
+        title: String,
+        status: TaskStatus,
+        deleted: bool,
+        t: &Theme,
+    ) -> AnyElement {
         let closed = matches!(status, TaskStatus::Done | TaskStatus::Canceled);
         let (ink, faint) = (t.ink, t.faint);
         let label = div()
             .min_w_0()
             .overflow_hidden()
             .text_color(if closed { faint } else { ink })
+            .when(deleted, |label| label.line_through().text_color(faint))
             .child(div().truncate().child(title));
         let run = self.session.motion.completion(id).map(|(_, run)| run);
         let body = match (status, run) {
@@ -1154,7 +1224,8 @@ impl Root {
             .cloned()
             .collect::<Vec<_>>()
             .join(" ");
-        let (select_id, toggle_id) = (id.clone(), id.clone());
+        let (select_id, toggle_id, menu_id) = (id.clone(), id.clone(), id.clone());
+        let deleted = data.deleted;
         let body = measured(div(), format!("row-{row}"))
             .relative()
             .id(("row", row))
@@ -1189,9 +1260,18 @@ impl Root {
             })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     window.focus(&this.focus, cx);
                     this.select(select_id.clone(), window, cx);
+                    if event.click_count == 2 {
+                        this.expand(&Expand, window, cx);
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.row_menu(menu_id.clone(), event.position, window, cx);
                 }),
             )
             .child(div().flex_none().w(px(3.)).h(px(16.)).ml(px(-5.)))
@@ -1215,7 +1295,10 @@ impl Root {
             .when(self.list_refs, |row| {
                 row.child(ref_label(&data.reference, &data.project, Some(74.), &t))
             })
-            .child(self.task_title(&id, data.title, data.status, &t))
+            .child(self.task_title(&id, data.title, data.status, deleted, &t))
+            .when(deleted, |row| {
+                row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
+            })
             .when(data.recurring, |row| {
                 row.child(small(12.).flex_none().text_color(t.faint).child("↻"))
             })
@@ -1292,8 +1375,12 @@ impl Root {
             .child(header("Workspaces"));
         for (ix, workspace) in snapshot.workspaces.iter().enumerate() {
             let on = workspace.name == snapshot.workspace;
+            let key = workspace.key.clone();
             body = body.child(
                 nav_item(("workspace", ix), &t)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.switch_view(Command::SwitchWorkspace(key.clone()), window, cx);
+                    }))
                     .when(on, |item| {
                         item.text_color(t.ink).font_weight(FontWeight::MEDIUM)
                     })
@@ -1302,56 +1389,83 @@ impl Root {
             );
         }
         body = body.child(header("Views"));
-        for (ix, (key, name, icon_path)) in NAV_VIEWS.into_iter().enumerate() {
-            let on = key == "queue";
+        let view_item = |ix: usize, cx: &mut Context<Self>| {
+            let (query, name, icon_path, _, _) = VIEWS[ix];
+            let on = query == snapshot.view.query;
+            let key = count_key(query);
             let count = snapshot
                 .views
                 .iter()
                 .find(|(view, _)| *view == key)
                 .map_or(0, |(_, count)| *count);
-            let hot = matches!(key, "overdue" | "conflicts") && count > 0;
-            body = body.child(
-                nav_item(("view", ix), &t)
-                    .when(on, |item| {
-                        item.bg(if active { t.tint } else { t.raised })
-                            .text_color(t.ink)
-                            .font_weight(FontWeight::MEDIUM)
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh_view(cx)))
-                    })
-                    .child(icon(icon_path, if on { t.accent } else { t.faint }))
-                    .child(name)
-                    .child(nav_count(
-                        if count == 0 {
-                            String::new()
-                        } else {
-                            count.to_string()
-                        },
-                        hot,
-                        &t,
-                    )),
-            );
+            let hot = matches!(query, TaskQuery::Overdue | TaskQuery::Conflicts) && count > 0;
+            nav_item(("view", ix), &t)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.show_view(&ShowView(query), window, cx);
+                }))
+                .when(on, |item| {
+                    item.bg(if active { t.tint } else { t.raised })
+                        .text_color(t.ink)
+                        .font_weight(FontWeight::MEDIUM)
+                })
+                .child(icon(icon_path, if on { t.accent } else { t.faint }))
+                .child(name)
+                .child(nav_count(
+                    if count == 0 {
+                        String::new()
+                    } else {
+                        count.to_string()
+                    },
+                    hot,
+                    &t,
+                ))
+        };
+        let conflicts = VIEWS.iter().position(|view| view.0 == TaskQuery::Conflicts);
+        for ix in (0..PRIMARY_VIEWS).chain(conflicts) {
+            body = body.child(view_item(ix, cx));
         }
-        body = body
-            .child(nav_item("more", &t).text_color(t.faint).child("More views"))
-            .child(header("Projects"))
-            .child(
-                nav_item("all-projects", &t)
-                    .text_color(t.ink)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(icon("icons/ic-projects.svg", t.faint))
-                    .child("All projects"),
-            );
+        body = body.child(
+            nav_item("more", &t)
+                .text_color(t.faint)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.more_views = !this.more_views;
+                    cx.notify();
+                }))
+                .child(if self.more_views {
+                    "Fewer views"
+                } else {
+                    "More views"
+                }),
+        );
+        if self.more_views {
+            for ix in (PRIMARY_VIEWS..VIEWS.len()).filter(|ix| Some(*ix) != conflicts) {
+                body = body.child(view_item(ix, cx));
+            }
+        }
+        let scoped = snapshot.view.project.clone();
+        body = body.child(header("Projects")).child(
+            nav_item("all-projects", &t)
+                .when(scoped.is_none(), |item| {
+                    item.text_color(t.ink).font_weight(FontWeight::MEDIUM)
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.all_projects(&AllProjects, window, cx);
+                }))
+                .child(icon("icons/ic-projects.svg", t.faint))
+                .child("All projects"),
+        );
         for (ix, project) in snapshot.projects.iter().enumerate() {
+            let key = project.key.clone();
+            let on = scoped.as_ref() == Some(&project.key);
             body = body.child(
                 nav_item(("project", ix), &t)
-                    .child(
-                        div()
-                            .flex_none()
-                            .mx(px(4.))
-                            .size(px(8.))
-                            .rounded(px(3.))
-                            .bg(t.project_dot(&project.prefix)),
-                    )
+                    .when(on, |item| {
+                        item.text_color(t.ink).font_weight(FontWeight::MEDIUM)
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.scope_to(Some(key.clone()), window, cx);
+                    }))
+                    .child(project_dot(&project.prefix, &t).mx(px(4.)))
                     .child(project.name.clone())
                     .child(nav_count(project.count.to_string(), false, &t)),
             );
@@ -1445,7 +1559,37 @@ impl Root {
     fn render_top(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx);
         let active = self.active(window);
-        let count = self.session.snapshot.ordered().count();
+        let snapshot = &self.session.snapshot;
+        let count = snapshot.ordered().count();
+        let view = &snapshot.view;
+        let query = view.query;
+        let name = view_name(query);
+        let subtitle = VIEWS
+            .iter()
+            .find(|entry| entry.0 == query)
+            .map_or("", |entry| entry.4);
+        let scope_name = view
+            .project
+            .as_ref()
+            .and_then(|key| snapshot.projects.iter().find(|project| project.key == *key))
+            .map_or("All projects".to_string(), |project| project.name.clone());
+        let expanded = self.session.expanded;
+        let peeking = self.session.peek.is_some() || expanded;
+        let reference = self
+            .session
+            .target_row()
+            .filter(|_| peeking)
+            .map(|row| row.reference.clone());
+        let fixed = matches!(query, TaskQuery::Queue | TaskQuery::Upcoming);
+        let logged = query == TaskQuery::RecentActions;
+        let filterable = !logged && query != TaskQuery::Conflicts;
+        let can_columns = supports_columns(query);
+        let columns = view.columns;
+        let orderable = !fixed && !logged;
+        let groupable = !fixed
+            && !logged
+            && !columns
+            && !matches!(query, TaskQuery::Epics | TaskQuery::Conflicts);
         let width = window.viewport_size().width;
         let hints = width > px(HEADER_HINTS_MIN_WINDOW_WIDTH);
         let crumbs = width > px(CRUMBS_MIN_WINDOW_WIDTH);
@@ -1478,21 +1622,54 @@ impl Root {
                         crumb
                             .child(
                                 div()
+                                    .id("crumb-workspace")
+                                    .relative()
+                                    .role(Role::Button)
+                                    .aria_label("Switch workspace")
                                     .text_color(t.muted)
-                                    .child(self.session.snapshot.workspace.clone()),
+                                    .hover(|style| style.text_color(t.ink))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.pick_workspace(&PickWorkspace, window, cx);
+                                    }))
+                                    .child(anchor_probe("workspace", &self.anchors))
+                                    .child(snapshot.workspace.clone()),
                             )
                             .child(div().text_color(t.faint).child("›"))
-                            .child(div().text_color(t.muted).child("All projects"))
+                            .child(
+                                div()
+                                    .id("crumb-scope")
+                                    .relative()
+                                    .role(Role::Button)
+                                    .aria_label("Choose project scope")
+                                    .text_color(t.muted)
+                                    .hover(|style| style.text_color(t.ink))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.pick_project(&PickProject, window, cx);
+                                    }))
+                                    .child(anchor_probe("scope", &self.anchors))
+                                    .child(scope_name),
+                            )
                             .child(div().text_color(t.faint).child("›"))
                     })
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(t.ink)
-                            .child("Queue"),
-                    ),
+                            .child(name),
+                    )
+                    .when_some(reference, |crumb, reference| {
+                        crumb
+                            .child(div().text_color(t.faint).child("›"))
+                            .child(div().text_color(t.muted).child(reference))
+                    }),
             )
-            .when(hints, |top| {
+            .when(hints && !expanded && !logged, |top| {
                 top.child(
                     div()
                         .flex_none()
@@ -1506,23 +1683,73 @@ impl Root {
                     .min_w_0()
                     .truncate()
                     .text_color(t.faint)
-                    .when(hints, |hint| {
-                        hint.child("Open and available, most urgent first")
-                    }),
+                    .when(hints && !expanded, |hint| hint.child(subtitle)),
             )
-            .child(btn("review", "Review tasks", &t).child("Review tasks"))
-            .child(btn("filter", "Filter", &t).child("Filter"))
-            .child(
-                btn("details", "Toggle details", &t)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_details(&ToggleDetails, window, cx)
-                    }))
-                    .child(icon("icons/ic-details.svg", t.body))
-                    .child("Details"),
-            )
+            .when(expanded, |top| {
+                top.child(
+                    line_btn("collapse", format!("← {name}"), &t)
+                        .on_click(cx.listener(|this, _, window, cx| this.collapse(window, cx))),
+                )
+            })
+            .when(!expanded && filterable, |top| {
+                top.child(
+                    btn("filter", "Filter", &t)
+                        .relative()
+                        .child(anchor_probe("filter", &self.anchors))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.pick_filter(&PickFilter, window, cx);
+                        }))
+                        .child("Filter"),
+                )
+            })
+            .when(!expanded && orderable, |top| {
+                top.child(
+                    btn("order", "Order", &t)
+                        .relative()
+                        .child(anchor_probe("order", &self.anchors))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.pick_order(&PickOrder, window, cx);
+                        }))
+                        .child("Order"),
+                )
+            })
+            .when(!expanded && groupable, |top| {
+                top.child(
+                    btn("group", "Group", &t)
+                        .relative()
+                        .child(anchor_probe("group", &self.anchors))
+                        .on_click(cx.listener(|this, _, window, cx| this.pick_group(window, cx)))
+                        .child("Group"),
+                )
+            })
+            .when(!expanded && can_columns, |top| {
+                let label = if columns { "List" } else { "Columns" };
+                top.child(
+                    btn("layout", label, &t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_layout(&ToggleLayout, window, cx);
+                        }))
+                        .child(label),
+                )
+            })
+            .when(!expanded && query != TaskQuery::RecentActions, |top| {
+                top.child(
+                    btn("details", "Toggle details", &t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_details(&ToggleDetails, window, cx)
+                        }))
+                        .child(icon("icons/ic-details.svg", t.body))
+                        .child("Details"),
+                )
+            })
             .child(
                 btn("search", "Search", &t)
                     .shadow(vec![t.inset_ring(t.line)])
+                    .on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.open_search(&OpenSearch, window, cx)
+                        }),
+                    )
                     .child("Search")
                     .when(hints, |search| {
                         search.child(small(12.).text_color(t.faint).child("/"))
@@ -1531,6 +1758,9 @@ impl Root {
             .child(
                 btn("palette", "Commands", &t)
                     .shadow(vec![t.inset_ring(t.line)])
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_palette(&OpenPalette, window, cx)
+                    }))
                     .child("⌘K"),
             )
             .child(
@@ -1564,6 +1794,299 @@ impl Root {
                         )
                     }),
             )
+    }
+
+    fn render_empty(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx);
+        let snapshot = &self.session.snapshot;
+        let view = &snapshot.view;
+        let count = |key: &str| {
+            let counts = snapshot.views.iter();
+            counts
+                .clone()
+                .find(|(view, _)| *view == key)
+                .map_or(0, |(_, n)| *n)
+        };
+        let ready = format!(
+            "{} blocked and {} deferred.",
+            count("blocked"),
+            count("upcoming")
+        );
+        let (heading, line, go): (&str, &str, &[TaskQuery]) = match view.query {
+            TaskQuery::Search => ("No search results", "", &[]),
+            _ if view.has_filters() => ("No tasks match these filters", "", &[]),
+            TaskQuery::Queue => ("Queue is clear", "Press a to add a task.", &[]),
+            TaskQuery::Ready => (
+                "Nothing is ready",
+                ready.as_str(),
+                &[TaskQuery::Blocked, TaskQuery::Upcoming],
+            ),
+            TaskQuery::Inbox => ("Inbox zero", "Everything captured has been triaged.", &[]),
+            TaskQuery::Overdue => (
+                "Nothing overdue",
+                "Deferred work with a passed deadline stays in Upcoming.",
+                &[TaskQuery::Upcoming],
+            ),
+            TaskQuery::Conflicts => ("No conflicts", "Devices agree on every field.", &[]),
+            TaskQuery::Blocked => ("Nothing is blocked", "", &[TaskQuery::Ready]),
+            TaskQuery::Upcoming => ("Nothing deferred", "Defer a task with e a.", &[]),
+            _ => ("Nothing here", "", &[]),
+        };
+        let search = view.query == TaskQuery::Search;
+        let filtered = !search && view.has_filters();
+        let mut actions = div().mt(px(12.)).flex().justify_center().gap(px(6.));
+        if search {
+            actions = actions.child(line_btn("empty-search", "Search", &t).on_click(
+                cx.listener(|this, _, window, cx| this.open_search(&OpenSearch, window, cx)),
+            ));
+        }
+        if filtered {
+            actions = actions.child(line_btn("empty-clear", "Clear filters", &t).on_click(
+                cx.listener(|this, _, window, cx| this.clear_filters(&ClearFilters, window, cx)),
+            ));
+        }
+        for (ix, query) in go.iter().copied().enumerate() {
+            actions = actions.child(line_btn(("empty-go", ix), view_name(query), &t).on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.show_view(&ShowView(query), window, cx);
+                }),
+            ));
+        }
+        div().w_full().pt(px(48.)).flex().justify_center().child(
+            measured(div(), "empty")
+                .max_w(px(340.))
+                .flex()
+                .flex_col()
+                .items_center()
+                .text_color(t.muted)
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.ink)
+                        .child(heading),
+                )
+                .when(!line.is_empty(), |empty| {
+                    empty.child(div().mt(px(6.)).child(line.to_string()))
+                })
+                .child(actions),
+        )
+    }
+
+    fn render_log(&self, entry: usize, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx);
+        let action = &self.session.snapshot.recent[entry];
+        let task = action.task.clone();
+        div()
+            .px(px(8.))
+            .child(
+                div()
+                    .id(("log", entry))
+                    .role(Role::ListItem)
+                    .h(px(LOG_HEIGHT))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(9.))
+                    .rounded(px(6.))
+                    .hover(|style| style.bg(t.panel))
+                    .when_some(task, |row, task| {
+                        row.on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_task(task.clone(), window, cx);
+                        }))
+                    })
+                    .child(
+                        small(12.)
+                            .flex_none()
+                            .w(px(LOG_TIME_WIDTH))
+                            .text_color(t.faint)
+                            .child(action.at.clone()),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(t.body)
+                            .child(action.text.clone()),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The lines between the header and the list: what scopes the view.
+    fn render_strips(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = theme(cx);
+        let snapshot = &self.session.snapshot;
+        let view = &snapshot.view;
+        let mut strips = Vec::new();
+        if self.session.expanded {
+            return strips;
+        }
+        let strip = || {
+            div()
+                .flex_none()
+                .min_h(px(34.))
+                .px(px(16.))
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.))
+                .border_b_1()
+                .border_color(t.line)
+                .text_size(px(12.))
+                .text_color(t.muted)
+        };
+        if let Some(text) = &view.search {
+            let count = snapshot.ordered().count();
+            let scope = view
+                .project
+                .as_ref()
+                .and_then(|key| snapshot.projects.iter().find(|project| project.key == *key))
+                .map_or("all projects".to_string(), |project| project.name.clone());
+            strips.push(
+                strip()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(format!("{count} results for “{text}” in {scope}")),
+                    )
+                    .child(
+                        btn("search-refine", "Refine", &t)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_search(&OpenSearch, window, cx);
+                            }))
+                            .child("Refine"),
+                    )
+                    .child(
+                        btn("search-clear", "Clear", &t)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_view(&ShowView(TaskQuery::Queue), window, cx);
+                            }))
+                            .child("Clear"),
+                    )
+                    .into_any_element(),
+            );
+        }
+        if view.project.is_some() {
+            let count = |key: &str| {
+                let counts = snapshot.views.iter();
+                counts
+                    .clone()
+                    .find(|(view, _)| *view == key)
+                    .map_or(0, |(_, n)| *n)
+            };
+            let parts = [
+                ("active", "active"),
+                ("ready", "ready"),
+                ("blocked", "blocked"),
+                ("upcoming", "deferred"),
+            ];
+            let text: Vec<String> = parts
+                .iter()
+                .map(|(key, word)| format!("{} {word}", count(key)))
+                .collect();
+            strips.push(strip().child(text.join("  ·  ")).into_any_element());
+        }
+        if view.has_filters() {
+            let mut chips: Vec<(String, Command)> = Vec::new();
+            if let Some(label) = &view.label {
+                chips.push((format!("Label: {label}"), Command::FilterLabel(None)));
+            }
+            if let Some(priority) = view.priority {
+                let name = priority_name(priority);
+                chips.push((format!("Priority: {name}"), Command::FilterPriority(None)));
+            }
+            match view.deleted {
+                DeletedFilter::Hide => {}
+                DeletedFilter::Show => chips.push((
+                    "Including deleted".to_string(),
+                    Command::FilterDeleted(DeletedFilter::Hide),
+                )),
+                DeletedFilter::Only => chips.push((
+                    "Deleted only".to_string(),
+                    Command::FilterDeleted(DeletedFilter::Hide),
+                )),
+            }
+            if let Some(filter) = &view.metadata {
+                let word = if filter.present { "present" } else { "missing" };
+                chips.push((
+                    format!("{} {word}", filter.key),
+                    Command::FilterMetadata(None),
+                ));
+            }
+            let mut line = strip();
+            for (ix, (label, command)) in chips.into_iter().enumerate() {
+                line = line.child(
+                    bare_btn(("filter-chip", ix), format!("Remove {label}"), &t)
+                        .h(px(22.))
+                        .px(px(8.))
+                        .rounded_full()
+                        .text_size(px(12.))
+                        .shadow(vec![t.inset_ring(t.line)])
+                        .hover(|style| style.bg(t.raised))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.session.write(command.clone());
+                            cx.notify();
+                        }))
+                        .child(label)
+                        .child(div().text_color(t.faint).child("×")),
+                );
+            }
+            strips.push(
+                line.child(
+                    btn("filters-clear", "Clear filters", &t)
+                        .h(px(22.))
+                        .text_size(px(12.))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.clear_filters(&ClearFilters, window, cx);
+                        }))
+                        .child("Clear filters"),
+                )
+                .into_any_element(),
+            );
+        }
+        strips
+    }
+
+    /// What can follow the first key of a chord.
+    fn render_chord(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let key = self.chord.as_ref()?;
+        let (_, keys) = CHORDS.iter().find(|(first, _)| *first == key)?;
+        let t = theme(cx);
+        let mut bar = div()
+            .id("chord")
+            .role(Role::Status)
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(12.))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(8.))
+            .bg(t.pop)
+            .shadow(t.menu_shadow())
+            .text_size(px(12.))
+            .text_color(t.body)
+            .child(div().font_family(MONO).text_color(t.ink).child(key.clone()));
+        for (next, name) in keys.iter() {
+            bar = bar.child(
+                div()
+                    .flex()
+                    .gap(px(5.))
+                    .child(div().font_family(MONO).text_color(t.accent).child(*next))
+                    .child(*name),
+            );
+        }
+        Some(
+            div()
+                .absolute()
+                .bottom(px(66.))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(bar),
+        )
     }
 
     fn render_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -1770,7 +2293,7 @@ impl Render for Root {
         }
         let mut key_context = KeyContext::default();
         key_context.add("Aven");
-        if self.menu.is_some() || self.composer_open() {
+        if self.menu.is_some() || self.composer_open() || self.dialog_open() {
             key_context.add("Overlay");
         }
         let nav = self.nav_open.then(|| self.render_nav(window, cx));
@@ -1786,17 +2309,23 @@ impl Render for Root {
             f32::from(window.viewport_size().width) - nav_space - detail_space - SHEET_MARGIN;
         self.list_wide = list_width > LIST_COLUMNS_MIN_WIDTH;
         self.list_refs = list_width > LIST_REFS_MIN_WIDTH;
+        let expanded = self.session.expanded;
+        let columns = self.session.snapshot.view.columns;
         let list_el = self.render_list(window, cx);
-        let detail = self
-            .details_open
-            .then(|| self.render_detail(detail_width, window, cx));
+        let board = (columns && !expanded).then(|| self.render_board(cx));
+        let doc = expanded.then(|| self.render_doc(window, cx));
+        let logged = self.session.snapshot.view.query == TaskQuery::RecentActions;
+        let details_open = self.details_open && !expanded && !logged;
+        let detail = details_open.then(|| self.render_detail(detail_width, window, cx));
+        let strips = self.render_strips(cx);
+        let chord = self.render_chord(cx);
+        let dialog = self.render_dialog(window, cx);
         let menu = self.render_menu(window, cx);
         let composer = self.render_composer(window, cx);
         let toast = self.render_toast(cx);
         let nav_edge = self.prefs.nav_width;
         let split = self.split_drag;
         let nav_open = self.nav_open;
-        let details_open = self.details_open;
         let nav_handle = self.split_handle(Split::Nav, cx);
         let detail_handle = self.split_handle(Split::Detail, cx);
         measured(div(), "app")
@@ -1820,9 +2349,50 @@ impl Render for Root {
             .on_action(cx.listener(Self::change_status))
             .on_action(cx.listener(Self::change_priority))
             .on_action(cx.listener(Self::edit_title))
+            .on_action(cx.listener(Self::rename_task))
+            .on_action(cx.listener(Self::edit_description))
+            .on_action(cx.listener(Self::save_description))
+            .on_action(cx.listener(Self::edit_availability))
+            .on_action(cx.listener(Self::edit_due))
+            .on_action(cx.listener(Self::change_project))
+            .on_action(cx.listener(Self::edit_labels))
+            .on_action(cx.listener(Self::edit_metadata))
+            .on_action(cx.listener(Self::focus_note))
+            .on_action(cx.listener(Self::delete_task))
+            .on_action(cx.listener(Self::restore_task))
+            .on_action(cx.listener(Self::add_blocker))
+            .on_action(cx.listener(Self::remove_blocker))
+            .on_action(cx.listener(Self::add_related))
+            .on_action(cx.listener(Self::jump_to_blocker))
+            .on_action(cx.listener(Self::lane_back))
+            .on_action(cx.listener(Self::lane_on))
+            .on_action(cx.listener(Self::all_projects))
+            .on_action(cx.listener(Self::pick_project))
+            .on_action(cx.listener(Self::pick_workspace))
+            .on_action(cx.listener(Self::toggle_layout))
+            .on_action(cx.listener(Self::open_search))
+            .on_action(cx.listener(Self::open_palette))
+            .on_action(cx.listener(Self::open_help))
+            .on_action(cx.listener(Self::pick_filter))
+            .on_action(cx.listener(Self::cycle_deleted))
+            .on_action(cx.listener(Self::clear_filters))
+            .on_action(cx.listener(Self::pick_order))
+            .on_action(cx.listener(Self::show_view))
+            .on_action(cx.listener(Self::expand))
+            .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::paste_image))
             .on_action(cx.listener(Self::copy_ref))
+            .on_action(cx.listener(Self::copy_id))
+            .on_action(cx.listener(Self::copy_title))
+            .on_action(cx.listener(Self::copy_description))
+            .on_action(cx.listener(Self::copy_title_and_description))
+            .on_action(cx.listener(Self::copy_notes))
+            .on_action(cx.listener(Self::copy_report))
             .on_action(cx.listener(Self::new_task))
             .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::next_field))
+            .on_action(cx.listener(Self::previous_field))
             .on_action(cx.listener(Self::close_window))
             .when_some(split, |root, split| {
                 root.cursor_col_resize()
@@ -1883,13 +2453,20 @@ impl Render for Root {
                     .shadow(t.sheet_shadow())
                     .overflow_hidden()
                     .child(top)
+                    .children(strips)
                     .child(
-                        div().flex_1().min_h_0().flex().child(list_el).when_some(
-                            detail,
-                            |body, detail| {
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .when_some(doc, |body, doc| body.child(doc))
+                            .when(!expanded, |body| match board {
+                                Some(board) => body.child(board),
+                                None => body.child(list_el),
+                            })
+                            .when_some(detail, |body, detail| {
                                 body.child(div().flex().flex_none().h_full().child(detail))
-                            },
-                        ),
+                            }),
                     ),
             )
             .when(nav_open, |root| {
@@ -1913,9 +2490,11 @@ impl Render for Root {
                         .child(detail_handle),
                 )
             })
-            .when_some(toast, |root, toast| root.child(toast))
-            .when_some(menu, |root, menu| root.child(menu))
+            .when_some(chord, |root, chord| root.child(chord))
             .when_some(composer, |root, composer| root.child(composer))
+            .when_some(dialog, |root, dialog| root.child(dialog))
+            .when_some(menu, |root, menu| root.child(menu))
+            .when_some(toast, |root, toast| root.child(toast))
     }
 }
 

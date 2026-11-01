@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
+use aven_core::ids::TaskId;
 use aven_desktop::adapter::{self, Snapshot};
 use aven_desktop::assets::{Assets, load_fonts};
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
@@ -255,6 +256,7 @@ fn list_bench(tasks: usize) -> Result<()> {
             name: format!("Group {index}"),
             hint: String::new(),
             rows: chunk.to_vec(),
+            lane: None,
         });
     }
     let (requests, _) = tokio::sync::mpsc::unbounded_channel();
@@ -350,7 +352,7 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
             storage: isolation.protected_storage(),
         };
         let store = adapter::start(runtime.handle().clone(), launch)?;
-        let gpui_boxes = render_gpui(&mut cx, scene, store, output)?;
+        let gpui_boxes = render_gpui(&mut cx, scene, store, &seeded.ids, output)?;
         let present = unexpectedly_present(scene, &boxes, &gpui_boxes);
         let comparisons = measure::compare(&manifest.expectations(scene)?, &boxes, &gpui_boxes);
         // Steps change the prototype's data, and the seeded state is what is compared.
@@ -548,8 +550,8 @@ fn capture_context() -> VisualTestAppContext {
     cx.update(|cx| {
         load_fonts(cx);
         cx.set_global(aven_desktop::theme::Theme::dark());
-        cx.bind_keys(actions::key_bindings());
         cx.bind_keys(input::key_bindings());
+        cx.bind_keys(actions::key_bindings());
     });
     cx
 }
@@ -600,10 +602,26 @@ fn settle(
     Ok(())
 }
 
+/// A small gradient to stand for an attachment.
+fn scene_image() -> adapter::PendingImage {
+    let image = image::RgbaImage::from_fn(240, 160, |x, y| {
+        image::Rgba([(x / 2) as u8, (y * 2) as u8, 160, 255])
+    });
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .expect("an image in memory encodes");
+    adapter::PendingImage {
+        name: "launch-plan.png".to_string(),
+        bytes: std::sync::Arc::new(bytes.into_inner()),
+    }
+}
+
 fn render_gpui(
     cx: &mut VisualTestAppContext,
     scene: &Scene,
     (session, mut replies): (Session, adapter::Replies),
+    ids: &BTreeMap<String, TaskId>,
     output: &Path,
 ) -> Result<NamedBounds> {
     let theme = match scene.theme {
@@ -626,12 +644,47 @@ fn render_gpui(
     // Motion scenes are caught mid-flight, so they wait no longer than they must.
     let quiet_polls = if scene.gpui_frame_ms.is_some() { 2 } else { 12 };
     settle(cx, any, &window_root, &mut replies, 12)?;
+    if let Some(task) = &scene.gpui_select {
+        let id = ids[task].clone();
+        cx.update_window(any, |_, window, cx| {
+            window_root.update(cx, |root, cx| root.open_task(id, window, cx));
+        })?;
+        settle(cx, any, &window_root, &mut replies, 12)?;
+    }
+    if scene.gpui_image {
+        cx.update(|cx| {
+            window_root.update(cx, |root, _| {
+                let session = root.session_mut();
+                let id = session.target().cloned().expect("a task is open");
+                session.write(adapter::Command::AddImage(id, scene_image()));
+            });
+        });
+        // The worker stores the bytes off the test clock.
+        for _ in 0..30 {
+            settle(cx, any, &window_root, &mut replies, 4)?;
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
     for keys in &scene.gpui_keys {
         cx.simulate_keystrokes(any, keys);
         settle(cx, any, &window_root, &mut replies, quiet_polls)?;
     }
+    if let Some(text) = &scene.gpui_incoming {
+        cx.update(|cx| {
+            window_root.update(cx, |root, _| {
+                let session = root.session_mut();
+                let id = session.target().cloned().expect("a task is open");
+                session.write(adapter::Command::SetDescription(id, text.clone()));
+            });
+        });
+        settle(cx, any, &window_root, &mut replies, 30)?;
+    }
     if let Some([x, y]) = scene.gpui_pointer {
         cx.simulate_mouse_move(any, point(px(x), px(y)), None, Modifiers::default());
+    }
+    if let Some([x, y]) = scene.gpui_click {
+        cx.simulate_click(any, point(px(x), px(y)), Modifiers::default());
+        settle(cx, any, &window_root, &mut replies, quiet_polls)?;
     }
     if let Some(frame_ms) = scene.gpui_frame_ms {
         cx.update_window(any, |_, window, _| window.refresh())?;

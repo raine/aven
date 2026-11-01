@@ -47,8 +47,8 @@ pub fn run(isolation: Isolation) -> Result<()> {
     application().with_assets(Assets).run(move |cx: &mut App| {
         load_fonts(cx);
         cx.set_global(Theme::dark());
-        cx.bind_keys(actions::key_bindings());
         cx.bind_keys(input::key_bindings());
+        cx.bind_keys(actions::key_bindings());
         cx.on_action(|_: &actions::Quit, cx| cx.quit());
         cx.set_menus(actions::menus());
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);

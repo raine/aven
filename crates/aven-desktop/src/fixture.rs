@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
+use aven_core::metadata::TaskMetadataInput;
 use aven_core::operations::TaskDraft;
 use aven_core::workspaces::Workspace;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeDelta, TimeZone, Timelike};
@@ -55,6 +56,8 @@ struct FixtureTask {
     source: Option<String>,
     #[serde(default)]
     deleted: bool,
+    #[serde(default)]
+    meta: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,7 +209,15 @@ pub async fn seed(database: &Database, shifted: &Value) -> Result<Seeded> {
                     priority: PRIORITIES[task.pri].to_string(),
                     source: source(task.source.as_deref()),
                     labels: task.labels.clone(),
-                    metadata: Vec::new(),
+                    metadata: task
+                        .meta
+                        .iter()
+                        .map(|(key, value)| TaskMetadataInput {
+                            expected_field_id: None,
+                            key: key.clone(),
+                            value: value.clone(),
+                        })
+                        .collect(),
                     available_at: task.available_at.as_deref().map(utc).transpose()?,
                     due_on: task.due.clone(),
                     is_epic: task.is_epic,

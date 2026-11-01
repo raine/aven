@@ -8,7 +8,7 @@ use aven_core::choices::{TaskPriority, TaskStatus};
 use gpui::{
     Animation, AnimationExt, App, Bounds, BoxShadow, Div, ElementId, Hsla, IntoElement,
     MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, Svg, Transformation, Window,
-    canvas, div, point, prelude::*, px, size, svg,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, svg,
 };
 
 use crate::session::POP_DURATION;
@@ -76,6 +76,15 @@ pub fn icon(path: &'static str, color: Hsla) -> Svg {
     svg().path(path).size(px(16.)).flex_none().text_color(color)
 }
 
+pub fn project_dot(prefix: &str, t: &Theme) -> Div {
+    div()
+        .flex_none()
+        .mx(px(4.))
+        .size(px(8.))
+        .rounded(px(3.))
+        .bg(t.project_dot(prefix))
+}
+
 pub fn nav_item(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
     let raised = t.raised;
     div()
@@ -104,17 +113,61 @@ pub fn nav_count(text: impl Into<SharedString>, hot: bool, t: &Theme) -> impl In
         .child(text.into())
 }
 
-pub fn btn(id: impl Into<ElementId>, label: &'static str, t: &Theme) -> Stateful<Div> {
+pub fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, t: &Theme) -> Stateful<Div> {
     let raised = t.raised;
     bare_btn(id, label, t).hover(move |style| style.bg(raised))
 }
 
+/// An outlined button that names itself.
+pub fn line_btn(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    t: &Theme,
+) -> Stateful<Div> {
+    let label = label.into();
+    btn(id, label.clone(), t)
+        .shadow(vec![t.inset_ring(t.line)])
+        .child(label)
+}
+
+/// The filled primary button that names itself.
+pub fn fill_btn(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    t: &Theme,
+) -> Stateful<Div> {
+    let label = label.into();
+    let (fill_top, fill, fill_h) = (t.fill_top, t.fill, t.fill_h);
+    bare_btn(id, label.clone(), t)
+        .bg(linear_gradient(
+            180.,
+            linear_color_stop(fill_top, 0.),
+            linear_color_stop(fill, 1.),
+        ))
+        .text_color(t.on_fill)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .hover(move |style| style.bg(fill_h))
+        .child(label)
+}
+
+/// A key shown inside a button.
+pub fn kbd(text: &'static str, color: Hsla) -> impl IntoElement + use<> {
+    small(12.)
+        .text_color(color)
+        .font_weight(gpui::FontWeight::NORMAL)
+        .child(text)
+}
+
 /// A button that sets its own hover colour.
-pub fn bare_btn(id: impl Into<ElementId>, label: &'static str, t: &Theme) -> Stateful<Div> {
+pub fn bare_btn(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    t: &Theme,
+) -> Stateful<Div> {
     div()
         .id(id)
         .role(Role::Button)
-        .aria_label(label)
+        .aria_label(label.into())
         .flex_none()
         .flex()
         .items_center()

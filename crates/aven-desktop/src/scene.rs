@@ -45,6 +45,15 @@ pub struct Scene {
     pub gpui_pointer: Option<[f32; 2]>,
     /// Takes the picture this long after the keys, to catch a motion in flight.
     pub gpui_frame_ms: Option<u64>,
+    /// A fixture task to open before the keys run.
+    pub gpui_select: Option<String>,
+    /// Attaches a generated image to the open task before the keys run.
+    #[serde(default)]
+    pub gpui_image: bool,
+    /// A description written from outside while the keys' edit is open.
+    pub gpui_incoming: Option<String>,
+    /// Where to click after the keys.
+    pub gpui_click: Option<[f32; 2]>,
     /// Element names, which must all exist on both sides.
     pub measure: Vec<String>,
     /// Element names that must be missing or empty on both sides.

@@ -10,15 +10,16 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontWeight, GlobalElementId,
-    Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, Pixels, Point, ScrollEvent, SharedString, Size, Style, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px,
-    relative, size,
+    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    FontWeight, GlobalElementId, Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Size, Style,
+    TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill,
+    point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::markdown::{Rendered, Span};
 use crate::theme::theme;
 
 actions!(
@@ -143,6 +144,27 @@ pub enum EditorEvent {
     Blur,
     Up,
     Down,
+    /// A paste the editor cannot hold, for a surface that takes images.
+    PastedImage(PastedImage),
+}
+
+/// An image from the clipboard: its bytes, or the file it was copied from.
+#[derive(Clone)]
+pub enum PastedImage {
+    Bytes(gpui::Image),
+    Path(std::path::PathBuf),
+}
+
+/// An image the clipboard holds, if any.
+pub fn clipboard_image(cx: &App) -> Option<PastedImage> {
+    let item = cx.read_from_clipboard()?;
+    item.entries().iter().find_map(|entry| match entry {
+        ClipboardEntry::Image(image) => Some(PastedImage::Bytes(image.clone())),
+        ClipboardEntry::ExternalPaths(paths) => {
+            paths.paths().first().cloned().map(PastedImage::Path)
+        }
+        ClipboardEntry::String(_) => None,
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -269,12 +291,16 @@ pub struct Editor {
     mode: Mode,
     read_only: bool,
     emit_arrows: bool,
+    /// Enter breaks the line, leaving saving to the surface around the editor.
+    enter_breaks: bool,
+    takes_images: bool,
     content: String,
     placeholder: SharedString,
     selected: Range<usize>,
     reversed: bool,
     marked: Option<Range<usize>>,
-    bold: Vec<Range<usize>>,
+    spans: Vec<Span>,
+    tight: Vec<usize>,
     paragraph_gap: Option<Pixels>,
     layout: Option<TextLayout>,
     bounds: Option<Bounds<Pixels>>,
@@ -331,12 +357,15 @@ impl Editor {
             mode,
             read_only: false,
             emit_arrows: false,
+            enter_breaks: false,
+            takes_images: false,
             content: String::new(),
             placeholder: placeholder.into(),
             selected: 0..0,
             reversed: false,
             marked: None,
-            bold: Vec::new(),
+            spans: Vec::new(),
+            tight: Vec::new(),
             paragraph_gap: None,
             layout: None,
             bounds: None,
@@ -364,6 +393,16 @@ impl Editor {
         self
     }
 
+    pub fn enter_breaks(mut self) -> Self {
+        self.enter_breaks = true;
+        self
+    }
+
+    pub fn takes_images(mut self) -> Self {
+        self.takes_images = true;
+        self
+    }
+
     pub fn max_height(mut self, height: Pixels) -> Self {
         self.max_height = Some(height);
         self
@@ -387,7 +426,8 @@ impl Editor {
         self.selected = self.content.len()..self.content.len();
         self.reversed = false;
         self.marked = None;
-        self.bold.clear();
+        self.spans.clear();
+        self.tight.clear();
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
@@ -395,8 +435,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_bold(&mut self, ranges: Vec<Range<usize>>) {
-        self.bold = ranges;
+    /// Shows Markdown already turned into styled text.
+    pub fn set_rendered(&mut self, rendered: Rendered, cx: &mut Context<Self>) {
+        self.set_text(&rendered.text, cx);
+        self.spans = rendered.spans;
+        self.tight = rendered.tight;
     }
 
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
@@ -885,6 +928,12 @@ impl Editor {
         if self.read_only {
             return;
         }
+        if self.takes_images
+            && let Some(image) = clipboard_image(cx)
+        {
+            cx.emit(EditorEvent::PastedImage(image));
+            return;
+        }
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let text = self.sanitize(&text);
             self.record(EditKind::Other);
@@ -918,8 +967,12 @@ impl Editor {
         }
     }
 
-    fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(EditorEvent::Submit);
+    fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.enter_breaks {
+            self.insert_newline(&InsertNewline, window, cx);
+        } else {
+            cx.emit(EditorEvent::Submit);
+        }
     }
 
     fn insert_newline(&mut self, _: &InsertNewline, window: &mut Window, cx: &mut Context<Self>) {
@@ -960,6 +1013,14 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let offset = self.index_for_position(event.position);
+        if self.read_only
+            && event.click_count == 1
+            && let Some(url) = self.link_at(offset)
+        {
+            cx.open_url(&url);
+            cx.stop_propagation();
+            return;
+        }
         match event.click_count {
             1 => {
                 self.drag = Some(DragUnit::Char);
@@ -984,6 +1045,13 @@ impl Editor {
                 self.selection_changed(window, cx);
             }
         }
+    }
+
+    fn link_at(&self, offset: usize) -> Option<String> {
+        self.spans
+            .iter()
+            .find(|span| span.range.contains(&offset))
+            .and_then(|span| span.style.link.clone())
     }
 
     fn drag_to(&mut self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
@@ -1019,37 +1087,55 @@ impl Editor {
         cx.notify();
     }
 
-    fn runs(&self, range: Range<usize>, style: &TextStyle, color: Hsla) -> Vec<TextRun> {
+    fn runs(&self, range: Range<usize>, style: &TextStyle, color: Hsla, cx: &App) -> Vec<TextRun> {
         let mut cuts = vec![range.start, range.end];
         let inside = |offset: usize| offset > range.start && offset < range.end;
-        for span in self.marked.iter().chain(&self.bold) {
+        let spans = self.spans.iter().map(|span| &span.range);
+        for span in self.marked.iter().chain(spans) {
             cuts.extend([span.start, span.end].into_iter().filter(|o| inside(*o)));
         }
         cuts.sort_unstable();
         cuts.dedup();
-        let mut font = style.font();
+        let theme = theme(cx);
         cuts.windows(2)
             .map(|pair| {
                 let (start, end) = (pair[0], pair[1]);
                 let contains = |span: &Range<usize>| span.start <= start && end <= span.end;
-                font.weight = if self.bold.iter().any(contains) {
-                    FontWeight::SEMIBOLD
+                let span = self.spans.iter().find(|span| contains(&span.range));
+                let marks = span.map(|span| span.style.clone()).unwrap_or_default();
+                let mut font = style.font();
+                if marks.bold {
+                    font.weight = FontWeight::SEMIBOLD;
+                }
+                if marks.italic {
+                    font.style = gpui::FontStyle::Italic;
+                }
+                if marks.code {
+                    font.family = crate::kit::MONO.into();
+                }
+                let link = marks.link.is_some();
+                let tint = if link {
+                    theme.accent
+                } else if marks.dim {
+                    theme.muted
                 } else {
-                    style.font_weight
+                    color
                 };
+                let underline = self.marked.as_ref().is_some_and(contains) || link;
                 TextRun {
                     len: end - start,
-                    font: font.clone(),
-                    color,
-                    background_color: None,
-                    underline: self.marked.as_ref().filter(|m| contains(m)).map(|_| {
-                        UnderlineStyle {
-                            color: Some(color),
-                            thickness: px(1.),
-                            wavy: false,
-                        }
+                    font,
+                    color: tint,
+                    background_color: marks.code.then_some(theme.raised),
+                    underline: underline.then_some(UnderlineStyle {
+                        color: Some(tint),
+                        thickness: px(1.),
+                        wavy: false,
                     }),
-                    strikethrough: None,
+                    strikethrough: marks.strike.then_some(gpui::StrikethroughStyle {
+                        color: Some(tint),
+                        thickness: px(1.),
+                    }),
                 }
             })
             .collect()
@@ -1084,7 +1170,7 @@ impl Editor {
         for (ix, source) in sources.iter().enumerate() {
             let end = start + source.len();
             let runs = if is_placeholder {
-                let mut runs = self.runs(0..0, style, color);
+                let mut runs = self.runs(0..0, style, color, cx);
                 runs.push(TextRun {
                     len: source.len(),
                     font: style.font(),
@@ -1095,7 +1181,7 @@ impl Editor {
                 });
                 runs
             } else {
-                self.runs(start..end, style, color)
+                self.runs(start..end, style, color, cx)
             };
             let line = window
                 .text_system()
@@ -1142,9 +1228,7 @@ impl Editor {
                 row_start = boundary;
             }
             if let Some(gap) = self.paragraph_gap {
-                let bullet = |s: &&str| s.starts_with('•');
-                let tight = bullet(source) && sources.get(ix + 1).is_some_and(bullet);
-                if ix + 1 < sources.len() && !tight {
+                if ix + 1 < sources.len() && !self.tight.contains(&ix) {
                     top += gap;
                 }
             }

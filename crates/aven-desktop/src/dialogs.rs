@@ -1,0 +1,1460 @@
+//! Dialogs over the window: search, schedule, prompts, images, help and the
+//! incoming description. One shows at a time, above the composer, and focus goes
+//! back where it came from.
+use std::rc::Rc;
+
+use accesskit::Role;
+use aven_core::ids::TaskId;
+use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
+use aven_host::time_input::{
+    available_at_error_message, due_on_error_message, parse_available_at_input, parse_due_on_input,
+};
+use chrono::{DateTime, Local, Utc};
+use gpui::{
+    AnyElement, Context, Entity, FocusHandle, FontWeight, HighlightStyle, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription, Window, div,
+    img, prelude::*, px,
+};
+
+use crate::actions::*;
+use crate::adapter::{Command, Image, SearchHit, SearchInput};
+use crate::draft::{dates_preview, schedule_preview};
+use crate::input::{Editor, EditorEvent, Mode};
+use crate::kit::*;
+use crate::shell::Root;
+use crate::theme::{Theme, theme};
+
+const DIALOG_WIDTH: f32 = 560.;
+const WIDE_WIDTH: f32 = 760.;
+const NARROW_WIDTH: f32 = 440.;
+const SEARCH_WIDTH: f32 = 660.;
+const SEARCH_LIST_HEIGHT: f32 = 312.;
+const SEARCH_ROW_HEIGHT: f32 = 50.;
+
+type Save = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
+
+const HELP: [(&str, &[(&str, &str)]); 6] = [
+    (
+        "Move",
+        &[
+            ("Next, previous", "j / k"),
+            ("Expand task", "Enter"),
+            ("Previous, next", "[ / ]"),
+            ("Close", "Esc"),
+            ("All projects", "g a"),
+            ("Project", "g p"),
+            ("Workspace", "g w"),
+            ("Toggle inspector", "g d"),
+            ("Toggle sidebar", "g b"),
+            ("Jump to blocker", "g B"),
+        ],
+    ),
+    (
+        "Change",
+        &[
+            ("New task", "a"),
+            ("Status", "s"),
+            ("Priority", "!"),
+            ("Done", "d"),
+            ("Canceled", "x"),
+            ("Note", "n"),
+            ("Undo", "u"),
+            ("Title", "e t"),
+            ("Description", "e d"),
+            ("Project", "e j"),
+            ("Availability", "e a"),
+            ("Due date", "e u"),
+            ("Labels", "e l"),
+            ("Metadata", "e m"),
+            ("Priority", "e p"),
+        ],
+    ),
+    (
+        "Task",
+        &[
+            ("Delete", "t D"),
+            ("Restore", "t R"),
+            ("Blockers", "t B"),
+            ("Remove blocker", "t U"),
+            ("Related", "t l"),
+            ("Move lane", "< / >"),
+        ],
+    ),
+    (
+        "Views",
+        &[
+            ("Queue", "v q"),
+            ("Ready", "v y"),
+            ("Inbox", "v i"),
+            ("Upcoming", "v p"),
+            ("Overdue", "v x"),
+            ("Blocked", "v k"),
+            ("Epics", "v e"),
+            ("Recurring", "v u"),
+            ("Done", "v d"),
+            ("Conflicts", "v c"),
+            ("Recent", "v r"),
+            ("Columns or list", "v l"),
+        ],
+    ),
+    (
+        "Find",
+        &[
+            ("Search", "/"),
+            ("Palette", "⌘K or :"),
+            ("Filter label", "f l"),
+            ("Filter priority", "f p"),
+            ("Deleted", "f x"),
+            ("Metadata", "f m"),
+            ("Clear", "f c"),
+            ("Order", "o"),
+        ],
+    ),
+    (
+        "Copy and sync",
+        &[
+            ("Ref", "y r"),
+            ("ID", "y i"),
+            ("Title", "y t"),
+            ("Description", "y d"),
+            ("Notes", "y n"),
+            ("Report", "y m"),
+            ("This help", "?"),
+        ],
+    ),
+];
+
+pub enum Dialog {
+    Search {
+        input: Entity<Editor>,
+        all: bool,
+        deleted: bool,
+        index: usize,
+    },
+    Schedule {
+        id: TaskId,
+        reference: String,
+        text: Entity<Editor>,
+        available: Entity<Editor>,
+        due: Entity<Editor>,
+        base: (String, String),
+        error: Option<String>,
+    },
+    Prompt {
+        title: String,
+        label: &'static str,
+        hint: &'static str,
+        input: Entity<Editor>,
+        save: Save,
+    },
+    Image {
+        id: TaskId,
+        image: Image,
+        alt: Entity<Editor>,
+    },
+    Help,
+    Incoming {
+        id: TaskId,
+        mine: String,
+        theirs: String,
+    },
+}
+
+pub struct Layer {
+    pub dialog: Dialog,
+    prior: Option<FocusHandle>,
+    focus: FocusHandle,
+    fields: Vec<FocusHandle>,
+    _subscriptions: Vec<Subscription>,
+}
+
+/// A stored instant as the schedule field shows it.
+fn local_field(at: &str) -> String {
+    at.parse::<DateTime<Utc>>().map_or_else(
+        |_| at.to_string(),
+        |at| {
+            at.with_timezone(&Local)
+                .format("%Y-%m-%d at %H:%M")
+                .to_string()
+        },
+    )
+}
+
+/// One schedule field's parsed value.
+fn field_value(
+    text: &str,
+    parse: fn(&str) -> anyhow::Result<String>,
+    message: fn(&anyhow::Error) -> String,
+) -> Result<Option<String>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    match parse(text.trim()) {
+        Ok(value) if value.is_empty() => Ok(None),
+        Ok(value) => Ok(Some(value)),
+        Err(error) => Err(message(&error)),
+    }
+}
+
+impl Root {
+    pub(crate) fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+
+    fn open_dialog(
+        &mut self,
+        dialog: Dialog,
+        editors: Vec<Entity<Editor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let subscriptions = editors
+            .iter()
+            .map(|editor| cx.subscribe_in(editor, window, Self::on_dialog_event))
+            .collect();
+        let fields: Vec<FocusHandle> = editors
+            .iter()
+            .map(|editor| editor.read(cx).focus.clone())
+            .collect();
+        let focus = fields.first().cloned().unwrap_or_else(|| cx.focus_handle());
+        let prior = window.focused(cx);
+        window.focus(&focus, cx);
+        self.dialog = Some(Layer {
+            dialog,
+            prior,
+            focus,
+            fields,
+            _subscriptions: subscriptions,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(layer) = self.dialog.take() {
+            let focus = layer.prior.unwrap_or_else(|| self.focus.clone());
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    fn on_dialog_event(
+        &mut self,
+        _: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let searching = matches!(
+            self.dialog.as_ref().map(|layer| &layer.dialog),
+            Some(Dialog::Search { .. })
+        );
+        match event {
+            EditorEvent::Submit => self.accept(&Accept, window, cx),
+            EditorEvent::Cancel => self.close_dialog(window, cx),
+            EditorEvent::Changed if searching => {
+                self.set_search_index(0, cx);
+                self.run_search_preview(cx);
+            }
+            EditorEvent::Up if searching => self.step_search(-1, cx),
+            EditorEvent::Down if searching => self.step_search(1, cx),
+            EditorEvent::Changed => cx.notify(),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn next_field(
+        &mut self,
+        _: &NextField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_field(1, window, cx);
+    }
+
+    pub(crate) fn previous_field(
+        &mut self,
+        _: &PreviousField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_field(-1, window, cx);
+    }
+
+    fn cycle_field(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let fields = match self.dialog.as_ref() {
+            Some(layer) => layer.fields.clone(),
+            None => self.composer_fields(cx),
+        };
+        if fields.is_empty() {
+            return;
+        }
+        let at = fields.iter().position(|field| field.is_focused(window));
+        let count = fields.len() as isize;
+        let next = at.map_or(0, |at| (at as isize + delta).rem_euclid(count));
+        window.focus(&fields[next as usize], cx);
+        cx.notify();
+    }
+
+    pub(crate) fn open_search(
+        &mut self,
+        _: &OpenSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let placeholder = "Search tasks, notes, labels and refs";
+        let input = cx.new(|cx| Editor::new(Mode::Single, placeholder, window, cx).emit_arrows());
+        let dialog = Dialog::Search {
+            input: input.clone(),
+            all: self.session.snapshot.view.project.is_none(),
+            deleted: self.session.snapshot.view.deleted != crate::adapter::DeletedFilter::Hide,
+            index: 0,
+        };
+        self.session.search = Default::default();
+        self.open_dialog(dialog, vec![input], window, cx);
+    }
+
+    fn search_input(&self, cx: &Context<Self>) -> Option<SearchInput> {
+        match &self.dialog.as_ref()?.dialog {
+            Dialog::Search {
+                input,
+                all,
+                deleted,
+                ..
+            } => Some(SearchInput {
+                text: input.read(cx).text().trim().to_string(),
+                project: (!all)
+                    .then(|| self.session.snapshot.view.project.clone())
+                    .flatten(),
+                deleted: *deleted,
+            }),
+            _ => None,
+        }
+    }
+
+    fn run_search_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(input) = self.search_input(cx) {
+            if input.text.is_empty() {
+                self.session.search = Default::default();
+            } else {
+                self.session.search_preview(input);
+            }
+        }
+        cx.notify();
+    }
+
+    /// What the list holds with nothing typed: the tasks touched last.
+    fn recent_hits(&self) -> Vec<SearchHit> {
+        let catalog = self.session.catalog.iter().take(6);
+        catalog
+            .map(|task| SearchHit {
+                id: task.id.clone(),
+                reference: task.reference.clone(),
+                project: task.project.clone(),
+                title: task.title.clone(),
+                status: task.status,
+                snippet: None,
+                deleted: false,
+            })
+            .collect()
+    }
+
+    fn search_hits(&self, cx: &Context<Self>) -> Vec<SearchHit> {
+        match self.search_input(cx) {
+            Some(input) if input.text.is_empty() => self.recent_hits(),
+            _ => self.session.search.hits.clone(),
+        }
+    }
+
+    fn set_search_index(&mut self, next: usize, cx: &mut Context<Self>) {
+        if let Some(Layer {
+            dialog: Dialog::Search { index, .. },
+            ..
+        }) = self.dialog.as_mut()
+        {
+            *index = next;
+        }
+        cx.notify();
+    }
+
+    fn step_search(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let count = self.search_hits(cx).len() as isize;
+        if let Some(Layer {
+            dialog: Dialog::Search { index, .. },
+            ..
+        }) = self.dialog.as_ref()
+        {
+            let next = (*index as isize + delta).clamp(0, (count - 1).max(0));
+            self.set_search_index(next as usize, cx);
+        }
+    }
+
+    fn open_hit(&mut self, id: TaskId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = self.search_input(cx).filter(|input| !input.text.is_empty()) {
+            self.session.search_accepted(&input.text);
+        }
+        self.close_dialog(window, cx);
+        self.open_task(id, window, cx);
+    }
+
+    pub(crate) fn toggle_search_scope(
+        &mut self,
+        _: &ToggleSearchScope,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session.snapshot.view.project.is_none() {
+            return;
+        }
+        if let Some(Layer {
+            dialog: Dialog::Search { all, .. },
+            ..
+        }) = self.dialog.as_mut()
+        {
+            *all = !*all;
+            self.run_search_preview(cx);
+        }
+    }
+
+    fn toggle_search_deleted(&mut self, cx: &mut Context<Self>) {
+        if let Some(Layer {
+            dialog: Dialog::Search { deleted, .. },
+            ..
+        }) = self.dialog.as_mut()
+        {
+            *deleted = !*deleted;
+            self.run_search_preview(cx);
+        }
+    }
+
+    pub(crate) fn full_results(
+        &mut self,
+        _: &FullResults,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(input) = self.search_input(cx).filter(|input| !input.text.is_empty()) else {
+            return;
+        };
+        self.session.search_accepted(&input.text);
+        self.close_dialog(window, cx);
+        self.switch_view(Command::Search(input), window, cx);
+    }
+
+    pub(crate) fn edit_availability(
+        &mut self,
+        _: &EditAvailability,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_schedule(0, window, cx);
+    }
+
+    pub(crate) fn edit_due(&mut self, _: &EditDue, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_schedule(2, window, cx);
+    }
+
+    /// Opens the schedule dialog with one of its fields focused.
+    pub(crate) fn open_schedule(
+        &mut self,
+        field: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.session.target_row().cloned() else {
+            return;
+        };
+        let detail = self.session.detail.as_ref();
+        let at = detail.and_then(|detail| detail.available_at.as_deref());
+        let base = (
+            at.map(local_field).unwrap_or_default(),
+            detail
+                .and_then(|detail| detail.due_on.clone())
+                .unwrap_or_default(),
+        );
+        let field_editor = |value: &str,
+                            placeholder: &'static str,
+                            window: &mut Window,
+                            cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                let mut editor = Editor::new(Mode::Single, placeholder, window, cx);
+                editor.set_text(value, cx);
+                editor
+            })
+        };
+        let text = field_editor("", "available tomorrow at 9am, due next friday", window, cx);
+        let available = field_editor(&base.0, "Available now", window, cx);
+        let due = field_editor(&base.1, "No deadline", window, cx);
+        let editors = vec![text.clone(), available.clone(), due.clone()];
+        let target = editors[field].read(cx).focus.clone();
+        let dialog = Dialog::Schedule {
+            id: row.id,
+            reference: row.reference,
+            text,
+            available,
+            due,
+            base,
+            error: None,
+        };
+        self.open_dialog(dialog, editors, window, cx);
+        if let Some(layer) = self.dialog.as_mut() {
+            layer.focus = target.clone();
+        }
+        window.focus(&target, cx);
+    }
+
+    /// The writes the schedule fields ask for, or why they cannot be made.
+    fn schedule_writes(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<Result<(Option<Option<String>>, Option<Option<String>>), String>> {
+        let Dialog::Schedule {
+            text,
+            available,
+            due,
+            base,
+            ..
+        } = &self.dialog.as_ref()?.dialog
+        else {
+            return None;
+        };
+        let typed = text.read(cx).text().trim();
+        if !typed.is_empty() {
+            return Some(match parse_schedule_input(typed) {
+                Ok(ParsedScheduleInput::Once {
+                    available_at,
+                    due_on,
+                }) => Ok((
+                    Some(available_at).filter(|at| !at.is_empty()).map(Some),
+                    Some(due_on).filter(|due| !due.is_empty()).map(Some),
+                )),
+                Ok(ParsedScheduleInput::Recurring { .. }) => {
+                    Err("Repeating schedules are set when creating a task.".to_string())
+                }
+                Ok(ParsedScheduleInput::None) => Ok((None, None)),
+                Err(_) => Err(schedule_preview(typed).text),
+            });
+        }
+        let at = available.read(cx).text().trim().to_string();
+        let on = due.read(cx).text().trim().to_string();
+        let writes = (|| {
+            let at = (at != base.0)
+                .then(|| field_value(&at, parse_available_at_input, available_at_error_message))
+                .transpose()?;
+            let on = (on != base.1)
+                .then(|| field_value(&on, parse_due_on_input, due_on_error_message))
+                .transpose()?;
+            Ok((at, on))
+        })();
+        Some(writes)
+    }
+
+    fn schedule_preview_line(&self, cx: &Context<Self>) -> (String, bool) {
+        match self.schedule_writes(cx) {
+            Some(Err(message)) => (message, false),
+            Some(Ok((at, on))) => {
+                let detail = self.session.detail.as_ref();
+                let stored_at = detail.and_then(|detail| detail.available_at.clone());
+                let stored_on = detail.and_then(|detail| detail.due_on.clone());
+                let at = at.unwrap_or(stored_at).unwrap_or_default();
+                let on = on.unwrap_or(stored_on).unwrap_or_default();
+                (dates_preview(&at, &on, Local::now().date_naive()), true)
+            }
+            None => (String::new(), true),
+        }
+    }
+
+    fn apply_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(writes) = self.schedule_writes(cx) else {
+            return;
+        };
+        match writes {
+            Ok((available_at, due_on)) => {
+                if let Some(Layer {
+                    dialog: Dialog::Schedule { id, .. },
+                    ..
+                }) = self.dialog.as_ref()
+                    && (available_at.is_some() || due_on.is_some())
+                {
+                    self.session.write(Command::SetSchedule {
+                        id: id.clone(),
+                        available_at,
+                        due_on,
+                    });
+                }
+                self.close_dialog(window, cx);
+            }
+            Err(message) => {
+                if let Some(Layer {
+                    dialog: Dialog::Schedule { error, .. },
+                    ..
+                }) = self.dialog.as_mut()
+                {
+                    *error = Some(message);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    fn set_field(&self, editor: &Entity<Editor>, value: &str, cx: &mut Context<Self>) {
+        editor.update(cx, |editor, cx| editor.set_text(value, cx));
+    }
+
+    pub(crate) fn open_prompt(
+        &mut self,
+        title: String,
+        label: &'static str,
+        hint: &'static str,
+        value: &str,
+        save: Save,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| {
+            let mut editor = Editor::new(Mode::Single, "", window, cx);
+            editor.set_text(value, cx);
+            editor.select_all_text(cx);
+            editor
+        });
+        let dialog = Dialog::Prompt {
+            title,
+            label,
+            hint,
+            input: input.clone(),
+            save,
+        };
+        self.open_dialog(dialog, vec![input], window, cx);
+    }
+
+    pub(crate) fn rename_task(
+        &mut self,
+        _: &RenameTask,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.session.target_row().cloned() else {
+            return;
+        };
+        let id = row.id.clone();
+        let save: Save = Rc::new(move |root, text, _, _| {
+            if !text.trim().is_empty() {
+                root.session.set_title(&id, text.trim().to_string());
+            }
+        });
+        let title = format!("Rename {}", row.reference);
+        self.open_prompt(title, "Title", "", &row.title, save, window, cx);
+    }
+
+    /// Sets a metadata field on the target. An empty value is still a value.
+    pub(crate) fn open_meta(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.session.target().cloned() else {
+            return;
+        };
+        let detail = self.session.detail.as_ref();
+        let value = detail
+            .and_then(|detail| detail.metadata.iter().find(|(field, _)| *field == key))
+            .map(|(_, value)| value.clone())
+            .unwrap_or_default();
+        let hint =
+            "An empty value is different from no value. Use Remove in the task to clear the field.";
+        let field = key.clone();
+        let save: Save = Rc::new(move |root, text, _, _| {
+            let command = Command::SetMetadata(id.clone(), field.clone(), Some(text));
+            root.session.write(command);
+        });
+        self.open_prompt(
+            format!("Set {key}"),
+            "Value",
+            hint,
+            &value,
+            save,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_image(&mut self, image: Image, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.session.target().cloned() else {
+            return;
+        };
+        let alt = cx.new(|cx| {
+            let mut editor = Editor::new(Mode::Single, "Describe this image", window, cx);
+            editor.set_text(&image.alt, cx);
+            editor
+        });
+        self.open_dialog(
+            Dialog::Image {
+                id,
+                image,
+                alt: alt.clone(),
+            },
+            vec![alt],
+            window,
+            cx,
+        );
+    }
+
+    fn close_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Layer {
+            dialog: Dialog::Image { id, image, alt },
+            ..
+        }) = self.dialog.as_ref()
+        {
+            let text = alt.read(cx).text().to_string();
+            if text != image.alt {
+                let (id, attachment) = (id.clone(), image.id.clone());
+                self.session
+                    .write(Command::SetImageAlt(id, attachment, text));
+            }
+        }
+        self.close_dialog(window, cx);
+    }
+
+    pub(crate) fn open_help(&mut self, _: &OpenHelp, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_dialog(Dialog::Help, Vec::new(), window, cx);
+    }
+
+    /// Compares a description being edited with the one that arrived.
+    pub(crate) fn open_incoming(
+        &mut self,
+        id: TaskId,
+        mine: String,
+        theirs: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_dialog(
+            Dialog::Incoming { id, mine, theirs },
+            Vec::new(),
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn accept(&mut self, _: &Accept, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(layer) = self.dialog.as_ref() else {
+            return;
+        };
+        match &layer.dialog {
+            Dialog::Search { index, .. } => {
+                let hit = self.search_hits(cx).get(*index).cloned();
+                if let Some(hit) = hit {
+                    self.open_hit(hit.id, window, cx);
+                }
+            }
+            Dialog::Schedule { .. } => self.apply_schedule(window, cx),
+            Dialog::Prompt { input, save, .. } => {
+                let (text, save) = (input.read(cx).text().to_string(), save.clone());
+                self.close_dialog(window, cx);
+                save(self, text, window, cx);
+            }
+            Dialog::Image { .. } => self.close_image(window, cx),
+            Dialog::Help | Dialog::Incoming { .. } => self.close_dialog(window, cx),
+        }
+    }
+
+    fn render_search(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let Some(Layer {
+            dialog:
+                Dialog::Search {
+                    input,
+                    all,
+                    deleted,
+                    index,
+                },
+            ..
+        }) = self.dialog.as_ref()
+        else {
+            return Vec::new();
+        };
+        let text = input.read(cx).text().trim().to_string();
+        let scope = self.session.snapshot.view.project.clone();
+        let scope_name = scope
+            .as_ref()
+            .and_then(|key| {
+                let projects = &self.session.snapshot.projects;
+                projects.iter().find(|project| project.key == *key)
+            })
+            .map(|project| project.name.clone());
+        let hits = self.search_hits(cx);
+        let results = &self.session.search;
+        let mut list = div()
+            .id("search-list")
+            .h(px(SEARCH_LIST_HEIGHT))
+            .overflow_y_scroll()
+            .p(px(6.));
+        if text.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(t.faint)
+                    .child("Recent"),
+            );
+        }
+        for (ix, hit) in hits.iter().enumerate() {
+            list = list.child(self.search_row(ix, hit, ix == *index, &text, cx, t));
+        }
+        if hits.is_empty() && !text.is_empty() {
+            let other = results.elsewhere;
+            list = list.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.))
+                    .pt(px(48.))
+                    .text_color(t.muted)
+                    .child(format!("No matches for “{text}”"))
+                    .when(other > 0, |none| {
+                        none.child(
+                            line_btn(
+                                "search-elsewhere",
+                                format!("Show {other} in other projects"),
+                                t,
+                            )
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.toggle_search_scope(&ToggleSearchScope, window, cx);
+                                },
+                            )),
+                        )
+                    })
+                    .when(other == 0 && !*deleted, |none| {
+                        none.child(
+                            small(12.)
+                                .text_color(t.faint)
+                                .child("Deleted tasks are hidden."),
+                        )
+                    }),
+            );
+        }
+        let where_ = if *all {
+            "all projects".to_string()
+        } else {
+            scope_name.clone().unwrap_or_default()
+        };
+        let count = if text.is_empty() {
+            "Includes done and canceled tasks".to_string()
+        } else {
+            format!("{} results in {where_}", results.total)
+        };
+        vec![
+            div()
+                .h(px(52.))
+                .px(px(16.))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .border_b_1()
+                .border_color(t.line)
+                .child(icon("icons/ic-search.svg", t.faint))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(15.))
+                        .text_color(t.ink)
+                        .child(input.clone()),
+                )
+                .when_some(scope_name, |top, name| {
+                    let label = if *all {
+                        "All projects".to_string()
+                    } else {
+                        name
+                    };
+                    top.child(
+                        btn("search-scope", label.clone(), t)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_search_scope(&ToggleSearchScope, window, cx);
+                            }))
+                            .child(label),
+                    )
+                })
+                .into_any_element(),
+            list.into_any_element(),
+            div()
+                .h(px(40.))
+                .px(px(14.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .border_t_1()
+                .border_color(t.line)
+                .child(
+                    small(12.)
+                        .flex_1()
+                        .truncate()
+                        .text_color(t.faint)
+                        .child(count),
+                )
+                .child(
+                    btn(
+                        "search-deleted",
+                        if *deleted {
+                            "Hide deleted"
+                        } else {
+                            "Include deleted"
+                        },
+                        t,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_search_deleted(cx)))
+                    .child(if *deleted {
+                        "Hide deleted"
+                    } else {
+                        "Include deleted"
+                    }),
+                )
+                .child(
+                    btn("search-full", "All results", t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.full_results(&FullResults, window, cx);
+                        }))
+                        .child("All results")
+                        .child(kbd("⇧↵", t.faint)),
+                )
+                .into_any_element(),
+        ]
+    }
+
+    fn search_row(
+        &self,
+        ix: usize,
+        hit: &SearchHit,
+        on: bool,
+        text: &str,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
+        let id = hit.id.clone();
+        let status = status_name(hit.status);
+        let detail = hit.snippet.as_ref().map_or(status.to_string(), |snippet| {
+            format!("{status} · {snippet}")
+        });
+        let highlight = HighlightStyle {
+            background_color: Some(t.accent.opacity(0.24)),
+            ..HighlightStyle::default()
+        };
+        let marked = |line: &str| -> StyledText {
+            let lower = line.to_lowercase();
+            let ranges = text
+                .split_whitespace()
+                .flat_map(|word| {
+                    let word = word.to_lowercase();
+                    let found: Vec<_> = lower
+                        .match_indices(&word)
+                        .map(|(at, _)| (at..at + word.len(), highlight))
+                        .collect();
+                    found
+                })
+                .filter(|(range, _)| {
+                    line.len() == lower.len()
+                        && line.is_char_boundary(range.start)
+                        && line.is_char_boundary(range.end)
+                })
+                .collect::<Vec<_>>();
+            let mut ranges = ranges;
+            ranges.sort_by_key(|(range, _)| range.start);
+            ranges.dedup_by(|later, earlier| later.0.start < earlier.0.end);
+            StyledText::new(SharedString::from(line.to_string())).with_highlights(ranges)
+        };
+        div()
+            .id(("search-row", ix))
+            .role(Role::ListBoxOption)
+            .aria_label(format!("{} {}", hit.reference, hit.title))
+            .aria_selected(on)
+            .h(px(SEARCH_ROW_HEIGHT))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .rounded(px(6.))
+            .when(on, |row| row.bg(t.tint))
+            .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
+                let hovered = match this.dialog.as_ref() {
+                    Some(Layer {
+                        dialog: Dialog::Search { index, .. },
+                        ..
+                    }) => *index != ix,
+                    _ => false,
+                };
+                if hovered {
+                    this.set_search_index(ix, cx);
+                }
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_hit(id.clone(), window, cx);
+            }))
+            .child(status_glyph(hit.status, t))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_color(t.ink)
+                            .when(hit.deleted, |title| title.line_through())
+                            .child(marked(&hit.title)),
+                    )
+                    .child(
+                        small(12.)
+                            .truncate()
+                            .text_color(t.muted)
+                            .child(marked(&detail)),
+                    ),
+            )
+            .when(hit.deleted, |row| {
+                row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
+            })
+            .child(ref_label(&hit.reference, &hit.project, None, t))
+    }
+
+    fn field_label(text: &'static str, t: &Theme) -> impl IntoElement + use<> {
+        small(12.)
+            .mt(px(10.))
+            .mb(px(4.))
+            .text_color(t.faint)
+            .child(text)
+    }
+
+    fn field_box(editor: &Entity<Editor>, t: &Theme) -> impl IntoElement + use<> {
+        div()
+            .h(px(30.))
+            .px(px(9.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .bg(t.page)
+            .shadow(vec![t.inset_ring(t.line)])
+            .text_color(t.ink)
+            .child(editor.clone())
+    }
+
+    fn quick_row(
+        &self,
+        id: &'static str,
+        editor: &Entity<Editor>,
+        options: Vec<(&'static str, String)>,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
+        let mut quick = div().flex().flex_wrap().gap(px(5.)).mt(px(6.));
+        for (ix, (label, value)) in options.into_iter().enumerate() {
+            let editor = editor.clone();
+            quick = quick.child(
+                btn((id, ix), label, t)
+                    .h(px(24.))
+                    .px(px(8.))
+                    .text_size(px(12.))
+                    .shadow(vec![t.inset_ring(t.line)])
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_field(&editor, &value, cx);
+                        cx.notify();
+                    }))
+                    .child(label),
+            );
+        }
+        quick
+    }
+
+    fn heading(text: String, t: &Theme) -> impl IntoElement + use<> {
+        div()
+            .px(px(18.))
+            .pt(px(14.))
+            .text_size(px(15.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(t.ink)
+            .child(text)
+    }
+
+    fn footer(t: &Theme) -> gpui::Div {
+        div()
+            .flex()
+            .justify_end()
+            .gap(px(6.))
+            .px(px(14.))
+            .py(px(10.))
+            .mt(px(4.))
+            .border_t_1()
+            .border_color(t.line)
+    }
+
+    fn cancel_and_accept(
+        &self,
+        label: &'static str,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
+        Self::footer(t)
+            .child(
+                line_btn("dialog-cancel", "Cancel", t)
+                    .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx))),
+            )
+            .child(
+                fill_btn("dialog-accept", label, t)
+                    .on_click(cx.listener(|this, _, window, cx| this.accept(&Accept, window, cx))),
+            )
+    }
+
+    fn render_schedule(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let Some(Layer {
+            dialog:
+                Dialog::Schedule {
+                    reference,
+                    text,
+                    available,
+                    due,
+                    error,
+                    ..
+                },
+            ..
+        }) = self.dialog.as_ref()
+        else {
+            return Vec::new();
+        };
+        let today = Local::now().date_naive();
+        let tomorrow = today + chrono::Days::new(1);
+        let days_to_monday =
+            7 - i64::from(chrono::Datelike::weekday(&today).num_days_from_monday());
+        let monday = today + chrono::Duration::days(days_to_monday);
+        let days_to_friday =
+            (4 + 7 - i64::from(chrono::Datelike::weekday(&today).num_days_from_monday())) % 7;
+        let friday = today + chrono::Duration::days(days_to_friday);
+        let morning = |date: chrono::NaiveDate| format!("{} at 09:00", date.format("%Y-%m-%d"));
+        let (line, valid) = self.schedule_preview_line(cx);
+        let (line, valid) = match error {
+            Some(error) if !valid => (error.clone(), false),
+            _ => (line, valid),
+        };
+        let starts = vec![
+            ("Now", String::new()),
+            ("Tomorrow morning", morning(tomorrow)),
+            ("Next Monday", morning(monday)),
+            ("In two weeks", morning(today + chrono::Days::new(14))),
+        ];
+        let ends = vec![
+            ("No deadline", String::new()),
+            ("Today", today.format("%Y-%m-%d").to_string()),
+            ("Friday", friday.format("%Y-%m-%d").to_string()),
+            (
+                "Next week",
+                (today + chrono::Days::new(7))
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ),
+        ];
+        vec![
+            Self::heading(format!("Schedule {reference}"), t).into_any_element(),
+            div()
+                .px(px(18.))
+                .pb(px(12.))
+                .child(Self::field_label("Type a schedule", t))
+                .child(Self::field_box(text, t))
+                .child(Self::field_label("Available", t))
+                .child(Self::field_box(available, t))
+                .child(self.quick_row("quick-available", available, starts, cx, t))
+                .child(Self::field_label("Due", t))
+                .child(Self::field_box(due, t))
+                .child(self.quick_row("quick-due", due, ends, cx, t))
+                .child(
+                    div()
+                        .mt(px(12.))
+                        .px(px(10.))
+                        .py(px(8.))
+                        .rounded(px(7.))
+                        .bg(t.raised)
+                        .text_color(if valid { t.body } else { t.bad })
+                        .child(line),
+                )
+                .into_any_element(),
+            self.cancel_and_accept("Apply", cx, t).into_any_element(),
+        ]
+    }
+
+    fn render_prompt(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let Some(Layer {
+            dialog:
+                Dialog::Prompt {
+                    title,
+                    label,
+                    hint,
+                    input,
+                    ..
+                },
+            ..
+        }) = self.dialog.as_ref()
+        else {
+            return Vec::new();
+        };
+        vec![
+            Self::heading(title.clone(), t).into_any_element(),
+            div()
+                .px(px(18.))
+                .pb(px(12.))
+                .child(Self::field_label(label, t))
+                .child(Self::field_box(input, t))
+                .when(!hint.is_empty(), |body| {
+                    body.child(small(12.).mt(px(8.)).text_color(t.faint).child(*hint))
+                })
+                .into_any_element(),
+            self.cancel_and_accept("Save", cx, t).into_any_element(),
+        ]
+    }
+
+    fn render_image(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let Some(Layer {
+            dialog: Dialog::Image { id, image, alt },
+            ..
+        }) = self.dialog.as_ref()
+        else {
+            return Vec::new();
+        };
+        let viewer = div()
+            .h(px(300.))
+            .rounded(px(7.))
+            .bg(t.raised)
+            .flex()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .text_color(t.faint);
+        let viewer = match &image.preview {
+            Some(path) => {
+                viewer.child(img(path.clone()).size_full().object_fit(ObjectFit::Contain))
+            }
+            None => viewer.child("Not on this device"),
+        };
+        let (save_id, save_name) = (image.id.clone(), image.name.clone());
+        let (task, attachment) = (id.clone(), image.id.clone());
+        vec![
+            div()
+                .flex()
+                .items_center()
+                .pr(px(10.))
+                .child(div().flex_1().child(Self::heading(image.name.clone(), t)))
+                .child(
+                    btn("image-close", "Close", t)
+                        .mt(px(8.))
+                        .on_click(cx.listener(|this, _, window, cx| this.close_image(window, cx)))
+                        .child("Close"),
+                )
+                .into_any_element(),
+            div()
+                .px(px(18.))
+                .pt(px(10.))
+                .pb(px(12.))
+                .child(viewer)
+                .child(Self::field_label("Description", t))
+                .child(Self::field_box(alt, t))
+                .into_any_element(),
+            Self::footer(t)
+                .child(line_btn("image-save", "Save copy", t).on_click(cx.listener(
+                    move |this, _, _, cx| this.save_image_copy(save_id.clone(), &save_name, cx),
+                )))
+                .child(line_btn("image-remove", "Remove", t).on_click(cx.listener(
+                    move |this, _, window, cx| {
+                        let command = Command::DeleteImage(task.clone(), attachment.clone());
+                        this.session.write(command);
+                        this.close_dialog(window, cx);
+                    },
+                )))
+                .child(
+                    fill_btn("image-done", "Done", t)
+                        .on_click(cx.listener(|this, _, window, cx| this.close_image(window, cx))),
+                )
+                .into_any_element(),
+        ]
+    }
+
+    fn render_help(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let mut columns = div().flex().flex_wrap().px(px(10.)).pb(px(14.));
+        for (family, keys) in HELP {
+            let mut column = div().w(relative_third()).px(px(8.)).mt(px(12.)).child(
+                div()
+                    .mb(px(4.))
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.muted)
+                    .child(family),
+            );
+            for (text, key) in keys {
+                column = column.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(22.))
+                        .text_size(px(12.))
+                        .child(div().truncate().text_color(t.body).child(*text))
+                        .child(div().flex_none().text_color(t.accent).child(*key)),
+                );
+            }
+            columns = columns.child(column);
+        }
+        vec![
+            div()
+                .flex()
+                .items_center()
+                .pr(px(10.))
+                .child(
+                    div()
+                        .flex_1()
+                        .child(Self::heading("Keyboard shortcuts".to_string(), t)),
+                )
+                .child(
+                    btn("help-close", "Close", t)
+                        .mt(px(8.))
+                        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
+                        .child("Close"),
+                )
+                .into_any_element(),
+            columns.into_any_element(),
+        ]
+    }
+
+    fn render_incoming(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let Some(Layer {
+            dialog: Dialog::Incoming { id, mine, theirs },
+            ..
+        }) = self.dialog.as_ref()
+        else {
+            return Vec::new();
+        };
+        let side = |heading: &'static str, text: &str| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(Self::field_label(heading, t))
+                .child(
+                    div()
+                        .id(heading)
+                        .h(px(240.))
+                        .overflow_y_scroll()
+                        .p(px(10.))
+                        .rounded(px(7.))
+                        .bg(t.raised)
+                        .text_color(t.body)
+                        .child(text.to_string()),
+                )
+        };
+        let (task, text) = (id.clone(), mine.clone());
+        vec![
+            Self::heading("Review the incoming description".to_string(), t).into_any_element(),
+            div()
+                .px(px(18.))
+                .pb(px(12.))
+                .flex()
+                .gap(px(12.))
+                .child(side("Your draft", mine))
+                .child(side("Incoming", theirs))
+                .into_any_element(),
+            Self::footer(t)
+                .child(
+                    line_btn("incoming-take", "Use incoming", t).on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.close_dialog(window, cx);
+                            this.cancel_description(window, cx);
+                        },
+                    )),
+                )
+                .child(
+                    fill_btn("incoming-keep", "Keep my draft", t).on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            let command = Command::SetDescription(task.clone(), text.clone());
+                            this.session.write(command);
+                            this.close_dialog(window, cx);
+                            this.finish_description(window, cx);
+                        },
+                    )),
+                )
+                .into_any_element(),
+        ]
+    }
+
+    pub(crate) fn render_dialog(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let layer = self.dialog.as_ref()?;
+        let t = theme(cx);
+        let viewport = window.viewport_size();
+        let (name, width, content, context) = match &layer.dialog {
+            Dialog::Search { .. } => (
+                "Search",
+                SEARCH_WIDTH,
+                self.render_search(cx, &t),
+                "Dialog Search",
+            ),
+            Dialog::Schedule { .. } => (
+                "Schedule",
+                DIALOG_WIDTH,
+                self.render_schedule(cx, &t),
+                "Dialog",
+            ),
+            Dialog::Prompt { .. } => ("Edit", NARROW_WIDTH, self.render_prompt(cx, &t), "Dialog"),
+            Dialog::Image { .. } => ("Image", DIALOG_WIDTH, self.render_image(cx, &t), "Dialog"),
+            Dialog::Help => (
+                "Keyboard shortcuts",
+                WIDE_WIDTH,
+                self.render_help(cx, &t),
+                "Dialog",
+            ),
+            Dialog::Incoming { .. } => (
+                "Incoming description",
+                WIDE_WIDTH,
+                self.render_incoming(cx, &t),
+                "Dialog",
+            ),
+        };
+        let width = width.min(f32::from(viewport.width) - 32.);
+        Some(
+            div()
+                .id("dialog-backdrop")
+                .absolute()
+                .inset_0()
+                .bg(t.shade)
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                        this.close_dialog(window, cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .id("dialog")
+                        .role(Role::Dialog)
+                        .aria_label(name)
+                        .key_context(context)
+                        .track_focus(&layer.focus)
+                        .on_action(cx.listener(Self::accept))
+                        .on_action(cx.listener(Self::toggle_search_scope))
+                        .on_action(cx.listener(Self::full_results))
+                        .absolute()
+                        .left((viewport.width - px(width)) / 2.)
+                        .top(viewport.height * 0.11)
+                        .w(px(width))
+                        .max_h(viewport.height * 0.78)
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .rounded(px(12.))
+                        .bg(t.pop)
+                        .shadow(t.dlg_shadow())
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .children(content),
+                ),
+        )
+    }
+}
+
+fn relative_third() -> gpui::Length {
+    gpui::relative(1. / 3.).into()
+}

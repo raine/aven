@@ -107,6 +107,8 @@ pub struct Group {
     pub name: String,
     pub hint: String,
     pub rows: Vec<usize>,
+    /// The status a task takes when dropped on this column.
+    pub lane: Option<TaskStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -569,7 +571,7 @@ fn date_tone(item: &TaskListItem, today: NaiveDate) -> DateTone {
 }
 
 /// Matches the prototype's `availText`.
-fn available_text(stamp: &str, today: NaiveDate) -> String {
+pub fn available_text(stamp: &str, today: NaiveDate) -> String {
     local_time(stamp).map_or_else(String::new, |time| {
         let day = time.format("%Y-%m-%d").to_string();
         format!("{} {}", due_text(&day, today), time.format("%H:%M"))
@@ -628,7 +630,12 @@ fn group_text(label: &str) -> (String, String) {
 /// The group of tasks closed during this visit to a view.
 pub fn done_group(rows: Vec<usize>) -> Group {
     let (name, hint) = group_text("done");
-    Group { name, hint, rows }
+    Group {
+        name,
+        hint,
+        rows,
+        lane: None,
+    }
 }
 
 fn core_groups(store: &TuiStore) -> Vec<Group> {
@@ -641,6 +648,7 @@ fn core_groups(store: &TuiStore) -> Vec<Group> {
                     name,
                     hint,
                     rows: Vec::with_capacity(group.count),
+                    lane: None,
                 });
             }
             TaskListRow::Task { task_index } | TaskListRow::EpicChild { task_index, .. } => {
@@ -660,6 +668,7 @@ fn named_groups(names: Vec<String>, rows: Vec<(usize, usize)>) -> Vec<Group> {
             name,
             hint: String::new(),
             rows: Vec::new(),
+            lane: None,
         })
         .collect();
     for (group, row) in rows {
@@ -774,6 +783,11 @@ fn list_groups(store: &TuiStore, now: DateTime<Local>, arrange: &Arrange) -> Vec
                 name: column.config.name.clone(),
                 hint: String::new(),
                 rows: column.task_indices.clone(),
+                lane: column
+                    .config
+                    .statuses
+                    .first()
+                    .and_then(|status| TaskStatus::parse(status).ok()),
             })
             .collect();
     }
@@ -840,12 +854,12 @@ pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
     arranged_snapshot(store, now, &Arrange::default())
 }
 
-fn recent_actions(store: &TuiStore) -> Vec<RecentAction> {
+fn recent_actions(store: &TuiStore, now: DateTime<Local>) -> Vec<RecentAction> {
     store
         .recent_actions
         .iter()
         .map(|action| RecentAction {
-            at: action.created_at.clone(),
+            at: relative_time(&action.created_at, now),
             text: action.summary.clone(),
             task: action
                 .entity_id
@@ -917,12 +931,13 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
             ("epics", counts.epics),
             ("recurring", counts.recurring),
             ("done", 0),
+            ("active", counts.active),
             ("conflicts", counts.conflicts),
         ],
         view: view_info(store, arrange),
         labels: store.labels.clone(),
         fields: Vec::new(),
-        recent: recent_actions(store),
+        recent: recent_actions(store, now),
     }
 }
 
@@ -989,12 +1004,6 @@ fn detail_with(
     images: Vec<Image>,
 ) -> Detail {
     let today = now.date_naive();
-    let stamp = |stamp: &str| {
-        local_time(stamp).map_or_else(
-            || stamp.to_string(),
-            |time| time.format("%b %-d, %H:%M").to_string(),
-        )
-    };
     let available = item.task.available_at.as_deref();
     let live_related = item.related.iter().filter(|link| !link.deleted);
     Detail {
@@ -1019,9 +1028,10 @@ fn detail_with(
         notes: item
             .notes
             .iter()
+            .rev()
             .map(|note| Note {
                 id: note.id.clone(),
-                at: stamp(&note.created_at),
+                at: relative_time(&note.created_at, now),
                 body: note.body.clone(),
             })
             .collect(),
