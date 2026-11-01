@@ -3,23 +3,31 @@
 //! One thread owns the `TuiStore` and runs requests in order, so its replies keep
 //! their order too. Outside writes surface through SQLite's `data_version`, which
 //! changes when another connection commits. A background task runs sync rounds.
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
+use aven_core::attachments::{ImageOptimizationPolicy, object_path};
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::db::Database;
-use aven_core::ids::TaskId;
-use aven_core::operations::TaskDraft;
-use aven_core::query::TaskListItem;
+use aven_core::ids::{TaskId, new_id};
+use aven_core::metadata::TaskMetadataInput;
+use aven_core::operations::{AttachmentAddInput, TaskAttachmentAddInput, TaskDraft};
+use aven_core::query::{
+    SortDirection, TaskFilters, TaskListItem, TaskQueryMode, TaskSearchQuery, TaskSort,
+};
 use aven_core::queue::QueueReason;
 use aven_core::sync::client::keys::ProtectedStorage;
-use aven_host::config::AppConfig;
+use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
+use aven_host::config::{AppConfig, resolve_blob_dir};
+use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
 use aven_host::store::{
-    PriorityMutation, TaskListRow, TaskTextField, TaskViewState, TuiStore, mutation_committed,
+    PendingTaskAttachment, PriorityMutation, SelectionRestore, TaskDateField, TaskLayout,
+    TaskListRenderMode, TaskListRow, TaskOrder, TaskProjectionOrigin, TaskQuery, TaskScope,
+    TaskScopeTarget, TaskTextField, TaskViewState, TuiStore, mutation_committed, recurrence_draft,
     task_creation_committed,
 };
 use aven_host::sync::encrypted::{DaemonRound, DaemonSync};
@@ -86,8 +94,12 @@ pub struct TaskRow {
     pub recurring: bool,
     pub progress: Option<String>,
     pub labels: Vec<String>,
+    /// The due date, or the availability where the view orders by it.
     pub due: String,
     pub date_tone: DateTone,
+    pub deleted: bool,
+    pub is_epic: bool,
+    pub project_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +118,121 @@ pub struct NavEntry {
     pub count: i64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GroupBy {
+    #[default]
+    Status,
+    Project,
+    Priority,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DeletedFilter {
+    #[default]
+    Hide,
+    Show,
+    Only,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ViewOrder {
+    #[default]
+    Priority,
+    Due,
+    Available,
+    Updated,
+    Title,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetaFilter {
+    pub key: String,
+    pub present: bool,
+}
+
+/// How the list on screen was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewInfo {
+    pub query: TaskQuery,
+    /// The key of the project in scope.
+    pub project: Option<String>,
+    pub columns: bool,
+    pub order: ViewOrder,
+    pub group: GroupBy,
+    pub label: Option<String>,
+    pub priority: Option<TaskPriority>,
+    pub deleted: DeletedFilter,
+    pub metadata: Option<MetaFilter>,
+    pub search: Option<String>,
+}
+
+impl Default for ViewInfo {
+    fn default() -> Self {
+        Self {
+            query: TaskQuery::Queue,
+            project: None,
+            columns: false,
+            order: ViewOrder::default(),
+            group: GroupBy::default(),
+            label: None,
+            priority: None,
+            deleted: DeletedFilter::default(),
+            metadata: None,
+            search: None,
+        }
+    }
+}
+
+impl ViewInfo {
+    /// Whether closed rows belong to this list, rather than joining the end group.
+    pub fn lists_closed(&self) -> bool {
+        self.columns
+            || self.search.is_some()
+            || matches!(self.query, TaskQuery::Done | TaskQuery::Search)
+    }
+
+    pub fn has_filters(&self) -> bool {
+        self.label.is_some()
+            || self.priority.is_some()
+            || self.deleted != DeletedFilter::Hide
+            || self.metadata.is_some()
+    }
+}
+
+/// Views the prototype offers as columns.
+pub fn supports_columns(query: TaskQuery) -> bool {
+    matches!(
+        query,
+        TaskQuery::Ready
+            | TaskQuery::Inbox
+            | TaskQuery::Blocked
+            | TaskQuery::Overdue
+            | TaskQuery::Open
+            | TaskQuery::Backlog
+            | TaskQuery::Todo
+            | TaskQuery::Active
+            | TaskQuery::Done
+    )
+}
+
+/// One entry of the workspace's task list, for pickers and the palette.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogTask {
+    pub id: TaskId,
+    pub reference: String,
+    pub project: String,
+    pub title: String,
+    pub status: TaskStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentAction {
+    pub at: String,
+    pub text: String,
+    pub task: Option<TaskId>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot {
     pub workspace: String,
@@ -114,6 +241,10 @@ pub struct Snapshot {
     pub workspaces: Vec<NavEntry>,
     pub projects: Vec<NavEntry>,
     pub views: Vec<(&'static str, i64)>,
+    pub view: ViewInfo,
+    pub labels: Vec<String>,
+    pub fields: Vec<String>,
+    pub recent: Vec<RecentAction>,
 }
 
 impl Snapshot {
@@ -131,18 +262,116 @@ impl Snapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
+    pub id: String,
     pub at: String,
     pub body: String,
+}
+
+/// Another task a task points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    pub id: TaskId,
+    pub reference: String,
+    pub project: String,
+    pub title: String,
+    pub status: TaskStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    pub id: String,
+    pub name: String,
+    pub alt: String,
+    /// A local preview. Without one the image's bytes are still on their way.
+    pub preview: Option<PathBuf>,
 }
 
 /// What the details panel shows beyond the row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Detail {
     pub task_id: TaskId,
+    /// A task outside the list has no row there.
+    pub row: TaskRow,
     pub description: String,
     pub available: String,
+    pub available_at: Option<String>,
+    pub due_on: Option<String>,
     pub project: String,
+    pub project_name: String,
     pub notes: Vec<Note>,
+    pub images: Vec<Image>,
+    pub epic: Option<Link>,
+    pub blocked_by: Vec<Link>,
+    pub blocks: Vec<Link>,
+    pub related: Vec<Link>,
+    pub metadata: Vec<(String, String)>,
+    pub activity: Vec<(String, String)>,
+}
+
+/// Bytes waiting to become an attachment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingImage {
+    pub name: String,
+    pub bytes: Arc<Vec<u8>>,
+}
+
+/// A task as the composer submits it. `schedule` is the text the user typed, so
+/// a failed create returns it unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NewTask {
+    pub title: String,
+    pub description: String,
+    pub project: Option<String>,
+    pub status: Option<String>,
+    pub priority: String,
+    pub labels: Vec<String>,
+    pub metadata: Vec<(String, String)>,
+    pub is_epic: bool,
+    pub schedule: String,
+    pub images: Vec<PendingImage>,
+}
+
+impl NewTask {
+    pub fn titled(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            priority: TaskPriority::None.to_string(),
+            ..Self::default()
+        }
+    }
+}
+
+/// What a toast's second button does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Go {
+    pub label: &'static str,
+    pub command: Command,
+}
+
+/// What the task list search dialog asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchInput {
+    pub text: String,
+    pub project: Option<String>,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    pub id: TaskId,
+    pub reference: String,
+    pub project: String,
+    pub title: String,
+    pub status: TaskStatus,
+    pub snippet: Option<String>,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchResults {
+    pub hits: Vec<SearchHit>,
+    pub total: usize,
+    pub elsewhere: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,17 +380,74 @@ pub enum Command {
     /// A refresh the user asked for, which also lets go of the selected row.
     RefreshView,
     LoadDetail(TaskId),
+    /// Details of a task opened from another one, leaving the selection alone.
+    Peek(TaskId),
+    Preview(SearchInput),
+    Intake {
+        input: String,
+        project: Option<String>,
+    },
+    Copy(TaskId, CopyKind),
+    ShowView(TaskQuery),
+    ShowProject(Option<String>),
+    SwitchWorkspace(String),
+    FilterLabel(Option<String>),
+    FilterPriority(Option<TaskPriority>),
+    FilterDeleted(DeletedFilter),
+    FilterMetadata(Option<MetaFilter>),
+    ClearFilters,
+    SetOrder(ViewOrder),
+    SetGroup(GroupBy),
+    SetColumns(bool),
+    Search(SearchInput),
+    /// Reveals a task, widening the view as far as it takes.
+    Goto(TaskId),
     SetStatus(TaskId, TaskStatus),
     SetPriority(TaskId, TaskPriority),
     SetTitle(TaskId, String),
+    SetDescription(TaskId, String),
+    SetSchedule {
+        id: TaskId,
+        available_at: Option<Option<String>>,
+        due_on: Option<Option<String>>,
+    },
+    SetProject(TaskId, String),
+    SetLabels(TaskId, Vec<String>),
+    SetDeleted(TaskId, bool),
+    AddBlocker(TaskId, TaskId),
+    RemoveBlocker(TaskId, TaskId),
+    AddRelated(TaskId, TaskId),
+    RemoveRelated(TaskId, TaskId),
+    SetMetadata(TaskId, String, Option<String>),
     AddNote(TaskId, String),
-    Create(String),
+    DeleteNote(TaskId, String),
+    AddImage(TaskId, PendingImage),
+    DeleteImage(TaskId, String),
+    SetImageAlt(TaskId, String, String),
+    SaveImage(String, PathBuf),
+    Undo,
+    Create(Box<NewTask>),
+}
+
+/// The task fields that can be copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyKind {
+    Report,
 }
 
 impl Command {
     /// Whether lists from before this command must be dropped.
     pub fn is_mutation(&self) -> bool {
-        !matches!(self, Self::Refresh | Self::LoadDetail(_))
+        !matches!(
+            self,
+            Self::Refresh
+                | Self::LoadDetail(_)
+                | Self::Peek(_)
+                | Self::Preview(_)
+                | Self::Intake { .. }
+                | Self::Copy(..)
+                | Self::SaveImage(..)
+        )
     }
 }
 
@@ -184,7 +470,25 @@ pub enum SyncHealth {
 pub enum ReplyBody {
     List(Box<Snapshot>),
     Detail(Box<Detail>),
+    Catalog(Vec<CatalogTask>),
+    Search(SearchResults),
+    /// Text a task's report or similar produced for the clipboard.
+    Copied(String, &'static str),
+    /// A draft to fill the composer with.
+    Intake(Box<NewTask>),
+    /// Natural language input that produced no draft.
+    IntakeFailed(String),
     Created(TaskId),
+    /// A write landed, with what the toast says about it.
+    Saved {
+        message: String,
+        go: Option<Go>,
+        undo: bool,
+    },
+    /// A task the view should select.
+    Select(TaskId),
+    /// A notice that is not about a write.
+    Notice(String),
     /// The write did not happen, so the command can run again.
     SaveFailed(Command, String),
     /// The write happened but the view is behind. Only a refresh may follow.
@@ -264,6 +568,23 @@ fn date_tone(item: &TaskListItem, today: NaiveDate) -> DateTone {
     }
 }
 
+/// Matches the prototype's `availText`.
+fn available_text(stamp: &str, today: NaiveDate) -> String {
+    local_time(stamp).map_or_else(String::new, |time| {
+        let day = time.format("%Y-%m-%d").to_string();
+        format!("{} {}", due_text(&day, today), time.format("%H:%M"))
+    })
+}
+
+fn is_deferred(item: &TaskListItem, now: DateTime<Local>) -> bool {
+    let at = item.task.available_at.as_deref().and_then(local_time);
+    at.is_some_and(|at| at > now)
+}
+
+fn is_closed(status: TaskStatus) -> bool {
+    matches!(status, TaskStatus::Done | TaskStatus::Canceled)
+}
+
 fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
     let task = &item.task;
     let prefix = item.display_ref.split('-').next().unwrap_or_default();
@@ -288,6 +609,9 @@ fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
             .map(|due| due_text(due, today))
             .unwrap_or_default(),
         date_tone: date_tone(item, today),
+        deleted: task.deleted,
+        is_epic: task.is_epic,
+        project_key: task.project_key.clone(),
     }
 }
 
@@ -301,20 +625,13 @@ fn group_text(label: &str) -> (String, String) {
         )
 }
 
-/// The group of tasks completed during this visit to a view.
+/// The group of tasks closed during this visit to a view.
 pub fn done_group(rows: Vec<usize>) -> Group {
     let (name, hint) = group_text("done");
     Group { name, hint, rows }
 }
 
-/// Reads the store's projection. `now` formats dates, so scene runs pass their anchor.
-pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
-    let today = now.date_naive();
-    let tasks: Vec<TaskRow> = store
-        .tasks
-        .iter()
-        .map(|item| task_row(item, today))
-        .collect();
+fn core_groups(store: &TuiStore) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     for row in &store.task_list_view().rows {
         match row {
@@ -332,6 +649,234 @@ pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
                 }
             }
         }
+    }
+    groups
+}
+
+fn named_groups(names: Vec<String>, rows: Vec<(usize, usize)>) -> Vec<Group> {
+    let mut groups: Vec<Group> = names
+        .into_iter()
+        .map(|name| Group {
+            name,
+            hint: String::new(),
+            rows: Vec::new(),
+        })
+        .collect();
+    for (group, row) in rows {
+        groups[group].rows.push(row);
+    }
+    groups.retain(|group| !group.rows.is_empty());
+    groups
+}
+
+/// The prototype's buckets, sooner than core's day by day labels.
+fn upcoming_groups(store: &TuiStore, now: DateTime<Local>) -> Vec<Group> {
+    let names = ["Tomorrow or sooner", "Next 7 days", "Later"];
+    let bucket = |item: &TaskListItem| {
+        let at = item.task.available_at.as_deref().and_then(local_time);
+        let days = at.map_or(i64::MAX, |at| {
+            (at.date_naive() - now.date_naive()).num_days()
+        });
+        match days {
+            ..=1 => 0,
+            2..=7 => 1,
+            _ => 2,
+        }
+    };
+    let rows = store.tasks.iter().enumerate();
+    named_groups(
+        names.map(String::from).to_vec(),
+        rows.map(|(row, item)| (bucket(item), row)).collect(),
+    )
+}
+
+/// A flat view's rows under the chosen grouping, in `rows`' order.
+fn flat_groups(store: &TuiStore, rows: Vec<usize>, group: GroupBy) -> Vec<Group> {
+    const STATUSES: [TaskStatus; 6] = [
+        TaskStatus::Active,
+        TaskStatus::Todo,
+        TaskStatus::Inbox,
+        TaskStatus::Backlog,
+        TaskStatus::Done,
+        TaskStatus::Canceled,
+    ];
+    const PRIORITIES: [TaskPriority; 5] = [
+        TaskPriority::Urgent,
+        TaskPriority::High,
+        TaskPriority::Medium,
+        TaskPriority::Low,
+        TaskPriority::None,
+    ];
+    let capitalised = |text: String| {
+        let mut letters = text.chars();
+        letters.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(letters).collect()
+        })
+    };
+    let (names, slot): (Vec<String>, Box<dyn Fn(&TaskListItem) -> usize>) = match group {
+        GroupBy::None => (vec![String::new()], Box::new(|_| 0)),
+        GroupBy::Status => (
+            STATUSES
+                .map(|status| capitalised(status.to_string()))
+                .to_vec(),
+            Box::new(|item| {
+                STATUSES
+                    .iter()
+                    .position(|status| *status == item.task.status)
+                    .unwrap_or_default()
+            }),
+        ),
+        GroupBy::Priority => (
+            PRIORITIES
+                .map(|priority| capitalised(priority.to_string()))
+                .to_vec(),
+            Box::new(|item| {
+                PRIORITIES
+                    .iter()
+                    .position(|priority| *priority == item.task.priority)
+                    .unwrap_or_default()
+            }),
+        ),
+        GroupBy::Project => {
+            let projects = &store.projects;
+            (
+                projects
+                    .iter()
+                    .map(|project| project.name.clone())
+                    .collect(),
+                Box::new(|item| {
+                    projects
+                        .iter()
+                        .position(|project| project.key == item.task.project_key)
+                        .unwrap_or_default()
+                }),
+            )
+        }
+    };
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let rows = rows
+        .into_iter()
+        .map(|row| (slot(&store.tasks[row]), row))
+        .collect();
+    named_groups(names, rows)
+}
+
+fn list_groups(store: &TuiStore, now: DateTime<Local>, arrange: &Arrange) -> Vec<Group> {
+    let filters = &store.view_state.filter_modifiers;
+    if store.view_state.layout == TaskLayout::Columns {
+        return store
+            .column_board()
+            .columns
+            .iter()
+            .map(|column| Group {
+                name: column.config.name.clone(),
+                hint: String::new(),
+                rows: column.task_indices.clone(),
+            })
+            .collect();
+    }
+    match store.view_state.render_mode() {
+        TaskListRenderMode::Queue | TaskListRenderMode::Epics if !filters.deleted_only => {
+            core_groups(store)
+        }
+        TaskListRenderMode::Upcoming => upcoming_groups(store, now),
+        _ => {
+            let mut rows: Vec<usize> = (0..store.tasks.len()).collect();
+            if arrange.order == ViewOrder::Available {
+                rows.sort_by_key(|row| {
+                    let at = store.tasks[*row].task.available_at.clone();
+                    (at.is_none(), at)
+                });
+            }
+            flat_groups(store, rows, arrange.group)
+        }
+    }
+}
+
+/// How the view arranges rows beyond what the store's view state holds.
+#[derive(Debug, Clone, Default)]
+pub struct Arrange {
+    pub group: GroupBy,
+    pub order: ViewOrder,
+    pub metadata: Option<MetaFilter>,
+    /// Tasks the metadata filter lets through.
+    pub allowed: Option<HashSet<TaskId>>,
+}
+
+fn view_info(store: &TuiStore, arrange: &Arrange) -> ViewInfo {
+    let state = &store.view_state;
+    let filters = &state.filter_modifiers;
+    ViewInfo {
+        query: state.query,
+        project: match &state.scope {
+            TaskScope::Workspace => None,
+            TaskScope::Project(project) => Some(project.clone()),
+        },
+        columns: state.layout == TaskLayout::Columns,
+        order: arrange.order,
+        group: arrange.group,
+        label: filters.label.clone(),
+        priority: filters
+            .priority
+            .as_deref()
+            .and_then(|text| TaskPriority::parse(text).ok()),
+        deleted: match (filters.deleted_only, filters.include_deleted) {
+            (true, _) => DeletedFilter::Only,
+            (false, true) => DeletedFilter::Show,
+            (false, false) => DeletedFilter::Hide,
+        },
+        metadata: arrange.metadata.clone(),
+        search: match &state.projection_origin {
+            TaskProjectionOrigin::Search { query, .. } => Some(query.clone()),
+            _ => None,
+        },
+    }
+}
+
+/// Reads the store's projection. `now` formats dates, so scene runs pass their anchor.
+pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
+    arranged_snapshot(store, now, &Arrange::default())
+}
+
+fn recent_actions(store: &TuiStore) -> Vec<RecentAction> {
+    store
+        .recent_actions
+        .iter()
+        .map(|action| RecentAction {
+            at: action.created_at.clone(),
+            text: action.summary.clone(),
+            task: action
+                .entity_id
+                .parse()
+                .ok()
+                .filter(|_| action.entity_type == "task"),
+        })
+        .collect()
+}
+
+pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arrange) -> Snapshot {
+    let today = now.date_naive();
+    let upcoming = store.view_state.query == TaskQuery::Upcoming;
+    let tasks: Vec<TaskRow> = store
+        .tasks
+        .iter()
+        .map(|item| {
+            let mut row = task_row(item, today);
+            if upcoming {
+                let at = item.task.available_at.as_deref();
+                row.due = at.map(|at| available_text(at, today)).unwrap_or_default();
+            }
+            row
+        })
+        .collect();
+    let mut groups = list_groups(store, now, arrange);
+    if let Some(allowed) = &arrange.allowed {
+        for group in &mut groups {
+            group.rows.retain(|row| allowed.contains(&tasks[*row].id));
+        }
+        groups.retain(|group| !group.rows.is_empty());
     }
     let counts = &store.counts;
     Snapshot {
@@ -374,34 +919,171 @@ pub fn snapshot(store: &TuiStore, now: DateTime<Local>) -> Snapshot {
             ("done", 0),
             ("conflicts", counts.conflicts),
         ],
+        view: view_info(store, arrange),
+        labels: store.labels.clone(),
+        fields: Vec::new(),
+        recent: recent_actions(store),
     }
 }
 
-pub fn detail(item: &TaskListItem) -> Detail {
+/// Matches the prototype's `rel`.
+pub fn relative_time(stamp: &str, now: DateTime<Local>) -> String {
+    let hours = local_time(stamp).map_or(0, |at| (now - at).num_minutes()) as f64 / 60.;
+    if hours < 1. {
+        "just now".to_string()
+    } else if hours < 24. {
+        format!("{}h ago", hours.round())
+    } else {
+        format!("{}d ago", (hours / 24.).round())
+    }
+}
+
+pub fn detail(item: &TaskListItem, now: DateTime<Local>) -> Detail {
+    detail_with(item, now, String::new(), Vec::new())
+}
+
+fn status_of(text: &str) -> TaskStatus {
+    TaskStatus::parse(text).unwrap_or(TaskStatus::Todo)
+}
+
+fn dependency(link: &aven_core::query::TaskDependencyLink) -> Link {
+    Link {
+        id: link.task_id.clone(),
+        reference: link.display_ref.clone(),
+        project: link
+            .display_ref
+            .split('-')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+        title: link.title.clone(),
+        status: status_of(&link.status),
+    }
+}
+
+/// What the task's history reads as, newest first, ending at its creation.
+fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> {
+    let mut lines: Vec<(String, String)> = item
+        .activity
+        .iter()
+        .map(|action| {
+            (
+                action.summary.clone(),
+                relative_time(&action.created_at, now),
+            )
+        })
+        .collect();
+    lines.truncate(4);
+    let source = item.task.source.to_string();
+    lines.push((
+        format!("Created from {source}"),
+        relative_time(&item.task.created_at, now),
+    ));
+    lines
+}
+
+fn detail_with(
+    item: &TaskListItem,
+    now: DateTime<Local>,
+    project_name: String,
+    images: Vec<Image>,
+) -> Detail {
+    let today = now.date_naive();
     let stamp = |stamp: &str| {
         local_time(stamp).map_or_else(
             || stamp.to_string(),
             |time| time.format("%b %-d, %H:%M").to_string(),
         )
     };
+    let available = item.task.available_at.as_deref();
+    let live_related = item.related.iter().filter(|link| !link.deleted);
     Detail {
         task_id: item.task.id.clone(),
+        row: task_row(item, today),
         description: item.task.description.clone(),
-        available: item
-            .task
-            .available_at
-            .as_deref()
-            .map_or_else(|| "Now".to_string(), stamp),
+        available: available.map_or_else(
+            || "Now".to_string(),
+            |at| {
+                let text = available_text(at, today);
+                if is_deferred(item, now) {
+                    format!("Hidden until {text}")
+                } else {
+                    format!("Since {text}")
+                }
+            },
+        ),
+        available_at: item.task.available_at.clone(),
+        due_on: item.task.due_on.clone(),
         project: item.task.project_key.clone(),
+        project_name,
         notes: item
             .notes
             .iter()
             .map(|note| Note {
+                id: note.id.clone(),
                 at: stamp(&note.created_at),
                 body: note.body.clone(),
             })
             .collect(),
+        images,
+        epic: item.epic_parent.as_ref().map(dependency),
+        blocked_by: item.depends_on.iter().map(dependency).collect(),
+        blocks: item.blocks.iter().map(dependency).collect(),
+        related: live_related
+            .map(|link| Link {
+                id: link.task_id.clone(),
+                reference: link.display_ref.clone(),
+                project: link
+                    .display_ref
+                    .split('-')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+                title: link.title.clone(),
+                status: link.status,
+            })
+            .collect(),
+        metadata: item
+            .metadata
+            .iter()
+            .map(|field| (field.key.clone(), field.value.clone()))
+            .collect(),
+        activity: activity(item, now),
     }
+}
+
+fn status_label(status: TaskStatus) -> String {
+    let mut text = status.to_string();
+    text[..1].make_ascii_uppercase();
+    text
+}
+
+fn priority_label(priority: TaskPriority) -> String {
+    let mut text = priority.to_string();
+    text[..1].make_ascii_uppercase();
+    text
+}
+
+fn attachment_input(image: &PendingImage, alt: String) -> AttachmentAddInput {
+    AttachmentAddInput {
+        filename: Some(image.name.clone()),
+        alt_text: Some(alt).filter(|alt| !alt.is_empty()),
+        declared_media_type: None,
+        bytes: image.bytes.to_vec(),
+        optimization_policy: ImageOptimizationPolicy::Optimize,
+        dedupe_existing: false,
+    }
+}
+
+fn metadata_inputs(fields: &[(String, String)]) -> Vec<TaskMetadataInput> {
+    fields
+        .iter()
+        .map(|(key, value)| TaskMetadataInput {
+            expected_field_id: None,
+            key: key.clone(),
+            value: value.clone(),
+        })
+        .collect()
 }
 
 /// Opens the store a launch resolves to: the queue's selected workspace on the
@@ -455,14 +1137,83 @@ impl OutsideWrites {
 struct Actor {
     store: TuiStore,
     database: PathBuf,
+    config: AppConfig,
     replies: mpsc::UnboundedSender<Reply>,
     sync_wake: Arc<Notify>,
     handled: u64,
     /// The task the view has selected, which refreshes keep in the list.
     selected: Option<TaskId>,
+    arrange: Arrange,
+    /// Views last shown as columns.
+    column_views: Vec<TaskQuery>,
+    /// What each write in the undo history said, newest last.
+    undoable: Vec<String>,
+}
+
+/// What a write reports once the list has caught up.
+#[derive(Default)]
+struct Outcome {
+    created: Option<TaskId>,
+    message: Option<String>,
+    go: Option<Go>,
+    undo: bool,
+}
+
+impl Outcome {
+    fn saved(message: String) -> Self {
+        Self {
+            message: Some(message),
+            undo: true,
+            ..Self::default()
+        }
+    }
+
+    fn with_go(self, label: &'static str, command: Command) -> Self {
+        Self {
+            go: Some(Go { label, command }),
+            ..self
+        }
+    }
+
+    /// A write core keeps no undo entry for.
+    fn final_write(self) -> Self {
+        Self {
+            undo: false,
+            ..self
+        }
+    }
+
+    /// A change the undo history takes, with nothing to announce.
+    fn quiet() -> Self {
+        Self {
+            undo: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl Actor {
+    fn new(
+        store: TuiStore,
+        database: PathBuf,
+        config: AppConfig,
+        replies: mpsc::UnboundedSender<Reply>,
+        sync_wake: Arc<Notify>,
+    ) -> Self {
+        Self {
+            store,
+            database,
+            config,
+            replies,
+            sync_wake,
+            handled: 0,
+            selected: None,
+            arrange: Arrange::default(),
+            column_views: Vec::new(),
+            undoable: Vec::new(),
+        }
+    }
+
     fn send(&self, body: ReplyBody) {
         let _ = self.replies.send(Reply {
             request: self.handled,
@@ -470,14 +1221,87 @@ impl Actor {
         });
     }
 
-    fn send_list(&self) {
-        let list = snapshot(&self.store, Local::now());
+    async fn metadata_matches(&self, filter: &MetaFilter) -> Result<HashSet<TaskId>> {
+        let keys = vec![filter.key.clone()];
+        let filters = TaskFilters {
+            has_metadata: if filter.present {
+                keys.clone()
+            } else {
+                Vec::new()
+            },
+            missing_metadata: if filter.present { Vec::new() } else { keys },
+            ..self.store.view_state.filters()
+        };
+        let items = self
+            .store
+            .database()
+            .list_task_summary_items_from_current_projection(
+                &self.store.active_workspace.id,
+                filters,
+                TaskQueryMode::Flat,
+                TaskSort::Updated,
+                SortDirection::Desc,
+                None,
+            )
+            .await?;
+        Ok(items.into_iter().map(|item| item.task.id).collect())
+    }
+
+    async fn catalog(&self) -> Result<Vec<CatalogTask>> {
+        let items = self
+            .store
+            .database()
+            .list_task_summary_items_from_current_projection(
+                &self.store.active_workspace.id,
+                TaskFilters::default(),
+                TaskQueryMode::Flat,
+                TaskSort::Updated,
+                SortDirection::Desc,
+                None,
+            )
+            .await?;
+        Ok(items
+            .iter()
+            .map(|item| CatalogTask {
+                id: item.task.id.clone(),
+                reference: item.display_ref.clone(),
+                project: item
+                    .display_ref
+                    .split('-')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+                title: item.task.title.clone(),
+                status: item.task.status,
+            })
+            .collect())
+    }
+
+    async fn send_catalog(&self) {
+        if let Ok(catalog) = self.catalog().await {
+            self.send(ReplyBody::Catalog(catalog));
+        }
+    }
+
+    async fn send_list(&mut self) {
+        self.arrange.allowed = match self.arrange.metadata.clone() {
+            Some(filter) => self.metadata_matches(&filter).await.ok(),
+            None => None,
+        };
+        let mut list = arranged_snapshot(&self.store, Local::now(), &self.arrange);
+        if let Ok(fields) = self.store.metadata_fields().await {
+            list.fields = fields.into_iter().map(|field| field.key).collect();
+        }
         self.send(ReplyBody::List(Box::new(list)));
+        self.send_catalog().await;
     }
 
     /// A desktop launch has no directory to infer a project from, so a new task
-    /// joins the selected task's project, or the first one.
+    /// joins the scoped project, the selected task's project, or the first one.
     fn project_for_new_task(&self) -> Option<String> {
+        if let TaskScope::Project(project) = &self.store.view_state.scope {
+            return Some(project.clone());
+        }
         let selected = self.selected.as_ref().and_then(|id| {
             let item = self.store.tasks.iter().find(|item| item.task.id == *id)?;
             Some(item.task.project_key.clone())
@@ -514,7 +1338,6 @@ impl Actor {
     async fn selection(&mut self, id: &TaskId) -> Result<TaskSelection> {
         if self.store.tasks.iter().all(|item| &item.task.id != id)
             && let Some(item) = self.store.load_task_item(id).await?
-            && !item.task.deleted
         {
             self.store.insert_task(self.store.tasks.len(), item);
         }
@@ -526,53 +1349,738 @@ impl Actor {
             .ok_or_else(|| anyhow!("That task is no longer in this view"))
     }
 
-    /// Runs a write and returns the task it created, if any. An error that
-    /// `mutation_committed` or `task_creation_committed` accepts means the
-    /// write stands.
-    async fn mutate(&mut self, command: &Command) -> Result<Option<TaskId>> {
+    fn reference(&self, id: &TaskId) -> String {
+        self.store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == *id)
+            .map_or_else(String::new, |item| item.display_ref.clone())
+    }
+
+    fn blob_dir(&self) -> Result<PathBuf> {
+        resolve_blob_dir(&self.database, &self.config)
+    }
+
+    /// Images with a local preview built on demand, as the TUI does.
+    async fn images(&self, item: &TaskListItem) -> Vec<Image> {
+        let Ok(blob_dir) = self.blob_dir() else {
+            return Vec::new();
+        };
+        let quota = self.config.local.attachment_lifecycle.preview_quota_bytes;
+        let mut images = Vec::new();
+        for attachment in item.attachments.iter().filter(|image| !image.deleted) {
+            let built = load_preview_png(&blob_dir, &attachment.sha256, quota).await;
+            images.push(Image {
+                id: attachment.attachment_id.clone(),
+                name: attachment.filename.clone().unwrap_or_default(),
+                alt: attachment.alt_text.clone().unwrap_or_default(),
+                preview: built
+                    .ok()
+                    .and_then(|_| cached_preview_path(&blob_dir, &attachment.sha256).ok()),
+            });
+        }
+        images
+    }
+
+    async fn send_detail(&mut self, id: &TaskId) {
+        match self.store.load_task_item(id).await {
+            Ok(Some(item)) => {
+                let project = self
+                    .store
+                    .projects
+                    .iter()
+                    .find(|project| project.key == item.task.project_key);
+                let name = project.map_or_else(String::new, |project| project.name.clone());
+                let images = self.images(&item).await;
+                let detail = detail_with(&item, Local::now(), name, images);
+                self.send(ReplyBody::Detail(Box::new(detail)));
+            }
+            Ok(None) => {}
+            Err(error) => self.send(ReplyBody::RefreshFailed(error.to_string())),
+        }
+    }
+
+    /// Keeps each view's column choice, as the prototype's `layouts` does.
+    async fn show_view(&mut self, query: TaskQuery) -> Result<()> {
+        if self.store.view_state.layout == TaskLayout::Columns {
+            let current = self.store.view_state.query;
+            self.column_views.retain(|view| *view != current);
+            self.column_views.push(current);
+        } else {
+            let current = self.store.view_state.query;
+            self.column_views.retain(|view| *view != current);
+        }
+        let mut state = self.store.view_state.clone();
+        state.layout = TaskLayout::List;
+        self.store
+            .restore_view_state_with_restore(state, &SelectionRestore::Default)
+            .await?;
+        self.store
+            .show_view_restoring(query, &SelectionRestore::Default)
+            .await?;
+        if query == TaskQuery::Queue {
+            self.arrange.order = ViewOrder::default();
+        }
+        if self.column_views.contains(&query) {
+            self.set_columns(true).await?;
+        }
+        Ok(())
+    }
+
+    async fn set_columns(&mut self, on: bool) -> Result<()> {
+        let mut state = self.store.view_state.clone();
+        state.layout = if on {
+            TaskLayout::Columns
+        } else {
+            TaskLayout::List
+        };
+        self.store
+            .restore_view_state_with_restore(state, &SelectionRestore::Default)
+            .await?;
+        Ok(())
+    }
+
+    async fn set_filters(&mut self, change: impl FnOnce(&mut TaskViewState)) -> Result<()> {
+        let mut state = self.store.view_state.clone();
+        change(&mut state);
+        self.store
+            .restore_view_state_with_restore(state, &SelectionRestore::Default)
+            .await?;
+        Ok(())
+    }
+
+    async fn search(&mut self, input: &SearchInput) -> Result<()> {
+        let text = input.text.trim().to_string();
+        let results = self
+            .store
+            .database()
+            .search_task_items(
+                &self.store.active_workspace.id,
+                TaskSearchQuery {
+                    text: text.clone(),
+                    project: input.project.clone(),
+                    metadata: Vec::new(),
+                    has_metadata: Vec::new(),
+                    missing_metadata: Vec::new(),
+                    include_deleted: input.deleted,
+                    limit: 100,
+                },
+            )
+            .await?;
+        let mut state = self.store.view_state.clone();
+        state.scope = input
+            .project
+            .clone()
+            .map_or(TaskScope::Workspace, TaskScope::Project);
+        state.set_query(TaskQuery::Search);
+        state.layout = TaskLayout::List;
+        state.projection_origin = TaskProjectionOrigin::Search {
+            query: text,
+            task_ids: results
+                .iter()
+                .map(|result| result.item.task.id.clone())
+                .collect(),
+        };
+        state.filter_modifiers = Default::default();
+        self.arrange.metadata = None;
+        self.store
+            .restore_view_state_with_restore(state, &SelectionRestore::Default)
+            .await?;
+        Ok(())
+    }
+
+    fn listed(&self, id: &TaskId) -> bool {
+        self.store.tasks.iter().any(|item| item.task.id == *id)
+    }
+
+    /// Widens the view one step at a time until the task is in it, then falls
+    /// back to showing it alone.
+    async fn goto(&mut self, id: &TaskId) -> Result<()> {
+        let item = self
+            .store
+            .load_task_item(id)
+            .await?
+            .ok_or_else(|| anyhow!("That task no longer exists"))?;
+        if item.task.deleted {
+            self.set_filters(|state| {
+                state.filter_modifiers.include_deleted = true;
+                state.filter_modifiers.deleted_only = false;
+            })
+            .await?;
+        }
+        if self.listed(id) {
+            return Ok(());
+        }
+        self.set_filters(|state| state.scope = TaskScope::Workspace)
+            .await?;
+        if self.listed(id) {
+            return Ok(());
+        }
+        let home = if is_deferred(&item, Local::now()) {
+            TaskQuery::Upcoming
+        } else if is_closed(item.task.status) {
+            TaskQuery::Done
+        } else {
+            TaskQuery::Queue
+        };
+        self.show_view(home).await?;
+        if self.listed(id) {
+            return Ok(());
+        }
+        let deleted = item.task.deleted;
+        self.arrange.metadata = None;
+        self.set_filters(|state| {
+            state.filter_modifiers = Default::default();
+            state.filter_modifiers.include_deleted = deleted;
+        })
+        .await?;
+        if self.listed(id) {
+            self.send(ReplyBody::Notice(
+                "Filters cleared to show this task".to_string(),
+            ));
+            return Ok(());
+        }
+        self.store.show_task_by_id(id.clone()).await?;
+        Ok(())
+    }
+
+    /// Runs a command that changes what is shown, not what is stored.
+    async fn navigate(&mut self, command: &Command) -> Result<()> {
         match command {
+            Command::ShowView(query) => self.show_view(*query).await,
+            Command::ShowProject(project) => {
+                let target = project
+                    .clone()
+                    .map_or(TaskScopeTarget::Workspace, TaskScopeTarget::Project);
+                self.store
+                    .show_scope_restoring(target, &SelectionRestore::Default)
+                    .await?;
+                Ok(())
+            }
+            Command::SwitchWorkspace(key) => {
+                self.arrange = Arrange::default();
+                self.store.switch_workspace(key.clone()).await?;
+                Ok(())
+            }
+            Command::FilterLabel(label) => {
+                let label = label.clone();
+                self.set_filters(|state| state.filter_modifiers.label = label)
+                    .await
+            }
+            Command::FilterPriority(priority) => {
+                let priority = priority.map(|priority| priority.to_string());
+                self.set_filters(|state| state.filter_modifiers.priority = priority)
+                    .await
+            }
+            Command::FilterDeleted(filter) => {
+                let filter = *filter;
+                self.set_filters(|state| {
+                    let modifiers = &mut state.filter_modifiers;
+                    modifiers.include_deleted = filter == DeletedFilter::Show;
+                    modifiers.deleted_only = filter == DeletedFilter::Only;
+                })
+                .await
+            }
+            Command::FilterMetadata(filter) => {
+                self.arrange.metadata = filter.clone();
+                Ok(())
+            }
+            Command::ClearFilters => {
+                self.arrange.metadata = None;
+                self.set_filters(|state| state.filter_modifiers = Default::default())
+                    .await
+            }
+            Command::SetOrder(order) => {
+                self.arrange.order = *order;
+                let core = match order {
+                    ViewOrder::Priority | ViewOrder::Available => TaskOrder::Priority,
+                    ViewOrder::Due => TaskOrder::DueOn,
+                    ViewOrder::Updated => TaskOrder::Updated,
+                    ViewOrder::Title => TaskOrder::Title,
+                };
+                self.store
+                    .set_order_restoring(core, &SelectionRestore::Default)
+                    .await?;
+                Ok(())
+            }
+            Command::SetGroup(group) => {
+                self.arrange.group = *group;
+                Ok(())
+            }
+            Command::SetColumns(on) => self.set_columns(*on).await,
+            Command::Search(input) => self.search(input).await,
+            Command::Goto(id) => {
+                self.goto(id).await?;
+                self.selected = Some(id.clone());
+                self.send(ReplyBody::Select(id.clone()));
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn add_image(&mut self, id: &TaskId, image: &PendingImage, alt: String) -> Result<()> {
+        let blob_dir = self.blob_dir()?;
+        let policy = self.config.local.attachment_lifecycle.policy();
+        self.store
+            .attachment_worker_context()
+            .add_ordered_attachment(
+                &blob_dir,
+                policy,
+                id,
+                Local::now().to_utc().to_rfc3339(),
+                TaskAttachmentAddInput {
+                    attachment_id: new_id(),
+                    input: attachment_input(image, alt),
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Core keeps no way to change alt text, so the image is added again with the
+    /// new text and the old copy is removed.
+    async fn set_image_alt(&mut self, id: &TaskId, image: &str, alt: &str) -> Result<()> {
+        let item = self
+            .store
+            .load_task_item(id)
+            .await?
+            .ok_or_else(|| anyhow!("That task no longer exists"))?;
+        let attachment = item
+            .attachments
+            .iter()
+            .find(|attachment| attachment.attachment_id == image)
+            .ok_or_else(|| anyhow!("That image no longer exists"))?;
+        let path = object_path(&self.blob_dir()?, &attachment.sha256)?;
+        let bytes = std::fs::read(path).context("This image has not finished downloading")?;
+        let pending = PendingImage {
+            name: attachment.filename.clone().unwrap_or_default(),
+            bytes: Arc::new(bytes),
+        };
+        self.add_image(id, &pending, alt.to_string()).await?;
+        self.store.delete_attachment(image).await
+    }
+
+    async fn create(&mut self, task: &NewTask) -> Result<Outcome> {
+        let project = task.project.clone().or_else(|| self.project_for_new_task());
+        let (available_at, due_on) = match parse_schedule_input(&task.schedule)? {
+            ParsedScheduleInput::None => (None, None),
+            ParsedScheduleInput::Once {
+                available_at,
+                due_on,
+            } => (
+                Some(available_at).filter(|at| !at.is_empty()),
+                Some(due_on).filter(|due| !due.is_empty()),
+            ),
+            ParsedScheduleInput::Recurring { .. } => {
+                return self.create_recurring(task, project).await;
+            }
+        };
+        let deferred = available_at.is_some();
+        let draft = TaskDraft {
+            title: task.title.clone(),
+            description: task.description.clone(),
+            project,
+            status: task.status.clone(),
+            priority: task.priority.clone(),
+            source: TaskSource::Tui,
+            labels: task.labels.clone(),
+            metadata: metadata_inputs(&task.metadata),
+            available_at,
+            due_on,
+            is_epic: task.is_epic,
+        };
+        let selected = if task.images.is_empty() {
+            self.store.create_task(draft, None).await?.1
+        } else {
+            let attachments = task
+                .images
+                .iter()
+                .map(|image| {
+                    PendingTaskAttachment::new(new_id(), attachment_input(image, String::new()))
+                })
+                .collect();
+            let blob_dir = self.blob_dir()?;
+            let policy = self.config.local.attachment_lifecycle.policy();
+            self.store
+                .create_task_with_attachments(draft, None, &blob_dir, policy, attachments)
+                .await?
+                .1
+        };
+        let item = selected.and_then(|index| self.store.tasks.get(index));
+        let created = item.map(|item| item.task.id.clone());
+        let name = item.map_or_else(|| "Task".to_string(), |item| item.display_ref.clone());
+        let outcome = Outcome {
+            created: created.clone(),
+            ..Outcome::saved(format!("{name} created"))
+        };
+        Ok(match created {
+            Some(id) if !deferred => outcome.with_go("View task", Command::Goto(id)),
+            _ => outcome.with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming)),
+        })
+    }
+
+    async fn create_recurring(
+        &mut self,
+        task: &NewTask,
+        project: Option<String>,
+    ) -> Result<Outcome> {
+        let schedule = crate::draft::recurrence_schedule(&task.schedule)?;
+        let status = task.status.clone().unwrap_or_else(|| "todo".to_string());
+        let mut draft = recurrence_draft(
+            task.title.clone(),
+            task.description.clone(),
+            project,
+            task.priority.clone(),
+            status,
+            task.labels.clone(),
+            schedule,
+        );
+        draft.metadata = metadata_inputs(&task.metadata);
+        let (message, _) = self.store.create_recurrence_series(draft, None).await?;
+        Ok(Outcome::saved(message)
+            .with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming)))
+    }
+
+    /// Runs a write and reports what it did. An error that `mutation_committed`
+    /// or `task_creation_committed` accepts means the write stands.
+    async fn mutate(&mut self, command: &Command) -> Result<Outcome> {
+        let outcome = match command {
             Command::SetStatus(id, status) => {
                 let selection = self.selection(id).await?;
                 self.store
                     .mutate_status_selection(&selection, *status, true)
                     .await?;
+                let change = match status {
+                    TaskStatus::Done => "done".to_string(),
+                    TaskStatus::Canceled => "canceled".to_string(),
+                    status => format!("moved to {}", status_label(*status)),
+                };
+                Outcome::saved(format!("{} {change}", self.reference(id)))
             }
             Command::SetPriority(id, priority) => {
                 let selection = self.selection(id).await?;
                 self.store
                     .mutate_priority_selection(&selection, PriorityMutation::Set(*priority))
                     .await?;
+                let name = priority_label(*priority);
+                Outcome::saved(format!("{} set to {name}", self.reference(id)))
             }
             Command::SetTitle(id, title) => {
                 let selection = self.selection(id).await?;
                 self.store
                     .mutate_text_selection(&selection, TaskTextField::Title, title.clone())
                     .await?;
+                Outcome::quiet()
+            }
+            Command::SetDescription(id, text) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .mutate_text_selection(&selection, TaskTextField::Description, text.clone())
+                    .await?;
+                Outcome::quiet()
+            }
+            Command::SetSchedule {
+                id,
+                available_at,
+                due_on,
+            } => self.set_schedule(id, available_at, due_on).await?,
+            Command::SetProject(id, project) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .mutate_project_selection(&selection, project.clone())
+                    .await?;
+                let name = self
+                    .store
+                    .projects
+                    .iter()
+                    .find(|entry| entry.key == *project)
+                    .map_or(project.as_str(), |entry| entry.name.as_str());
+                Outcome::saved(format!("{} moved to {name}", self.reference(id)))
+            }
+            Command::SetLabels(id, labels) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .mutate_labels_selection(&selection, labels.clone(), Vec::new())
+                    .await?;
+                Outcome::quiet()
+            }
+            Command::SetDeleted(id, deleted) => {
+                let selection = self.selection(id).await?;
+                let reference = self.reference(id);
+                self.store
+                    .mutate_deleted_selection(&selection, *deleted, false)
+                    .await?;
+                if *deleted {
+                    Outcome::saved(format!("{reference} deleted"))
+                        .with_go("Show deleted", Command::FilterDeleted(DeletedFilter::Show))
+                } else {
+                    Outcome::saved(format!("{reference} restored"))
+                }
+            }
+            Command::AddBlocker(id, other) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .add_dependency_to_selection(&selection, other)
+                    .await?;
+                Outcome::quiet()
+            }
+            Command::RemoveBlocker(id, other) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .remove_dependency_from_selection(&selection, other)
+                    .await?;
+                Outcome::saved(format!("{} blocker removed", self.reference(id)))
+            }
+            Command::AddRelated(id, other) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .add_related_to_selection(&selection, other)
+                    .await?;
+                Outcome::quiet()
+            }
+            Command::RemoveRelated(id, other) => {
+                let selection = self.selection(id).await?;
+                self.store
+                    .remove_related_from_selection(&selection, other)
+                    .await?;
+                Outcome::saved(format!("{} link removed", self.reference(id)))
+            }
+            Command::SetMetadata(id, key, value) => {
+                let selection = self.selection(id).await?;
+                let fields = self.store.metadata_fields().await?;
+                let field = fields
+                    .iter()
+                    .find(|field| field.key == *key)
+                    .ok_or_else(|| anyhow!("{key} is not a defined field"))?;
+                self.store
+                    .mutate_metadata(&selection, field, value.clone())
+                    .await?;
+                let change = if value.is_some() { "saved" } else { "removed" };
+                Outcome::saved(format!("{} {key} {change}", self.reference(id)))
             }
             Command::AddNote(id, body) => {
                 self.store.add_note_to_task(id, body.clone()).await?;
+                Outcome::quiet()
             }
-            Command::Create(title) => {
-                let draft = TaskDraft {
-                    title: title.clone(),
-                    description: String::new(),
-                    project: self.project_for_new_task(),
-                    status: None,
-                    priority: TaskPriority::None.to_string(),
-                    source: TaskSource::Tui,
-                    labels: Vec::new(),
-                    metadata: Vec::new(),
-                    available_at: None,
-                    due_on: None,
-                    is_epic: false,
-                };
-                let (_, selected) = self.store.create_task(draft, None).await?;
-                let row = selected.and_then(|index| self.store.tasks.get(index));
-                return Ok(row.map(|item| item.task.id.clone()));
+            Command::DeleteNote(id, note) => {
+                self.store.delete_note(id, note).await?;
+                Outcome::saved("Note deleted".to_string())
             }
-            Command::Refresh | Command::RefreshView | Command::LoadDetail(_) => {}
+            Command::AddImage(id, image) => {
+                self.add_image(id, image, String::new()).await?;
+                Outcome::saved(format!("Image added to {}", self.reference(id))).final_write()
+            }
+            Command::DeleteImage(id, image) => {
+                self.store.delete_attachment(image).await?;
+                Outcome::saved(format!("Image removed from {}", self.reference(id))).final_write()
+            }
+            Command::SetImageAlt(id, image, alt) => {
+                self.set_image_alt(id, image, alt).await?;
+                Outcome::default()
+            }
+            Command::Undo => match self.undo().await? {
+                Some(message) => Outcome {
+                    message: Some(message),
+                    ..Outcome::default()
+                },
+                None => Outcome {
+                    message: Some("Nothing to undo".to_string()),
+                    ..Outcome::default()
+                },
+            },
+            Command::Create(task) => self.create(task).await?,
+            _ => Outcome::default(),
+        };
+        Ok(outcome)
+    }
+
+    async fn set_schedule(
+        &mut self,
+        id: &TaskId,
+        available_at: &Option<Option<String>>,
+        due_on: &Option<Option<String>>,
+    ) -> Result<Outcome> {
+        let selection = self.selection(id).await?;
+        let today = Local::now().date_naive();
+        let mut changes = Vec::new();
+        if let Some(at) = available_at {
+            self.store
+                .mutate_date_selection(&selection, TaskDateField::Availability, at.clone(), true)
+                .await?;
+            changes.push(at.as_deref().map_or_else(
+                || "available now".to_string(),
+                |at| format!("hidden until {}", available_text(at, today).to_lowercase()),
+            ));
         }
-        Ok(None)
+        if let Some(due) = due_on {
+            let selection = self.selection(id).await?;
+            self.store
+                .mutate_date_selection(&selection, TaskDateField::Due, due.clone(), true)
+                .await?;
+            changes.push(due.as_deref().map_or_else(
+                || "due date cleared".to_string(),
+                |due| format!("due {}", due_text(due, today).to_lowercase()),
+            ));
+        }
+        let outcome = Outcome::saved(format!("{} {}", self.reference(id), changes.join(", ")));
+        Ok(match available_at {
+            Some(Some(_)) => {
+                outcome.with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming))
+            }
+            _ => outcome,
+        })
+    }
+
+    async fn undo(&mut self) -> Result<Option<String>> {
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.store.tasks.iter().position(|item| item.task.id == *id));
+        let Some(undone) = self.store.undo_last(at).await? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.undoable
+                .pop()
+                .map_or(undone.message, |message| format!("Undone: {message}")),
+        ))
+    }
+
+    fn preview(&self, input: SearchInput) {
+        let database = self.store.database();
+        let workspace = self.store.active_workspace.id.clone();
+        let replies = self.replies.clone();
+        let request = self.handled;
+        tokio::spawn(async move {
+            let lookup = |project: Option<String>| {
+                let database = database.clone();
+                let workspace = workspace.clone();
+                let text = input.text.trim().to_string();
+                async move {
+                    database
+                        .search_task_preview_set_from_current_projection(
+                            &workspace,
+                            TaskSearchQuery {
+                                text,
+                                project,
+                                metadata: Vec::new(),
+                                has_metadata: Vec::new(),
+                                missing_metadata: Vec::new(),
+                                include_deleted: input.deleted,
+                                limit: 50,
+                            },
+                        )
+                        .await
+                }
+            };
+            let Ok(found) = lookup(input.project.clone()).await else {
+                return;
+            };
+            let elsewhere = match &input.project {
+                Some(_) => lookup(None).await.map_or(0, |all| {
+                    all.total_matches.saturating_sub(found.total_matches)
+                }),
+                None => 0,
+            };
+            let hits = found
+                .items
+                .iter()
+                .map(|hit| SearchHit {
+                    id: hit.task_id.clone(),
+                    reference: hit.display_ref.clone(),
+                    project: hit
+                        .display_ref
+                        .split('-')
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    title: hit.title.clone(),
+                    status: status_of(&hit.status),
+                    snippet: hit.snippet.clone(),
+                    deleted: hit.deleted,
+                })
+                .collect();
+            let body = ReplyBody::Search(SearchResults {
+                hits,
+                total: found.total_matches,
+                elsewhere,
+            });
+            let _ = replies.send(Reply { request, body });
+        });
+    }
+
+    /// Runs the configured natural language command off the actor, since it can
+    /// take many seconds.
+    fn intake(&self, input: String, project: Option<String>) {
+        let intake =
+            self.store
+                .spawn_task_intake(self.config.agent.task_intake.clone(), input, project);
+        let replies = self.replies.clone();
+        let request = self.handled;
+        tokio::spawn(async move {
+            let body = match intake
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|run| run)
+            {
+                Ok(result) => {
+                    let task = result.task;
+                    let schedule = crate::draft::schedule_text(
+                        task.available_at.as_deref().unwrap_or_default(),
+                        task.due_on.as_deref().unwrap_or_default(),
+                        result.recurrence.as_ref(),
+                    );
+                    ReplyBody::Intake(Box::new(NewTask {
+                        title: task.title,
+                        description: task.description,
+                        project: task.project,
+                        status: task.status,
+                        priority: task.priority,
+                        labels: task.labels,
+                        metadata: task
+                            .metadata
+                            .into_iter()
+                            .map(|field| (field.key, field.value))
+                            .collect(),
+                        is_epic: task.is_epic,
+                        schedule,
+                        images: Vec::new(),
+                    }))
+                }
+                Err(error) => ReplyBody::IntakeFailed(format!("{error:#}")),
+            };
+            let _ = replies.send(Reply { request, body });
+        });
+    }
+
+    async fn copy_report(&mut self, id: &TaskId) -> Result<String> {
+        let blob_dir = self.blob_dir()?;
+        let report = self
+            .store
+            .task_full_report(&blob_dir, id)
+            .await?
+            .ok_or_else(|| anyhow!("That task no longer exists"))?;
+        Ok(aven_host::task_render::task_markdown(&report))
+    }
+
+    fn is_navigation(command: &Command) -> bool {
+        matches!(
+            command,
+            Command::ShowView(_)
+                | Command::ShowProject(_)
+                | Command::SwitchWorkspace(_)
+                | Command::FilterLabel(_)
+                | Command::FilterPriority(_)
+                | Command::FilterDeleted(_)
+                | Command::FilterMetadata(_)
+                | Command::ClearFilters
+                | Command::SetOrder(_)
+                | Command::SetGroup(_)
+                | Command::SetColumns(_)
+                | Command::Search(_)
+                | Command::Goto(_)
+        )
     }
 
     async fn handle(&mut self, request: Request) {
@@ -585,36 +2093,61 @@ impl Actor {
             }
             Command::LoadDetail(id) => {
                 self.selected = Some(id.clone());
-                match self.store.load_task_item(&id).await {
-                    Ok(Some(item)) => self.send(ReplyBody::Detail(Box::new(detail(&item)))),
-                    Ok(None) => {}
-                    Err(error) => self.send(ReplyBody::RefreshFailed(error.to_string())),
+                self.send_detail(&id).await;
+            }
+            Command::Peek(id) => self.send_detail(&id).await,
+            Command::Preview(input) => self.preview(input),
+            Command::Intake { input, project } => self.intake(input, project),
+            Command::Copy(id, CopyKind::Report) => match self.copy_report(&id).await {
+                Ok(text) => self.send(ReplyBody::Copied(text, "task report")),
+                Err(error) => self.send(ReplyBody::Notice(error.to_string())),
+            },
+            Command::SaveImage(image, path) => {
+                let message = match self.save_image(&image, path).await {
+                    Ok(()) => "Saved a copy".to_string(),
+                    Err(error) => format!("Could not save the image: {error}"),
+                };
+                self.send(ReplyBody::Notice(message));
+            }
+            command if Self::is_navigation(&command) => {
+                if !matches!(command, Command::Goto(_)) {
+                    self.selected = None;
+                }
+                match self.navigate(&command).await {
+                    Ok(()) => self.send_list().await,
+                    Err(error) => {
+                        self.send(ReplyBody::SaveFailed(command, error.to_string()));
+                        self.send_list().await;
+                    }
                 }
             }
             command => {
                 match self.mutate(&command).await {
-                    Ok(created) => {
-                        // A note saves without refreshing the projection.
+                    Ok(outcome) => {
+                        // These save without refreshing the projection.
                         let refreshed = match command {
-                            Command::AddNote(..) => self.refresh().await,
+                            Command::AddNote(..)
+                            | Command::SetDeleted(..)
+                            | Command::DeleteNote(..)
+                            | Command::AddImage(..)
+                            | Command::DeleteImage(..)
+                            | Command::SetImageAlt(..) => self.refresh().await,
                             _ => Ok(()),
                         };
                         match refreshed {
-                            Ok(()) => self.send_list(),
+                            Ok(()) => self.send_list().await,
                             Err(error) => {
                                 self.send(ReplyBody::SavedRefreshFailed(error.to_string()));
                             }
                         }
-                        if let Some(id) = created {
-                            self.send(ReplyBody::Created(id));
-                        }
+                        self.finish_write(&command, outcome);
                     }
                     Err(error) if mutation_committed(&error) || task_creation_committed(&error) => {
                         self.send(ReplyBody::SavedRefreshFailed(error.to_string()));
                     }
                     Err(error) => {
                         self.send(ReplyBody::SaveFailed(command, error.to_string()));
-                        self.send_list();
+                        self.send_list().await;
                     }
                 }
                 self.sync_wake.notify_one();
@@ -622,14 +2155,45 @@ impl Actor {
         }
     }
 
+    fn finish_write(&mut self, command: &Command, outcome: Outcome) {
+        let undo = outcome.undo && self.store.available_undo().is_some();
+        if undo && !matches!(command, Command::Undo) {
+            self.undoable.push(
+                outcome
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "last change".to_string()),
+            );
+        }
+        if let Some(id) = outcome.created {
+            self.send(ReplyBody::Created(id));
+        }
+        if let Some(message) = outcome.message {
+            self.send(ReplyBody::Saved {
+                message,
+                go: outcome.go,
+                undo,
+            });
+        }
+    }
+
+    async fn save_image(&self, image: &str, path: PathBuf) -> Result<()> {
+        self.store
+            .save_attachment(&self.blob_dir()?, image, path)
+            .await
+            .map_err(|error| anyhow!("{error:?}"))?;
+        Ok(())
+    }
+
     async fn outside_change(&mut self) {
         match self.refresh().await {
-            Ok(()) => self.send_list(),
+            Ok(()) => self.send_list().await,
             Err(error) => self.send(ReplyBody::RefreshFailed(error.to_string())),
         }
     }
 
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
+        self.send_catalog().await;
         let mut writes = OutsideWrites::open(&self.database).await.ok();
         let mut poll = interval(POLL_INTERVAL);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -737,16 +2301,9 @@ pub fn start(handle: tokio::runtime::Handle, launch: Launch) -> Result<(Session,
                     ));
                 }
                 let _ = opened_tx.send(Ok(snapshot(&store, Local::now())));
-                Actor {
-                    store,
-                    database: launch.database,
-                    replies: replies_tx,
-                    sync_wake,
-                    handled: 0,
-                    selected: None,
-                }
-                .run(requests_rx)
-                .await;
+                Actor::new(store, launch.database, launch.config, replies_tx, sync_wake)
+                    .run(requests_rx)
+                    .await;
             });
         })?;
     let first = opened_rx.recv().context("the store thread stopped")??;
@@ -773,6 +2330,9 @@ pub fn bench_snapshot(tasks: usize, groups: Vec<Group>) -> Snapshot {
                 labels: vec!["bench".to_string()],
                 due: String::new(),
                 date_tone: DateTone::Plain,
+                deleted: false,
+                is_epic: false,
+                project_key: "bench".to_string(),
             })
             .collect(),
         groups,
@@ -839,14 +2399,13 @@ mod tests {
         let mut store = open_store(&path, &AppConfig::default()).await.unwrap();
         store.create_task(draft(title), None).await.unwrap();
         let (replies, received) = mpsc::unbounded_channel();
-        let actor = Actor {
+        let actor = Actor::new(
             store,
-            database: path,
+            path,
+            AppConfig::default(),
             replies,
-            sync_wake: Arc::new(Notify::new()),
-            handled: 0,
-            selected: None,
-        };
+            Arc::new(Notify::new()),
+        );
         (directory, actor, received)
     }
 
@@ -907,7 +2466,7 @@ mod tests {
             item.expect("a task with that title").task.clone()
         };
         actor.selected = Some(find(&actor.store, "Elsewhere").id);
-        let command = Command::Create("Second".to_string());
+        let command = Command::Create(Box::new(NewTask::titled("Second")));
         actor.handle(Request { id: 1, command }).await;
 
         assert!(
@@ -922,7 +2481,7 @@ mod tests {
     async fn a_refresh_failure_after_a_create_reports_saved_once() {
         let (_directory, mut actor, mut replies) = actor("Stored").await;
         actor.store.fail_next_refresh();
-        let command = Command::Create("Second".to_string());
+        let command = Command::Create(Box::new(NewTask::titled("Second")));
         actor.handle(Request { id: 1, command }).await;
 
         let bodies = bodies(&mut replies);
@@ -971,6 +2530,335 @@ mod tests {
             .unwrap();
         assert!(writes.changed().await.unwrap());
         assert!(!writes.changed().await.unwrap());
+    }
+
+    async fn run(actor: &mut Actor, command: Command) {
+        let id = actor.handled + 1;
+        actor.handle(Request { id, command }).await;
+    }
+
+    fn task_id(actor: &Actor, title: &str) -> TaskId {
+        let item = actor
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == title);
+        item.expect("a task with that title").task.id.clone()
+    }
+
+    fn lists(bodies: &[ReplyBody]) -> Vec<&Snapshot> {
+        bodies
+            .iter()
+            .filter_map(|body| match body {
+                ReplyBody::List(list) => Some(&**list),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn last_toast(bodies: &[ReplyBody]) -> Option<(String, bool)> {
+        bodies.iter().rev().find_map(|body| match body {
+            ReplyBody::Saved { message, undo, .. } => Some((message.clone(), *undo)),
+            _ => None,
+        })
+    }
+
+    #[tokio::test]
+    async fn views_filters_order_and_grouping_reach_the_list() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        actor
+            .store
+            .create_task(
+                TaskDraft {
+                    labels: vec!["bug".to_string()],
+                    priority: "high".to_string(),
+                    ..draft("Labelled")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        run(&mut actor, Command::ShowView(TaskQuery::Open)).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen)[0];
+        assert_eq!(list.view.query, TaskQuery::Open);
+        assert_eq!(list.ordered().count(), 2);
+        assert_eq!(list.groups[0].name, "Todo");
+
+        run(&mut actor, Command::FilterLabel(Some("bug".to_string()))).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen)[0];
+        assert_eq!(list.view.label.as_deref(), Some("bug"));
+        assert_eq!(list.ordered().count(), 1);
+
+        run(&mut actor, Command::ClearFilters).await;
+        run(&mut actor, Command::SetGroup(GroupBy::Priority)).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen).pop().unwrap();
+        let names: Vec<_> = list
+            .groups
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect();
+        assert_eq!(names, ["High", "None"]);
+
+        run(&mut actor, Command::SetOrder(ViewOrder::Title)).await;
+        run(&mut actor, Command::SetGroup(GroupBy::None)).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen).pop().unwrap();
+        let titles: Vec<_> = list
+            .ordered()
+            .map(|row| list.tasks[row].title.as_str())
+            .collect();
+        assert_eq!(titles, ["Labelled", "Stored"]);
+    }
+
+    #[tokio::test]
+    async fn columns_stay_with_their_view_and_list_every_lane() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        run(&mut actor, Command::ShowView(TaskQuery::Open)).await;
+        run(&mut actor, Command::SetColumns(true)).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen).pop().unwrap();
+        assert!(list.view.columns);
+        let lanes: Vec<_> = list
+            .groups
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect();
+        assert_eq!(lanes, ["Inbox", "Backlog", "Todo", "Active", "Done"]);
+
+        run(&mut actor, Command::ShowView(TaskQuery::Queue)).await;
+        assert_eq!(actor.store.view_state.layout, TaskLayout::List);
+        run(&mut actor, Command::ShowView(TaskQuery::Open)).await;
+        assert_eq!(actor.store.view_state.layout, TaskLayout::Columns);
+        bodies(&mut replies);
+    }
+
+    #[tokio::test]
+    async fn the_metadata_filter_keeps_rows_with_or_without_the_field() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        let tagged = TaskDraft {
+            metadata: metadata_inputs(&[("owner".to_string(), "Ada".to_string())]),
+            ..draft("Tagged")
+        };
+        actor.store.create_task(tagged, None).await.unwrap();
+        let id = task_id(&actor, "Tagged");
+        let stored = task_id(&actor, "Stored");
+        let command = Command::SetMetadata(stored, "owner".to_string(), Some("Bo".to_string()));
+        run(&mut actor, command).await;
+        let command = Command::SetMetadata(id.clone(), "owner".to_string(), None);
+        run(&mut actor, command).await;
+        let filter = MetaFilter {
+            key: "owner".to_string(),
+            present: true,
+        };
+        run(&mut actor, Command::FilterMetadata(Some(filter))).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen).pop().unwrap();
+        let rows: Vec<_> = list
+            .ordered()
+            .map(|row| list.tasks[row].id.clone())
+            .collect();
+        assert_eq!(rows, [task_id(&actor, "Stored")]);
+        assert!(!rows.contains(&id));
+        assert_eq!(list.fields, ["owner"]);
+    }
+
+    #[tokio::test]
+    async fn delete_shows_a_toast_undo_brings_it_back_and_a_filter_finds_it() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        let id = task_id(&actor, "Stored");
+        run(&mut actor, Command::SetDeleted(id.clone(), true)).await;
+        let seen = bodies(&mut replies);
+        let (message, undo) = last_toast(&seen).unwrap();
+        assert!(message.ends_with("deleted"), "{message}");
+        assert!(undo);
+        assert!(actor.store.tasks.is_empty());
+
+        run(&mut actor, Command::FilterDeleted(DeletedFilter::Show)).await;
+        let seen = bodies(&mut replies);
+        let list = lists(&seen).pop().unwrap();
+        assert!(list.tasks[0].deleted);
+
+        run(&mut actor, Command::Undo).await;
+        let seen = bodies(&mut replies);
+        let (message, undo) = last_toast(&seen).unwrap();
+        assert!(message.starts_with("Undone: "), "{message}");
+        assert!(!undo);
+        let list = lists(&seen).pop().unwrap();
+        assert!(!list.tasks[0].deleted);
+    }
+
+    #[tokio::test]
+    async fn an_empty_undo_history_says_so() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        run(&mut actor, Command::Undo).await;
+        run(&mut actor, Command::Undo).await;
+        let seen = bodies(&mut replies);
+        let (message, undo) = last_toast(&seen).unwrap();
+        assert_eq!(message, "Nothing to undo");
+        assert!(!undo);
+    }
+
+    #[tokio::test]
+    async fn search_finds_and_a_second_query_can_include_deleted_rows() {
+        let (_directory, mut actor, mut replies) = actor("Needle one").await;
+        actor.store.create_task(draft("Other"), None).await.unwrap();
+        let needle = task_id(&actor, "Needle one");
+        let input = SearchInput {
+            text: "needle".to_string(),
+            project: None,
+            deleted: false,
+        };
+        run(&mut actor, Command::Search(input.clone())).await;
+        let seen = bodies(&mut replies);
+        let list = lists(&seen).pop().unwrap();
+        assert_eq!(list.view.search.as_deref(), Some("needle"));
+        assert_eq!(list.tasks.len(), 1);
+
+        run(&mut actor, Command::SetDeleted(needle, true)).await;
+        run(&mut actor, Command::Search(input.clone())).await;
+        let seen = bodies(&mut replies);
+        assert!(lists(&seen).pop().unwrap().tasks.is_empty());
+
+        let deleted = SearchInput {
+            deleted: true,
+            ..input
+        };
+        run(&mut actor, Command::Search(deleted)).await;
+        let seen = bodies(&mut replies);
+        assert_eq!(lists(&seen).pop().unwrap().tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn goto_widens_the_view_until_the_task_shows() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        let id = task_id(&actor, "Stored");
+        run(&mut actor, Command::SetStatus(id.clone(), TaskStatus::Done)).await;
+        run(&mut actor, Command::ShowView(TaskQuery::Inbox)).await;
+        assert!(actor.store.tasks.is_empty());
+        bodies(&mut replies);
+
+        run(&mut actor, Command::Goto(id.clone())).await;
+        assert!(actor.listed(&id));
+        assert_eq!(actor.store.view_state.query, TaskQuery::Done);
+        let seen = bodies(&mut replies);
+        assert!(seen.iter().any(|body| matches!(body, ReplyBody::Select(_))));
+    }
+
+    #[tokio::test]
+    async fn schedule_project_labels_links_and_notes_write_through_core() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        actor
+            .store
+            .create_task(draft("Blocker"), None)
+            .await
+            .unwrap();
+        let id = task_id(&actor, "Stored");
+        let blocker = task_id(&actor, "Blocker");
+        run(
+            &mut actor,
+            Command::SetSchedule {
+                id: id.clone(),
+                available_at: None,
+                due_on: Some(Some("2031-05-01".to_string())),
+            },
+        )
+        .await;
+        run(
+            &mut actor,
+            Command::SetLabels(id.clone(), vec!["bug".to_string()]),
+        )
+        .await;
+        run(&mut actor, Command::AddBlocker(id.clone(), blocker.clone())).await;
+        run(&mut actor, Command::AddRelated(id.clone(), blocker.clone())).await;
+        run(
+            &mut actor,
+            Command::AddNote(id.clone(), "Noted".to_string()),
+        )
+        .await;
+        run(
+            &mut actor,
+            Command::SetDescription(id.clone(), "Body".to_string()),
+        )
+        .await;
+        bodies(&mut replies);
+
+        run(&mut actor, Command::LoadDetail(id.clone())).await;
+        let seen = bodies(&mut replies);
+        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
+            panic!("no detail");
+        };
+        assert_eq!(detail.due_on.as_deref(), Some("2031-05-01"));
+        assert_eq!(detail.row.labels, ["bug"]);
+        assert_eq!(detail.blocked_by[0].id, blocker);
+        assert_eq!(detail.related[0].id, blocker);
+        assert_eq!(detail.description, "Body");
+        let note = detail.notes[0].id.clone();
+
+        run(
+            &mut actor,
+            Command::RemoveBlocker(id.clone(), blocker.clone()),
+        )
+        .await;
+        run(
+            &mut actor,
+            Command::RemoveRelated(id.clone(), blocker.clone()),
+        )
+        .await;
+        run(&mut actor, Command::DeleteNote(id.clone(), note)).await;
+        bodies(&mut replies);
+        run(&mut actor, Command::LoadDetail(id)).await;
+        let seen = bodies(&mut replies);
+        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
+            panic!("no detail");
+        };
+        assert!(detail.blocked_by.is_empty() && detail.related.is_empty());
+        assert!(detail.notes.is_empty());
+    }
+
+    fn png() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let picture = image::RgbImage::new(4, 4);
+        picture
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    }
+
+    #[tokio::test]
+    async fn an_image_lands_with_a_preview_and_changing_its_alt_keeps_the_picture() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        let id = task_id(&actor, "Stored");
+        let pending = PendingImage {
+            name: "chart.png".to_string(),
+            bytes: Arc::new(png()),
+        };
+        run(&mut actor, Command::AddImage(id.clone(), pending)).await;
+        bodies(&mut replies);
+        run(&mut actor, Command::LoadDetail(id.clone())).await;
+        let seen = bodies(&mut replies);
+        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
+            panic!("no detail");
+        };
+        assert_eq!(detail.images[0].name, "chart.png");
+        assert!(detail.images[0].preview.as_ref().unwrap().exists());
+        let image = detail.images[0].id.clone();
+
+        let command = Command::SetImageAlt(id.clone(), image, "A chart".to_string());
+        run(&mut actor, command).await;
+        bodies(&mut replies);
+        run(&mut actor, Command::LoadDetail(id)).await;
+        let seen = bodies(&mut replies);
+        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
+            panic!("no detail");
+        };
+        assert_eq!(detail.images.len(), 1);
+        assert_eq!(detail.images[0].alt, "A chart");
     }
 
     #[test]

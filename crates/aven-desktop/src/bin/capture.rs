@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
-use aven_desktop::adapter::{self, Reply, ReplyBody, Snapshot};
+use aven_desktop::adapter::{self, Snapshot};
 use aven_desktop::assets::{Assets, load_fonts};
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
@@ -220,24 +220,23 @@ fn load_state(
             Some(id) => store.load_task_item(&id).await?,
             None => None,
         };
-        Ok((snapshot, detail.as_ref().map(adapter::detail)))
+        Ok((
+            snapshot,
+            detail.as_ref().map(|item| adapter::detail(item, now)),
+        ))
     })
 }
 
-/// A view with no store behind it: requests go nowhere and no replies come.
+/// A view whose replies the caller feeds in, so a scene decides when they land.
 fn open_root(
     cx: &mut VisualTestAppContext,
-    state: &(Snapshot, Option<adapter::Detail>),
+    session: Session,
     prefs: PathBuf,
     width: f32,
     height: f32,
 ) -> Result<gpui::WindowHandle<Root>> {
-    let (snapshot, detail) = state.clone();
     cx.open_offscreen_window(size(px(width), px(height)), move |window, cx| {
-        let (requests, _) = tokio::sync::mpsc::unbounded_channel();
         let (_, replies) = tokio::sync::mpsc::unbounded_channel();
-        let mut session = Session::new(snapshot, requests);
-        session.detail = detail;
         cx.new(|cx| {
             let mut root = Root::new(session, replies, prefs, window, cx);
             root.always_active = true;
@@ -258,10 +257,17 @@ fn list_bench(tasks: usize) -> Result<()> {
             rows: chunk.to_vec(),
         });
     }
-    let state = (adapter::bench_snapshot(tasks, groups), None);
+    let (requests, _) = tokio::sync::mpsc::unbounded_channel();
+    let session = Session::new(adapter::bench_snapshot(tasks, groups), requests);
     let mut cx = capture_context();
     let started = Instant::now();
-    let window = open_root(&mut cx, &state, work.path().join("prefs.json"), 1440., 900.)?;
+    let window = open_root(
+        &mut cx,
+        session,
+        work.path().join("prefs.json"),
+        1440.,
+        900.,
+    )?;
     let any: AnyWindowHandle = window.into();
     cx.run_until_parked();
     cx.update_window(any, |_, window, _| window.refresh())?;
@@ -331,12 +337,20 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         isolation.fresh_prototype_directory()?,
     )?;
     let mut cx = capture_context();
+    let runtime = tokio::runtime::Runtime::new()?;
     let mut passed = true;
     let mut scene_reports = Vec::new();
     for scene in scenes {
         let page = render_prototype(&prototype, &manifest, scene, &seeded, anchor, output)?;
         let boxes: NamedBounds = serde_json::from_value(strip_missing(&page["boxes"]))?;
-        let gpui_boxes = render_gpui(&mut cx, scene, &state, output)?;
+        let database = scene_database(&isolation, &scene.name)?;
+        let launch = adapter::Launch {
+            database,
+            config: offline_config(),
+            storage: isolation.protected_storage(),
+        };
+        let store = adapter::start(runtime.handle().clone(), launch)?;
+        let gpui_boxes = render_gpui(&mut cx, scene, store, output)?;
         let present = unexpectedly_present(scene, &boxes, &gpui_boxes);
         let comparisons = measure::compare(&manifest.expectations(scene)?, &boxes, &gpui_boxes);
         // Steps change the prototype's data, and the seeded state is what is compared.
@@ -386,6 +400,8 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         )?;
         scene_reports.push(json!({"scene": scene.name, "passed": scene_passed}));
     }
+    // Scene stores still run on it, and their threads end with the process.
+    std::mem::forget(runtime);
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&json!({
@@ -538,10 +554,56 @@ fn capture_context() -> VisualTestAppContext {
     cx
 }
 
+/// A copy of the seeded database for one scene, so its writes end with it.
+fn scene_database(isolation: &Isolation, name: &str) -> Result<PathBuf> {
+    let directory = isolation.root.join("scene-data").join(name);
+    if directory.exists() {
+        std::fs::remove_dir_all(&directory)?;
+    }
+    std::fs::create_dir_all(&directory)?;
+    let copy = directory.join("db.sqlite");
+    std::fs::copy(&isolation.database, &copy).context("copy the seeded database")?;
+    Ok(copy)
+}
+
+fn offline_config() -> AppConfig {
+    let mut config = AppConfig::default();
+    config.sync.disable_override = true;
+    config
+}
+
+/// Hands replies to the view until the store has gone quiet.
+fn settle(
+    cx: &mut VisualTestAppContext,
+    any: AnyWindowHandle,
+    root: &gpui::Entity<Root>,
+    replies: &mut adapter::Replies,
+    quiet_polls: u32,
+) -> Result<()> {
+    let mut quiet = 0;
+    while quiet < quiet_polls {
+        let mut took = false;
+        while let Ok(reply) = replies.try_recv() {
+            took = true;
+            cx.update_window(any, |_, window, cx| {
+                root.update(cx, |root, cx| root.take_reply(reply, window, cx));
+            })?;
+        }
+        cx.run_until_parked();
+        if took {
+            quiet = 0;
+        } else {
+            quiet += 1;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    Ok(())
+}
+
 fn render_gpui(
     cx: &mut VisualTestAppContext,
     scene: &Scene,
-    state: &(Snapshot, Option<adapter::Detail>),
+    (session, mut replies): (Session, adapter::Replies),
     output: &Path,
 ) -> Result<NamedBounds> {
     let theme = match scene.theme {
@@ -554,26 +616,19 @@ fn render_gpui(
     });
     let window = open_root(
         cx,
-        state,
+        session,
         output.join("capture-prefs.json"),
         scene.width as f32,
         scene.height as f32,
     )?;
     let window_root = window.entity(cx)?;
     let any: AnyWindowHandle = window.into();
+    // Motion scenes are caught mid-flight, so they wait no longer than they must.
+    let quiet_polls = if scene.gpui_frame_ms.is_some() { 2 } else { 12 };
+    settle(cx, any, &window_root, &mut replies, 12)?;
     for keys in &scene.gpui_keys {
         cx.simulate_keystrokes(any, keys);
-        // No store answers, so the view's own list stands in for a write's reply.
-        cx.update_window(any, |_, window, cx| {
-            window_root.update(cx, |root, cx| {
-                let list = root.session_mut().snapshot.clone();
-                let reply = Reply {
-                    request: u64::MAX,
-                    body: ReplyBody::List(Box::new(list)),
-                };
-                root.take_reply(reply, window, cx);
-            })
-        })?;
+        settle(cx, any, &window_root, &mut replies, quiet_polls)?;
     }
     if let Some([x, y]) = scene.gpui_pointer {
         cx.simulate_mouse_move(any, point(px(x), px(y)), None, Modifiers::default());

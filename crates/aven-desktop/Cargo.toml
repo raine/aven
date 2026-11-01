@@ -47,6 +47,7 @@ unicode-segmentation = "1"
 
 [dev-dependencies]
 aven-host = { path = "../aven-host", features = ["test-support"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3.14"
 
 [patch.crates-io]

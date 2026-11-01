@@ -359,7 +359,7 @@ impl Root {
         if title.is_empty() {
             return;
         }
-        self.session.create(title);
+        self.session.create(crate::adapter::NewTask::titled(title));
         self.close_composer(false, window, cx);
     }
 

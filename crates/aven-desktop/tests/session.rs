@@ -7,10 +7,10 @@ use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::ids::TaskId;
 use aven_core::operations::TaskDraft;
 use aven_core::sync::client::keys::FileProtectedStorage;
-use aven_desktop::adapter::{self, Command, Reply, ReplyBody, Request, Snapshot};
+use aven_desktop::adapter::{self, Command, NewTask, Reply, ReplyBody, Request, Snapshot};
 use aven_desktop::session::{Session, ToastAction};
 use aven_host::config::AppConfig;
-use aven_host::store::TuiStore;
+use aven_host::store::{TaskQuery, TuiStore};
 use chrono::Local;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -69,6 +69,10 @@ async fn harness(titles: &[&str]) -> Harness {
 }
 
 impl Harness {
+    fn store_list(&self) -> Snapshot {
+        adapter::snapshot(&self.store, Local::now())
+    }
+
     fn take_requests(&mut self) -> Vec<Request> {
         let mut taken = Vec::new();
         while let Ok(request) = self.requests.try_recv() {
@@ -152,7 +156,7 @@ async fn a_detail_for_an_earlier_selection_is_dropped() {
     let requested = h.take_requests().last().map_or(0, |request| request.id);
     h.session.select(second.clone());
 
-    let late = ReplyBody::Detail(Box::new(adapter::detail(&first_item)));
+    let late = ReplyBody::Detail(Box::new(adapter::detail(&first_item, Local::now())));
     h.session.apply(reply(requested, late));
     assert_eq!(h.session.detail, None);
 }
@@ -234,13 +238,13 @@ async fn a_note_typed_while_the_save_failed_follows_the_returned_text() {
 #[tokio::test]
 async fn a_failed_create_returns_its_title_to_the_composer() {
     let mut h = harness(&["Only"]).await;
-    let failed = Command::Create("New idea".to_string());
+    let failed = Command::Create(Box::new(NewTask::titled("New idea")));
 
     let applied = h.session.apply(reply(
         1,
         ReplyBody::SaveFailed(failed, "database is locked".to_string()),
     ));
-    assert_eq!(applied.composer_draft.as_deref(), Some("New idea"));
+    assert_eq!(applied.composer_draft.unwrap().title, "New idea");
     assert_eq!(
         h.session.toast.clone().unwrap().action,
         None,
@@ -257,11 +261,11 @@ async fn a_created_task_takes_selection_only_if_it_has_not_moved() {
         row(&h.session.snapshot, "Third"),
     );
     h.session.select(first.clone());
-    h.session.create("Fourth".to_string());
+    h.session.create(NewTask::titled("Fourth"));
     h.session.apply(reply(1, ReplyBody::Created(third.clone())));
     assert_eq!(h.session.selected.as_ref(), Some(&third));
 
-    h.session.create("Fifth".to_string());
+    h.session.create(NewTask::titled("Fifth"));
     h.session.select(second.clone());
     h.session.apply(reply(2, ReplyBody::Created(first)));
     assert_eq!(h.session.selected.as_ref(), Some(&second));
@@ -618,9 +622,99 @@ async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
 
     session.set_status(&second, TaskStatus::Todo);
     until_done_group(&mut session, &mut replies, false).await;
-    assert_eq!(session.toast, None);
+    assert!(session.toast.unwrap().message.ends_with("moved to Todo"));
     assert_eq!(
         session.snapshot.row(&second).unwrap().status,
         TaskStatus::Todo
     );
+}
+
+#[tokio::test]
+async fn canceled_rows_join_the_same_end_group_as_done_rows() {
+    let mut h = harness(&["First", "Second", "Third"]).await;
+    let first = row(&h.session.snapshot, "First");
+    let second = row(&h.session.snapshot, "Second");
+    h.session.set_status(&first, TaskStatus::Done);
+    h.session.set_status(&second, TaskStatus::Canceled);
+    let mut list = with_status(&h, &first, TaskStatus::Done);
+    let at = list.tasks.iter().position(|task| task.id == second);
+    list.tasks[at.unwrap()].status = TaskStatus::Canceled;
+    answer(&mut h, list);
+
+    assert_eq!(done_titles(&h.session), ["First", "Second"]);
+    assert_eq!(groups(&h.session).len(), 2);
+}
+
+#[tokio::test]
+async fn switching_views_clears_the_done_group_and_the_selection() {
+    let mut h = harness(&["First", "Second"]).await;
+    let first = row(&h.session.snapshot, "First");
+    h.session.set_status(&first, TaskStatus::Done);
+    let list = with_status(&h, &first, TaskStatus::Done);
+    answer(&mut h, list);
+    assert_eq!(done_titles(&h.session), ["First"]);
+
+    h.take_requests();
+    h.session.switch_view(Command::ShowView(TaskQuery::Inbox));
+    assert_eq!(h.session.selected, None);
+    let commands: Vec<_> = h.take_requests().into_iter().map(|r| r.command).collect();
+    assert_eq!(
+        commands,
+        [Command::RefreshView, Command::ShowView(TaskQuery::Inbox)]
+    );
+    let list = h.store_list();
+    h.session
+        .apply(reply(u64::MAX, ReplyBody::List(Box::new(list))));
+    assert_eq!(done_titles(&h.session), Vec::<String>::new());
+    assert!(h.session.selected.is_some());
+}
+
+#[tokio::test]
+async fn a_view_of_closed_rows_keeps_them_in_their_own_groups() {
+    let mut h = harness(&["First"]).await;
+    let first = row(&h.session.snapshot, "First");
+    let mut list = with_status(&h, &first, TaskStatus::Done);
+    list.view.query = TaskQuery::Done;
+    answer(&mut h, list);
+    assert_eq!(done_titles(&h.session), Vec::<String>::new());
+    assert_eq!(h.session.snapshot.ordered().count(), 1);
+}
+
+#[tokio::test]
+async fn a_peeked_task_takes_actions_and_steps_back_along_the_trail() {
+    let mut h = harness(&["First", "Second"]).await;
+    let first = row(&h.session.snapshot, "First");
+    h.session.select(first.clone());
+    let outside = TaskId::new();
+    h.session.follow(outside.clone());
+    assert_eq!(h.session.target(), Some(&outside));
+    assert_eq!(h.session.selected.as_ref(), Some(&first));
+    assert_eq!(h.session.trail.len(), 1);
+    h.session.trail_back();
+    assert_eq!(h.session.target(), Some(&first));
+    assert!(h.session.trail.is_empty());
+}
+
+#[tokio::test]
+async fn a_saved_write_offers_undo_and_its_way_there() {
+    let mut h = harness(&["First"]).await;
+    let go = adapter::Go {
+        label: "View in Upcoming",
+        command: Command::ShowView(TaskQuery::Upcoming),
+    };
+    h.session.apply(reply(
+        0,
+        ReplyBody::Saved {
+            message: "Deferred".to_string(),
+            go: Some(go.clone()),
+            undo: true,
+        },
+    ));
+    let toast = h.session.toast.clone().unwrap();
+    assert!(toast.undo);
+    assert_eq!(toast.action, Some(ToastAction::Go(go)));
+    h.take_requests();
+    h.session.run_toast_undo();
+    let commands: Vec<_> = h.take_requests().into_iter().map(|r| r.command).collect();
+    assert_eq!(commands, [Command::Undo]);
 }

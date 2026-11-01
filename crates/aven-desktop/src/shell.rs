@@ -576,10 +576,10 @@ impl Root {
         if applied.list {
             self.rebuild(applied.moved.is_some());
         }
-        if let Some(title) = applied.composer_draft
+        if let Some(task) = applied.composer_draft
             && self.composer_draft.is_empty()
         {
-            self.composer_draft = title;
+            self.composer_draft = task.title;
         }
         if applied.draft
             && let Some(id) = self.session.selected.clone()

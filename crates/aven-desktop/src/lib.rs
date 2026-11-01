@@ -5,6 +5,7 @@ pub mod assets;
 pub mod bounce;
 pub mod capabilities;
 mod details;
+pub mod draft;
 #[cfg(feature = "capture")]
 pub mod fixture;
 pub mod input;
