@@ -851,6 +851,63 @@ async fn review_moves_on_after_a_decision_and_undo_returns_to_the_card() {
     assert_eq!(toast.message, "left triage · 0 decided · 2 undecided");
 }
 
+async fn settle(session: &mut Session, replies: &mut adapter::Replies) {
+    // A reply can send a request of its own, so one pass may not be the last.
+    for _ in 0..3 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        while let Ok(reply) = replies.try_recv() {
+            session.apply(reply);
+        }
+    }
+}
+
+async fn review_undo_case(view: Option<TaskQuery>) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let store = store_with(&path, &["One", "Two"]).await;
+    drop(store);
+    let storage = Arc::new(FileProtectedStorage::new(directory.path().join("keys")));
+    let launch = adapter::Launch {
+        database: path,
+        config: AppConfig::default(),
+        storage: Some(storage),
+    };
+    let (mut session, mut replies) =
+        adapter::start(tokio::runtime::Handle::current(), launch).unwrap();
+    let one = row(&session.snapshot, "One");
+    let two = row(&session.snapshot, "Two");
+    let status = session.snapshot.row(&one).unwrap().status;
+    settle(&mut session, &mut replies).await;
+    if let Some(view) = view {
+        session.switch_view(Command::ShowView(view));
+        settle(&mut session, &mut replies).await;
+    }
+    session.apply(reply(
+        0,
+        ReplyBody::Review(vec![card(&one, true), card(&two, true)], 0),
+    ));
+    settle(&mut session, &mut replies).await;
+
+    session.review_status('d', TaskStatus::Done);
+    settle(&mut session, &mut replies).await;
+
+    session.review_undo();
+    settle(&mut session, &mut replies).await;
+    assert_eq!(session.target(), Some(&one));
+    assert_eq!(session.target_row().unwrap().status, status);
+    assert!(done_titles(&session).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_undo_returns_the_card_to_its_status() {
+    review_undo_case(None).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_undo_returns_a_card_the_inbox_does_not_list() {
+    review_undo_case(Some(TaskQuery::Inbox)).await;
+}
+
 #[tokio::test]
 async fn an_inbox_card_cannot_be_kept() {
     let mut h = harness(&["One"]).await;

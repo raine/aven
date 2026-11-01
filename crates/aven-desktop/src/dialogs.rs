@@ -240,7 +240,9 @@ pub enum ConfirmAction {
 pub struct Layer {
     pub dialog: Dialog,
     prior: Option<FocusHandle>,
-    focus: FocusHandle,
+    /// The dialog's own handle, since a focusable element reports its handle
+    /// and each field already reports the one in `fields`.
+    container: FocusHandle,
     pub(crate) fields: Vec<FocusHandle>,
     _subscriptions: Vec<Subscription>,
 }
@@ -306,16 +308,13 @@ impl Root {
             .iter()
             .map(|editor| cx.subscribe_in(editor, window, Self::on_dialog_event))
             .collect();
-        let focus = fields
-            .get(first)
-            .cloned()
-            .unwrap_or_else(|| cx.focus_handle());
+        let container = cx.focus_handle();
         let prior = window.focused(cx);
-        window.focus(&focus, cx);
+        window.focus(fields.get(first).unwrap_or(&container), cx);
         self.dialog = Some(Layer {
             dialog,
             prior,
-            focus,
+            container,
             fields,
             _subscriptions: subscriptions,
         });
@@ -600,9 +599,6 @@ impl Root {
             error: None,
         };
         self.open_dialog(dialog, editors, window, cx);
-        if let Some(layer) = self.dialog.as_mut() {
-            layer.focus = target.clone();
-        }
         window.focus(&target, cx);
     }
 
@@ -1714,7 +1710,7 @@ impl Root {
                         .role(Role::Dialog)
                         .aria_label(name)
                         .key_context(context)
-                        .track_focus(&layer.focus)
+                        .track_focus(&layer.container)
                         .on_action(cx.listener(Self::accept))
                         .on_action(cx.listener(Self::toggle_search_scope))
                         .on_action(cx.listener(Self::full_results))

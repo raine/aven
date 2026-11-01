@@ -846,7 +846,12 @@ impl Session {
         let id = review.cards[at].id.clone();
         review.decided.remove(&id);
         match change {
-            ReviewChange::Store(_) => self.undo(),
+            ReviewChange::Store(_) => {
+                // A view that does not list the open task would keep its Done
+                // copy, which outranks the details the card reads.
+                self.done.retain(|done| *done != id);
+                self.undo();
+            }
             ReviewChange::Keep(_) => {
                 self.send(Command::Unkeep(id));
             }

@@ -1106,7 +1106,7 @@ impl Root {
             .collect();
         page(
             "Custom commands",
-            Some("Trusted local programs. They appear in the palette and run on the selected or marked tasks."),
+            Some("Trusted local programs. They run from the terminal app, on the selected or marked tasks."),
             t,
         )
         .when(!rows.is_empty(), |tab| tab.child(group(rows, t)))
