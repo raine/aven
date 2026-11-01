@@ -7,7 +7,9 @@ use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::ids::TaskId;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::adapter::{Command, Detail, Reply, ReplyBody, Request, Snapshot, SyncHealth};
+use crate::adapter::{
+    Command, Detail, Reply, ReplyBody, Request, Snapshot, SyncHealth, done_group,
+};
 
 pub const POP_DURATION: Duration = Duration::from_millis(320);
 pub const SETTLE_DURATION: Duration = Duration::from_millis(620);
@@ -109,6 +111,8 @@ pub struct Applied {
     pub draft: bool,
     /// The title of a task that could not be created.
     pub composer_draft: Option<String>,
+    /// The task whose local write produced this list, so the list may animate.
+    pub moved: Option<TaskId>,
 }
 
 fn join_drafts(first: &str, second: &str) -> String {
@@ -127,6 +131,11 @@ pub struct Session {
     pub toast: Option<Toast>,
     pub sync: Option<SyncHealth>,
     pub motion: Motion,
+    /// Tasks completed during this visit to the view, oldest first. They stay
+    /// in the Done group until the user refreshes the view.
+    done: Vec<TaskId>,
+    /// The newest status or priority write whose list has not arrived.
+    moving: Option<(u64, TaskId)>,
     requests: UnboundedSender<Request>,
     next_request: u64,
     last_mutation: u64,
@@ -146,6 +155,8 @@ impl Session {
             toast: None,
             sync: None,
             motion: Motion::default(),
+            done: Vec::new(),
+            moving: None,
             requests,
             next_request: 0,
             last_mutation: 0,
@@ -202,7 +213,8 @@ impl Session {
         }
         let previous = std::mem::replace(&mut row.status, status);
         self.motion.status_changed(id, previous, status);
-        self.send(Command::SetStatus(id.clone(), status));
+        let request = self.send(Command::SetStatus(id.clone(), status));
+        self.moving = Some((request, id.clone()));
     }
 
     pub fn toggle_status(&mut self, id: &TaskId, status: TaskStatus) {
@@ -226,7 +238,8 @@ impl Session {
         }
         let previous = std::mem::replace(&mut row.priority, priority);
         self.motion.priority_changed(id, previous, priority);
-        self.send(Command::SetPriority(id.clone(), priority));
+        let request = self.send(Command::SetPriority(id.clone(), priority));
+        self.moving = Some((request, id.clone()));
     }
 
     pub fn set_title(&mut self, id: &TaskId, title: String) {
@@ -248,6 +261,13 @@ impl Session {
     pub fn create(&mut self, title: String) {
         self.create_from = self.selected.clone();
         self.send(Command::Create(title));
+    }
+
+    /// A refresh the user asked for: the Done group empties.
+    pub fn refresh_view(&mut self) {
+        self.done.clear();
+        self.moving = None;
+        self.send(Command::RefreshView);
     }
 
     pub fn run_toast_action(&mut self) {
@@ -288,6 +308,10 @@ impl Session {
             ReplyBody::List(list) => {
                 // A list that predates a write would undo its optimistic change.
                 if reply.request >= self.last_mutation {
+                    applied.moved = self
+                        .moving
+                        .take_if(|(request, _)| *request <= reply.request)
+                        .map(|(_, id)| id);
                     self.take_list(*list, &mut applied);
                 }
             }
@@ -341,9 +365,64 @@ impl Session {
         applied
     }
 
-    fn take_list(&mut self, list: Snapshot, applied: &mut Applied) {
+    /// Moves done rows to one last group. A row the store no longer lists keeps
+    /// the fields it had, and a row reopened anywhere rejoins its own group.
+    fn gather_done(&mut self, list: &mut Snapshot) {
+        self.done.retain(|id| {
+            list.row(id)
+                .is_none_or(|row| row.status == TaskStatus::Done)
+        });
+        for group in &mut list.groups {
+            group.rows.retain(|task| {
+                let row = &list.tasks[*task];
+                if row.status != TaskStatus::Done {
+                    return true;
+                }
+                if !self.done.contains(&row.id) {
+                    self.done.push(row.id.clone());
+                }
+                false
+            });
+        }
+        list.groups.retain(|group| !group.rows.is_empty());
+        for id in &self.done {
+            if list.row(id).is_none()
+                && let Some(row) = self.snapshot.row(id)
+            {
+                list.tasks.push(row.clone());
+            }
+        }
+        let rows: Vec<usize> = self
+            .done
+            .iter()
+            .filter_map(|id| list.tasks.iter().position(|row| row.id == *id))
+            .collect();
+        if !rows.is_empty() {
+            list.groups.push(done_group(rows));
+        }
+    }
+
+    /// The row in a locally completed selection's place, staying on open rows.
+    fn after_completion(&self, id: &TaskId, was: &[TaskId]) -> Option<TaskId> {
+        let at = was.iter().position(|task| task == id)?;
+        let open = |task: &&TaskId| !self.done.contains(task);
+        let next = was[at + 1..].iter().find(open);
+        next.or_else(|| was[..at].iter().rfind(open)).cloned()
+    }
+
+    fn take_list(&mut self, mut list: Snapshot, applied: &mut Applied) {
+        let already_done = (self.selected.as_ref()).is_some_and(|id| self.done.contains(id));
+        self.gather_done(&mut list);
         applied.list = list.tasks != self.snapshot.tasks || list.groups != self.snapshot.groups;
+        let completed = applied.moved.clone().filter(|id| {
+            !already_done && self.selected.as_ref() == Some(id) && self.done.contains(id)
+        });
         let replaced = std::mem::replace(&mut self.snapshot, list);
+        if let Some(next) = completed.and_then(|id| self.after_completion(&id, &order(&replaced))) {
+            self.select(next);
+            applied.selection = true;
+            return;
+        }
         let kept = self
             .selected
             .clone()

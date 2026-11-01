@@ -1,5 +1,6 @@
 //! The window: navigation, the queue list, and the state that spans them.
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -15,7 +16,7 @@ use gpui::{
 };
 
 use crate::actions::*;
-use crate::adapter::{DateTone, Note, Prefs, Replies, SyncHealth};
+use crate::adapter::{DateTone, Note, Prefs, Replies, Reply, SyncHealth};
 use crate::bounce::{Bounce, ListBounce};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
@@ -49,6 +50,8 @@ const GLIDE_DURATION: Duration = Duration::from_millis(140);
 /// The farthest the highlight glides, enough for a neighbour across a section
 /// header. A longer jump lands at once.
 const GLIDE_REACH: f32 = 70.;
+/// How long a row takes to reach its new place, and a group to fade.
+const MOVE_DURATION: Duration = Duration::from_millis(200);
 
 const NAV_VIEWS: [(&str, &str, &str); 10] = [
     ("queue", "Queue", "icons/ic-queue.svg"),
@@ -88,6 +91,14 @@ enum Item {
 }
 
 impl Item {
+    fn height(&self) -> f32 {
+        match self {
+            Self::Pad(height) | Self::Section { height, .. } => *height,
+            Self::Row { .. } => ROW_HEIGHT,
+            Self::Empty => 0.,
+        }
+    }
+
     /// Whether both are the same list entry, so scroll can stay on it.
     fn same(&self, other: &Self) -> bool {
         match (self, other) {
@@ -118,12 +129,150 @@ impl Glide {
     }
 
     fn top(self, delta: f32) -> f32 {
-        self.from + (self.to - self.from) * (1. - (1. - delta).powi(3))
+        self.from + (self.to - self.from) * ease_out(delta)
     }
 
     fn top_now(self) -> f32 {
         let delta = self.at.elapsed().as_secs_f32() / GLIDE_DURATION.as_secs_f32();
         self.top(delta.min(1.))
+    }
+}
+
+fn ease_out(delta: f32) -> f32 {
+    1. - (1. - delta).powi(3)
+}
+
+/// How far an entry that started `from` its place still is at `delta`.
+fn offset_at(from: f32, delta: f32) -> f32 {
+    from * (1. - ease_out(delta.min(1.)))
+}
+
+/// A section heading fading where its group used to be.
+#[derive(Clone)]
+struct LeftSection {
+    name: String,
+    hint: String,
+    count: usize,
+    height: f32,
+    /// From the top of the list viewport.
+    top: f32,
+}
+
+/// A list change made by a local write: rows glide from where they were, and
+/// groups fade in or out. Live state is keyed on wall time, so a row scrolled
+/// back into view does not replay it.
+#[derive(Default)]
+struct ListMotion {
+    at: Option<Instant>,
+    /// How far above or below its place each row starts, and its animation.
+    rows: HashMap<TaskId, (f32, usize)>,
+    /// The same for the headings of groups that stay.
+    sections: HashMap<String, (f32, usize)>,
+    entered: HashMap<String, usize>,
+    left: Vec<(LeftSection, usize)>,
+}
+
+impl ListMotion {
+    fn live(&self) -> bool {
+        self.at.is_some_and(|at| at.elapsed() < MOVE_DURATION)
+    }
+
+    fn row(&self, id: &TaskId) -> Option<(f32, usize)> {
+        self.rows.get(id).copied().filter(|_| self.live())
+    }
+
+    fn section(&self, name: &str) -> Option<(f32, usize)> {
+        self.sections.get(name).copied().filter(|_| self.live())
+    }
+
+    fn entered(&self, name: &str) -> Option<usize> {
+        self.entered.get(name).copied().filter(|_| self.live())
+    }
+
+    /// How far an entry still is from its place, so a new move carries on from it.
+    fn remaining(&self, start: Option<(f32, usize)>) -> f32 {
+        let (Some((from, _)), Some(at)) = (start, self.at) else {
+            return 0.;
+        };
+        let delta = at.elapsed().as_secs_f32() / MOVE_DURATION.as_secs_f32();
+        offset_at(from, delta)
+    }
+
+    /// What changed between two lists at one scroll position. A row that moves
+    /// more than a screen lands at once.
+    fn between(
+        &self,
+        old: &[Item],
+        new: &[Item],
+        scrolled: f32,
+        viewport: f32,
+        mut next_run: impl FnMut() -> usize,
+    ) -> Self {
+        let mut rows = HashMap::new();
+        let mut sections = HashMap::new();
+        let mut top = 0.;
+        for item in old {
+            match item {
+                Item::Row { id, .. } => {
+                    rows.insert(id, top);
+                }
+                Item::Section { name, .. } => {
+                    sections.insert(name, (top, item));
+                }
+                _ => {}
+            }
+            top += item.height();
+        }
+        let mut next = Self {
+            at: Some(Instant::now()),
+            ..Self::default()
+        };
+        let mut top = 0.;
+        for item in new {
+            match item {
+                Item::Row { id, .. } => {
+                    if let Some(was) = rows.get(id) {
+                        let from = was - top + self.remaining(self.row(id));
+                        if from.abs() >= 0.5 && from.abs() <= viewport {
+                            next.rows.insert(id.clone(), (from, next_run()));
+                        }
+                    }
+                }
+                Item::Section { name, .. } => match sections.remove(name) {
+                    Some((was, _)) => {
+                        let from = was - top + self.remaining(self.section(name));
+                        if from.abs() >= 0.5 && from.abs() <= viewport {
+                            next.sections.insert(name.clone(), (from, next_run()));
+                        }
+                    }
+                    None => {
+                        next.entered.insert(name.clone(), next_run());
+                    }
+                },
+                _ => {}
+            }
+            top += item.height();
+        }
+        for (top, item) in sections.into_values() {
+            if let Item::Section {
+                name,
+                hint,
+                count,
+                height,
+                ..
+            } = item
+            {
+                let left = LeftSection {
+                    name: name.clone(),
+                    hint: hint.clone(),
+                    count: *count,
+                    height: *height,
+                    top: top - scrolled,
+                };
+                next.left.push((left, next_run()));
+            }
+        }
+        next
     }
 }
 
@@ -162,6 +311,7 @@ pub struct Root {
     list: ListState,
     bounce: Rc<RefCell<Bounce>>,
     glide: Option<Glide>,
+    list_motion: ListMotion,
     pub(crate) details_open: bool,
     nav_open: bool,
     narrow: Option<bool>,
@@ -225,8 +375,7 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             while let Some(reply) = replies.recv().await {
                 let applied = this.update_in(cx, |this, window, cx| {
-                    let applied = this.session.apply(reply);
-                    this.take_applied(applied, window, cx);
+                    this.take_reply(reply, window, cx);
                 });
                 if applied.is_err() {
                     break;
@@ -244,6 +393,7 @@ impl Root {
             list: ListState::new(0, ListAlignment::Top, px(300.)).measure_all(),
             bounce: Rc::default(),
             glide: None,
+            list_motion: ListMotion::default(),
             details_open: true,
             nav_open: true,
             narrow: None,
@@ -269,7 +419,7 @@ impl Root {
             thumb_drag: None,
             subscriptions,
         };
-        this.rebuild();
+        this.rebuild(false);
         this.load_selection(window, cx);
         window.focus(&this.focus, cx);
         this
@@ -357,8 +507,9 @@ impl Root {
 
     /// Rebuilds list entries, replacing only those that moved. Entries around
     /// them keep their measured heights and the scroll position stays on its
-    /// entry.
-    fn rebuild(&mut self) {
+    /// entry. After a local write it stays at its offset instead, because the
+    /// entry may be the row that left for another group.
+    fn rebuild(&mut self, moved: bool) {
         let items = self.build_items();
         let top = self.list.logical_scroll_top();
         let shared = items.len().min(self.items.len());
@@ -374,12 +525,31 @@ impl Root {
             // Measures the new entries; `measure_all` otherwise only runs once.
             self.list.remeasure_items(start..start);
             self.glide = None;
-            // A splice over the scroll anchor drops it to the splice's start.
-            let anchor = (start..old_end)
-                .contains(&top.item_ix)
-                .then(|| &self.items[top.item_ix]);
-            if let Some(ix) = anchor.and_then(|old| items.iter().position(|new| new.same(old))) {
-                self.list.scroll_to(ListOffset { item_ix: ix, ..top });
+            if moved {
+                let scrolled = f32::from(top.offset_in_item)
+                    + self.items[..top.item_ix.min(self.items.len())]
+                        .iter()
+                        .map(Item::height)
+                        .sum::<f32>();
+                if !self.session.motion.reduced() {
+                    let viewport = f32::from(self.list.viewport_bounds().size.height);
+                    let motion = &mut self.session.motion;
+                    self.list_motion =
+                        self.list_motion
+                            .between(&self.items, &items, scrolled, viewport, || {
+                                motion.next_run()
+                            });
+                }
+                self.list.scroll_to(list_offset_at(&items, scrolled));
+            } else {
+                // A splice over the scroll anchor drops it to the splice's start.
+                let anchor = (start..old_end)
+                    .contains(&top.item_ix)
+                    .then(|| &self.items[top.item_ix]);
+                if let Some(ix) = anchor.and_then(|old| items.iter().position(|new| new.same(old)))
+                {
+                    self.list.scroll_to(ListOffset { item_ix: ix, ..top });
+                }
             }
         }
         self.items = items;
@@ -387,8 +557,14 @@ impl Root {
 
     /// Shows the session's list as it now stands.
     pub fn reload_list(&mut self, cx: &mut Context<Self>) {
-        self.rebuild();
+        self.rebuild(false);
         cx.notify();
+    }
+
+    /// Takes one reply from the store.
+    pub fn take_reply(&mut self, reply: Reply, window: &mut Window, cx: &mut Context<Self>) {
+        let applied = self.session.apply(reply);
+        self.take_applied(applied, window, cx);
     }
 
     pub(crate) fn take_applied(
@@ -398,7 +574,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         if applied.list {
-            self.rebuild();
+            self.rebuild(applied.moved.is_some());
         }
         if let Some(title) = applied.composer_draft
             && self.composer_draft.is_empty()
@@ -412,9 +588,13 @@ impl Root {
             self.session.merge_note_draft(&id, &typed);
         }
         if applied.selection {
+            self.commit_title(cx);
             self.load_selection(window, cx);
             self.reveal_selection();
         } else {
+            if applied.moved.is_some() && applied.moved == self.session.selected {
+                self.reveal_selection();
+            }
             if applied.draft {
                 self.load_note_draft(cx);
             }
@@ -691,6 +871,11 @@ impl Root {
         }
     }
 
+    fn refresh_view(&mut self, cx: &mut Context<Self>) {
+        self.session.refresh_view();
+        cx.notify();
+    }
+
     pub(crate) fn after_status_motion(&mut self, cx: &mut Context<Self>) {
         cx.notify();
         // The row returns to its resting elements when the motion ends.
@@ -805,41 +990,70 @@ impl Root {
                 hint,
                 count,
                 height,
-            } => div()
-                .px(px(8.))
-                .child(
-                    measured(div(), format!("section-{index}"))
-                        .h(px(height))
-                        .px(px(8.))
-                        .pt(px(12.))
-                        .pb(px(4.))
-                        .flex()
-                        .items_baseline()
-                        .gap(px(8.))
-                        .text_size(px(12.))
-                        .line_height(px(16.8))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(t.muted)
-                        .child(name)
-                        .child(
-                            div()
-                                .font_weight(FontWeight::NORMAL)
-                                .text_color(t.faint)
-                                .child(count.to_string()),
+            } => {
+                let entered = self.list_motion.entered(&name);
+                let moved = self.list_motion.section(&name);
+                let section = self.section_heading(
+                    measured(div(), format!("section-{index}")),
+                    name,
+                    hint,
+                    count,
+                    height,
+                    &t,
+                );
+                let section = div().px(px(8.)).child(section);
+                match (entered, moved) {
+                    (Some(run), _) => section
+                        .with_animation(
+                            ("section-enter", run),
+                            Animation::new(MOVE_DURATION),
+                            |section, delta| section.opacity(delta),
                         )
-                        .when(self.list_wide, |section| {
-                            section.child(
-                                div()
-                                    .font_weight(FontWeight::NORMAL)
-                                    .text_color(t.faint)
-                                    .text_size(px(11.))
-                                    .child(hint),
-                            )
-                        }),
-                )
-                .into_any_element(),
-            Item::Row { task, row, .. } => self.render_row(task, row, window, cx),
+                        .into_any_element(),
+                    (None, Some(start)) => glide_to_place(section, start),
+                    (None, None) => section.into_any_element(),
+                }
+            }
+            Item::Row { task, row, .. } => self.render_row(ix, task, row, window, cx),
         }
+    }
+
+    fn section_heading(
+        &self,
+        base: Div,
+        name: String,
+        hint: String,
+        count: usize,
+        height: f32,
+        t: &Theme,
+    ) -> Div {
+        base.h(px(height))
+            .px(px(8.))
+            .pt(px(12.))
+            .pb(px(4.))
+            .flex()
+            .items_baseline()
+            .gap(px(8.))
+            .text_size(px(12.))
+            .line_height(px(16.8))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(t.muted)
+            .child(name)
+            .child(
+                div()
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(t.faint)
+                    .child(count.to_string()),
+            )
+            .when(self.list_wide, |section| {
+                section.child(
+                    div()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(t.faint)
+                        .text_size(px(11.))
+                        .child(hint),
+                )
+            })
     }
 
     /// The status mark, popping while the task has just been completed.
@@ -879,44 +1093,26 @@ impl Root {
             .into_any_element()
     }
 
-    /// The row's title: a task just completed dims while a strike draws across
-    /// it and fades away.
+    /// The row's title, dimming while the task has just been completed.
     fn task_title(&self, id: &TaskId, title: String, status: TaskStatus, t: &Theme) -> AnyElement {
         let closed = matches!(status, TaskStatus::Done | TaskStatus::Canceled);
         let (ink, faint) = (t.ink, t.faint);
         let label = div()
-            .relative()
             .min_w_0()
             .overflow_hidden()
             .text_color(if closed { faint } else { ink })
             .child(div().truncate().child(title));
         let run = self.session.motion.completion(id).map(|(_, run)| run);
         let body = match (status, run) {
-            (TaskStatus::Done, Some(run)) => {
-                let settle = Animation::new(SETTLE_DURATION);
-                let strike = div()
-                    .absolute()
-                    .left_0()
-                    .top(relative(0.54))
-                    .h(px(1.))
-                    .bg(faint);
-                label
-                    .child(strike.with_animation(
-                        ("title-strike", run),
-                        settle.clone(),
-                        |strike, delta| {
-                            let sweep = ((delta - 0.2) / 0.5).clamp(0., 1.);
-                            let fade = ((delta - 0.75) / 0.25).clamp(0., 1.);
-                            strike
-                                .w(relative(1. - (1. - sweep).powi(3)))
-                                .opacity(1. - fade)
-                        },
-                    ))
-                    .with_animation(("title-dim", run), settle, move |title, delta| {
+            (TaskStatus::Done, Some(run)) => label
+                .with_animation(
+                    ("title-dim", run),
+                    Animation::new(SETTLE_DURATION),
+                    move |title, delta| {
                         title.text_color(mix(ink, faint, ((delta - 0.3) / 0.4).clamp(0., 1.)))
-                    })
-                    .into_any_element()
-            }
+                    },
+                )
+                .into_any_element(),
             _ => label.into_any_element(),
         };
         div()
@@ -929,6 +1125,7 @@ impl Root {
 
     fn render_row(
         &mut self,
+        ix: usize,
         task: usize,
         row: usize,
         window: &mut Window,
@@ -938,6 +1135,10 @@ impl Root {
         let data = self.session.snapshot.tasks[task].clone();
         let id = data.id.clone();
         let selected = self.session.selected.as_ref() == Some(&id);
+        let below_selected = matches!(
+            &self.items[ix - 1],
+            Item::Row { id, .. } if self.session.selected.as_ref() == Some(id)
+        );
         let active = self.active(window);
         let gliding = self.glide.is_some_and(Glide::live);
         let wide = self.list_wide;
@@ -955,6 +1156,7 @@ impl Root {
             .join(" ");
         let (select_id, toggle_id) = (id.clone(), id.clone());
         let body = measured(div(), format!("row-{row}"))
+            .relative()
             .id(("row", row))
             .role(Role::ListItem)
             .aria_label(format!("{} {}", data.reference, data.title))
@@ -969,7 +1171,22 @@ impl Root {
                 let (bg, ring) = t.selection(active);
                 row.bg(bg).shadow(vec![t.ring(ring)])
             })
-            .when(!selected, |row| row.hover(|style| style.bg(t.panel)))
+            .when(!selected && !below_selected, |row| {
+                row.hover(|style| style.bg(t.panel))
+            })
+            // The selection's ring reaches 1px into this row and stays visible.
+            .when(below_selected, |row| {
+                row.group("below-selected").child(
+                    div()
+                        .absolute()
+                        .top(px(1.))
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .rounded(px(6.))
+                        .group_hover("below-selected", |style| style.bg(t.panel)),
+                )
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, window, cx| {
@@ -1043,7 +1260,11 @@ impl Root {
                     .text_color(date_color)
                     .child(data.due),
             );
-        div().px(px(8.)).child(body).into_any_element()
+        let place = div().px(px(8.)).child(body);
+        match self.list_motion.row(&id) {
+            Some(start) => glide_to_place(place, start),
+            None => place.into_any_element(),
+        }
     }
 
     fn render_nav(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -1095,6 +1316,7 @@ impl Root {
                         item.bg(if active { t.tint } else { t.raised })
                             .text_color(t.ink)
                             .font_weight(FontWeight::MEDIUM)
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh_view(cx)))
                     })
                     .child(icon(icon_path, if on { t.accent } else { t.faint }))
                     .child(name)
@@ -1376,11 +1598,41 @@ impl Root {
                     ),
             )
         });
+        let left = if self.list_motion.live() {
+            self.list_motion.left.clone()
+        } else {
+            Vec::new()
+        };
+        let left = left.into_iter().map(|(section, run)| {
+            let top = section.top;
+            let heading = self.section_heading(
+                div(),
+                section.name,
+                section.hint,
+                section.count,
+                section.height,
+                &t,
+            );
+            div().absolute().inset_0().overflow_hidden().child(
+                div()
+                    .absolute()
+                    .top(px(top))
+                    .left(px(8.))
+                    .right(px(8.))
+                    .child(heading)
+                    .with_animation(
+                        ("section-leave", run),
+                        Animation::new(MOVE_DURATION),
+                        |section, delta| section.opacity(1. - delta),
+                    ),
+            )
+        });
         measured(div(), "list")
             .flex_1()
             .min_w_0()
             .min_h_0()
             .children(glide)
+            .children(left)
             .child(ListBounce::new(
                 "list-bounce",
                 self.bounce.clone(),
@@ -1473,6 +1725,33 @@ impl Root {
         let room = f32::from(window.viewport_size().width) - nav - LIST_MIN_WIDTH;
         self.prefs.detail_width.min(room).max(DETAIL_WIDTH_RANGE.0)
     }
+}
+
+/// Moves an entry from its old place to where the list lays it out.
+fn glide_to_place(entry: Div, (from, run): (f32, usize)) -> AnyElement {
+    entry
+        .relative()
+        .with_animation(
+            ("list-move", run),
+            Animation::new(MOVE_DURATION),
+            move |entry, delta| entry.top(px(offset_at(from, delta))),
+        )
+        .into_any_element()
+}
+
+/// The list position `scrolled` pixels down `items`.
+fn list_offset_at(items: &[Item], scrolled: f32) -> ListOffset {
+    let mut top = 0.;
+    for (item_ix, item) in items.iter().enumerate() {
+        if scrolled < top + item.height() {
+            return ListOffset {
+                item_ix,
+                offset_in_item: px(scrolled - top),
+            };
+        }
+        top += item.height();
+    }
+    ListOffset::default()
 }
 
 impl Focusable for Root {
@@ -1637,5 +1916,70 @@ impl Render for Root {
             .when_some(toast, |root, toast| root.child(toast))
             .when_some(menu, |root, menu| root.child(menu))
             .when_some(composer, |root, composer| root.child(composer))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section(name: &str) -> Item {
+        Item::Section {
+            index: 0,
+            name: name.to_string(),
+            hint: String::new(),
+            count: 0,
+            height: 32.,
+        }
+    }
+
+    fn row(id: &TaskId) -> Item {
+        Item::Row {
+            task: 0,
+            row: 0,
+            id: id.clone(),
+        }
+    }
+
+    #[test]
+    fn a_move_glides_the_rows_it_shifts_and_fades_the_groups_it_changes() {
+        let (first, second) = (TaskId::new(), TaskId::new());
+        let old = [section("Focus"), row(&first), row(&second)];
+        let new = [section("Focus"), row(&second), section("Done"), row(&first)];
+        let shifted = [row(&first), section("Focus"), row(&second)];
+        let motion = ListMotion::default().between(&old, &shifted, 0., 500., || 1);
+        assert_eq!(motion.section("Focus").unwrap().0, -ROW_HEIGHT);
+
+        let mut runs = 0;
+        let motion = ListMotion::default().between(&old, &new, 0., 500., || {
+            runs += 1;
+            runs
+        });
+        assert_eq!(motion.row(&second).unwrap().0, ROW_HEIGHT);
+        assert_eq!(motion.row(&first).unwrap().0, -(ROW_HEIGHT + 32.));
+        assert!(motion.entered("Done").is_some());
+        assert!(motion.entered("Focus").is_none());
+        assert_eq!(motion.section("Focus"), None);
+
+        let motion = ListMotion::default().between(&new, &old, 10., 500., || 0);
+        assert_eq!(motion.left[0].0.name, "Done");
+        assert_eq!(motion.left[0].0.top, 32. + ROW_HEIGHT - 10.);
+    }
+
+    #[test]
+    fn a_move_past_a_screen_lands_at_once() {
+        let (first, second) = (TaskId::new(), TaskId::new());
+        let old = [row(&first), row(&second)];
+        let new = [row(&second), row(&first)];
+        let motion = ListMotion::default().between(&old, &new, 0., ROW_HEIGHT - 1., || 0);
+        assert_eq!(motion.row(&first), None);
+    }
+
+    #[test]
+    fn a_scroll_position_lands_in_the_entry_that_holds_it() {
+        let id = TaskId::new();
+        let items = [Item::Pad(4.), section("Focus"), row(&id)];
+        let at = list_offset_at(&items, 40.);
+        assert_eq!((at.item_ix, at.offset_in_item), (2, px(4.)));
     }
 }

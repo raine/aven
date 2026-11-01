@@ -148,6 +148,8 @@ pub struct Detail {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Refresh,
+    /// A refresh the user asked for, which also lets go of the selected row.
+    RefreshView,
     LoadDetail(TaskId),
     SetStatus(TaskId, TaskStatus),
     SetPriority(TaskId, TaskPriority),
@@ -157,6 +159,7 @@ pub enum Command {
 }
 
 impl Command {
+    /// Whether lists from before this command must be dropped.
     pub fn is_mutation(&self) -> bool {
         !matches!(self, Self::Refresh | Self::LoadDetail(_))
     }
@@ -296,6 +299,12 @@ fn group_text(label: &str) -> (String, String) {
             || (label.to_string(), String::new()),
             |(_, name, hint)| ((*name).to_string(), (*hint).to_string()),
         )
+}
+
+/// The group of tasks completed during this visit to a view.
+pub fn done_group(rows: Vec<usize>) -> Group {
+    let (name, hint) = group_text("done");
+    Group { name, hint, rows }
 }
 
 /// Reads the store's projection. `now` formats dates, so scene runs pass their anchor.
@@ -501,7 +510,14 @@ impl Actor {
         Ok(())
     }
 
-    fn selection(&self, id: &TaskId) -> Result<TaskSelection> {
+    /// Resolves a task, bringing back one the view keeps but the store dropped.
+    async fn selection(&mut self, id: &TaskId) -> Result<TaskSelection> {
+        if self.store.tasks.iter().all(|item| &item.task.id != id)
+            && let Some(item) = self.store.load_task_item(id).await?
+            && !item.task.deleted
+        {
+            self.store.insert_task(self.store.tasks.len(), item);
+        }
         let index = self.store.tasks.iter().position(|item| &item.task.id == id);
         index
             .and_then(|index| {
@@ -516,19 +532,19 @@ impl Actor {
     async fn mutate(&mut self, command: &Command) -> Result<Option<TaskId>> {
         match command {
             Command::SetStatus(id, status) => {
-                let selection = self.selection(id)?;
+                let selection = self.selection(id).await?;
                 self.store
                     .mutate_status_selection(&selection, *status, true)
                     .await?;
             }
             Command::SetPriority(id, priority) => {
-                let selection = self.selection(id)?;
+                let selection = self.selection(id).await?;
                 self.store
                     .mutate_priority_selection(&selection, PriorityMutation::Set(*priority))
                     .await?;
             }
             Command::SetTitle(id, title) => {
-                let selection = self.selection(id)?;
+                let selection = self.selection(id).await?;
                 self.store
                     .mutate_text_selection(&selection, TaskTextField::Title, title.clone())
                     .await?;
@@ -554,7 +570,7 @@ impl Actor {
                 let row = selected.and_then(|index| self.store.tasks.get(index));
                 return Ok(row.map(|item| item.task.id.clone()));
             }
-            Command::Refresh | Command::LoadDetail(_) => {}
+            Command::Refresh | Command::RefreshView | Command::LoadDetail(_) => {}
         }
         Ok(None)
     }
@@ -563,6 +579,10 @@ impl Actor {
         self.handled = request.id;
         match request.command {
             Command::Refresh => self.outside_change().await,
+            Command::RefreshView => {
+                self.selected = None;
+                self.outside_change().await;
+            }
             Command::LoadDetail(id) => {
                 self.selected = Some(id.clone());
                 match self.store.load_task_item(&id).await {

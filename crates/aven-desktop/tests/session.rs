@@ -355,3 +355,272 @@ async fn writes_run_in_order_and_outside_writes_arrive() {
         .unwrap();
     assert_eq!(reread.tasks.len(), 2);
 }
+
+/// Answers the newest write the way the actor does once the store has run it.
+fn answer(h: &mut Harness, list: Snapshot) -> aven_desktop::session::Applied {
+    let request = h.take_requests().iter().map(|r| r.id).max().unwrap_or(0);
+    h.session
+        .apply(reply(request, ReplyBody::List(Box::new(list))))
+}
+
+/// The store's list with one task changed, in place.
+fn with_status(h: &Harness, id: &TaskId, status: TaskStatus) -> Snapshot {
+    let mut list = adapter::snapshot(&h.store, Local::now());
+    let at = list.tasks.iter().position(|row| row.id == *id).unwrap();
+    list.tasks[at].status = status;
+    list
+}
+
+/// The store's list once a task has left it.
+fn without(h: &Harness, ids: &[&TaskId]) -> Snapshot {
+    let mut list = adapter::snapshot(&h.store, Local::now());
+    let tasks = std::mem::take(&mut list.tasks);
+    let rows: Vec<_> = tasks
+        .into_iter()
+        .filter(|row| !ids.contains(&&row.id))
+        .collect();
+    list.groups = vec![adapter::Group {
+        name: "Focus".to_string(),
+        hint: String::new(),
+        rows: (0..rows.len()).collect(),
+    }];
+    list.tasks = rows;
+    list
+}
+
+fn groups(session: &Session) -> Vec<(String, Vec<String>)> {
+    let snapshot = &session.snapshot;
+    let titles = |rows: &[usize]| {
+        rows.iter()
+            .map(|task| snapshot.tasks[*task].title.clone())
+            .collect()
+    };
+    snapshot
+        .groups
+        .iter()
+        .map(|group| (group.name.clone(), titles(&group.rows)))
+        .collect()
+}
+
+fn done_titles(session: &Session) -> Vec<String> {
+    groups(session)
+        .into_iter()
+        .find(|(name, _)| name == "Done")
+        .map_or_else(Vec::new, |(_, titles)| titles)
+}
+
+#[tokio::test]
+async fn completed_tasks_gather_in_one_last_group_in_completion_order() {
+    let mut h = harness(&["First", "Second", "Third"]).await;
+    let (first, third) = (
+        row(&h.session.snapshot, "First"),
+        row(&h.session.snapshot, "Third"),
+    );
+
+    h.session.set_status(&third, TaskStatus::Done);
+    let list = with_status(&h, &third, TaskStatus::Done);
+    let applied = answer(&mut h, list);
+    assert_eq!(applied.moved.as_ref(), Some(&third));
+
+    h.session.set_status(&first, TaskStatus::Done);
+    let mut list = without(&h, &[&third]);
+    let at = list.tasks.iter().position(|row| row.id == first).unwrap();
+    list.tasks[at].status = TaskStatus::Done;
+    answer(&mut h, list);
+
+    let shown = groups(&h.session);
+    assert_eq!(shown.last().unwrap().0, "Done");
+    assert_eq!(shown.iter().filter(|(name, _)| name == "Done").count(), 1);
+    assert_eq!(done_titles(&h.session), ["Third", "First"]);
+    assert!(shown[..shown.len() - 1].iter().all(|(_, titles)| {
+        !titles.contains(&"First".to_string()) && !titles.contains(&"Third".to_string())
+    }));
+}
+
+#[tokio::test]
+async fn an_outside_refresh_keeps_the_done_group_and_plays_no_motion() {
+    let mut h = harness(&["First", "Second"]).await;
+    let second = row(&h.session.snapshot, "Second");
+    h.session.set_status(&second, TaskStatus::Done);
+    let list = with_status(&h, &second, TaskStatus::Done);
+    answer(&mut h, list);
+
+    let list = without(&h, &[&second]);
+    let applied = h.session.apply(reply(100, ReplyBody::List(Box::new(list))));
+
+    assert_eq!(applied.moved, None);
+    assert_eq!(done_titles(&h.session), ["Second"]);
+}
+
+#[tokio::test]
+async fn the_users_refresh_clears_the_done_group_without_motion() {
+    let mut h = harness(&["First", "Second"]).await;
+    let second = row(&h.session.snapshot, "Second");
+    h.session.select(second.clone());
+    h.session.set_status(&second, TaskStatus::Done);
+    let list = with_status(&h, &second, TaskStatus::Done);
+    answer(&mut h, list);
+    h.take_requests();
+
+    h.session.refresh_view();
+    let sent = h.take_requests();
+    assert!(matches!(sent[0].command, Command::RefreshView));
+
+    // A list from before the refresh must not bring the row back.
+    let stale = with_status(&h, &second, TaskStatus::Done);
+    h.session
+        .apply(reply(sent[0].id - 1, ReplyBody::List(Box::new(stale))));
+    assert_eq!(done_titles(&h.session), ["Second"]);
+
+    let list = without(&h, &[&second]);
+    let applied = h
+        .session
+        .apply(reply(sent[0].id, ReplyBody::List(Box::new(list))));
+    assert_eq!(applied.moved, None);
+    assert!(done_titles(&h.session).is_empty());
+    assert!(h.session.snapshot.row(&second).is_none());
+}
+
+#[tokio::test]
+async fn a_reopened_task_leaves_the_done_group() {
+    let mut h = harness(&["First", "Second"]).await;
+    let second = row(&h.session.snapshot, "Second");
+    h.session.set_status(&second, TaskStatus::Done);
+    let list = with_status(&h, &second, TaskStatus::Done);
+    answer(&mut h, list);
+
+    let list = adapter::snapshot(&h.store, Local::now());
+    h.session.apply(reply(100, ReplyBody::List(Box::new(list))));
+
+    assert!(done_titles(&h.session).is_empty());
+    assert!(h.session.snapshot.row(&second).is_some());
+}
+
+#[tokio::test]
+async fn completing_the_selection_moves_it_to_the_row_in_its_place() {
+    let mut h = harness(&["First", "Second", "Third"]).await;
+    let order: Vec<_> = h
+        .session
+        .snapshot
+        .ordered()
+        .map(|task| h.session.snapshot.tasks[task].id.clone())
+        .collect();
+    h.session.select(order[1].clone());
+
+    h.session.set_status(&order[1], TaskStatus::Done);
+    let list = with_status(&h, &order[1], TaskStatus::Done);
+    let applied = answer(&mut h, list);
+    assert!(applied.selection);
+    assert_eq!(h.session.selected.as_ref(), Some(&order[2]));
+
+    // The last open row falls back, like the TUI, and never enters the group.
+    h.session.set_status(&order[2], TaskStatus::Done);
+    let mut list = with_status(&h, &order[2], TaskStatus::Done);
+    let at = list
+        .tasks
+        .iter()
+        .position(|row| row.id == order[1])
+        .unwrap();
+    list.tasks[at].status = TaskStatus::Done;
+    answer(&mut h, list);
+    assert_eq!(h.session.selected.as_ref(), Some(&order[0]));
+
+    // With nothing open left, the selection stays on its row.
+    h.session.set_status(&order[0], TaskStatus::Done);
+    let list = h.session.snapshot.clone();
+    answer(&mut h, list);
+    assert_eq!(h.session.selected.as_ref(), Some(&order[0]));
+}
+
+#[tokio::test]
+async fn completing_another_row_and_outside_changes_leave_the_selection() {
+    let mut h = harness(&["First", "Second", "Third"]).await;
+    let (first, second) = (
+        row(&h.session.snapshot, "First"),
+        row(&h.session.snapshot, "Second"),
+    );
+    h.session.select(first.clone());
+    h.session.set_status(&second, TaskStatus::Done);
+    let list = with_status(&h, &second, TaskStatus::Done);
+    answer(&mut h, list);
+    assert_eq!(h.session.selected.as_ref(), Some(&first));
+
+    let mut list = with_status(&h, &first, TaskStatus::Done);
+    let at = list.tasks.iter().position(|row| row.id == second).unwrap();
+    list.tasks[at].status = TaskStatus::Done;
+    let applied = h.session.apply(reply(100, ReplyBody::List(Box::new(list))));
+    assert_eq!(h.session.selected.as_ref(), Some(&first));
+    assert_eq!(applied.moved, None);
+    assert_eq!(done_titles(&h.session).len(), 2);
+}
+
+#[tokio::test]
+async fn a_priority_change_reports_its_move_once_and_keeps_the_selection() {
+    let mut h = harness(&["First", "Second"]).await;
+    let first = row(&h.session.snapshot, "First");
+    h.session.select(first.clone());
+    h.session.set_priority(&first, TaskPriority::High);
+    let list = adapter::snapshot(&h.store, Local::now());
+    let applied = answer(&mut h, list);
+    assert_eq!(applied.moved.as_ref(), Some(&first));
+    assert_eq!(h.session.selected.as_ref(), Some(&first));
+
+    let list = adapter::snapshot(&h.store, Local::now());
+    let applied = h.session.apply(reply(100, ReplyBody::List(Box::new(list))));
+    assert_eq!(applied.moved, None);
+}
+
+async fn until_done_group(session: &mut Session, replies: &mut adapter::Replies, shown: bool) {
+    loop {
+        let reply = tokio::time::timeout(Duration::from_secs(5), replies.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let list = matches!(reply.body, ReplyBody::List(_));
+        session.apply(reply);
+        if list && done_titles(session).is_empty() != shown {
+            return;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let store = store_with(&path, &["First", "Second"]).await;
+    drop(store);
+    let storage = Arc::new(FileProtectedStorage::new(directory.path().join("keys")));
+    let launch = adapter::Launch {
+        database: path,
+        config: AppConfig::default(),
+        storage,
+    };
+    let (mut session, mut replies) =
+        adapter::start(tokio::runtime::Handle::current(), launch).unwrap();
+    let first = row(&session.snapshot, "First");
+    let second = row(&session.snapshot, "Second");
+    session.select(second.clone());
+
+    session.set_status(&second, TaskStatus::Done);
+    until_done_group(&mut session, &mut replies, true).await;
+    assert_eq!(session.selected.as_ref(), Some(&first));
+
+    // The next refresh drops the row from the store. The view keeps it.
+    session.select(first.clone());
+    session.apply(reply(0, ReplyBody::RefreshFailed("x".to_string())));
+    session.run_toast_action();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while let Ok(reply) = replies.try_recv() {
+        session.apply(reply);
+    }
+    assert_eq!(done_titles(&session), ["Second"]);
+
+    session.set_status(&second, TaskStatus::Todo);
+    until_done_group(&mut session, &mut replies, false).await;
+    assert_eq!(session.toast, None);
+    assert_eq!(
+        session.snapshot.row(&second).unwrap().status,
+        TaskStatus::Todo
+    );
+}

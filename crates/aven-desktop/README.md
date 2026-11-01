@@ -89,6 +89,12 @@ frozen clock, so the seconds between anchor and query cannot change a result.
 until the phase that seeds them. `report.json` fails on any queue section whose
 tasks differ between core and prototype.
 
+**Scene input.** `gpui_keys` runs after launch, and with no store behind the view,
+its own list stands in for each write's reply. `gpui_pointer` rests the pointer, and
+`gpui_frame_ms` takes the picture that long after the keys, to catch a motion in
+flight. Scenes with `prototype_steps` skip the data check, which compares seeded
+state.
+
 **Prototype requirements.** Chrome, or `AVEN_DESKTOP_CHROME` pointing at a Chromium
 binary. It runs with a throwaway profile and the web font link removed, so results
 do not depend on the network.

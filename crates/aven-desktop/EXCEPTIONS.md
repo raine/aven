@@ -19,3 +19,4 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Copy ref surface | Details | Clicking the details ref copies it. The prototype copies from the more actions menu, which arrives with the details actions. | `src/details.rs` |
 | Rows measured to row 18 | Scenes | The list is virtual, so rows below the fold are never painted. `row-18` is the last fully visible measured row at 1440x900. | `scenes/manifest.toml` |
 | Narrow header alignment | Header | Header actions stay right-aligned at every width. The prototype packs them beside the title once the crumbs hide, which reads as an artefact of its collapsed spacer. | `queue-narrow.gpui.png` |
+| Done group in the queue | Queue list | The prototype drops a completed row at once. The app keeps it in a Done group at the end of the list until the user refreshes the view, by owner direction. | `queue-completed.gpui.png` beside `queue-completed.prototype.png` |

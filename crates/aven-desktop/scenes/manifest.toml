@@ -89,3 +89,30 @@ width = 960
 height = 600
 measure = ["app", "nav", "main", "main-header", "list", "section-0", "row-0", "row-1", "row-8", "row-11"]
 absent = ["detail"]
+
+[[scene]]
+name = "queue-completed"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["d", "j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j j"]
+prototype_steps = ["setStatus('done')", "mount()", "document.querySelector('.list').scrollTop = 1e6"]
+measure = ["app", "nav", "main", "main-header", "list", "detail"]
+
+[[scene]]
+name = "queue-moving"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["d"]
+gpui_frame_ms = 60
+prototype_steps = ["setStatus('done')", "mount()"]
+measure = ["app", "nav", "main", "main-header", "list", "detail"]
+
+[[scene]]
+name = "queue-hover-below-selection"
+theme = "dark"
+width = 1440
+height = 900
+gpui_pointer = [600.0, 133.0]
+measure = ["app", "nav", "main", "main-header", "list", "detail"]

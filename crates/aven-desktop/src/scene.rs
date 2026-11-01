@@ -41,6 +41,10 @@ pub struct Scene {
     pub prototype_steps: Vec<String>,
     #[serde(default)]
     pub gpui_keys: Vec<String>,
+    /// Where the pointer rests in the window, in logical pixels.
+    pub gpui_pointer: Option<[f32; 2]>,
+    /// Takes the picture this long after the keys, to catch a motion in flight.
+    pub gpui_frame_ms: Option<u64>,
     /// Element names, which must all exist on both sides.
     pub measure: Vec<String>,
     /// Element names that must be missing or empty on both sides.

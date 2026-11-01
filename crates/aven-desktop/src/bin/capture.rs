@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use aven_core::db::Database;
-use aven_desktop::adapter::{self, Snapshot};
+use aven_desktop::adapter::{self, Reply, ReplyBody, Snapshot};
 use aven_desktop::assets::{Assets, load_fonts};
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
@@ -21,7 +21,7 @@ use aven_desktop::shell::Root;
 use aven_desktop::{actions, input};
 use aven_host::config::AppConfig;
 use chrono::{DateTime, Local, TimeZone};
-use gpui::{AnyWindowHandle, AppContext as _, VisualTestAppContext, px, size};
+use gpui::{AnyWindowHandle, AppContext as _, Modifiers, VisualTestAppContext, point, px, size};
 use serde_json::{Value, json};
 
 const FIXTURE_INSTANT: (i32, u32, u32, u32) = (2026, 10, 14, 12);
@@ -339,7 +339,12 @@ fn run(output: &Path, only: Option<&str>) -> Result<bool> {
         let gpui_boxes = render_gpui(&mut cx, scene, &state, output)?;
         let present = unexpectedly_present(scene, &boxes, &gpui_boxes);
         let comparisons = measure::compare(&manifest.expectations(scene)?, &boxes, &gpui_boxes);
-        let parity = data_parity(&page["queue"], &state.0);
+        // Steps change the prototype's data, and the seeded state is what is compared.
+        let parity = if scene.prototype_steps.is_empty() {
+            data_parity(&page["queue"], &state.0)
+        } else {
+            Vec::new()
+        };
         let scene_passed = comparisons.iter().all(|result| result.passed)
             && parity.is_empty()
             && present.is_empty();
@@ -554,16 +559,37 @@ fn render_gpui(
         scene.width as f32,
         scene.height as f32,
     )?;
+    let window_root = window.entity(cx)?;
     let any: AnyWindowHandle = window.into();
     for keys in &scene.gpui_keys {
         cx.simulate_keystrokes(any, keys);
+        // No store answers, so the view's own list stands in for a write's reply.
+        cx.update_window(any, |_, window, cx| {
+            window_root.update(cx, |root, cx| {
+                let list = root.session_mut().snapshot.clone();
+                let reply = Reply {
+                    request: u64::MAX,
+                    body: ReplyBody::List(Box::new(list)),
+                };
+                root.take_reply(reply, window, cx);
+            })
+        })?;
     }
-    for _ in 0..4 {
-        cx.run_until_parked();
-        cx.advance_clock(Duration::from_millis(50));
+    if let Some([x, y]) = scene.gpui_pointer {
+        cx.simulate_mouse_move(any, point(px(x), px(y)), None, Modifiers::default());
+    }
+    if let Some(frame_ms) = scene.gpui_frame_ms {
         cx.update_window(any, |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(frame_ms));
+    } else {
+        for _ in 0..4 {
+            cx.run_until_parked();
+            cx.advance_clock(Duration::from_millis(50));
+            cx.update_window(any, |_, window, _| window.refresh())?;
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
-    std::thread::sleep(Duration::from_millis(200));
     cx.update_window(any, |_, window, _| window.refresh())?;
     cx.run_until_parked();
     let image = cx
