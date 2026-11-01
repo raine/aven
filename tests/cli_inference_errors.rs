@@ -138,7 +138,7 @@ project:
 }
 
 #[test]
-fn project_path_command_remaps_same_path_in_config() {
+fn project_creation_preserves_conflicting_unmanaged_path_mapping() {
     let env = TestEnv::new();
     let db = env.db("mapping-before-override.sqlite");
     let repo = env.path("repo");
@@ -157,18 +157,29 @@ project:
     ));
 
     ok(env.aven_config(["project", "create", "Override"]));
-    ok(env.aven_config([
+    let original = fs::read_to_string(env.config_file()).unwrap();
+    let error = fail(env.aven_config([
         "project",
         "create",
         "Mapped",
         "--path",
         repo.to_str().unwrap(),
     ]));
+    contains_all(
+        &error,
+        &[
+            "Project mapped was created but its path mapping was not saved",
+            "already mapped to project override by an unmanaged override",
+            "edit project.overrides manually",
+        ],
+    );
+    assert_eq!(fs::read_to_string(env.config_file()).unwrap(), original);
     let output = ok(aven_config_in(&env, &repo, ["add", "mapping precedence"]));
-    contains_all(&output, &["project=mapped"]);
-    let config = fs::read_to_string(env.config_file()).unwrap();
-    contains_all(&config, &["workspace: default", "project: mapped"]);
-    contains_none(&config, &["project: Override"]);
+    contains_all(&output, &["project=override"]);
+    contains_all(
+        &ok(env.aven_config(["project", "list"])),
+        &["mapped", "override"],
+    );
 }
 
 #[test]
@@ -461,8 +472,10 @@ fn unrelated_path_edits_preserve_valid_scoped_mappings() {
         let db = env.db("preservation.sqlite");
         let mapped = env.path("mapped");
         let other = env.path("other");
+        let third = env.path("third");
         fs::create_dir_all(&mapped).unwrap();
         fs::create_dir_all(&other).unwrap();
+        fs::create_dir_all(&third).unwrap();
         let entry = match layout {
             "inline-paths" => format!(
                 "  overrides:\n    - workspace_id: '0000000000000000'\n      workspace: default\n      project: mapped\n      paths: [\"{}\"]\n",
@@ -489,16 +502,23 @@ fn unrelated_path_edits_preserve_valid_scoped_mappings() {
         );
         ok(env.aven_config(["project", "create", "other"]));
         for create in [false, true] {
+            let edited_path = if create { &third } else { &other };
             let args = if create {
                 vec![
                     "project",
                     "create",
                     "third",
                     "--path",
-                    other.to_str().unwrap(),
+                    edited_path.to_str().unwrap(),
                 ]
             } else {
-                vec!["project", "path", "add", "other", other.to_str().unwrap()]
+                vec![
+                    "project",
+                    "path",
+                    "add",
+                    "other",
+                    edited_path.to_str().unwrap(),
+                ]
             };
             let output = env.aven_config(args);
             assert_eq!(
@@ -508,7 +528,7 @@ fn unrelated_path_edits_preserve_valid_scoped_mappings() {
             );
             if output.status.success() {
                 contains_all(
-                    &ok(aven_config_in(&env, &other, ["add", "accepted edit"])),
+                    &ok(aven_config_in(&env, edited_path, ["add", "accepted edit"])),
                     &[if create {
                         "project=third"
                     } else {
