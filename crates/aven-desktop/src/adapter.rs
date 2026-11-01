@@ -3,8 +3,11 @@
 //! One thread owns the `TuiStore` and runs requests in order, so its replies keep
 //! their order too. Outside writes surface through SQLite's `data_version`, which
 //! changes when another connection commits. A background task runs sync rounds.
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::ffi::{OsStr, OsString};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,21 +17,32 @@ use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::{TaskId, new_id};
 use aven_core::metadata::TaskMetadataInput;
-use aven_core::operations::{AttachmentAddInput, TaskAttachmentAddInput, TaskDraft};
-use aven_core::query::{
-    SortDirection, TaskFilters, TaskListItem, TaskQueryMode, TaskSearchQuery, TaskSort,
+use aven_core::operations::{
+    AttachmentAddInput, RecurrenceTemplateUpdate, TaskAttachmentAddInput, TaskDraft,
 };
-use aven_core::queue::QueueReason;
+use aven_core::query::{
+    RecurrenceHistoryKind, RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem,
+    SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem, TaskQueryMode,
+    TaskSearchQuery, TaskSort,
+};
+use aven_core::queue::{
+    QueueDateKind, QueueReason, STALE_ACTIVE_DAYS, STALE_TODO_DAYS, TriageReason, now_seconds,
+    triage_reason, triage_review_current,
+};
+use aven_core::recurrence::{
+    RecurrenceDuePolicy, RecurrenceProjectionState, RecurrenceSeriesId, RecurrenceSeriesState,
+    next_slot_after,
+};
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
 use aven_host::config::{AppConfig, resolve_blob_dir};
 use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
 use aven_host::store::{
-    PendingTaskAttachment, PriorityMutation, SelectionRestore, TaskDateField, TaskLayout,
-    TaskListRenderMode, TaskListRow, TaskOrder, TaskProjectionOrigin, TaskQuery, TaskScope,
-    TaskScopeTarget, TaskTextField, TaskViewState, TuiStore, mutation_committed, recurrence_draft,
-    task_creation_committed,
+    ClosedTaskVisibility, ConflictTarget, EpicContext, PendingTaskAttachment, PriorityMutation,
+    SelectionRestore, TaskDateField, TaskLayout, TaskListRenderMode, TaskListRow, TaskOrder,
+    TaskProjectionOrigin, TaskQuery, TaskScope, TaskScopeTarget, TaskTextField, TaskViewState,
+    TuiStore, mutation_committed, recurrence_draft, task_creation_committed,
 };
 use aven_host::sync::encrypted::{DaemonRound, DaemonSync};
 use aven_host::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
@@ -99,6 +113,106 @@ pub struct TaskRow {
     pub date_tone: DateTone,
     pub deleted: bool,
     pub is_epic: bool,
+    /// How far an epic's children have got.
+    pub epic: Option<EpicProgress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpicProgress {
+    pub done: usize,
+    pub canceled: usize,
+    pub open: usize,
+    /// The first child in progress.
+    pub current: Option<String>,
+}
+
+impl EpicProgress {
+    pub fn total(&self) -> usize {
+        self.done + self.canceled + self.open
+    }
+
+    /// Matches the prototype's `countsText`.
+    pub fn counts(&self) -> String {
+        let parts = [
+            (self.done, "done"),
+            (self.canceled, "canceled"),
+            (self.open, "open"),
+        ]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, word)| format!("{count} {word}"))
+        .collect::<Vec<_>>();
+        if parts.is_empty() {
+            "No tasks".to_string()
+        } else {
+            parts.join(" · ")
+        }
+    }
+}
+
+/// A series' occurrence that is still in play.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Occurrence {
+    pub id: TaskId,
+    pub reference: String,
+    pub slot: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeriesRow {
+    pub id: RecurrenceSeriesId,
+    pub reference: String,
+    pub project: String,
+    pub title: String,
+    pub state: RecurrenceSeriesState,
+    pub rule: String,
+    pub current: Option<Occurrence>,
+    pub after: Option<String>,
+}
+
+/// What the details panel shows for a selected series.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeriesDetail {
+    pub id: RecurrenceSeriesId,
+    pub reference: String,
+    pub title: String,
+    pub description: String,
+    pub state: RecurrenceSeriesState,
+    pub rule: String,
+    pub due: String,
+    pub timezone: String,
+    pub after: Option<String>,
+    pub current: Option<Occurrence>,
+    /// Whether the current occurrence can still be skipped.
+    pub skippable: bool,
+    pub history: Vec<(String, String)>,
+}
+
+/// A task a review shows, with why it came up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewCard {
+    pub id: TaskId,
+    pub why: String,
+    /// An inbox task has no status to keep.
+    pub stale: bool,
+}
+
+/// What every marked task receives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bulk {
+    Status(TaskStatus),
+    Priority(TaskPriority),
+    Schedule {
+        available_at: Option<Option<String>>,
+        due_on: Option<Option<String>>,
+    },
+    Project(String),
+    Labels {
+        selected: Vec<String>,
+        partial: Vec<String>,
+    },
+    Deleted(bool),
+    Epic(TaskId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +280,10 @@ pub struct ViewInfo {
     pub deleted: DeletedFilter,
     pub metadata: Option<MetaFilter>,
     pub search: Option<String>,
+    /// Which recurring series are listed.
+    pub lifecycle: RecurrenceSeriesLifecycleFilter,
+    /// Whether closed rows are listed where the view can include them.
+    pub closed: bool,
 }
 
 impl Default for ViewInfo {
@@ -181,6 +299,8 @@ impl Default for ViewInfo {
             deleted: DeletedFilter::default(),
             metadata: None,
             search: None,
+            lifecycle: RecurrenceSeriesLifecycleFilter::default(),
+            closed: false,
         }
     }
 }
@@ -225,6 +345,7 @@ pub struct CatalogTask {
     pub project: String,
     pub title: String,
     pub status: TaskStatus,
+    pub is_epic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,6 +360,7 @@ pub struct Snapshot {
     pub workspace: String,
     pub tasks: Vec<TaskRow>,
     pub groups: Vec<Group>,
+    pub series: Vec<SeriesRow>,
     pub workspaces: Vec<NavEntry>,
     pub projects: Vec<NavEntry>,
     pub views: Vec<(&'static str, i64)>,
@@ -307,6 +429,28 @@ pub struct Detail {
     pub related: Vec<Link>,
     pub metadata: Vec<(String, String)>,
     pub activity: Vec<(String, String)>,
+    /// Children in core's order. Epics have them, other tasks do not.
+    pub children: Vec<Child>,
+    pub conflicts: Vec<ConflictTarget>,
+    /// The series a recurring task came from, with its ref.
+    pub series: Option<(RecurrenceSeriesId, String)>,
+}
+
+/// An epic's child as the epic's section reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Child {
+    pub link: Link,
+    pub group: ChildGroup,
+    pub note: String,
+    pub due: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildGroup {
+    Progress,
+    Ready,
+    Waiting,
+    Finished,
 }
 
 /// Bytes waiting to become an attachment.
@@ -330,6 +474,8 @@ pub struct NewTask {
     pub is_epic: bool,
     pub schedule: String,
     pub images: Vec<PendingImage>,
+    /// The series this one takes over from.
+    pub replaces: Option<RecurrenceSeriesId>,
 }
 
 impl NewTask {
@@ -428,6 +574,27 @@ pub enum Command {
     SaveImage(String, PathBuf),
     Undo,
     Create(Box<NewTask>),
+    /// A write to exactly these tasks, whatever the list holds by then.
+    Bulk(Vec<TaskId>, Bulk),
+    CreateChild(TaskId, String),
+    AddChild(TaskId, TaskId),
+    RemoveChild(TaskId, TaskId),
+    SetClosed(bool),
+    ShowRecurring(RecurrenceSeriesLifecycleFilter),
+    /// Lists a series, widening the lifecycle filter if it is hidden.
+    OpenSeries(RecurrenceSeriesId),
+    LoadSeries(RecurrenceSeriesId),
+    PauseSeries(RecurrenceSeriesId),
+    ResumeSeries(RecurrenceSeriesId),
+    SkipSeries(RecurrenceSeriesId),
+    StopSeries(RecurrenceSeriesId, bool),
+    SetTemplate(RecurrenceSeriesId, String),
+    /// One field of one task. Conflicts never resolve through marks.
+    ResolveConflict(Box<ConflictTarget>, String),
+    StartReview(Vec<TaskId>),
+    Keep(TaskId),
+    Unkeep(TaskId),
+    PublishGist(TaskId),
 }
 
 /// The task fields that can be copied.
@@ -443,6 +610,9 @@ impl Command {
                 | Self::Intake { .. }
                 | Self::CopyReport(..)
                 | Self::SaveImage(..)
+                | Self::LoadSeries(_)
+                | Self::StartReview(_)
+                | Self::PublishGist(_)
         )
     }
 }
@@ -466,6 +636,13 @@ pub enum SyncHealth {
 pub enum ReplyBody {
     List(Box<Snapshot>),
     Detail(Box<Detail>),
+    Series(Box<SeriesDetail>),
+    /// A page of tasks to review, with how many wait beyond it.
+    Review(Vec<ReviewCard>, usize),
+    /// A series to ask about stopping, now its replacement exists.
+    AskStop(RecurrenceSeriesId),
+    /// Selects a series the list now shows.
+    SelectSeries(RecurrenceSeriesId),
     Catalog(Vec<CatalogTask>),
     Search(SearchResults),
     /// Text a task's report or similar produced for the clipboard.
@@ -491,6 +668,8 @@ pub enum ReplyBody {
     SavedRefreshFailed(String),
     RefreshFailed(String),
     Sync(SyncHealth),
+    /// The published gist's URL, or why there is none.
+    Gist(Result<String, String>),
 }
 
 #[derive(Debug)]
@@ -594,6 +773,7 @@ fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
             .epic_rollup
             .as_ref()
             .map(|rollup| format!("{}/{}", rollup.done, rollup.total)),
+        epic: task.is_epic.then(|| epic_progress(item)),
         labels: item.labels.clone(),
         due: task
             .due_on
@@ -627,6 +807,26 @@ pub fn done_group(rows: Vec<usize>) -> Group {
     }
 }
 
+fn epic_progress(item: &TaskListItem) -> EpicProgress {
+    let count = |status: TaskStatus| {
+        let matching = item.epic_children.iter();
+        matching
+            .filter(|child| child.status == status.as_str())
+            .count()
+    };
+    let (done, canceled) = (count(TaskStatus::Done), count(TaskStatus::Canceled));
+    EpicProgress {
+        done,
+        canceled,
+        open: item.epic_children.len() - done - canceled,
+        current: item
+            .epic_children
+            .iter()
+            .find(|child| child.status == TaskStatus::Active.as_str())
+            .map(|child| child.title.clone()),
+    }
+}
+
 fn core_groups(store: &TuiStore) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     for row in &store.task_list_view().rows {
@@ -641,6 +841,14 @@ fn core_groups(store: &TuiStore) -> Vec<Group> {
                 });
             }
             TaskListRow::Task { task_index } | TaskListRow::EpicChild { task_index, .. } => {
+                if groups.is_empty() {
+                    groups.push(Group {
+                        name: String::new(),
+                        hint: String::new(),
+                        rows: Vec::new(),
+                        lane: None,
+                    });
+                }
                 if let Some(group) = groups.last_mut() {
                     group.rows.push(*task_index);
                 }
@@ -665,6 +873,45 @@ fn named_groups(names: Vec<String>, rows: Vec<(usize, usize)>) -> Vec<Group> {
     }
     groups.retain(|group| !group.rows.is_empty());
     groups
+}
+
+/// The TUI's page: pressing work first, then taking turns between the reasons,
+/// longest idle first within a project.
+fn review_page(
+    mut candidates: Vec<(TaskListItem, TriageReason)>,
+) -> Vec<(TaskListItem, TriageReason)> {
+    const PAGE_SIZE: usize = 10;
+    let idle = |item: &TaskListItem| item.queue.idle_days.unwrap_or(0);
+    candidates.sort_by(|(left, _), (right, _)| {
+        (left.task.project_key.cmp(&right.task.project_key)).then(idle(right).cmp(&idle(left)))
+    });
+    let (mut page, rest): (Vec<_>, Vec<_>) = candidates.into_iter().partition(|(item, _)| {
+        item.task.priority == TaskPriority::Urgent
+            || matches!(
+                item.queue.date_kind,
+                Some(QueueDateKind::Overdue | QueueDateKind::DueToday)
+            )
+    });
+    page.truncate(PAGE_SIZE);
+    let mut pools: [VecDeque<_>; 3] = Default::default();
+    for entry in rest {
+        let pool = match entry.1 {
+            TriageReason::StaleActive => 0,
+            TriageReason::Inbox => 1,
+            TriageReason::StaleTodo => 2,
+        };
+        pools[pool].push_back(entry);
+    }
+    while page.len() < PAGE_SIZE && pools.iter().any(|pool| !pool.is_empty()) {
+        for pool in &mut pools {
+            if page.len() < PAGE_SIZE
+                && let Some(entry) = pool.pop_front()
+            {
+                page.push(entry);
+            }
+        }
+    }
+    page
 }
 
 /// The prototype's buckets, sooner than core's day by day labels.
@@ -832,6 +1079,8 @@ fn view_info(store: &TuiStore, arrange: &Arrange) -> ViewInfo {
             TaskProjectionOrigin::Search { query, .. } => Some(query.clone()),
             _ => None,
         },
+        lifecycle: state.recurring.lifecycle,
+        closed: filters.closed == ClosedTaskVisibility::Included,
     }
 }
 
@@ -871,7 +1120,11 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
             row
         })
         .collect();
-    let mut groups = list_groups(store, now, arrange);
+    let mut groups = if store.view_state.query == TaskQuery::Recurring {
+        Vec::new()
+    } else {
+        list_groups(store, now, arrange)
+    };
     if let Some(allowed) = &arrange.allowed {
         for group in &mut groups {
             group.rows.retain(|row| allowed.contains(&tasks[*row].id));
@@ -883,6 +1136,7 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
         workspace: store.active_workspace.name.clone(),
         tasks,
         groups,
+        series: store.recurrence_series.iter().map(series_row).collect(),
         workspaces: store
             .workspaces
             .iter()
@@ -1045,6 +1299,10 @@ fn detail_with(
             .map(|field| (field.key.clone(), field.value.clone()))
             .collect(),
         activity: activity(item, now),
+        children: Vec::new(),
+        conflicts: Vec::new(),
+        series: (item.recurrence.as_ref())
+            .map(|series| (series.series_id.clone(), series.series_ref.clone())),
     }
 }
 
@@ -1130,6 +1388,88 @@ impl OutsideWrites {
     }
 }
 
+/// The slot after a series' current one, while it still has any.
+fn slot_after(series: &aven_core::types::RecurrenceSeries, slot: &str) -> Option<String> {
+    let slot = NaiveDate::parse_from_str(slot, "%Y-%m-%d").ok()?;
+    (series.state != RecurrenceSeriesState::Stopped)
+        .then(|| next_slot_after(&series.rule, series.start_on, slot))
+        .flatten()
+        .map(|date| date.to_string())
+}
+
+fn series_row(item: &RecurrenceSeriesListItem) -> SeriesRow {
+    let current = item.current_occurrence.as_ref();
+    SeriesRow {
+        id: item.series.id.clone(),
+        reference: item.series_ref.clone(),
+        project: item.project_key.clone(),
+        title: item.series.title.clone(),
+        state: item.series.state,
+        rule: item.rule_label.clone(),
+        after: current.and_then(|link| slot_after(&item.series, &link.slot_on)),
+        current: current.map(|link| Occurrence {
+            id: link.task_id.clone(),
+            reference: link.task_ref.clone(),
+            slot: link.slot_on.clone(),
+        }),
+    }
+}
+
+/// Which section of its epic a child reads under, as `epicFacts` sorts them.
+fn child_group(status: TaskStatus, waiting: bool) -> ChildGroup {
+    match status {
+        TaskStatus::Done | TaskStatus::Canceled => ChildGroup::Finished,
+        TaskStatus::Active => ChildGroup::Progress,
+        _ if waiting => ChildGroup::Waiting,
+        _ => ChildGroup::Ready,
+    }
+}
+
+/// `gh gist create`, fed the report on standard input.
+pub fn create_secret_gist(
+    program: &OsStr,
+    markdown: &str,
+    filename: &str,
+    description: &str,
+) -> Result<String> {
+    let mut child = ProcessCommand::new(program)
+        .args([
+            "gist",
+            "create",
+            "--filename",
+            filename,
+            "--desc",
+            description,
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not run gh; install and authenticate GitHub CLI")?;
+    child
+        .stdin
+        .take()
+        .context("gh standard input is unavailable")?
+        .write_all(markdown.as_bytes())?;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if message.is_empty() {
+            return Err(anyhow!("gh gist create exited with {}", output.status));
+        }
+        return Err(anyhow!(message));
+    }
+    let url = String::from_utf8(output.stdout)
+        .context("gh gist create returned a non-UTF-8 URL")?
+        .trim()
+        .to_string();
+    if url.is_empty() {
+        return Err(anyhow!("gh gist create returned no URL"));
+    }
+    Ok(url)
+}
+
 struct Actor {
     store: TuiStore,
     database: PathBuf,
@@ -1144,6 +1484,10 @@ struct Actor {
     column_views: Vec<TaskQuery>,
     /// What each write in the undo history said, newest last.
     undoable: Vec<String>,
+    /// Review marks a keep replaced, for taking the keep back.
+    kept: HashMap<TaskId, Option<i64>>,
+    /// The GitHub CLI.
+    gh: OsString,
 }
 
 /// What a write reports once the list has caught up.
@@ -1153,6 +1497,8 @@ struct Outcome {
     message: Option<String>,
     go: Option<Go>,
     undo: bool,
+    /// A replaced series to ask about stopping.
+    stop: Option<RecurrenceSeriesId>,
 }
 
 impl Outcome {
@@ -1207,6 +1553,8 @@ impl Actor {
             arrange: Arrange::default(),
             column_views: Vec::new(),
             undoable: Vec::new(),
+            kept: HashMap::new(),
+            gh: OsString::from("gh"),
         }
     }
 
@@ -1269,6 +1617,7 @@ impl Actor {
                     .to_string(),
                 title: item.task.title.clone(),
                 status: item.task.status,
+                is_epic: item.task.is_epic,
             })
             .collect())
     }
@@ -1378,6 +1727,363 @@ impl Actor {
         images
     }
 
+    /// An epic's children with what `kidRow` says about each. A child that
+    /// cannot be read stays out of the section until the next load.
+    async fn children(&self, item: &TaskListItem) -> Vec<Child> {
+        let today = Local::now().date_naive();
+        let mut children = Vec::new();
+        for link in &item.epic_children {
+            let Ok(Some(child)) = self.store.load_task_item(&link.task_id).await else {
+                continue;
+            };
+            let blocker = child
+                .depends_on
+                .iter()
+                .find(|blocker| blocker.unresolved)
+                .map(|blocker| blocker.display_ref.clone());
+            let hidden = child
+                .task
+                .available_at
+                .as_deref()
+                .and_then(local_time)
+                .filter(|at| *at > Local::now());
+            let note = match (&hidden, &blocker) {
+                (Some(at), _) => {
+                    format!("Hidden until {}", available_text(&at.to_rfc3339(), today))
+                }
+                (None, Some(_)) if child.task.status == TaskStatus::Active => "Blocked".to_string(),
+                (None, Some(blocker)) => format!("Waits on {blocker}"),
+                (None, None) => String::new(),
+            };
+            let waiting = hidden.is_some() || blocker.is_some();
+            children.push(Child {
+                link: dependency(link),
+                group: child_group(child.task.status, waiting),
+                note,
+                due: child
+                    .task
+                    .due_on
+                    .as_deref()
+                    .map(|due| due_text(due, today))
+                    .unwrap_or_default(),
+            });
+        }
+        children
+    }
+
+    async fn send_series(&mut self, id: &RecurrenceSeriesId) {
+        match self.series_detail(id).await {
+            Ok(detail) => self.send(ReplyBody::Series(Box::new(detail))),
+            Err(error) => self.send(ReplyBody::RefreshFailed(error.to_string())),
+        }
+    }
+
+    async fn series_detail(&self, id: &RecurrenceSeriesId) -> Result<SeriesDetail> {
+        const HISTORY: usize = 20;
+        let detail = self.store.recurrence_detail_for_series(id).await?;
+        let history = self
+            .store
+            .recurrence_history_for_series(id, chrono::Utc::now(), 0, HISTORY)
+            .await?;
+        let series = &detail.series;
+        let current = detail.current_occurrence.as_ref();
+        let slot = detail.summary.current_slot_on.clone();
+        let reference = detail.summary.current_task_ref.clone();
+        Ok(SeriesDetail {
+            id: id.clone(),
+            reference: detail.summary.series_ref.clone(),
+            title: series.title.clone(),
+            description: series.description.clone(),
+            state: series.state,
+            rule: detail.summary.rule_label.clone(),
+            due: match series.due_policy {
+                RecurrenceDuePolicy::SameDay => "Same day".to_string(),
+                RecurrenceDuePolicy::None => "None".to_string(),
+            },
+            timezone: series.timezone.to_string(),
+            after: slot.as_deref().and_then(|slot| slot_after(series, slot)),
+            current: current
+                .and_then(|occurrence| occurrence.task_id.clone())
+                .zip(slot.zip(reference))
+                .map(|(id, (slot, reference))| Occurrence {
+                    id,
+                    reference,
+                    slot,
+                }),
+            // Matches the TUI's availability rule for skipping.
+            skippable: current.is_some_and(|occurrence| {
+                occurrence.outcome.is_none()
+                    && occurrence.projection_state == RecurrenceProjectionState::Projected
+            }),
+            history: history
+                .items
+                .iter()
+                .map(|entry| {
+                    let kind = match entry.kind {
+                        RecurrenceHistoryKind::Completed => "completed",
+                        RecurrenceHistoryKind::Skipped => "skipped",
+                        RecurrenceHistoryKind::Missed => "missed",
+                        RecurrenceHistoryKind::Paused => "paused",
+                    };
+                    (entry.slot_on.clone().unwrap_or_default(), kind.to_string())
+                })
+                .collect(),
+        })
+    }
+
+    /// Resolves exactly `ids`, refusing if any of them is gone, so a write can
+    /// never land on tasks that took their place.
+    async fn marked(&mut self, ids: &[TaskId]) -> Result<TaskSelection> {
+        for id in ids {
+            if self.store.tasks.iter().all(|item| &item.task.id != id)
+                && let Some(item) = self.store.load_task_item(id).await?
+            {
+                self.store.insert_task(self.store.tasks.len(), item);
+            }
+        }
+        let marks: BTreeSet<TaskId> = ids.iter().cloned().collect();
+        TaskSelection::resolve(&self.store.tasks, &marks, None)
+            .filter(|selection| selection.len() == marks.len())
+            .ok_or_else(|| anyhow!("A marked task is no longer available"))
+    }
+
+    async fn bulk(&mut self, ids: &[TaskId], bulk: &Bulk) -> Result<Outcome> {
+        let selection = self.marked(ids).await?;
+        let message = match bulk {
+            Bulk::Status(status) => {
+                let done = self
+                    .store
+                    .mutate_status_selection(&selection, *status, false);
+                done.await?.message
+            }
+            Bulk::Priority(priority) => {
+                let change = PriorityMutation::Set(*priority);
+                self.store
+                    .mutate_priority_selection(&selection, change)
+                    .await?
+                    .message
+            }
+            Bulk::Schedule {
+                available_at,
+                due_on,
+            } => {
+                let mut messages = Vec::new();
+                if let Some(value) = available_at {
+                    let field = TaskDateField::Availability;
+                    let done =
+                        self.store
+                            .mutate_date_selection(&selection, field, value.clone(), false);
+                    messages.push(done.await?.message);
+                }
+                if let Some(value) = due_on {
+                    let field = TaskDateField::Due;
+                    let done =
+                        self.store
+                            .mutate_date_selection(&selection, field, value.clone(), false);
+                    messages.push(done.await?.message);
+                }
+                messages.join(" · ")
+            }
+            Bulk::Project(project) => {
+                self.store
+                    .mutate_project_selection(&selection, project.clone())
+                    .await?
+                    .message
+            }
+            Bulk::Labels { selected, partial } => {
+                self.store
+                    .mutate_labels_selection(&selection, selected.clone(), partial.clone())
+                    .await?
+                    .message
+            }
+            Bulk::Deleted(deleted) => {
+                let done = self
+                    .store
+                    .mutate_deleted_selection(&selection, *deleted, false);
+                let message = done.await?.message;
+                if *deleted {
+                    return Ok(Outcome::saved(message)
+                        .with_go("Show deleted", Command::FilterDeleted(DeletedFilter::Show)));
+                }
+                message
+            }
+            Bulk::Epic(epic) => return self.add_to_epic(ids, epic).await,
+        };
+        Ok(Outcome::saved(message))
+    }
+
+    async fn epic_context(&self, epic: &TaskId) -> Result<EpicContext> {
+        let item = self
+            .store
+            .load_task_item(epic)
+            .await?
+            .ok_or_else(|| anyhow!("That epic no longer exists"))?;
+        Ok(EpicContext {
+            epic_id: item.task.id,
+            display_ref: item.display_ref,
+            project_key: item.task.project_key,
+        })
+    }
+
+    /// Core takes one child at a time, so each leaves its own undo entry.
+    async fn add_to_epic(&mut self, ids: &[TaskId], epic: &TaskId) -> Result<Outcome> {
+        let context = self.epic_context(epic).await?;
+        let mut last = String::new();
+        for (at, id) in ids.iter().enumerate() {
+            let added = self
+                .store
+                .add_epic_child(context.clone(), id.clone())
+                .await?;
+            last = added.message.message;
+            if added.changed && at + 1 < ids.len() {
+                self.undoable.push(last.clone());
+            }
+        }
+        Ok(Outcome::saved(if ids.len() == 1 {
+            last
+        } else {
+            format!("Added {} tasks to {}", ids.len(), context.display_ref)
+        }))
+    }
+
+    async fn review(&self, exclude: &[TaskId]) -> Result<(Vec<ReviewCard>, usize)> {
+        let store = &self.store;
+        let scope = self.store.view_state.scope.clone();
+        let project = match &scope {
+            TaskScope::Workspace => None,
+            TaskScope::Project(project) => Some(project.clone()),
+        };
+        let items = store
+            .database()
+            .list_task_items(
+                &store.active_workspace.id,
+                TaskFilters {
+                    project: project.clone(),
+                    statuses: ["inbox", "todo", "active"].map(str::to_string).to_vec(),
+                    exclude_epics: true,
+                    availability: TaskAvailabilityFilter::Available,
+                    ..TaskFilters::default()
+                },
+                TaskQueryMode::Flat,
+                TaskSort::Created,
+                SortDirection::Asc,
+            )
+            .await?;
+        let reviews = store.database().triage_reviews().await?;
+        let now = now_seconds();
+        let candidates: Vec<(TaskListItem, TriageReason)> = items
+            .into_iter()
+            .filter(|item| !exclude.contains(&item.task.id))
+            .filter_map(|item| {
+                let reason = triage_reason(&item.task, &item.queue, now)?;
+                let reviewed = reviews.get(item.task.id.as_str()).copied();
+                (!triage_review_current(reason, reviewed, now)).then_some((item, reason))
+            })
+            .collect();
+        if candidates.is_empty() && exclude.is_empty() {
+            return Err(anyhow!(match project {
+                Some(key) => format!("nothing to triage in {key}"),
+                None => "nothing to triage".to_string(),
+            }));
+        }
+        let total = candidates.len();
+        let cards: Vec<ReviewCard> = review_page(candidates)
+            .into_iter()
+            .map(|(item, reason)| ReviewCard {
+                id: item.task.id,
+                why: match reason {
+                    TriageReason::Inbox => "In the inbox, needs a decision".to_string(),
+                    _ => {
+                        let days = item.queue.idle_days.unwrap_or(0);
+                        format!("No activity for {days} days")
+                    }
+                },
+                stale: reason != TriageReason::Inbox,
+            })
+            .collect();
+        let more = total - cards.len();
+        Ok((cards, more))
+    }
+
+    async fn keep(&mut self, id: &TaskId) -> Result<Outcome> {
+        let item = self
+            .store
+            .load_task_item(id)
+            .await?
+            .ok_or_else(|| anyhow!("That task no longer exists"))?;
+        let now = now_seconds();
+        let previous = self
+            .store
+            .database()
+            .set_triage_review(id.as_str(), Some(now), now)
+            .await?;
+        self.kept.insert(id.clone(), previous);
+        let window = match item.task.status {
+            TaskStatus::Active => Some(STALE_ACTIVE_DAYS),
+            TaskStatus::Todo => Some(STALE_TODO_DAYS),
+            _ => None,
+        };
+        let status = item.task.status;
+        let reference = item.display_ref;
+        Ok(Outcome::saved(match window {
+            Some(days) => format!("{reference} stays {status} · back in triage in {days}d"),
+            None => format!("{reference} stays {status}"),
+        })
+        .final_write())
+    }
+
+    async fn unkeep(&mut self, id: &TaskId) -> Result<Outcome> {
+        let Some(previous) = self.kept.remove(id) else {
+            return Ok(Outcome::default());
+        };
+        let now = now_seconds();
+        self.store
+            .database()
+            .set_triage_review(id.as_str(), previous, now)
+            .await?;
+        Ok(Outcome::saved("undid keep".to_string()).final_write())
+    }
+
+    /// The report goes through `gh` off the actor, as publishing can take a while.
+    async fn publish_gist(&mut self, id: &TaskId) {
+        let blob_dir = self.blob_dir();
+        let report = match blob_dir {
+            Ok(blob_dir) => self.store.task_full_report(&blob_dir, id).await,
+            Err(error) => Err(error.into()),
+        };
+        let report = match report {
+            Ok(Some(report)) => report,
+            Ok(None) => {
+                let message = "could not prepare gist: that task no longer exists";
+                self.send(ReplyBody::Gist(Err(message.to_string())));
+                return;
+            }
+            Err(error) => {
+                let message = format!("could not prepare gist: {error:#}");
+                self.send(ReplyBody::Gist(Err(message)));
+                return;
+            }
+        };
+        let markdown = aven_host::task_render::task_markdown(&report);
+        let filename = aven_host::task_render::gist_filename(&report);
+        let description = aven_host::task_render::gist_description(&report);
+        let program = self.gh.clone();
+        let replies = self.replies.clone();
+        let request = self.handled;
+        tokio::spawn(async move {
+            let run = tokio::task::spawn_blocking(move || {
+                create_secret_gist(&program, &markdown, &filename, &description)
+            })
+            .await;
+            let result = run
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result)
+                .map_err(|error| format!("gist creation failed: {error:#}"));
+            let body = ReplyBody::Gist(result);
+            let _ = replies.send(Reply { request, body });
+        });
+    }
+
     async fn send_detail(&mut self, id: &TaskId) {
         match self.store.load_task_item(id).await {
             Ok(Some(item)) => {
@@ -1388,7 +2094,14 @@ impl Actor {
                     .find(|project| project.key == item.task.project_key);
                 let name = project.map_or_else(String::new, |project| project.name.clone());
                 let images = self.images(&item).await;
-                let detail = detail_with(&item, Local::now(), name, images);
+                let mut detail = detail_with(&item, Local::now(), name, images);
+                detail.children = self.children(&item).await;
+                // Conflicts on a recurring task can sit on its series.
+                detail.conflicts = self
+                    .store
+                    .conflict_targets_for(&item)
+                    .await
+                    .unwrap_or_default();
                 self.send(ReplyBody::Detail(Box::new(detail)));
             }
             Ok(None) => {}
@@ -1421,6 +2134,14 @@ impl Actor {
             self.set_columns(true).await?;
         }
         Ok(())
+    }
+
+    async fn show_recurring(&mut self, lifecycle: RecurrenceSeriesLifecycleFilter) -> Result<()> {
+        if self.store.view_state.query != TaskQuery::Recurring {
+            self.show_view(TaskQuery::Recurring).await?;
+        }
+        self.set_filters(|state| state.recurring.lifecycle = lifecycle)
+            .await
     }
 
     async fn set_columns(&mut self, on: bool) -> Result<()> {
@@ -1544,6 +2265,31 @@ impl Actor {
     async fn navigate(&mut self, command: &Command) -> Result<()> {
         match command {
             Command::ShowView(query) => self.show_view(*query).await,
+            Command::SetClosed(closed) => {
+                let closed = if *closed {
+                    ClosedTaskVisibility::Included
+                } else {
+                    ClosedTaskVisibility::Default
+                };
+                self.set_filters(|state| state.filter_modifiers.closed = closed)
+                    .await
+            }
+            Command::ShowRecurring(lifecycle) => self.show_recurring(*lifecycle).await,
+            Command::OpenSeries(id) => {
+                let lifecycle = self.store.view_state.recurring.lifecycle;
+                self.show_recurring(lifecycle).await?;
+                if self
+                    .store
+                    .recurrence_series
+                    .iter()
+                    .all(|item| item.series.id != *id)
+                {
+                    self.show_recurring(RecurrenceSeriesLifecycleFilter::All)
+                        .await?;
+                }
+                self.send(ReplyBody::SelectSeries(id.clone()));
+                Ok(())
+            }
             Command::ShowProject(project) => {
                 let target = project
                     .clone()
@@ -1659,7 +2405,11 @@ impl Actor {
 
     async fn create(&mut self, task: &NewTask) -> Result<Outcome> {
         let project = task.project.clone().or_else(|| self.project_for_new_task());
-        let (available_at, due_on) = match parse_schedule_input(&task.schedule)? {
+        let parsed = parse_schedule_input(&task.schedule)?;
+        if task.replaces.is_some() && !matches!(parsed, ParsedScheduleInput::Recurring { .. }) {
+            anyhow::bail!("A replacement needs a repeating schedule");
+        }
+        let (available_at, due_on) = match parsed {
             ParsedScheduleInput::None => (None, None),
             ParsedScheduleInput::Once {
                 available_at,
@@ -1734,25 +2484,122 @@ impl Actor {
         );
         draft.metadata = metadata_inputs(&task.metadata);
         let (message, _) = self.store.create_recurrence_series(draft, None).await?;
-        Ok(Outcome::saved(message)
-            .with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming)))
+        Ok(Outcome {
+            stop: task.replaces.clone(),
+            ..Outcome::saved(message)
+        }
+        .with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming)))
     }
 
     /// Runs a write and reports what it did. An error that `mutation_committed`
     /// or `task_creation_committed` accepts means the write stands.
     async fn mutate(&mut self, command: &Command) -> Result<Outcome> {
         let outcome = match command {
+            Command::Bulk(ids, bulk) => self.bulk(ids, bulk).await?,
+            Command::CreateChild(epic, title) => {
+                let context = self.epic_context(epic).await?;
+                let draft = TaskDraft {
+                    title: title.clone(),
+                    description: String::new(),
+                    project: None,
+                    status: None,
+                    priority: "none".to_string(),
+                    source: TaskSource::Tui,
+                    labels: Vec::new(),
+                    metadata: Vec::new(),
+                    available_at: None,
+                    due_on: None,
+                    is_epic: false,
+                };
+                let (message, ..) = self
+                    .store
+                    .create_task_for_epic(draft, None, &context)
+                    .await?;
+                Outcome::saved(message)
+            }
+            Command::AddChild(epic, child) => {
+                let context = self.epic_context(epic).await?;
+                let added = self.store.add_epic_child(context, child.clone()).await?;
+                Outcome::saved(added.message.message)
+            }
+            Command::RemoveChild(_, child) => {
+                let item = self
+                    .store
+                    .load_task_item(child)
+                    .await?
+                    .ok_or_else(|| anyhow!("That task no longer exists"))?;
+                let target = self
+                    .store
+                    .resolve_epic_child_target_for_item(&item)
+                    .ok_or_else(|| anyhow!("That task is not in an epic"))?;
+                let removed = self.store.remove_epic_child(target).await?;
+                Outcome::saved(removed.message.message)
+            }
+            Command::PauseSeries(id) => {
+                let selected = self.selected.clone();
+                let paused = self.store.pause_recurrence(id, selected.as_ref()).await?;
+                Outcome::saved(paused.message).final_write()
+            }
+            Command::ResumeSeries(id) => {
+                let selected = self.selected.clone();
+                let resumed = self.store.resume_recurrence(id, selected.as_ref()).await?;
+                Outcome::saved(resumed.message).final_write()
+            }
+            Command::SkipSeries(id) => {
+                let detail = self.store.recurrence_detail_for_series(id).await?;
+                let current = detail.current_occurrence.as_ref();
+                let task = current.and_then(|current| current.task_id.as_ref());
+                let (Some(current), Some(task)) = (current, task) else {
+                    return Err(anyhow!("series has no current occurrence to skip"));
+                };
+                let skipped = self.store.skip_recurrence(id, task, current.slot_on);
+                Outcome::saved(skipped.await?.message).final_write()
+            }
+            Command::StopSeries(id, skip) => {
+                let selected = self.selected.clone();
+                let stopped = self.store.stop_recurrence(id, selected.as_ref(), *skip);
+                Outcome::saved(stopped.await?.message).final_write()
+            }
+            Command::SetTemplate(id, description) => {
+                let selected = self.selected.clone();
+                let update = RecurrenceTemplateUpdate {
+                    description: Some(description.clone()),
+                    ..RecurrenceTemplateUpdate::default()
+                };
+                let saved = self
+                    .store
+                    .update_recurrence_template(id, update, selected.as_ref());
+                Outcome::saved(saved.await?.message).final_write()
+            }
+            Command::ResolveConflict(target, value) => {
+                let resolved = self
+                    .store
+                    .resolve_conflict_value((**target).clone(), value.clone());
+                Outcome::saved(resolved.await?.message).final_write()
+            }
+            Command::Keep(id) => self.keep(id).await?,
+            Command::Unkeep(id) => self.unkeep(id).await?,
             Command::SetStatus(id, status) => {
                 let selection = self.selection(id).await?;
                 self.store
                     .mutate_status_selection(&selection, *status, true)
                     .await?;
+                let open = (self.store.tasks.iter())
+                    .find(|item| item.task.id == *id && item.task.is_epic)
+                    .filter(|_| status.is_terminal())
+                    .map(|item| (item.task.title.clone(), epic_progress(item)));
                 let change = match status {
                     TaskStatus::Done => "done".to_string(),
                     TaskStatus::Canceled => "canceled".to_string(),
                     status => format!("moved to {}", status_label(*status)),
                 };
-                Outcome::saved(format!("{} {change}", self.reference(id)))
+                match open.filter(|(_, progress)| progress.open > 0) {
+                    Some((title, progress)) => Outcome::saved(format!(
+                        "{title} closed. {} tasks are still open.",
+                        progress.open
+                    )),
+                    None => Outcome::saved(format!("{} {change}", self.reference(id))),
+                }
             }
             Command::SetPriority(id, priority) => {
                 let selection = self.selection(id).await?;
@@ -2042,6 +2889,7 @@ impl Actor {
                         is_epic: task.is_epic,
                         schedule,
                         images: Vec::new(),
+                        replaces: None,
                     }))
                 }
                 Err(error) => ReplyBody::IntakeFailed(format!("{error:#}")),
@@ -2076,6 +2924,9 @@ impl Actor {
                 | Command::SetColumns(_)
                 | Command::Search(_)
                 | Command::Goto(_)
+                | Command::SetClosed(_)
+                | Command::ShowRecurring(_)
+                | Command::OpenSeries(_)
         )
     }
 
@@ -2094,6 +2945,12 @@ impl Actor {
             Command::Peek(id) => self.send_detail(&id).await,
             Command::Preview(input) => self.preview(input),
             Command::Intake { input, project } => self.intake(input, project),
+            Command::LoadSeries(id) => self.send_series(&id).await,
+            Command::StartReview(exclude) => match self.review(&exclude).await {
+                Ok((cards, more)) => self.send(ReplyBody::Review(cards, more)),
+                Err(error) => self.send(ReplyBody::Notice(error.to_string())),
+            },
+            Command::PublishGist(id) => self.publish_gist(&id).await,
             Command::CopyReport(id) => match self.copy_report(&id).await {
                 Ok(text) => self.send(ReplyBody::Copied(text)),
                 Err(error) => self.send(ReplyBody::Notice(error.to_string())),
@@ -2123,6 +2980,9 @@ impl Actor {
                         // These save without refreshing the projection.
                         let refreshed = match command {
                             Command::AddNote(..)
+                            | Command::Bulk(..)
+                            | Command::Keep(_)
+                            | Command::Unkeep(_)
                             | Command::SetDeleted(..)
                             | Command::DeleteNote(..)
                             | Command::AddImage(..)
@@ -2163,6 +3023,9 @@ impl Actor {
         }
         if let Some(id) = outcome.created {
             self.send(ReplyBody::Created(id));
+        }
+        if let Some(id) = outcome.stop {
+            self.send(ReplyBody::AskStop(id));
         }
         if let Some(message) = outcome.message {
             self.send(ReplyBody::Saved {
@@ -2323,6 +3186,7 @@ pub fn bench_snapshot(tasks: usize, groups: Vec<Group>) -> Snapshot {
                 blocked: false,
                 recurring: false,
                 progress: None,
+                epic: None,
                 labels: vec!["bench".to_string()],
                 due: String::new(),
                 date_tone: DateTone::Plain,
@@ -2408,6 +3272,248 @@ mod tests {
         std::iter::from_fn(|| replies.try_recv().ok())
             .map(|reply| reply.body)
             .collect()
+    }
+
+    fn status_of(actor: &Actor, title: &str) -> TaskStatus {
+        let item = actor
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.title == title);
+        item.expect("a task with that title").task.status
+    }
+
+    fn saved_message(bodies: &[ReplyBody]) -> Option<String> {
+        bodies.iter().find_map(|body| match body {
+            ReplyBody::Saved { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+    }
+
+    fn new_task(title: &str, schedule: &str) -> NewTask {
+        NewTask {
+            title: title.to_string(),
+            schedule: schedule.to_string(),
+            priority: "none".to_string(),
+            ..NewTask::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn bulk_writes_only_the_ids_it_was_given() {
+        let (_directory, mut actor, mut replies) = actor("One").await;
+        for title in ["Two", "Three"] {
+            actor.store.create_task(draft(title), None).await.unwrap();
+        }
+        let ids = vec![task_id(&actor, "One"), task_id(&actor, "Three")];
+        run(
+            &mut actor,
+            Command::Bulk(ids, Bulk::Priority(TaskPriority::High)),
+        )
+        .await;
+        let priority = |actor: &Actor, title: &str| {
+            let item = actor
+                .store
+                .tasks
+                .iter()
+                .find(|item| item.task.title == title);
+            item.unwrap().task.priority
+        };
+        assert_eq!(priority(&actor, "One"), TaskPriority::High);
+        assert_eq!(priority(&actor, "Two"), TaskPriority::None);
+        assert_eq!(priority(&actor, "Three"), TaskPriority::High);
+        bodies(&mut replies);
+    }
+
+    #[tokio::test]
+    async fn bulk_refuses_when_a_marked_task_is_gone() {
+        let (_directory, mut actor, mut replies) = actor("One").await;
+        let ids = vec![task_id(&actor, "One"), TaskId::new()];
+        run(
+            &mut actor,
+            Command::Bulk(ids, Bulk::Status(TaskStatus::Done)),
+        )
+        .await;
+        assert_eq!(status_of(&actor, "One"), TaskStatus::Todo);
+        let bodies = bodies(&mut replies);
+        assert!(format!("{bodies:?}").contains("A marked task is no longer available"));
+    }
+
+    #[tokio::test]
+    async fn a_template_edit_leaves_the_current_task() {
+        let (_directory, mut actor, mut replies) = actor("Other").await;
+        let mut task = new_task("Review", "every friday at 09:00");
+        task.description = "Old".to_string();
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        run(
+            &mut actor,
+            Command::ShowRecurring(RecurrenceSeriesLifecycleFilter::All),
+        )
+        .await;
+        let series = actor.store.recurrence_series[0].series.id.clone();
+        run(
+            &mut actor,
+            Command::SetTemplate(series.clone(), "New".to_string()),
+        )
+        .await;
+
+        let detail = actor.series_detail(&series).await.unwrap();
+        assert_eq!(detail.description, "New");
+        let current = detail.current.expect("the first occurrence").id;
+        let pool = aven_core::test_support::pool(&actor.store.database());
+        let description: String = sqlx::query_scalar("SELECT description FROM tasks WHERE id = ?")
+            .bind(&current)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(description, "Old");
+        bodies(&mut replies);
+    }
+
+    #[tokio::test]
+    async fn a_series_pauses_resumes_and_stops_with_the_current_task_kept() {
+        let (_directory, mut actor, mut replies) = actor("Other").await;
+        let task = new_task("Review", "every friday at 09:00");
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        run(
+            &mut actor,
+            Command::ShowRecurring(RecurrenceSeriesLifecycleFilter::All),
+        )
+        .await;
+        let series = actor.store.recurrence_series[0].series.id.clone();
+        let state = |detail: SeriesDetail| detail.state;
+
+        run(&mut actor, Command::PauseSeries(series.clone())).await;
+        let paused = actor.series_detail(&series).await.unwrap();
+        assert_eq!(state(paused), RecurrenceSeriesState::Paused);
+        run(&mut actor, Command::ResumeSeries(series.clone())).await;
+        let resumed = actor.series_detail(&series).await.unwrap();
+        assert_eq!(state(resumed), RecurrenceSeriesState::Active);
+        run(&mut actor, Command::StopSeries(series.clone(), false)).await;
+        let stopped = actor.series_detail(&series).await.unwrap();
+        assert_eq!(state(stopped), RecurrenceSeriesState::Stopped);
+        bodies(&mut replies);
+    }
+
+    #[tokio::test]
+    async fn a_replacement_without_a_repeating_schedule_is_refused() {
+        let (_directory, mut actor, mut replies) = actor("Other").await;
+        let task = new_task("Review", "every friday at 09:00");
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        run(
+            &mut actor,
+            Command::ShowRecurring(RecurrenceSeriesLifecycleFilter::All),
+        )
+        .await;
+        let series = actor.store.recurrence_series[0].series.id.clone();
+        let mut task = new_task("Replacement", "tomorrow");
+        task.replaces = Some(series.clone());
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        let bodies = bodies(&mut replies);
+        assert!(format!("{bodies:?}").contains("A replacement needs a repeating schedule"));
+    }
+
+    #[tokio::test]
+    async fn an_epic_gains_and_loses_children_and_says_what_stays_open() {
+        let (_directory, mut actor, mut replies) = actor("Loose").await;
+        let epic = TaskDraft {
+            is_epic: true,
+            ..draft("Launch")
+        };
+        actor.store.create_task(epic, None).await.unwrap();
+        actor.store.create_task(draft("Other"), None).await.unwrap();
+        let (epic, loose) = (task_id(&actor, "Launch"), task_id(&actor, "Loose"));
+        let other = task_id(&actor, "Other");
+        run(&mut actor, Command::AddChild(epic.clone(), loose.clone())).await;
+        run(&mut actor, Command::AddChild(epic.clone(), other.clone())).await;
+        run(&mut actor, Command::RemoveChild(epic.clone(), other)).await;
+        run(
+            &mut actor,
+            Command::CreateChild(epic.clone(), "Fresh".to_string()),
+        )
+        .await;
+        bodies(&mut replies);
+
+        run(&mut actor, Command::SetStatus(epic, TaskStatus::Done)).await;
+        let message = saved_message(&bodies(&mut replies));
+        assert_eq!(
+            message.as_deref(),
+            Some("Launch closed. 2 tasks are still open.")
+        );
+    }
+
+    #[tokio::test]
+    async fn resolving_a_conflict_writes_one_field_with_the_chosen_value() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        let id = task_id(&actor, "Stored");
+        let pool = aven_core::test_support::pool(&actor.store.database());
+        for (field, local, remote) in [
+            ("title", "Local title", "Remote title"),
+            ("description", "Local body", "Remote body"),
+        ] {
+            sqlx::query(
+                "INSERT INTO conflicts(task_id, field, base_version, local_value, remote_value,
+                 local_change_id, remote_change_id, variant_a, variant_b, created_at, resolved)
+                 VALUES (?, ?, NULL, ?, ?, NULL, ?, 'a', 'b', ?, 0)",
+            )
+            .bind(&id)
+            .bind(field)
+            .bind(local)
+            .bind(remote)
+            .bind(aven_core::ids::new_id())
+            .bind(aven_core::ids::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        actor.store.refresh(None).await.unwrap();
+        let item = actor.store.tasks[0].clone();
+        let targets = actor.store.conflict_targets_for(&item).await.unwrap();
+        assert_eq!(targets.len(), 2);
+        let title = targets
+            .iter()
+            .find(|target| target.field == "title")
+            .unwrap();
+        let command = Command::ResolveConflict(Box::new(title.clone()), "Remote title".to_string());
+        run(&mut actor, command).await;
+
+        let item = actor.store.tasks[0].clone();
+        assert_eq!(item.task.title, "Remote title");
+        let left = actor.store.conflict_targets_for(&item).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].field, "description");
+        bodies(&mut replies);
+    }
+
+    #[test]
+    fn a_gist_goes_to_the_program_as_a_secret_and_reports_its_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("gh");
+        let log = directory.path().join("args");
+        let body = format!(
+            "#!/bin/sh\necho \"$@\" > {}\ncat >> {}\necho https://gist.example/1\n",
+            log.display(),
+            log.display()
+        );
+        std::fs::write(&script, body).unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let url = create_secret_gist(script.as_os_str(), "# Report", "a.md", "Desc").unwrap();
+        assert_eq!(url, "https://gist.example/1");
+        let seen = std::fs::read_to_string(&log).unwrap();
+        assert!(seen.starts_with("gist create --filename a.md --desc Desc -"));
+        assert!(!seen.contains("--public"));
+        assert!(seen.contains("# Report"));
+
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ncat > /dev/null\necho denied >&2\nexit 1\n",
+        )
+        .unwrap();
+        let error = create_secret_gist(script.as_os_str(), "x", "a.md", "Desc").unwrap_err();
+        assert_eq!(error.to_string(), "denied");
     }
 
     #[tokio::test]

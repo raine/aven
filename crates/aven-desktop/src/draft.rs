@@ -2,7 +2,7 @@
 use anyhow::{Context as _, Result, bail};
 use aven_core::choices::{TaskPriority, TaskStatus};
 use aven_core::labels::normalize_label;
-use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceSchedule};
+use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceSchedule, RecurrenceSeriesId};
 use aven_host::recurrence_input::{
     RecurrenceClock, RecurrenceDraft, natural_rule_label, upcoming_slots,
 };
@@ -235,6 +235,8 @@ pub struct Draft {
     pub is_epic: bool,
     pub more: bool,
     pub images: Vec<PendingImage>,
+    /// The series this one takes over from, which stops once it exists.
+    pub replaces: Option<RecurrenceSeriesId>,
 }
 
 impl Default for Draft {
@@ -251,6 +253,7 @@ impl Default for Draft {
             is_epic: false,
             more: false,
             images: Vec::new(),
+            replaces: None,
         }
     }
 }
@@ -311,6 +314,7 @@ impl Draft {
             is_epic: self.is_epic,
             schedule: self.schedule.trim().to_string(),
             images: self.images.clone(),
+            replaces: self.replaces.clone(),
         })
     }
 
@@ -338,6 +342,7 @@ impl Draft {
         self.labels = task.labels;
         self.metadata = task.metadata;
         self.is_epic = task.is_epic;
+        self.replaces = task.replaces;
         self.more = !self.body.is_empty() || !self.schedule.is_empty();
     }
 
@@ -522,6 +527,7 @@ mod tests {
             is_epic: true,
             more: true,
             images: vec![image],
+            replaces: None,
         };
         let next = draft.after_created();
         assert_eq!(next.project.as_deref(), Some("key"));

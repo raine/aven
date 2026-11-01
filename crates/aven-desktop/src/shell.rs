@@ -13,12 +13,13 @@ use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle,
     Focusable, FontWeight, KeyContext, ListAlignment, ListOffset, ListState, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Subscription, Window, div,
-    linear_color_stop, linear_gradient, list, point, prelude::*, px, relative, svg,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, px, relative, svg,
 };
 
 use crate::actions::*;
 use crate::adapter::{
-    Command, DateTone, DeletedFilter, Note, Prefs, Replies, Reply, SyncHealth, supports_columns,
+    Bulk, Command, DateTone, DeletedFilter, Note, Prefs, Replies, Reply, SyncHealth, TaskRow,
+    supports_columns,
 };
 use crate::bounce::{Bounce, ListBounce};
 use crate::commands::view_name;
@@ -33,6 +34,7 @@ use crate::overlays::{Menu, TOAST_DURATION};
 use crate::platform;
 use crate::session::{Applied, PRIORITY_DURATION, SETTLE_DURATION, Session};
 use crate::theme::{Theme, mix, theme};
+use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
 const NAV_WIDTH_RANGE: (f32, f32) = (170., 340.);
 const DETAIL_WIDTH_RANGE: (f32, f32) = (290., 620.);
@@ -60,6 +62,7 @@ const GLIDE_DURATION: Duration = Duration::from_millis(140);
 const GLIDE_REACH: f32 = 70.;
 /// How long a row takes to reach its new place, and a group to fade.
 const MOVE_DURATION: Duration = Duration::from_millis(200);
+const LEAVE_DURATION: Duration = Duration::from_millis(640);
 
 /// How many of the views the sidebar shows before More views.
 const PRIMARY_VIEWS: usize = 9;
@@ -106,6 +109,10 @@ enum Item {
     },
     Log(usize),
     Empty,
+    AllClear,
+    Lifecycle,
+    SeriesHead,
+    Series(usize),
 }
 
 impl Item {
@@ -115,6 +122,10 @@ impl Item {
             Self::Row { .. } => ROW_HEIGHT,
             Self::Log(_) => LOG_HEIGHT,
             Self::Empty => 0.,
+            Self::AllClear => ALL_CLEAR_HEIGHT,
+            Self::Lifecycle => LIFECYCLE_HEIGHT,
+            Self::SeriesHead => SERIES_HEAD_HEIGHT,
+            Self::Series(_) => SERIES_ROW_HEIGHT,
         }
     }
 
@@ -177,6 +188,15 @@ struct LeftSection {
     top: f32,
 }
 
+/// A row on its way off the list.
+#[derive(Clone)]
+struct LeftRow {
+    title: String,
+    reference: String,
+    /// From the top of the list viewport.
+    top: f32,
+}
+
 /// A list change made by a local write: rows glide from where they were, and
 /// groups fade in or out. Live state is keyed on wall time, so a row scrolled
 /// back into view does not replay it.
@@ -189,11 +209,50 @@ struct ListMotion {
     sections: HashMap<String, (f32, usize)>,
     entered: HashMap<String, usize>,
     left: Vec<(LeftSection, usize)>,
+    /// Rows that went, drawn where they were until they have collapsed.
+    left_rows: Vec<(LeftRow, usize)>,
 }
 
 impl ListMotion {
     fn live(&self) -> bool {
         self.at.is_some_and(|at| at.elapsed() < MOVE_DURATION)
+    }
+
+    /// Row leaves outlast the glide, so they only stop on their own clock.
+    fn left_rows(&self) -> Vec<(LeftRow, usize)> {
+        let live = self.at.is_some_and(|at| at.elapsed() < LEAVE_DURATION);
+        if live {
+            self.left_rows.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Records rows that left, from where the old list had them.
+    fn take_left(
+        &mut self,
+        old: &[Item],
+        left: &[TaskRow],
+        scrolled: f32,
+        viewport: f32,
+        mut next_run: impl FnMut() -> usize,
+    ) {
+        let mut top = 0.;
+        for item in old {
+            if let Item::Row { id, .. } = item
+                && let Some(row) = left.iter().find(|row| row.id == *id)
+                && top - scrolled + ROW_HEIGHT >= 0.
+                && top - scrolled <= viewport
+            {
+                let row = LeftRow {
+                    title: row.title.clone(),
+                    reference: row.reference.clone(),
+                    top: top - scrolled,
+                };
+                self.left_rows.push((row, next_run()));
+            }
+            top += item.height();
+        }
     }
 
     fn row(&self, id: &TaskId) -> Option<(f32, usize)> {
@@ -333,6 +392,7 @@ pub struct Root {
     armed_toast: Option<usize>,
     pub(crate) description: Entity<Editor>,
     pub(crate) note: Entity<Editor>,
+    pub(crate) kid_input: Entity<Editor>,
     pub(crate) note_views: Vec<(Note, Entity<Editor>)>,
     pub(crate) detail_scroll: ScrollHandle,
     pub(crate) menu: Option<Menu>,
@@ -377,6 +437,8 @@ impl Root {
             )
             .max_height(px(206.))
         });
+        let kid_input =
+            cx.new(|cx| Editor::new(Mode::Single, "Add a task to this epic", window, cx));
         let body = cx.new(|cx| {
             Editor::new(
                 Mode::Multi,
@@ -390,6 +452,7 @@ impl Root {
         let subscriptions = vec![
             cx.subscribe_in(&title, window, Self::on_title_event),
             cx.subscribe_in(&note, window, Self::on_note_event),
+            cx.subscribe_in(&kid_input, window, Self::on_kid_event),
             cx.subscribe_in(&body, window, Self::on_body_event),
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
             cx.observe_pending_input(window, |this, window, cx| {
@@ -435,6 +498,7 @@ impl Root {
             armed_toast: None,
             description,
             note,
+            kid_input,
             note_views: Vec::new(),
             detail_scroll: ScrollHandle::new(),
             menu: None,
@@ -452,7 +516,7 @@ impl Root {
             thumb_drag: None,
             subscriptions,
         };
-        this.rebuild(false);
+        this.rebuild(false, &[]);
         this.load_selection(window, cx);
         window.focus(&this.focus, cx);
         this
@@ -511,18 +575,35 @@ impl Root {
             items.push(Item::Pad(40.));
             return items;
         }
+        if snapshot.view.query == TaskQuery::Recurring {
+            items.push(Item::Lifecycle);
+            if snapshot.series.is_empty() {
+                items.push(Item::Empty);
+            } else {
+                items.push(Item::SeriesHead);
+                items.extend((0..snapshot.series.len()).map(Item::Series));
+            }
+            items.push(Item::Pad(40.));
+            return items;
+        }
+        if self.session.all_clear() {
+            items.push(Item::AllClear);
+        }
         let mut row = 0;
         let mut carried = 0.;
         for (index, group) in snapshot.groups.iter().enumerate() {
             let height = snapped_height(SECTION_HEIGHT + carried);
             carried += SECTION_HEIGHT - height;
-            items.push(Item::Section {
-                index,
-                name: group.name.clone(),
-                hint: group.hint.clone(),
-                count: group.rows.len(),
-                height,
-            });
+            // A view core does not group lists its rows straight away.
+            if !group.name.is_empty() {
+                items.push(Item::Section {
+                    index,
+                    name: group.name.clone(),
+                    hint: group.hint.clone(),
+                    count: group.rows.len(),
+                    height,
+                });
+            }
             for task in &group.rows {
                 let id = snapshot.tasks[*task].id.clone();
                 items.push(Item::Row {
@@ -544,7 +625,7 @@ impl Root {
     /// them keep their measured heights and the scroll position stays on its
     /// entry. After a local write it stays at its offset instead, because the
     /// entry may be the row that left for another group.
-    fn rebuild(&mut self, moved: bool) {
+    fn rebuild(&mut self, moved: bool, left: &[TaskRow]) {
         let items = self.build_items();
         let top = self.list.logical_scroll_top();
         let shared = items.len().min(self.items.len());
@@ -574,6 +655,8 @@ impl Root {
                             .between(&self.items, &items, scrolled, viewport, || {
                                 motion.next_run()
                             });
+                    self.list_motion
+                        .take_left(&self.items, left, scrolled, viewport, || motion.next_run());
                 }
                 self.list.scroll_to(list_offset_at(&items, scrolled));
             } else {
@@ -592,7 +675,7 @@ impl Root {
 
     /// Shows the session's list as it now stands.
     pub fn reload_list(&mut self, cx: &mut Context<Self>) {
-        self.rebuild(false);
+        self.rebuild(false, &[]);
         cx.notify();
     }
 
@@ -609,7 +692,16 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         if applied.list {
-            self.rebuild(applied.moved.is_some());
+            self.rebuild(applied.moved.is_some(), &applied.left);
+            if !applied.left.is_empty() {
+                self.repaint_after(LEAVE_DURATION, cx);
+            }
+            if self.session.motion.ringing() {
+                self.repaint_after(crate::session::ALL_CLEAR_DURATION, cx);
+            }
+        }
+        if let Some(id) = applied.stop {
+            self.stop_series(id, window, cx);
         }
         if let Some(task) = applied.composer_draft {
             self.return_failed_draft(Draft::from_task(*task), window, cx);
@@ -897,7 +989,15 @@ impl Root {
     }
 
     fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.session.neighbour(delta) {
+        if self.step_child(delta, cx) {
+            return;
+        }
+        if self.session.snapshot.view.query == TaskQuery::Recurring {
+            if let Some(id) = self.session.neighbour_series(delta) {
+                self.session.select_series(id);
+                cx.notify();
+            }
+        } else if let Some(id) = self.session.neighbour(delta) {
             self.select(id, window, cx);
         }
     }
@@ -935,14 +1035,24 @@ impl Root {
     }
 
     pub(crate) fn mark_done(&mut self, _: &MarkDone, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.session.target().cloned() {
+        if self.session.bulk(Bulk::Status(TaskStatus::Done)) {
+            cx.notify();
+        } else if let Some(id) = self.session.child.clone() {
+            self.session.set_status(&id, TaskStatus::Done);
+            cx.notify();
+        } else if let Some(id) = self.session.target().cloned() {
             self.session.toggle_status(&id, TaskStatus::Done);
             self.after_status_motion(cx);
         }
     }
 
-    fn cancel_task(&mut self, _: &CancelTask, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.session.target().cloned() {
+    pub(crate) fn cancel_task(&mut self, _: &CancelTask, _: &mut Window, cx: &mut Context<Self>) {
+        if self.session.bulk(Bulk::Status(TaskStatus::Canceled)) {
+            cx.notify();
+        } else if let Some(id) = self.session.child.clone() {
+            self.session.set_status(&id, TaskStatus::Canceled);
+            cx.notify();
+        } else if let Some(id) = self.session.target().cloned() {
             self.session.toggle_status(&id, TaskStatus::Canceled);
             self.after_status_motion(cx);
         }
@@ -1046,6 +1156,10 @@ impl Root {
             Item::Pad(height) => div().h(px(height)).into_any_element(),
             Item::Empty => self.render_empty(cx).into_any_element(),
             Item::Log(entry) => self.render_log(entry, cx),
+            Item::AllClear => self.render_all_clear(cx),
+            Item::Lifecycle => self.render_lifecycle(cx),
+            Item::SeriesHead => self.render_series_head(cx),
+            Item::Series(index) => self.render_series_row(index, cx),
             Item::Section {
                 index,
                 name,
@@ -1202,7 +1316,9 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx);
+        let query_is_epics = self.session.snapshot.view.query == TaskQuery::Epics;
         let data = self.session.snapshot.tasks[task].clone();
+        let epic_cells = query_is_epics.then(|| self.epic_cells(&data, cx, &t));
         let id = data.id.clone();
         let selected = self.session.selected.as_ref() == Some(&id);
         let below_selected = matches!(
@@ -1262,6 +1378,11 @@ impl Root {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     window.focus(&this.focus, cx);
+                    let toggle = event.modifiers.platform || event.modifiers.control;
+                    let shift = event.modifiers.shift;
+                    if this.mark_click(&select_id, shift, toggle, window, cx) {
+                        return;
+                    }
                     this.select(select_id.clone(), window, cx);
                     if event.click_count == 2 {
                         this.expand(&Expand, window, cx);
@@ -1274,7 +1395,7 @@ impl Root {
                     this.row_menu(menu_id.clone(), event.position, window, cx);
                 }),
             )
-            .child(div().flex_none().w(px(3.)).h(px(16.)).ml(px(-5.)))
+            .child(mark_box(self.session.marks.contains(&id), &t))
             .child(self.task_priority(&id, data.priority, ("pri-row-old", "pri-row-new"), &t))
             .child(
                 div()
@@ -1313,17 +1434,21 @@ impl Root {
             .when(data.blocked && self.list_refs, |row| {
                 row.child(small(12.).flex_none().text_color(t.warn).child("Blocked"))
             })
-            .when_some(data.progress, |row, progress| {
-                row.child(
-                    div()
-                        .flex_none()
-                        .w(px(52.))
-                        .font_family(MONO)
-                        .text_size(px(12.))
-                        .text_color(t.faint)
-                        .child(progress),
-                )
-            })
+            .children(epic_cells.into_iter().flatten())
+            .when_some(
+                data.progress.filter(|_| !query_is_epics),
+                |row, progress| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .w(px(52.))
+                            .font_family(MONO)
+                            .text_size(px(12.))
+                            .text_color(t.faint)
+                            .child(progress),
+                    )
+                },
+            )
             .when(wide, |row| {
                 row.child(
                     small(12.)
@@ -1560,10 +1685,18 @@ impl Root {
         let t = theme(cx);
         let active = self.active(window);
         let snapshot = &self.session.snapshot;
-        let count = snapshot.ordered().count();
+        let count = if snapshot.view.query == TaskQuery::Recurring {
+            snapshot.series.len()
+        } else {
+            snapshot.ordered().count()
+        };
         let view = &snapshot.view;
         let query = view.query;
-        let name = view_name(query);
+        let name = if self.session.review.is_some() {
+            "Triage"
+        } else {
+            view_name(query)
+        };
         let subtitle = VIEWS
             .iter()
             .find(|entry| entry.0 == query)
@@ -1583,11 +1716,13 @@ impl Root {
         let fixed = matches!(query, TaskQuery::Queue | TaskQuery::Upcoming);
         let logged = query == TaskQuery::RecentActions;
         let filterable = !logged && query != TaskQuery::Conflicts;
-        let can_columns = supports_columns(query);
+        let can_columns = supports_columns(query) && self.session.review.is_none();
         let columns = view.columns;
-        let orderable = !fixed && !logged;
+        let reviewing = self.session.review.is_some();
+        let orderable = !fixed && !logged && !reviewing;
         let groupable = !fixed
             && !logged
+            && !reviewing
             && !columns
             && !matches!(query, TaskQuery::Epics | TaskQuery::Conflicts);
         let width = window.viewport_size().width;
@@ -1685,13 +1820,55 @@ impl Root {
                     .text_color(t.faint)
                     .when(hints && !expanded, |hint| hint.child(subtitle)),
             )
+            .when(
+                matches!(query, TaskQuery::Inbox | TaskQuery::Queue) && !expanded && !reviewing,
+                |top| {
+                    top.child(
+                        line_btn("review-tasks", "Review tasks", &t)
+                            .shadow(Vec::new())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.review_tasks(&ReviewTasks, window, cx);
+                            })),
+                    )
+                },
+            )
+            .when(query == TaskQuery::Epics && !expanded, |top| {
+                let closed = if view.closed {
+                    "Hide closed"
+                } else {
+                    "Show closed"
+                };
+                top.child(
+                    btn("epics-closed", closed, &t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_closed(window, cx);
+                        }))
+                        .child(closed),
+                )
+                .child(
+                    btn("new-epic", "New epic", &t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.new_epic(&NewEpic, window, cx);
+                        }))
+                        .child("New epic"),
+                )
+            })
+            .when(query == TaskQuery::Recurring, |top| {
+                top.child(
+                    btn("new-recurring", "New recurring task", &t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.new_recurring(window, cx);
+                        }))
+                        .child("New recurring task"),
+                )
+            })
             .when(expanded, |top| {
                 top.child(
                     line_btn("collapse", format!("← {name}"), &t)
                         .on_click(cx.listener(|this, _, window, cx| this.collapse(window, cx))),
                 )
             })
-            .when(!expanded && filterable, |top| {
+            .when(!expanded && !reviewing && filterable, |top| {
                 top.child(
                     btn("filter", "Filter", &t)
                         .relative()
@@ -2150,12 +2327,41 @@ impl Root {
                     ),
             )
         });
+        let left_rows = self.list_motion.left_rows();
+        let left_rows = left_rows.into_iter().map(|(row, run)| {
+            div().absolute().inset_0().overflow_hidden().child(
+                div()
+                    .absolute()
+                    .top(px(row.top))
+                    .left(px(8.))
+                    .right(px(8.))
+                    .h(px(ROW_HEIGHT))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(8.))
+                    .bg(t.page)
+                    .text_color(t.body)
+                    .child(ref_label(&row.reference, "", None, &t))
+                    .child(div().min_w_0().truncate().child(row.title))
+                    .with_animation(
+                        ("row-leave", run),
+                        Animation::new(LEAVE_DURATION).with_easing(ease_in_out),
+                        |row, delta| {
+                            row.h(px(ROW_HEIGHT * (1. - delta)))
+                                .opacity(1. - (delta / 0.7).min(1.))
+                        },
+                    ),
+            )
+        });
         measured(div(), "list")
             .flex_1()
             .min_w_0()
             .min_h_0()
             .children(glide)
             .children(left)
+            .children(left_rows)
             .child(ListBounce::new(
                 "list-bounce",
                 self.bounce.clone(),
@@ -2250,6 +2456,25 @@ impl Root {
     }
 }
 
+/// The box a marked row carries, and the gap an unmarked one keeps.
+fn mark_box(marked: bool, t: &Theme) -> Div {
+    if !marked {
+        return div().flex_none().w(px(3.)).h(px(16.)).ml(px(-5.));
+    }
+    div()
+        .flex_none()
+        .size(px(14.))
+        .ml(px(-2.))
+        .rounded(px(4.))
+        .bg(t.accent)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(10.))
+        .text_color(t.on_fill)
+        .child("✓")
+}
+
 /// Moves an entry from its old place to where the list lays it out.
 fn glide_to_place(entry: Div, (from, run): (f32, usize)) -> AnyElement {
     entry
@@ -2293,6 +2518,9 @@ impl Render for Root {
         }
         let mut key_context = KeyContext::default();
         key_context.add("Aven");
+        if self.session.review.is_some() {
+            key_context.add("Review");
+        }
         if self.menu.is_some() || self.composer_open() || self.dialog_open() {
             key_context.add("Overlay");
         }
@@ -2315,8 +2543,21 @@ impl Render for Root {
         let board = (columns && !expanded).then(|| self.render_board(cx));
         let doc = expanded.then(|| self.render_doc(window, cx));
         let logged = self.session.snapshot.view.query == TaskQuery::RecentActions;
-        let details_open = self.details_open && !expanded && !logged;
-        let detail = details_open.then(|| self.render_detail(detail_width, window, cx));
+        let reviewing = self.session.review.is_some();
+        let details_open = self.details_open && !expanded && !logged && !reviewing;
+        let recurring = self.session.snapshot.view.query == TaskQuery::Recurring;
+        let bulk = self.session.bulk_panel();
+        let detail = details_open.then(|| {
+            if recurring {
+                self.render_series(detail_width, cx).into_any_element()
+            } else if bulk {
+                self.render_bulk(detail_width, cx).into_any_element()
+            } else {
+                self.render_detail(detail_width, window, cx)
+                    .into_any_element()
+            }
+        });
+        let review = reviewing.then(|| self.render_review(cx));
         let strips = self.render_strips(cx);
         let chord = self.render_chord(cx);
         let dialog = self.render_dialog(window, cx);
@@ -2394,6 +2635,25 @@ impl Render for Root {
             .on_action(cx.listener(Self::next_field))
             .on_action(cx.listener(Self::previous_field))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::toggle_mark))
+            .on_action(cx.listener(Self::extend_marks_down))
+            .on_action(cx.listener(Self::extend_marks_up))
+            .on_action(cx.listener(Self::mark_visible))
+            .on_action(cx.listener(Self::clear_marks))
+            .on_action(cx.listener(Self::focus_child))
+            .on_action(cx.listener(Self::jump_to_epic))
+            .on_action(cx.listener(Self::add_to_epic))
+            .on_action(cx.listener(Self::new_epic))
+            .on_action(cx.listener(Self::cycle_lifecycle))
+            .on_action(cx.listener(Self::publish_gist))
+            .on_action(cx.listener(Self::review_tasks))
+            .on_action(cx.listener(Self::review_decide))
+            .on_action(cx.listener(Self::review_keep))
+            .on_action(cx.listener(Self::review_skip))
+            .on_action(cx.listener(Self::review_back))
+            .on_action(cx.listener(Self::review_undo))
+            .on_action(cx.listener(Self::review_exit))
+            .on_action(cx.listener(Self::review_next))
             .when_some(split, |root, split| {
                 root.cursor_col_resize()
                     .on_mouse_move(
@@ -2460,7 +2720,8 @@ impl Render for Root {
                             .min_h_0()
                             .flex()
                             .when_some(doc, |body, doc| body.child(doc))
-                            .when(!expanded, |body| match board {
+                            .when_some(review, |body, review| body.child(review))
+                            .when(!expanded && !reviewing, |body| match board {
                                 Some(board) => body.child(board),
                                 None => body.child(list_el),
                             })

@@ -206,9 +206,23 @@ impl Root {
                     })),
             )
             .when(row.recurring, |props| {
+                let series = self
+                    .session
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.series.clone());
                 props.child(
                     self.prop("recurrence", "Recurrence", t)
-                        .child(plain("Repeats".to_string())),
+                        .child(match series {
+                            Some((id, reference)) => bare_btn("open-series", "Open series", t)
+                                .text_color(t.body)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_series(id.clone(), window, cx);
+                                }))
+                                .child(format!("↻ {reference}"))
+                                .into_any_element(),
+                            None => plain("Repeats".to_string()).into_any_element(),
+                        }),
                 )
             })
     }
@@ -643,6 +657,12 @@ impl Root {
     ) -> Vec<AnyElement> {
         let mut sections = vec![self.render_description(row, cx, t).into_any_element()];
         if let Some(detail) = self.session.detail.clone() {
+            if row.is_epic {
+                sections.push(
+                    self.render_epic_section(row, &detail, cx, t)
+                        .into_any_element(),
+                );
+            }
             if !detail.images.is_empty() {
                 sections.push(self.render_images(&detail, cx, t).into_any_element());
             }
@@ -794,6 +814,7 @@ impl Root {
                     )
                     .child(self.detail_ref(&row, cx, &t)),
             )
+            .children(self.epic_ring(&row, &t))
             .child(div().flex_1())
             .child(self.top_actions(&row, cx, &t));
         let body = div()
@@ -805,6 +826,11 @@ impl Root {
             .pt(px(12.))
             .px(px(18.))
             .pb(px(40.))
+            .children(
+                detail
+                    .as_ref()
+                    .and_then(|detail| self.conflict_banner(detail, cx, &t)),
+            )
             .when(row.deleted, |body| body.child(self.deleted_banner(cx, &t)))
             .child(self.render_title(19., window, cx, &t))
             .child(self.render_props(&row, detail.as_ref(), cx, &t))

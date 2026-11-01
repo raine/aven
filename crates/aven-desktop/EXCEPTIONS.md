@@ -17,7 +17,7 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Rows measured to row 18 | Scenes | The list is virtual, so rows below the fold are never painted. `row-18` is the last fully visible measured row at 1440x900. | `scenes/manifest.toml` |
 | Narrow header alignment | Header | Header actions stay right-aligned at every width. The prototype packs them beside the title once the crumbs hide, which reads as an artefact of its collapsed spacer. | `queue-narrow.gpui.png` |
 | Done group in the queue | Queue list | The prototype drops a completed row at once. The app keeps it in a Done group at the end of the list until the user refreshes the view, by owner direction. | `queue-completed.gpui.png` beside `queue-completed.prototype.png` |
-| Controls owned by later phases | Header, palette, overflow menu | Review tasks, epics, marks and gist publishing arrive with workflows; Settings, Sync and About arrive with their phases. The capability map assigns each one. | `capabilities.toml` |
+| Controls owned by later phases | Header, palette, overflow menu | Settings, Sync and About arrive with their phases. The capability map assigns each one. | `capabilities.toml` |
 | Schedule dates are text fields | Schedule dialog | The kit has no native date picker. Each field accepts `YYYY-MM-DD` and the quick choices fill them in. | `schedule.gpui.png` |
 | Schedule saves in two writes | Schedule dialog | Core stores availability and due date through separate undoable writes, so one undo reverts the last of them. | `src/dialogs.rs` |
 | One label and one priority filter | Filter menu | Core's `TaskFilters` holds one of each, where the prototype keeps lists. | `queue-filtered.gpui.png` |
@@ -31,3 +31,8 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Fixture note and activity times | Details | The seed writes notes and history at seeding time, so they read `just now` and tie on time, where the prototype shows sample ages. Real notes order by their stored time. | `detail-notes.gpui.png` |
 | Status menu anchor from the keyboard | Status menu | `s` opens the menu at the Status property, beside the value it changes, where the prototype opens it under the row. | `menu-status.gpui.png` |
 | Completions landing in one list | Done group | Tasks completed faster than a list refresh keep list order among themselves, because the group orders by when each list first shows a task closed. | `src/session.rs` |
+| Template edit covers the description | Recurring detail | The prompt edits the text later tasks start from. Title, priority and labels of a series stay as they are; the terminal form that edits them is not rebuilt here. | `src/workflows.rs` |
+| Epics list has no groups | Epics | Core returns the Epics list ungrouped, so the prototype's three epic groups do not appear. | `epics.gpui.png` |
+| Series history starts empty in scenes | Recurring detail | Core records history as occurrences resolve, so the seeded series have no dated rows and refs are core's own. | `recurring-list.gpui.png` |
+| Row leaves on a local write only | List | A row that leaves through sync or another device goes at once, so a refresh never replays the motion. | `src/shell.rs` |
+| Review keys are modal | Triage | While a review runs only its own keys are live, so `t`, `d` or `a` cannot reach the list behind the card. | `src/actions.rs` |

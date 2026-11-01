@@ -508,3 +508,69 @@ height = 900
 gpui_keys = ["a", "k e p t space d r a f t", "escape", "a"]
 prototype_steps = ["openComposer()"]
 measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "epics"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v e"]
+prototype_steps = ["state.view='epics'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "epic-detail"
+theme = "dark"
+width = 1440
+height = 900
+gpui_select = "M3RK"
+prototype_steps = ["state.sel='M3RK'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "bulk-marks"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["space", "j", "space", "j", "space"]
+prototype_steps = ["state.marks=new Set(ordered().slice(0,3).map(t=>t.id))", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "composer-epic"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v e"]
+gpui_click = [942.0, 28.0]
+prototype_steps = ["state.view='epics'", "mount()", "document.querySelector('[data-a=newEpic]').click()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "recurring-list"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v u"]
+prototype_steps = ["state.view='recurring'", "mount()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "conflict-resolve"
+theme = "dark"
+width = 1440
+height = 900
+gpui_select = "9QWX"
+gpui_click = [1373.0, 122.0]
+prototype_steps = ["state.sel='9QWX'", "mount()", "openResolve()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "triage"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["v i"]
+gpui_click = [783.0, 28.0]
+prototype_steps = ["state.view='inbox'", "startTriage()"]
+measure = ["app", "nav", "main", "main-header"]

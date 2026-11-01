@@ -10,7 +10,7 @@ use gpui::{Bounds, ClipboardItem, Context, Pixels, Window, px, size};
 
 use crate::actions::*;
 use crate::adapter::{
-    Command, DeletedFilter, GroupBy, MetaFilter, PendingImage, TaskRow, ViewOrder,
+    Bulk, Command, DeletedFilter, GroupBy, MetaFilter, PendingImage, TaskRow, ViewOrder,
 };
 use crate::input::{self, PastedImage, clipboard_image};
 use crate::kit::*;
@@ -80,12 +80,28 @@ pub fn pasted_image(pasted: PastedImage) -> Option<PendingImage> {
 }
 
 impl Root {
+    /// The epic's focused child takes task keys ahead of the epic itself.
     fn target_id(&self) -> Option<TaskId> {
-        self.session.target().cloned()
+        self.session
+            .child
+            .clone()
+            .or(self.session.target().cloned())
+    }
+
+    /// The rows of the marks that take the next write, if any do.
+    pub(crate) fn marked_rows(&self) -> Vec<TaskRow> {
+        let targets = self.session.bulk_targets().unwrap_or_default();
+        let rows = targets
+            .iter()
+            .filter_map(|id| self.session.snapshot.row(id));
+        rows.cloned().collect()
     }
 
     fn target_row(&self) -> Option<TaskRow> {
-        self.session.target_row().cloned()
+        match &self.session.child {
+            Some(child) => self.session.snapshot.row(child).cloned(),
+            None => self.session.target_row().cloned(),
+        }
     }
 
     /// Where a menu about the target opens, unless a control asked for it.
@@ -98,7 +114,7 @@ impl Root {
     }
 
     /// Leaves what the task surfaces were doing for a new place in the list.
-    fn leave_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn leave_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_description(cx);
         self.commit_title(cx);
         self.keep_note_draft(cx);
@@ -237,7 +253,12 @@ impl Root {
     }
 
     pub(crate) fn expand(&mut self, _: &Expand, window: &mut Window, cx: &mut Context<Self>) {
-        if self.session.target().is_some() {
+        if self.session.snapshot.view.query == TaskQuery::Recurring {
+            self.open_series_current(window, cx);
+        } else if let Some(child) = self.session.child.clone() {
+            self.follow(child, window, cx);
+        } else if self.session.target().is_some() {
+            self.session.clear_marks();
             self.session.expanded = true;
             window.focus(&self.focus, cx);
             cx.notify();
@@ -259,10 +280,15 @@ impl Root {
     }
 
     pub(crate) fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.session.trail.is_empty() {
+        if !self.session.marks.is_empty() {
+            self.session.clear_marks();
+            cx.notify();
+        } else if !self.session.trail.is_empty() {
             self.trail_back(window, cx);
         } else if self.session.expanded {
             self.collapse(window, cx);
+        } else if self.session.child.take().is_some() {
+            cx.notify();
         } else if self.is_narrow() && self.details_open {
             self.details_open = false;
             cx.notify();
@@ -329,7 +355,9 @@ impl Root {
             .map(|(status, name)| {
                 let (id, status) = (id.clone(), *status);
                 Entry::new(*name, move |root, _, cx| {
-                    root.session.set_status(&id, status);
+                    if !root.session.bulk(Bulk::Status(status)) {
+                        root.session.set_status(&id, status);
+                    }
                     root.after_status_motion(cx);
                 })
                 .mark(Mark::Status(status))
@@ -359,7 +387,10 @@ impl Root {
             .map(|(priority, name)| {
                 let (id, priority) = (id.clone(), *priority);
                 Entry::new(*name, move |root, _, cx| {
-                    root.session.set_priority(&id, priority);
+                    if !root.session.bulk(Bulk::Priority(priority)) {
+                        root.session.set_priority(&id, priority);
+                        root.session.review_refined();
+                    }
                     root.repaint_after(crate::session::PRIORITY_DURATION, cx);
                 })
                 .mark(Mark::Priority(priority))
@@ -402,12 +433,14 @@ impl Root {
         let Some(row) = self.target_row() else {
             return;
         };
+        let marked = self.marked_rows();
         let linked = self
             .session
             .detail
             .as_ref()
             .is_some_and(|detail| detail.epic.is_some());
-        if row.is_epic || linked {
+        let epic = marked.iter().any(|row| row.is_epic);
+        if epic || (marked.is_empty() && (row.is_epic || linked)) {
             let message =
                 "Epic children stay in the epic's project. Remove them from the epic first.";
             self.session.show_toast(message.to_string(), None);
@@ -422,8 +455,10 @@ impl Root {
             .map(|project| {
                 let (id, key) = (row.id.clone(), project.key.clone());
                 Entry::new(project.name.clone(), move |root, _, _| {
-                    root.session
-                        .write(Command::SetProject(id.clone(), key.clone()));
+                    if !root.session.bulk(Bulk::Project(key.clone())) {
+                        root.session
+                            .write(Command::SetProject(id.clone(), key.clone()));
+                    }
                 })
                 .hint(project.prefix.clone())
                 .mark(Mark::Project(project.prefix.clone()))
@@ -450,22 +485,50 @@ impl Root {
             return;
         };
         let id = row.id.clone();
+        let marked = self.marked_rows();
+        let rows = if marked.is_empty() {
+            vec![row.clone()]
+        } else {
+            marked.clone()
+        };
+        let on_all = |label: &String| rows.iter().all(|row| row.labels.contains(label));
+        let on_some = |label: &String| rows.iter().any(|row| row.labels.contains(label));
+        // A label only some tasks carry stays as it is unless it gets checked.
+        let some: Vec<String> = (rows.iter().flat_map(|row| row.labels.iter()))
+            .filter(|label| !on_all(label))
+            .cloned()
+            .collect();
         let save: Rc<dyn Fn(&mut Root)> = Rc::new(move |root| {
             let labels = root.menu_checked();
-            root.session.write(Command::SetLabels(id.clone(), labels));
+            let partial = (some.iter())
+                .filter(|label| !labels.contains(label))
+                .cloned()
+                .collect();
+            let bulk = Bulk::Labels {
+                selected: labels.clone(),
+                partial,
+            };
+            if !root.session.bulk(bulk) {
+                root.session.write(Command::SetLabels(id.clone(), labels));
+            }
         });
         let entry = move |label: String, save: Rc<dyn Fn(&mut Root)>| {
             Entry::new(label, move |root, _, _| save(root))
         };
         let mut labels = self.session.snapshot.labels.clone();
-        labels.extend(row.labels.iter().cloned());
+        labels.extend(rows.iter().flat_map(|row| row.labels.iter().cloned()));
         labels.sort();
         labels.dedup();
         let entries = labels
             .into_iter()
             .map(|label| {
-                let checked = row.labels.contains(&label);
-                entry(label, save.clone()).checked(checked)
+                let hint = if on_some(&label) && !on_all(&label) {
+                    "Some"
+                } else {
+                    ""
+                };
+                let checked = on_all(&label);
+                entry(label, save.clone()).checked(checked).hint(hint)
             })
             .collect();
         let create = Rc::new(move |label: String| entry(label, save.clone()));
@@ -901,12 +964,19 @@ impl Root {
     ) {
         if let Some(id) = self.target_id() {
             self.leave_task(window, cx);
-            self.session.write(Command::SetDeleted(id, true));
+            if !self.session.bulk(Bulk::Deleted(true)) {
+                self.session.delete(&id);
+            }
             cx.notify();
         }
     }
 
     pub(crate) fn restore_task(&mut self, _: &RestoreTask, _: &mut Window, cx: &mut Context<Self>) {
+        if self.marked_rows().iter().any(|row| row.deleted) {
+            self.session.bulk(Bulk::Deleted(false));
+            cx.notify();
+            return;
+        }
         match self.target_row().filter(|row| row.deleted) {
             Some(row) => self.session.write(Command::SetDeleted(row.id, false)),
             None => self
@@ -1036,6 +1106,8 @@ impl Root {
                 Entry::action("Add note", "n", FocusNote),
                 Entry::action("Rename task", "e t", RenameTask),
                 Entry::action("Expand task", "↵", Expand),
+                Entry::action("Add to epic", "t c", AddToEpic),
+                Entry::action("Publish report as secret gist", "t g", PublishGist),
             ]);
             entries.push(if row.deleted {
                 Entry::action("Restore task", "t R", RestoreTask)
@@ -1049,7 +1121,13 @@ impl Root {
                 Entry::action("Copy task report as Markdown", "y m", CopyReport),
             ]);
         }
-        entries.push(Entry::head("Go to"));
+        entries.extend([
+            Entry::action("New epic", "", NewEpic),
+            Entry::action("Review tasks", "", ReviewTasks),
+            Entry::action("Mark all visible tasks", "t V", MarkVisible),
+            Entry::action("Clear marks", "t C", ClearMarks),
+            Entry::head("Go to"),
+        ]);
         for (query, name, _, key, _) in VIEWS {
             entries.push(Entry::action(format!("Go to {name}"), key, ShowView(query)));
         }

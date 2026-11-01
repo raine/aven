@@ -26,3 +26,4 @@ pub mod scene;
 pub mod session;
 pub mod shell;
 pub mod theme;
+mod workflows;

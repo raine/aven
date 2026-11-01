@@ -973,8 +973,10 @@ scenes = ["epic-detail"]
 [[capability]]
 id = "chord:t g"
 action = "Publish report as secret gist"
-operation = "host: gist command, prototype sample only"
-test_only = true
+operation = "host: gist command, run through the gh CLI"
+phase = "workflows"
+acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
+scenes = ["palette"]
 
 [[capability]]
 id = "chord:t l"
@@ -2165,9 +2167,9 @@ scenes = ["settings-sync"]
 id = "dialog:openSync.conf"
 action = "Review conflicts"
 operation = "aven_core::query conflicts view"
-phase = "workflows"
-acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
-scenes = ["conflict-resolve"]
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
 
 [[capability]]
 id = "dialog:openSync.dev"
@@ -2981,9 +2983,9 @@ scenes = ["search-results"]
 id = "listener:openSync.cf.click"
 action = "Review conflicts"
 operation = "aven_core::query conflicts view"
-phase = "workflows"
-acceptance = "Works through aven-core with a behaviour test, a scene and a real-input check."
-scenes = ["conflict-resolve"]
+phase = "settings-sync"
+acceptance = "Works against the disposable server with file-backed keys, with a test and a scene."
+scenes = ["settings-sync"]
 
 [[capability]]
 id = "listener:openSync.fix.click"

@@ -744,3 +744,142 @@ async fn natural_add_falls_back_to_the_project_in_scope() {
         .collect();
     assert_eq!(projects, ["scoped", "chosen"]);
 }
+
+#[tokio::test]
+async fn marks_only_survive_for_listed_rows_and_bulk_takes_exactly_them() {
+    let mut h = harness(&["One", "Two", "Three"]).await;
+    h.session.apply(h.list(0));
+    let snapshot = h.session.snapshot.clone();
+    let (one, two) = (row(&snapshot, "One"), row(&snapshot, "Two"));
+    h.session.select(row(&snapshot, "Three"));
+    h.session.toggle_mark(one.clone());
+    h.session.toggle_mark(two.clone());
+
+    let mut targets = h.session.bulk_targets().unwrap();
+    targets.sort();
+    let mut expected = vec![one.clone(), two.clone()];
+    expected.sort();
+    assert_eq!(targets, expected);
+
+    let mut smaller = snapshot.clone();
+    smaller.tasks.retain(|task| task.id != two);
+    for group in &mut smaller.groups {
+        group.rows = (0..smaller.tasks.len()).collect();
+    }
+    answer(&mut h, smaller);
+    assert_eq!(h.session.bulk_targets(), Some(vec![one]));
+}
+
+#[tokio::test]
+async fn clear_marks_leaves_the_selection_as_the_only_target() {
+    let mut h = harness(&["One", "Two"]).await;
+    h.session.apply(h.list(0));
+    let one = row(&h.session.snapshot, "One");
+    h.session.select(one.clone());
+    h.session.mark_visible();
+    assert_eq!(h.session.marks.len(), 2);
+    h.session.clear_marks();
+    assert_eq!(h.session.bulk_targets(), None);
+    assert_eq!(h.session.target(), Some(&one));
+    assert!(!h.session.bulk(aven_desktop::adapter::Bulk::Deleted(true)));
+}
+
+fn card(id: &TaskId, stale: bool) -> adapter::ReviewCard {
+    adapter::ReviewCard {
+        id: id.clone(),
+        why: "Untouched".to_string(),
+        stale,
+    }
+}
+
+#[tokio::test]
+async fn review_moves_on_after_a_decision_and_undo_returns_to_the_card() {
+    let mut h = harness(&["One", "Two"]).await;
+    let (one, two) = (
+        row(&h.session.snapshot, "One"),
+        row(&h.session.snapshot, "Two"),
+    );
+    h.session.toggle_mark(two.clone());
+    let cards = vec![card(&one, true), card(&two, true)];
+    h.session.apply(reply(0, ReplyBody::Review(cards, 0)));
+    assert!(h.session.marks.is_empty(), "marks wait out the review");
+    assert_eq!(h.session.review.as_ref().unwrap().at, 0);
+
+    h.session.review_keep();
+    let sent = h.take_requests();
+    assert!(
+        sent.iter()
+            .any(|request| request.command == Command::Keep(one.clone()))
+    );
+    assert_eq!(h.session.review.as_ref().unwrap().at, 1);
+
+    h.session.review_undo();
+    let sent = h.take_requests();
+    assert!(
+        sent.iter()
+            .any(|request| request.command == Command::Unkeep(one.clone()))
+    );
+    assert_eq!(h.session.review.as_ref().unwrap().at, 0);
+
+    h.session.exit_review();
+    assert!(h.session.review.is_none());
+    assert!(h.session.marks.contains(&two), "marks come back");
+    let toast = h.session.toast.as_ref().unwrap();
+    assert_eq!(toast.message, "left triage · 0 decided · 2 undecided");
+}
+
+#[tokio::test]
+async fn an_inbox_card_cannot_be_kept() {
+    let mut h = harness(&["One"]).await;
+    let one = row(&h.session.snapshot, "One");
+    h.session
+        .apply(reply(0, ReplyBody::Review(vec![card(&one, false)], 0)));
+    h.take_requests();
+    h.session.review_keep();
+    assert!(h.take_requests().is_empty());
+    assert_eq!(h.session.review.as_ref().unwrap().at, 0);
+}
+
+#[tokio::test]
+async fn a_ring_sweeps_only_for_a_local_write_and_never_when_reduced() {
+    let mut h = harness(&["Epic", "Other"]).await;
+    let epic = row(&h.session.snapshot, "Epic");
+    let progress = |done, open| adapter::EpicProgress {
+        done,
+        canceled: 0,
+        open,
+        current: None,
+    };
+    let with = |h: &Harness, done, open| {
+        let mut list = h.store_list();
+        let at = list.tasks.iter().position(|row| row.id == epic).unwrap();
+        list.tasks[at].epic = Some(progress(done, open));
+        list
+    };
+    let first = with(&h, 0, 2);
+    h.session.apply(reply(0, ReplyBody::List(Box::new(first))));
+
+    let outside = with(&h, 1, 1);
+    h.session
+        .apply(reply(0, ReplyBody::List(Box::new(outside))));
+    assert_eq!(
+        h.session.motion.ring(&epic),
+        None,
+        "not from another device"
+    );
+
+    let other = row(&h.session.snapshot, "Other");
+    h.session.set_status(&other, TaskStatus::Active);
+    let local = with(&h, 2, 0);
+    answer(&mut h, local);
+    assert_eq!(h.session.motion.ring(&epic).map(|(from, _)| from), Some(1));
+
+    h.session.motion.set_reduced(true);
+    h.session.set_status(&other, TaskStatus::Todo);
+    let local = with(&h, 0, 2);
+    answer(&mut h, local);
+    h.session.set_status(&other, TaskStatus::Active);
+    let local = with(&h, 1, 1);
+    answer(&mut h, local);
+    assert_eq!(h.session.motion.ring(&epic).map(|(from, _)| from), Some(1));
+}

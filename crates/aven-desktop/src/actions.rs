@@ -68,6 +68,24 @@ actions!(
         FullResults,
         SaveDescription,
         Accept,
+        ToggleMark,
+        ExtendMarksDown,
+        ExtendMarksUp,
+        MarkVisible,
+        ClearMarks,
+        FocusChild,
+        JumpToEpic,
+        AddToEpic,
+        NewEpic,
+        CycleLifecycle,
+        PublishGist,
+        ReviewTasks,
+        ReviewKeep,
+        ReviewSkip,
+        ReviewBack,
+        ReviewUndo,
+        ReviewExit,
+        ReviewNext,
     ]
 );
 
@@ -75,6 +93,11 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = aven, no_json)]
 pub struct ShowView(pub TaskQuery);
+
+/// Decides a review card with the status its key stands for.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = aven, no_json)]
+pub struct ReviewDecide(pub char);
 
 /// Every list the app can show: key, name, icon, chord key and hint.
 pub const VIEWS: [(TaskQuery, &str, &str, &str, &str); 15] = [
@@ -184,6 +207,7 @@ pub const CHORDS: [(&str, &[(&str, &str)]); 6] = [
             ("d", "Inspector"),
             ("b", "Sidebar"),
             ("B", "Jump to blocker"),
+            ("e", "Jump to epic"),
         ],
     ),
     (
@@ -215,6 +239,7 @@ pub const CHORDS: [(&str, &[(&str, &str)]); 6] = [
             ("p", "Priority"),
             ("m", "Metadata"),
             ("x", "Deleted"),
+            ("r", "Recurring state"),
             ("c", "Clear"),
         ],
     ),
@@ -239,6 +264,10 @@ pub const CHORDS: [(&str, &[(&str, &str)]); 6] = [
             ("B", "Blockers"),
             ("U", "Remove blocker"),
             ("l", "Related"),
+            ("c", "Epic"),
+            ("V", "Mark visible"),
+            ("C", "Clear marks"),
+            ("g", "Gist"),
         ],
     ),
     (
@@ -256,7 +285,8 @@ pub const CHORDS: [(&str, &[(&str, &str)]); 6] = [
 ];
 
 pub fn key_bindings() -> Vec<KeyBinding> {
-    let main = Some("Aven && !TextInput && !Overlay");
+    let main = Some("Aven && !TextInput && !Overlay && !Review");
+    let review = Some("Review && !TextInput && !Overlay");
     let dialog = Some("Dialog");
     let composer = Some("Composer");
     let composer_field = Some("Composer > TextInput");
@@ -284,6 +314,12 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("u", input::Undo, main),
         KeyBinding::new("cmd-z", input::Undo, main),
         KeyBinding::new("cmd-v", PasteImage, main),
+        KeyBinding::new("space", ToggleMark, main),
+        KeyBinding::new("J", ExtendMarksDown, main),
+        KeyBinding::new("shift-j", ExtendMarksDown, main),
+        KeyBinding::new("K", ExtendMarksUp, main),
+        KeyBinding::new("shift-k", ExtendMarksUp, main),
+        KeyBinding::new("c", FocusChild, main),
         KeyBinding::new("o", PickOrder, main),
         KeyBinding::new("/", OpenSearch, main),
         KeyBinding::new(":", OpenPalette, main),
@@ -307,18 +343,24 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("t shift-b", AddBlocker, main),
         KeyBinding::new("t shift-u", RemoveBlocker, main),
         KeyBinding::new("t l", AddRelated, main),
+        KeyBinding::new("t c", AddToEpic, main),
+        KeyBinding::new("t shift-v", MarkVisible, main),
+        KeyBinding::new("t shift-c", ClearMarks, main),
+        KeyBinding::new("t g", PublishGist, main),
         KeyBinding::new("g a", AllProjects, main),
         KeyBinding::new("g p", PickProject, main),
         KeyBinding::new("g w", PickWorkspace, main),
         KeyBinding::new("g b", ToggleSidebar, main),
         KeyBinding::new("g d", ToggleDetails, main),
         KeyBinding::new("g shift-b", JumpToBlocker, main),
+        KeyBinding::new("g e", JumpToEpic, main),
         KeyBinding::new("v l", ToggleLayout, main),
         KeyBinding::new("v s", ShowView(TaskQuery::Search), main),
         KeyBinding::new("f l", PickFilter, main),
         KeyBinding::new("f p", PickFilter, main),
         KeyBinding::new("f m", PickFilter, main),
         KeyBinding::new("f x", CycleDeleted, main),
+        KeyBinding::new("f r", CycleLifecycle, main),
         KeyBinding::new("f c", ClearFilters, main),
         KeyBinding::new("y r", CopyRef, main),
         KeyBinding::new("y i", CopyId, main),
@@ -327,6 +369,20 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("y a", CopyTitleAndDescription, main),
         KeyBinding::new("y n", CopyNotes, main),
         KeyBinding::new("y m", CopyReport, main),
+        KeyBinding::new("t", ReviewDecide('t'), review),
+        KeyBinding::new("b", ReviewDecide('b'), review),
+        KeyBinding::new("a", ReviewDecide('a'), review),
+        KeyBinding::new("d", ReviewDecide('d'), review),
+        KeyBinding::new("x", ReviewDecide('x'), review),
+        KeyBinding::new("k", ReviewKeep, review),
+        KeyBinding::new("p", ReviewBack, review),
+        KeyBinding::new("u", ReviewUndo, review),
+        KeyBinding::new("space", ReviewSkip, review),
+        KeyBinding::new("escape", ReviewExit, review),
+        KeyBinding::new("enter", ReviewNext, review),
+        KeyBinding::new("!", ChangePriority, review),
+        KeyBinding::new("shift-1", ChangePriority, review),
+        KeyBinding::new("e", EditAvailability, review),
         KeyBinding::new("cmd-enter", CreateTask, composer),
         KeyBinding::new("ctrl-enter", CreateTask, composer),
         KeyBinding::new("ctrl-s", CreateTask, composer),
@@ -355,6 +411,8 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Task", NewTask),
+            MenuItem::action("New Epic", NewEpic),
+            MenuItem::action("Review Tasks", ReviewTasks),
             MenuItem::separator(),
             MenuItem::action("Close Window", CloseWindow),
         ]),
@@ -394,6 +452,11 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Copy Ref", CopyRef),
             MenuItem::action("Copy Task Report", CopyReport),
+            MenuItem::action("Publish as Secret Gist…", PublishGist),
+            MenuItem::separator(),
+            MenuItem::action("Add to Epic…", AddToEpic),
+            MenuItem::action("Mark All Visible", MarkVisible),
+            MenuItem::action("Clear Marks", ClearMarks),
             MenuItem::separator(),
             MenuItem::action("Delete", DeleteTask),
             MenuItem::action("Restore", RestoreTask),

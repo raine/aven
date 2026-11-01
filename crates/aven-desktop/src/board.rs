@@ -49,7 +49,8 @@ impl Root {
             title: row.title.clone(),
             position: Point::default(),
         };
-        let ring = if selected { t.accent } else { t.line };
+        let marked = self.session.marks.contains(&row.id);
+        let ring = if selected || marked { t.accent } else { t.line };
         div()
             .id(gpui::ElementId::Name(format!("card-{}", row.id).into()))
             .role(Role::ListItem)

@@ -5,7 +5,9 @@ use std::rc::Rc;
 
 use accesskit::Role;
 use aven_core::ids::TaskId;
+use aven_core::recurrence::RecurrenceSeriesId;
 use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
+use aven_host::store::ConflictTarget;
 use aven_host::time_input::{
     available_at_error_message, due_on_error_message, parse_available_at_input, parse_due_on_input,
 };
@@ -17,7 +19,7 @@ use gpui::{
 };
 
 use crate::actions::*;
-use crate::adapter::{Command, Image, SearchHit, SearchInput};
+use crate::adapter::{Bulk, Command, Image, SearchHit, SearchInput};
 use crate::draft::{dates_preview, schedule_preview};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
@@ -57,6 +59,11 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Priority", "!"),
             ("Done", "d"),
             ("Canceled", "x"),
+            ("Mark", "Space"),
+            ("Extend marks", "⇧J / ⇧K"),
+            ("Mark visible", "t V"),
+            ("Clear marks", "t C"),
+            ("Add to epic", "t c"),
             ("Note", "n"),
             ("Undo", "u"),
             ("Title", "e t"),
@@ -119,6 +126,7 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Description", "y d"),
             ("Notes", "y n"),
             ("Report", "y m"),
+            ("Secret gist", "t g"),
             ("This help", "?"),
         ],
     ),
@@ -139,6 +147,22 @@ pub enum Dialog {
         due: Entity<Editor>,
         base: (String, String),
         error: Option<String>,
+    },
+    /// What becomes of a stopped series' current task.
+    Stop {
+        id: RecurrenceSeriesId,
+        title: String,
+        current: String,
+    },
+    /// One task's conflicts, walked field by field.
+    Resolve {
+        targets: Vec<ConflictTarget>,
+        at: usize,
+        input: Entity<Editor>,
+        chosen: Option<usize>,
+    },
+    Gist {
+        id: TaskId,
     },
     Prompt {
         title: String,
@@ -201,7 +225,7 @@ impl Root {
         self.dialog.is_some()
     }
 
-    fn open_dialog(
+    pub(crate) fn open_dialog(
         &mut self,
         dialog: Dialog,
         editors: Vec<Entity<Editor>>,
@@ -465,12 +489,17 @@ impl Root {
         };
         let detail = self.session.detail.as_ref();
         let at = detail.and_then(|detail| detail.available_at.as_deref());
-        let base = (
-            at.map(local_field).unwrap_or_default(),
-            detail
-                .and_then(|detail| detail.due_on.clone())
-                .unwrap_or_default(),
-        );
+        // Marked tasks share no dates, so only what gets typed is written.
+        let base = if self.session.bulk_panel() {
+            (String::new(), String::new())
+        } else {
+            (
+                at.map(local_field).unwrap_or_default(),
+                detail
+                    .and_then(|detail| detail.due_on.clone())
+                    .unwrap_or_default(),
+            )
+        };
         let field_editor = |value: &str,
                             placeholder: &'static str,
                             window: &mut Window,
@@ -575,11 +604,19 @@ impl Root {
                 }) = self.dialog.as_ref()
                     && (available_at.is_some() || due_on.is_some())
                 {
-                    self.session.write(Command::SetSchedule {
-                        id: id.clone(),
-                        available_at,
-                        due_on,
-                    });
+                    let bulk = Bulk::Schedule {
+                        available_at: available_at.clone(),
+                        due_on: due_on.clone(),
+                    };
+                    let id = id.clone();
+                    if !self.session.bulk(bulk) {
+                        self.session.write(Command::SetSchedule {
+                            id,
+                            available_at,
+                            due_on,
+                        });
+                    }
+                    self.session.review_deferred();
                 }
                 self.close_dialog(window, cx);
             }
@@ -610,8 +647,24 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_prompt_in(Mode::Single, title, label, hint, value, save, window, cx);
+    }
+
+    /// A prompt in a given editor mode, for text that may span lines.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_prompt_in(
+        &mut self,
+        mode: Mode,
+        title: String,
+        label: &'static str,
+        hint: &'static str,
+        value: &str,
+        save: Save,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let input = cx.new(|cx| {
-            let mut editor = Editor::new(Mode::Single, "", window, cx);
+            let mut editor = Editor::new(mode, "", window, cx);
             editor.set_text(value, cx);
             editor.select_all_text(cx);
             editor
@@ -749,7 +802,11 @@ impl Root {
                 save(self, text, window, cx);
             }
             Dialog::Image { .. } => self.close_image(window, cx),
-            Dialog::Help | Dialog::Incoming { .. } => self.close_dialog(window, cx),
+            Dialog::Help
+            | Dialog::Incoming { .. }
+            | Dialog::Stop { .. }
+            | Dialog::Resolve { .. }
+            | Dialog::Gist { .. } => self.close_dialog(window, cx),
         }
     }
 
@@ -1399,6 +1456,14 @@ impl Root {
                 "Dialog",
             ),
             Dialog::Prompt { .. } => ("Edit", NARROW_WIDTH, self.render_prompt(cx, &t), "Dialog"),
+            Dialog::Stop { .. } => ("Stop", NARROW_WIDTH, self.render_stop(cx, &t), "Dialog"),
+            Dialog::Gist { .. } => ("Gist", NARROW_WIDTH, self.render_gist(cx, &t), "Dialog"),
+            Dialog::Resolve { .. } => (
+                "Resolve conflict",
+                DIALOG_WIDTH,
+                self.render_resolve(cx, &t),
+                "Dialog",
+            ),
             Dialog::Image { .. } => ("Image", DIALOG_WIDTH, self.render_image(cx, &t), "Dialog"),
             Dialog::Help => (
                 "Keyboard shortcuts",

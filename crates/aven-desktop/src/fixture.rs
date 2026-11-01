@@ -13,11 +13,14 @@ use aven_core::choices::TaskSource;
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
 use aven_core::metadata::TaskMetadataInput;
-use aven_core::operations::TaskDraft;
+use aven_core::operations::{CreateRecurrenceSeriesParams, TaskDraft};
 use aven_core::workspaces::Workspace;
+use aven_host::store::recurrence_draft;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeDelta, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::draft::recurrence_schedule;
 
 const MINUTE_FORMAT: &str = "%Y-%m-%dT%H:%M";
 const DAY_FORMAT: &str = "%Y-%m-%d";
@@ -37,6 +40,8 @@ pub struct Fixture {
 #[serde(rename_all = "camelCase")]
 struct FixtureTask {
     id: String,
+    #[serde(default)]
+    conflicts: Vec<FixtureConflict>,
     project: String,
     title: String,
     status: String,
@@ -61,8 +66,33 @@ struct FixtureTask {
 }
 
 #[derive(Debug, Deserialize)]
+struct FixtureConflict {
+    field: String,
+    values: Vec<FixtureValue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureValue {
+    device: String,
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureSeries {
+    title: String,
+    project: String,
+    schedule: String,
+    state: String,
+    body: String,
+    #[serde(rename = "currentId")]
+    current: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FixtureData {
     tasks: Vec<FixtureTask>,
+    #[serde(default)]
+    series: Vec<FixtureSeries>,
     workspaces: BTreeMap<String, String>,
     projects: BTreeMap<String, (String, String, String)>,
 }
@@ -169,9 +199,9 @@ fn source(name: Option<&str>) -> TaskSource {
 
 /// Loads shifted fixture data through core. Only timestamps go through SQL,
 /// because core stamps them on write and scenes need them in the past.
-///
-/// Conflicts and recurrence series are not seeded yet, so the prototype's copy
-/// drops them too and both sides keep the same state.
+/// Conflicts are stored as sync leaves them, since nothing else creates one.
+/// A series' dated history is the prototype's alone: core only records it as
+/// occurrences resolve.
 pub async fn seed(database: &Database, shifted: &Value) -> Result<Seeded> {
     let data: FixtureData = serde_json::from_value(shifted.clone()).context("read fixture")?;
     let mut workspaces = BTreeMap::new();
@@ -193,7 +223,49 @@ pub async fn seed(database: &Database, shifted: &Value) -> Result<Seeded> {
 
     let workspace_of = |task: &FixtureTask| &workspaces[&data.projects[&task.project].1];
     let mut ids = BTreeMap::new();
+    for series in &data.series {
+        let task = series
+            .current
+            .as_ref()
+            .and_then(|current| data.tasks.iter().find(|task| task.id == *current));
+        let workspace = &workspaces[&data.projects[&series.project].1];
+        let schedule = series.schedule.to_lowercase().replace(", no due", "");
+        let created = database
+            .create_recurrence_series(
+                workspace,
+                CreateRecurrenceSeriesParams::new(recurrence_draft(
+                    series.title.clone(),
+                    series.body.clone(),
+                    Some(data.projects[&series.project].0.clone()),
+                    task.map_or(PRIORITIES[0], |task| PRIORITIES[task.pri])
+                        .to_string(),
+                    task.map_or("todo", |task| &task.status).to_string(),
+                    task.map_or_else(Vec::new, |task| task.labels.clone()),
+                    recurrence_schedule(&schedule)?,
+                ))
+                .with_create_missing_labels(),
+            )
+            .await
+            .with_context(|| format!("create series {}", series.title))?;
+        if let Some(task) = task {
+            ids.insert(task.id.clone(), created.task.id.clone());
+        }
+        match series.state.as_str() {
+            "paused" => {
+                let id = &created.series.id;
+                database.pause_recurrence_series(workspace, id).await?;
+            }
+            "stopped" => {
+                let id = &created.series.id;
+                database.stop_recurrence_series(workspace, id, true).await?;
+            }
+            _ => {}
+        }
+    }
     for task in &data.tasks {
+        if ids.contains_key(&task.id) {
+            continue;
+        }
         let workspace = workspace_of(task);
         for label in &task.labels {
             database.create_label(workspace, label).await.ok();
@@ -265,6 +337,46 @@ pub async fn seed(database: &Database, shifted: &Value) -> Result<Seeded> {
     }
 
     let pool = aven_core::test_support::pool(database);
+    // A series schedules its occurrence from today; the fixture's dates win.
+    for task in data.tasks.iter().filter(|task| {
+        let current = |series: &FixtureSeries| series.current.as_ref() == Some(&task.id);
+        data.series.iter().any(current)
+    }) {
+        sqlx::query("UPDATE tasks SET available_at = ?, due_on = ? WHERE id = ?")
+            .bind(utc(task.available_at.as_ref().unwrap_or(&task.created_at))?)
+            .bind(&task.due)
+            .bind(&ids[&task.id])
+            .execute(&pool)
+            .await?;
+    }
+    for task in &data.tasks {
+        for conflict in &task.conflicts {
+            let [local, remote] = &conflict.values[..] else {
+                bail!("conflict on {} needs two values", task.id);
+            };
+            sqlx::query(
+                "INSERT INTO conflicts(workspace_id, task_id, field, base_version, local_value,
+                 remote_value, local_change_id, remote_change_id, variant_a, variant_b,
+                 created_at, resolved)
+                 VALUES (?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, 0)",
+            )
+            .bind(&workspace_of(task).id)
+            .bind(&ids[&task.id])
+            .bind(if conflict.field == "body" {
+                "description"
+            } else {
+                &conflict.field
+            })
+            .bind(&local.value)
+            .bind(&remote.value)
+            .bind(aven_core::ids::new_id())
+            .bind(&local.device)
+            .bind(&remote.device)
+            .bind(aven_core::ids::now())
+            .execute(&pool)
+            .await?;
+        }
+    }
     for task in &data.tasks {
         sqlx::query(
             "UPDATE tasks SET created_at = ?, updated_at = ?, queue_activity_at = ? WHERE id = ?",
@@ -297,13 +409,6 @@ pub async fn seed(database: &Database, shifted: &Value) -> Result<Seeded> {
     }
     let mut prototype_data = shifted.clone();
     rename_ids(&mut prototype_data, &suffixes);
-    prototype_data["series"] = Value::Array(Vec::new());
-    for task in prototype_data["tasks"].as_array_mut().into_iter().flatten() {
-        task["conflicts"] = Value::Array(Vec::new());
-        if let Some(fields) = task.as_object_mut() {
-            fields.remove("rcr");
-        }
-    }
 
     let workspace = workspaces
         .get("personal")
