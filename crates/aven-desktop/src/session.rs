@@ -1,6 +1,6 @@
 //! The app's state above the store: selection, drafts, request identity, messages
 //! and motion bookkeeping. It has no GPUI types, so behaviour tests need no window.
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -1573,9 +1573,13 @@ impl Session {
     /// Starts what a local write's list earns: rings for epics whose children
     /// moved, and All clear for the row that was the last.
     fn start_list_motion(&mut self, before: &Snapshot) {
+        let epics: HashMap<&TaskId, _> = before
+            .tasks
+            .iter()
+            .filter_map(|row| Some((&row.id, row.epic.as_ref()?)))
+            .collect();
         for row in &self.snapshot.tasks {
-            let was = before.row(&row.id).and_then(|row| row.epic.as_ref());
-            if let (Some(now), Some(was)) = (&row.epic, was)
+            if let (Some(now), Some(was)) = (&row.epic, epics.get(&row.id))
                 && now.total() - now.open != was.total() - was.open
             {
                 self.motion.ring_changed(&row.id, was.total() - was.open);
@@ -1629,10 +1633,8 @@ impl Session {
         let replaced = std::mem::replace(&mut self.snapshot, list);
         if applied.moved.is_some() {
             self.start_list_motion(&replaced);
-            let gone = replaced
-                .tasks
-                .iter()
-                .filter(|row| self.snapshot.row(&row.id).is_none());
+            let kept: HashSet<&TaskId> = self.snapshot.tasks.iter().map(|row| &row.id).collect();
+            let gone = replaced.tasks.iter().filter(|row| !kept.contains(&row.id));
             applied.left = gone.cloned().collect();
         }
         self.prune_marks();
