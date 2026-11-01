@@ -115,6 +115,7 @@ pub struct ProjectPathMappingEdit<'a> {
     pub workspace: &'a str,
     pub project: &'a str,
     pub path: PathBuf,
+    pub move_existing: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -135,14 +136,64 @@ pub fn check_project_path_write(path: &Path, edit: &ProjectPathMappingEdit<'_>) 
     ))
 }
 
-pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<()> {
+pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result<Option<String>> {
     check_project_path_write(path, &edit)?;
     let text = read_config_text(path)?;
     let text = mark_scoped_project_overrides(&text);
     let (text, mut entries) = remove_managed_entries(&text)?;
+    // Entries left after removing managed blocks must never be rewritten.
+    let unmanaged: serde_json::Value = serde_saphyr::from_str(&text)?;
+    if let Some(overrides) = unmanaged["project"]["overrides"].as_array() {
+        for value in overrides {
+            let entry: crate::config::ProjectOverrideConfig =
+                serde_json::from_value(value.clone())?;
+            if entry.matches_workspace(Some(edit.workspace_id), Some(edit.workspace))
+                && entry
+                    .paths
+                    .iter()
+                    .any(|path| same_project_path(path, &edit.path))
+            {
+                bail!(
+                    "path {:?} is already mapped to project {} by an unmanaged override; edit project.overrides manually (cannot use --move)",
+                    edit.path,
+                    entry.project_key()
+                );
+            }
+        }
+    }
+    let mut previous_owners = Vec::new();
+    let mut already_owned = false;
+    for entry in &entries {
+        if &entry.workspace_id != edit.workspace_id
+            || !entry
+                .paths
+                .iter()
+                .any(|path| same_project_path(path, &edit.path))
+        {
+            continue;
+        }
+        let owner = crate::projects::normalize_key(&entry.project);
+        if owner == edit.project {
+            already_owned = true;
+        } else if !previous_owners.contains(&owner) {
+            previous_owners.push(owner);
+        }
+    }
+    if !previous_owners.is_empty() && !edit.move_existing {
+        bail!(
+            "path {:?} is already mapped to project {}; use --move to reassign it",
+            edit.path,
+            previous_owners.join(", ")
+        );
+    }
+    if already_owned && previous_owners.is_empty() {
+        return Ok(None);
+    }
     for entry in &mut entries {
         if &entry.workspace_id == edit.workspace_id {
-            entry.paths.retain(|path| path != &edit.path);
+            entry
+                .paths
+                .retain(|path| !same_project_path(path, &edit.path));
         }
     }
     entries.retain(|entry| !entry.paths.is_empty());
@@ -159,7 +210,16 @@ pub fn add_project_path(path: &Path, edit: ProjectPathMappingEdit<'_>) -> Result
             paths: vec![edit.path],
         });
     }
-    write_edited_config(path, append_managed_entries(&text, &entries)?)
+    write_edited_config(path, append_managed_entries(&text, &entries)?)?;
+    Ok((!previous_owners.is_empty()).then(|| previous_owners.join(",")))
+}
+
+fn same_project_path(left: &Path, right: &Path) -> bool {
+    let resolve = |path: &Path| {
+        let expanded = crate::config::expand_tilde(path).unwrap_or_else(|_| path.to_path_buf());
+        fs::canonicalize(&expanded).unwrap_or(expanded)
+    };
+    resolve(left) == resolve(right)
 }
 
 pub fn remove_project_path(
@@ -477,6 +537,7 @@ mod tests {
             workspace: "default",
             project: "app",
             path: mapped.clone(),
+            move_existing: false,
         };
         add_project_path(&source, edit.clone()).unwrap();
         let original = fs::read_to_string(&source).unwrap();
@@ -499,6 +560,102 @@ mod tests {
         assert!(!rename_project_path(&path, &workspace_id, "absent", "new").unwrap());
         assert_eq!(fs::read_to_string(&source).unwrap(), original);
         assert_eq!(fs::read_link(&path).unwrap(), source);
+    }
+
+    #[test]
+    fn path_ownership_respects_canonical_paths_and_workspace_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.yaml");
+        let mapped = dir.path().join("repo");
+        fs::create_dir_all(mapped.join("child")).unwrap();
+        let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
+        let other_id: WorkspaceId = "0000000000000001".parse().unwrap();
+        let edit = |project, move_existing| ProjectPathMappingEdit {
+            workspace_id: &workspace_id,
+            workspace: "default",
+            project,
+            path: mapped.join("child/.."),
+            move_existing,
+        };
+        // Scoped entries starting with workspace_id are managed even without a marker.
+        let original = format!(
+            "project:\n  overrides:\n    - workspace_id: '{}'\n      project: first\n      paths: [{}]\n    - project: unrelated\n      workspace: elsewhere\n      paths: [{}]\n",
+            workspace_id,
+            yaml_scalar(mapped.to_str().unwrap()),
+            yaml_scalar(mapped.to_str().unwrap())
+        );
+        fs::write(&config, &original).unwrap();
+        assert!(
+            add_project_path(&config, edit("second", false))
+                .unwrap_err()
+                .to_string()
+                .contains("first")
+        );
+        assert_eq!(fs::read_to_string(&config).unwrap(), original);
+        assert_eq!(
+            add_project_path(&config, edit("first", true)).unwrap(),
+            None
+        );
+        assert_eq!(fs::read_to_string(&config).unwrap(), original);
+        assert_eq!(
+            add_project_path(&config, edit("second", true))
+                .unwrap()
+                .as_deref(),
+            Some("first")
+        );
+        let mut other = edit("third", false);
+        other.workspace_id = &other_id;
+        other.workspace = "other";
+        assert_eq!(add_project_path(&config, other).unwrap(), None);
+        let parsed = AppConfig::load_from_path(&config).unwrap();
+        let owners: Vec<_> = parsed
+            .project
+            .overrides
+            .iter()
+            .map(|entry| (entry.project_key(), entry.workspace_id.clone()))
+            .collect();
+        assert_eq!(
+            owners,
+            vec![
+                ("unrelated".into(), None),
+                ("second".into(), Some(workspace_id.clone())),
+                ("third".into(), Some(other_id)),
+            ]
+        );
+    }
+
+    #[test]
+    fn unmanaged_path_conflicts_fail_closed_in_matching_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("child")).unwrap();
+        let config = dir.path().join("config.yaml");
+        let workspace_id: WorkspaceId = "0000000000000000".parse().unwrap();
+        for scope in [
+            "",
+            "      workspace: default\n",
+            "      workspace_id: '0000000000000000'\n",
+        ] {
+            let original = format!(
+                "project:\n  overrides:\n    - project: first\n{scope}      paths: [{}]\n",
+                yaml_scalar(dir.path().to_str().unwrap())
+            );
+            fs::write(&config, &original).unwrap();
+            for move_existing in [false, true] {
+                let error = add_project_path(
+                    &config,
+                    ProjectPathMappingEdit {
+                        workspace_id: &workspace_id,
+                        workspace: "default",
+                        project: "second",
+                        path: dir.path().join("child/.."),
+                        move_existing,
+                    },
+                )
+                .unwrap_err();
+                assert!(error.to_string().contains("unmanaged override"));
+                assert_eq!(fs::read_to_string(&config).unwrap(), original);
+            }
+        }
     }
 
     #[test]
@@ -555,8 +712,10 @@ mod tests {
                     workspace: "default",
                     project: "other",
                     path: PathBuf::from("/other"),
+                    move_existing: false,
                 },
-            ),
+            )
+            .map(|_| ()),
             remove_project_path(&path, &workspace_id, "app", &[PathBuf::from("/app")]).map(|_| ()),
             rename_project_path(&path, &workspace_id, "app", "renamed").map(|_| ()),
         ] {

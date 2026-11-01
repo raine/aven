@@ -816,7 +816,7 @@ aven project create <name> [--prefix <prefix>] [--path <path>]
 aven project delete <project>
 aven project list [--search <text>] [--limit <number>] [--json]
 aven project rename <project> <new-name> [--prefix <prefix>]
-aven project path add <project> <path>
+aven project path add <project> <path> [--move]
 aven project path remove <project> <path>
 aven project path list [project]
 ```
@@ -844,6 +844,10 @@ Updates the project's name, normalized key, and display prefix while preserving 
 #### `project path`
 
 `add` and `remove` update managed path mappings in the config file. Paths are canonicalized. `list` prints all mappings or only mappings for the optional project.
+
+A path belongs to one project per workspace. `add` refuses conflicts without changing the config. Use `--move` to reassign a managed mapping; the output includes `moved-from=<old-project>`. Re-adding a managed path to its current project is a no-op. Unmanaged overrides must be edited manually, even with `--move`.
+
+For monorepos, map subdirectories to separate projects. The deepest matching path wins, and a current-directory match takes precedence over a Git-root match.
 
 ```sh
 aven project create "Aven docs" --prefix DOCS --path ~/code/aven/docs

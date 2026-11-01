@@ -185,9 +185,14 @@ impl TuiStore {
     }
 
     pub async fn add_project_path(&self, project: &str, path: &Path) -> Result<String> {
-        let outcome =
-            add_project_path_operation(&self.database, &self.active_workspace, project, path)
-                .await?;
+        let outcome = add_project_path_operation(
+            &self.database,
+            &self.active_workspace,
+            project,
+            path,
+            false,
+        )
+        .await?;
         Ok(format!("added project path for {}", outcome.project.key))
     }
 

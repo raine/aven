@@ -71,14 +71,24 @@ pub(crate) async fn cmd_project(
             }
         }
         ProjectSubcommand::Path { command } => match command {
-            ProjectPathSubcommand::Add { project, path } => {
+            ProjectPathSubcommand::Add {
+                project,
+                path,
+                move_existing,
+            } => {
                 let outcome =
-                    add_project_path_operation(database, workspace, &project, &path).await?;
+                    add_project_path_operation(database, workspace, &project, &path, move_existing)
+                        .await?;
                 println!(
-                    "added-project-path {} path={} config={}",
+                    "added-project-path {} path={} config={}{}",
                     outcome.project.key,
                     quote(&outcome.path),
-                    quote(&outcome.config_path.display().to_string())
+                    quote(&outcome.config_path.display().to_string()),
+                    outcome
+                        .moved_from
+                        .as_ref()
+                        .map(|owner| format!(" moved-from={owner}"))
+                        .unwrap_or_default()
                 );
             }
             ProjectPathSubcommand::Remove { project, path } => {
