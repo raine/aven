@@ -686,6 +686,8 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Opens on mouse down, where the root would otherwise retake focus from the menu.
+        window.prevent_default();
         self.select(id.clone(), window, cx);
         let Some(row) = self.session.snapshot.row(&id).cloned() else {
             return;
