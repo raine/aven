@@ -67,6 +67,8 @@ pub(super) async fn epic_rollups_for_tasks(
         .format("%Y-%m-%d")
         .to_string();
     for chunk in task_ids.chunks(super::SQLITE_BIND_CHUNK_SIZE) {
+        // CROSS JOIN pins the dependency rows as the outer loop; otherwise the
+        // planner can scan every task in the workspace for each epic child.
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT l.epic_task_id,
                     COUNT(*) AS total,
@@ -75,7 +77,7 @@ pub(super) async fn epic_rollups_for_tasks(
                     SUM(CASE WHEN t.status = 'canceled' THEN 1 ELSE 0 END) AS canceled,
                     SUM(CASE WHEN t.status NOT IN ('done', 'canceled') AND EXISTS (
                         SELECT 1 FROM task_dependencies d
-                        JOIN tasks blocker
+                        CROSS JOIN tasks blocker
                           ON blocker.workspace_id = d.workspace_id
                          AND blocker.id = d.depends_on_task_id
                         WHERE d.workspace_id = t.workspace_id
@@ -96,7 +98,7 @@ pub(super) async fn epic_rollups_for_tasks(
         query.push(
             ") AND NOT EXISTS (
                         SELECT 1 FROM task_dependencies d
-                        JOIN tasks blocker
+                        CROSS JOIN tasks blocker
                           ON blocker.workspace_id = d.workspace_id
                          AND blocker.id = d.depends_on_task_id
                         WHERE d.workspace_id = t.workspace_id
