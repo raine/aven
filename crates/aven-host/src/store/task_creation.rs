@@ -123,7 +123,7 @@ impl TuiStore {
         mut draft: TaskDraft,
         current_selected_index: Option<usize>,
     ) -> Result<TaskCreationCompletion> {
-        draft.source = TaskSource::Tui;
+        draft.source = self.task_source;
         if draft.project.is_none() {
             draft.project = self.inferred_add_project().await?;
         }
@@ -158,7 +158,7 @@ impl TuiStore {
         current_selected_index: Option<usize>,
         epic: &super::EpicContext,
     ) -> Result<(String, Option<usize>, crate::ids::TaskId)> {
-        draft.source = TaskSource::Tui;
+        draft.source = self.task_source;
         draft.project = Some(epic.project_key.clone());
         let outcome = self
             .database
@@ -221,7 +221,7 @@ impl TuiStore {
         lifecycle_policy: crate::attachments::lifecycle::LifecyclePolicy,
         attachments: Vec<PendingTaskAttachment>,
     ) -> Result<TaskCreationCompletion> {
-        draft.source = TaskSource::Tui;
+        draft.source = self.task_source;
         if draft.project.is_none() {
             draft.project = self.inferred_add_project().await?;
         }
@@ -273,7 +273,7 @@ impl TuiStore {
         attachments: Vec<PendingTaskAttachment>,
         epic: &super::EpicContext,
     ) -> Result<(String, Option<usize>, crate::ids::TaskId)> {
-        draft.source = TaskSource::Tui;
+        draft.source = self.task_source;
         draft.project = Some(epic.project_key.clone());
         let attachment_ids = attachments
             .iter()

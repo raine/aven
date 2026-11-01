@@ -90,6 +90,8 @@ pub struct TuiStore {
     pub db_stats: TuiDatabaseStats,
     /// A manual sync or a Sync dialog operation is running.
     pub sync_busy: bool,
+    /// What tasks created through this store record as their origin.
+    pub task_source: aven_core::choices::TaskSource,
     refresh_health: RefreshHealth,
     /// Name of an active workspace that a refresh found deleted and replaced
     /// with the default workspace, until the app reports it.
@@ -262,6 +264,7 @@ impl TuiStore {
             columns_preview_visible: true,
             db_stats: TuiDatabaseStats::default(),
             sync_busy: false,
+            task_source: aven_core::choices::TaskSource::Tui,
             refresh_health: RefreshHealth::Healthy,
             deleted_active_workspace: None,
             #[cfg(any(test, feature = "test-support"))]

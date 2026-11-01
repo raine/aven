@@ -69,6 +69,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CLOCK_INTERVAL: Duration = Duration::from_secs(60);
 /// Coalesces a burst of local changes into one sync round.
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(700);
+/// How often a quit looks at user-started sync work.
+const QUIT_POLL: Duration = Duration::from_millis(50);
 
 /// The prototype's name and hint for each store group.
 const GROUP_NAMES: [(&str, &str, &str); 10] = [
@@ -713,6 +715,15 @@ pub enum Command {
     /// Restores an archive to a new database and opens it.
     Restore(PathBuf),
     OpenDatabase(PathBuf),
+    /// Goes back to what the last run showed, skipping what no longer exists.
+    ReopenView {
+        query: Option<TaskQuery>,
+        project: Option<String>,
+        columns: bool,
+        selected: Option<TaskId>,
+    },
+    /// Finishes queued work and stops sync between rounds.
+    Quit,
 }
 
 /// The task fields that can be copied.
@@ -738,6 +749,8 @@ impl Command {
                 | Self::Export
                 | Self::Restore(_)
                 | Self::OpenDatabase(_)
+                | Self::ReopenView { .. }
+                | Self::Quit
         )
     }
 }
@@ -787,6 +800,8 @@ pub enum ReplyBody {
     Select(TaskId),
     /// A notice that is not about a write.
     Notice(String),
+    /// Queued work is done and sync has stopped, so the app can exit.
+    Stopped,
     /// The write did not happen, so the command can run again.
     SaveFailed(Command, String),
     /// The write happened but the view is behind. Only a refresh may follow.
@@ -1379,11 +1394,12 @@ fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> 
         })
         .collect();
     lines.truncate(4);
-    let source = item.task.source.to_string();
-    lines.push((
-        format!("Created from {source}"),
-        relative_time(&item.task.created_at, now),
-    ));
+    // Core has no desktop source, so a task made here names none.
+    let created = match item.task.source {
+        TaskSource::Unknown => "Created".to_string(),
+        source => format!("Created from {source}"),
+    };
+    lines.push((created, relative_time(&item.task.created_at, now)));
     lines
 }
 
@@ -1495,13 +1511,16 @@ fn metadata_inputs(fields: &[(String, String)]) -> Vec<TaskMetadataInput> {
 pub async fn open_store(path: &Path, config: &AppConfig) -> Result<TuiStore> {
     let database = Database::open(path).await?;
     let workspace = database.restore_queue_workspace().await?;
-    TuiStore::new_with_view_state_and_config(
+    let mut store = TuiStore::new_with_view_state_and_config(
         database,
         workspace,
         TaskViewState::default(),
         config.clone(),
     )
-    .await
+    .await?;
+    // Core has no desktop source, and this one makes no claim.
+    store.task_source = TaskSource::Unknown;
+    Ok(store)
 }
 
 /// `PRAGMA data_version` on its own connection, which sees every commit made by
@@ -1639,6 +1658,7 @@ struct Actor {
     config: AppConfig,
     replies: mpsc::UnboundedSender<Reply>,
     sync_wake: Arc<Notify>,
+    sync_stop: Arc<Notify>,
     storage: Arc<dyn ProtectedStorage>,
     /// The launch database's config, which other databases start from.
     launch_config: AppConfig,
@@ -1720,6 +1740,7 @@ impl Actor {
             config,
             replies,
             sync_wake,
+            sync_stop: Arc::new(Notify::new()),
             storage,
             background_sync: None,
             sync_busy: Arc::new(AtomicBool::new(false)),
@@ -1747,6 +1768,7 @@ impl Actor {
                 self.config.clone(),
                 self.storage.clone(),
                 self.sync_wake.clone(),
+                self.sync_stop.clone(),
                 self.replies.clone(),
             )));
         }
@@ -2882,7 +2904,7 @@ impl Actor {
             project,
             status: task.status.clone(),
             priority: task.priority.clone(),
-            source: TaskSource::Tui,
+            source: TaskSource::Unknown,
             labels: task.labels.clone(),
             metadata: metadata_inputs(&task.metadata),
             available_at,
@@ -2960,7 +2982,7 @@ impl Actor {
                     project: None,
                     status: None,
                     priority: "none".to_string(),
-                    source: TaskSource::Tui,
+                    source: TaskSource::Unknown,
                     labels: Vec::new(),
                     metadata: Vec::new(),
                     available_at: None,
@@ -3427,6 +3449,13 @@ impl Actor {
             Command::OpenDatabase(path) => {
                 self.open_database(path).await;
             }
+            Command::ReopenView {
+                query,
+                project,
+                columns,
+                selected,
+            } => self.reopen_view(query, project, columns, selected).await,
+            Command::Quit => self.quit().await,
             Command::Settings(_) if self.paused_by_join().await => {
                 self.send(ReplyBody::Notice(JOIN_PAUSE.to_string()));
             }
@@ -3501,6 +3530,45 @@ impl Actor {
                 self.sync_wake.notify_one();
             }
         }
+    }
+
+    pub(crate) async fn reopen_view(
+        &mut self,
+        query: Option<TaskQuery>,
+        project: Option<String>,
+        columns: bool,
+        selected: Option<TaskId>,
+    ) {
+        let scope = project.map_or(TaskScopeTarget::Workspace, TaskScopeTarget::Project);
+        let _ = self
+            .store
+            .show_scope_restoring(scope, &SelectionRestore::Default)
+            .await;
+        if let Some(query) = query {
+            let _ = self.show_view(query).await;
+            if columns && supports_columns(query) {
+                let _ = self.set_columns(true).await;
+            }
+        }
+        let selected = selected.filter(|id| self.listed(id));
+        self.selected = selected.clone();
+        self.send_list().await;
+        if let Some(id) = selected {
+            self.send(ReplyBody::Select(id));
+        }
+    }
+
+    /// A background round runs to its end, because `run_sync` only looks at the
+    /// stop signal between rounds.
+    async fn quit(&mut self) {
+        self.sync_stop.notify_one();
+        if let Some(sync) = self.background_sync.take() {
+            let _ = sync.await;
+        }
+        while self.sync_busy.load(Ordering::SeqCst) {
+            sleep(QUIT_POLL).await;
+        }
+        self.send(ReplyBody::Stopped);
     }
 
     fn finish_write(&mut self, command: &Command, outcome: Outcome) {
@@ -3580,6 +3648,7 @@ async fn run_sync(
     config: AppConfig,
     storage: Arc<dyn ProtectedStorage>,
     wake: Arc<Notify>,
+    stop: Arc<Notify>,
     replies: mpsc::UnboundedSender<Reply>,
 ) {
     let interval = Duration::from_secs(config.sync_interval_seconds());
@@ -3593,6 +3662,8 @@ async fn run_sync(
     };
     loop {
         tokio::select! {
+            biased;
+            () = stop.notified() => return,
             () = wake.notified() => {
                 sleep(SYNC_DEBOUNCE).await;
                 scheduler.wake(false, Instant::now());
@@ -3753,6 +3824,12 @@ async fn recovery_target(
                     }
                 }
             }
+            Command::Quit => {
+                let _ = replies.send(Reply {
+                    request: request.id,
+                    body: ReplyBody::Stopped,
+                });
+            }
             _ => {}
         }
     }
@@ -3813,6 +3890,40 @@ pub struct Prefs {
     pub compact: bool,
     pub zoom: f32,
     pub databases: Vec<KnownDatabase>,
+    pub nav_open: bool,
+    pub details_open: bool,
+    pub window: Option<SavedWindow>,
+    pub view: Option<SavedView>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum WindowMode {
+    #[default]
+    Windowed,
+    Zoomed,
+    FullScreen,
+}
+
+/// The window's frame, with its unzoomed bounds when zoomed or full screen.
+/// Positions are relative to `display`, named by its UUID.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedWindow {
+    #[serde(default)]
+    pub display: Option<String>,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub mode: WindowMode,
+}
+
+/// What the window showed. `view` is a name from `VIEWS`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedView {
+    pub view: String,
+    pub project: Option<String>,
+    pub columns: bool,
+    pub selected: Option<String>,
 }
 
 impl Default for Prefs {
@@ -3824,6 +3935,10 @@ impl Default for Prefs {
             compact: false,
             zoom: 1.,
             databases: Vec::new(),
+            nav_open: true,
+            details_open: true,
+            window: None,
+            view: None,
         }
     }
 }
@@ -3832,6 +3947,11 @@ impl Prefs {
     /// Desktop-local preferences beside the database.
     pub fn path(database: &Path) -> PathBuf {
         database.with_file_name("desktop-prefs.json")
+    }
+
+    /// Unfinished writing, beside the preferences.
+    pub fn drafts_path(prefs: &Path) -> PathBuf {
+        prefs.with_file_name("desktop-drafts.json")
     }
 
     pub fn load(path: &Path) -> Self {
@@ -3846,9 +3966,150 @@ impl Prefs {
     }
 }
 
+/// Writing that outlives the app: the composer's draft and each task's note.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SavedDrafts {
+    pub composer: Option<crate::draft::SavedDraft>,
+    pub notes: Vec<(String, String)>,
+}
+
+impl SavedDrafts {
+    pub fn load(path: &Path) -> Self {
+        std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if *self == Self::default() {
+            return match std::fs::remove_file(path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    Err(error).context("clear drafts")
+                }
+                _ => Ok(()),
+            };
+        }
+        std::fs::write(path, serde_json::to_vec(self)?).context("write drafts")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_quit_waits_for_the_running_round_and_replies_last() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        let finished = Arc::new(AtomicBool::new(false));
+        let round = finished.clone();
+        actor.background_sync = Some(tokio::spawn(async move {
+            sleep(Duration::from_millis(50)).await;
+            round.store(true, Ordering::SeqCst);
+        }));
+        actor.quit().await;
+        assert!(finished.load(Ordering::SeqCst));
+        let reply = replies.recv().await.unwrap();
+        assert!(matches!(reply.body, ReplyBody::Stopped));
+    }
+
+    #[tokio::test]
+    async fn a_quit_stops_background_sync_between_rounds() {
+        let (directory, mut actor, _replies) = actor("Keep").await;
+        actor.config = AppConfig::default();
+        let (replies, _received) = mpsc::unbounded_channel();
+        actor.background_sync = Some(tokio::spawn(run_sync(
+            actor.store.database(),
+            AppConfig::default(),
+            Arc::new(aven_core::sync::client::keys::FileProtectedStorage::new(
+                directory.path().join("keys"),
+            )),
+            Arc::new(Notify::new()),
+            actor.sync_stop.clone(),
+            replies,
+        )));
+        tokio::time::timeout(Duration::from_secs(5), actor.quit())
+            .await
+            .expect("sync stopped");
+    }
+
+    #[tokio::test]
+    async fn the_last_view_comes_back_and_what_is_gone_is_skipped() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        let id = actor.store.tasks[0].task.id.clone();
+        actor
+            .reopen_view(
+                Some(TaskQuery::Open),
+                Some("no-such-project".to_string()),
+                false,
+                Some(id.clone()),
+            )
+            .await;
+        assert_eq!(actor.store.view_state.query, TaskQuery::Open);
+        assert_eq!(actor.selected, Some(id.clone()));
+        let mut selected = None;
+        while let Ok(reply) = replies.try_recv() {
+            if let ReplyBody::Select(id) = reply.body {
+                selected = Some(id);
+            }
+        }
+        assert_eq!(selected, Some(id));
+    }
+
+    #[test]
+    fn preferences_keep_the_window_and_old_files_still_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prefs.json");
+        std::fs::write(&path, r#"{"nav_width": 200.0}"#).unwrap();
+        let mut prefs = Prefs::load(&path);
+        assert_eq!(prefs.nav_width, 200.);
+        assert!(prefs.nav_open && prefs.details_open);
+        prefs.window = Some(SavedWindow {
+            display: Some("37D8832A-2D66-02CA-B9F7-8F30A301B230".into()),
+            x: 10.,
+            y: 20.,
+            width: 1000.,
+            height: 700.,
+            mode: WindowMode::Zoomed,
+        });
+        prefs.save(&path).unwrap();
+        assert_eq!(Prefs::load(&path), prefs);
+    }
+
+    #[test]
+    fn drafts_survive_a_save_and_leave_no_file_when_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("drafts.json");
+        let draft = crate::draft::Draft {
+            title: "Half written".to_string(),
+            status: Some(TaskStatus::Todo),
+            priority: TaskPriority::High,
+            images: vec![PendingImage {
+                name: "a.png".to_string(),
+                bytes: Arc::new(vec![1, 2, 3]),
+            }],
+            ..Default::default()
+        };
+        let saved = SavedDrafts {
+            composer: Some((&draft).into()),
+            notes: vec![("task".to_string(), "A note".to_string())],
+        };
+        saved.save(&path).unwrap();
+        let loaded = SavedDrafts::load(&path);
+        assert_eq!(loaded, saved);
+        assert_eq!(crate::draft::Draft::from(loaded.composer.unwrap()), draft);
+        SavedDrafts::default().save(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn a_task_made_here_names_no_source() {
+        let (_directory, actor, _replies) = actor("Keep").await;
+        let item = &actor.store.tasks[0];
+        let lines = activity(item, Local::now());
+        assert_eq!(lines.last().unwrap().0, "Created");
+    }
 
     fn draft(title: &str) -> TaskDraft {
         TaskDraft {
@@ -3891,9 +4152,12 @@ mod tests {
                 directory.path().join("keys"),
             )),
         };
-        let (session, _replies) = start(runtime.handle().clone(), launch).unwrap();
+        let (mut session, mut replies) = start(runtime.handle().clone(), launch).unwrap();
         assert_eq!(session.database_error.as_ref().unwrap().path, path);
         assert_eq!(std::fs::read(&path).unwrap(), before);
+        session.quit();
+        let reply = runtime.block_on(replies.recv()).unwrap();
+        assert!(matches!(reply.body, ReplyBody::Stopped));
     }
 
     #[tokio::test]

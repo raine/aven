@@ -12,10 +12,11 @@ use aven_host::store::TaskQuery;
 use chrono::Local;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::actions::VIEWS;
 use crate::adapter::{
     Bulk, CatalogTask, Command, Detail, Go, KnownDatabase, NewTask, Reply, ReplyBody, Request,
-    ReviewCard, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot, SyncHealth,
-    SyncPhase, TaskRow, done_group,
+    ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot,
+    SyncHealth, SyncPhase, TaskRow, done_group,
 };
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
@@ -201,6 +202,8 @@ pub struct Applied {
     pub left: Vec<TaskRow>,
     /// A database opened, with the one left behind.
     pub opened: Option<(KnownDatabase, Option<KnownDatabase>)>,
+    /// The store has finished what a quit waits for.
+    pub stopped: bool,
 }
 
 /// A change a review made, with the card it came from.
@@ -1094,6 +1097,34 @@ impl Session {
         self.send(Command::Sync(SyncRequest::Run(op)));
     }
 
+    pub fn quit(&mut self) {
+        self.send(Command::Quit);
+    }
+
+    /// Goes back to what `view` describes, once at launch.
+    pub fn reopen_view(&mut self, view: &SavedView) {
+        self.send(Command::ReopenView {
+            query: VIEWS
+                .iter()
+                .find(|known| known.1 == view.view)
+                .map(|known| known.0),
+            project: view.project.clone(),
+            columns: view.columns,
+            selected: view.selected.as_deref().and_then(|id| id.parse().ok()),
+        });
+    }
+
+    /// What the window shows now, for the next launch.
+    pub fn saved_view(&self) -> SavedView {
+        let view = &self.snapshot.view;
+        SavedView {
+            view: crate::commands::view_name(view.query).to_string(),
+            project: view.project.clone(),
+            columns: view.columns,
+            selected: self.selected.as_ref().map(ToString::to_string),
+        }
+    }
+
     pub fn request_sync(&mut self, request: SyncRequest) {
         self.send(Command::Sync(request));
     }
@@ -1420,6 +1451,7 @@ impl Session {
                 }
             }
             ReplyBody::Notice(message) => self.show_toast(message, None),
+            ReplyBody::Stopped => applied.stopped = true,
             ReplyBody::SaveFailed(Command::AddNote(id, body), message) => {
                 applied.draft = self.selected.as_ref() == Some(&id);
                 let draft = self.note_drafts.entry(id).or_default();

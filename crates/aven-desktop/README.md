@@ -21,6 +21,7 @@ needs a worktree with that directory.
 | `scripts/desktop/app-proof start` | Disposable server and two clients to run the app against by hand; its docstring lists the other subcommands |
 | `scripts/desktop/app-proof drive` | Setup, join, Sync now and device removal through the app's store and session |
 | `crates/aven-desktop/target/bin/aven-desktop-capture check-capabilities` | Compare the capability map with the prototype |
+| `crates/aven-desktop/target/bin/aven-desktop-capture check-menus` | Check that every menu item reaches a handler, and that task commands stand down behind the composer |
 
 `scripts/desktop/cargo` keeps build artifacts in
 `~/Library/Caches/aven-desktop/target`, so worktrees share compiled GPUI, and copies

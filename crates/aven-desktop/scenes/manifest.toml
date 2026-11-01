@@ -758,6 +758,24 @@ prototype_steps = ["openSync()"]
 measure = ["app", "nav", "main", "main-header"]
 
 [[scene]]
+name = "about"
+theme = "dark"
+width = 1440
+height = 900
+gpui_keys = ["cmd-k", "a b o u t", "enter"]
+prototype_steps = ["openAbout()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
+name = "about-light"
+theme = "light"
+width = 1440
+height = 900
+gpui_keys = ["cmd-k", "a b o u t", "enter"]
+prototype_steps = ["openAbout()"]
+measure = ["app", "nav", "main", "main-header"]
+
+[[scene]]
 name = "settings-opened-by-click"
 theme = "dark"
 width = 1440

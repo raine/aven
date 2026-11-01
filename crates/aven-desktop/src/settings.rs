@@ -733,11 +733,19 @@ impl Root {
             ))
             .child(section("About", t))
             .child(group(
-                vec![row(t).child(row_title(
-                    "Aven",
-                    Some(format!("Version {}", env!("CARGO_PKG_VERSION"))),
-                    t,
-                ))],
+                vec![
+                    row(t)
+                        .child(row_title(
+                            "Aven",
+                            Some(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+                            t,
+                        ))
+                        .child(
+                            line_btn("open-about", "About Aven", t).on_click(cx.listener(
+                                |this, _, window, cx| this.open_about(&OpenAbout, window, cx),
+                            )),
+                        ),
+                ],
                 t,
             ))
     }

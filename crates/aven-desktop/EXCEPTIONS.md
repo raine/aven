@@ -17,7 +17,6 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Rows measured to row 18 | Scenes | The list is virtual, so rows below the fold are never painted. `row-18` is the last fully visible measured row at 1440x900. | `scenes/manifest.toml` |
 | Narrow header alignment | Header | Header actions stay right-aligned at every width. The prototype packs them beside the title once the crumbs hide, which reads as an artefact of its collapsed spacer. | `queue-narrow.gpui.png` |
 | Done group in the queue | Queue list | The prototype drops a completed row at once. The app keeps it in a Done group at the end of the list until the user refreshes the view, by owner direction. | `queue-completed.gpui.png` beside `queue-completed.prototype.png` |
-| Controls owned by later phases | Header, palette, overflow menu | About arrives with its phase. The capability map assigns it. | `capabilities.toml` |
 | Schedule dates are text fields | Schedule dialog | The kit has no native date picker. Each field accepts `YYYY-MM-DD` and the quick choices fill them in. | `schedule.gpui.png` |
 | Schedule saves in two writes | Schedule dialog | Core stores availability and due date through separate undoable writes, so one undo reverts the last of them. | `src/dialogs.rs` |
 | One label and one priority filter | Filter menu | Core's `TaskFilters` holds one of each, where the prototype keeps lists. | `queue-filtered.gpui.png` |
@@ -48,3 +47,8 @@ controls cannot be excepted. Phases add entries here as they find them.
 | Sample data row replaced | Data and recovery | The prototype's Restore sample data has no product meaning. That section holds Reset sync data, with the reset the TUI offers. | `data-recovery.gpui.png` |
 | Database gate names one failure | Database gate | The app shows core's message with one body, where the prototype words each simulated failure. | `data-recovery-gate.gpui.png` |
 | Chosen database lasts for the session | Data and recovery | A launch finds its database the way the CLI does, so a joined or opened database is listed under Other database and reopened from there. | `src/adapter.rs` |
+| Version reads 0.0.0 | About, Settings | The desktop crate has its own workspace and version until it joins the root workspace. | `about.gpui.png` |
+| Created line names no source | Details activity | Core has no desktop source and adding one is a stored format change, so a task made here stores `unknown` and reads `Created`. | `src/adapter.rs` |
+| No focus ring on About | About | Opening a dialog puts focus inside it, so the prototype's dialog-wide ring does not appear. | `about.gpui.png` |
+| Menu bar reaches task commands behind a popup menu | Menu bar | Palette entries dispatch from a frame that still shows the popup, so handlers stay registered while one is open. Composer, dialogs, Settings and review do switch them off. | `src/shell.rs` |
+| Unresolved description returns as a note | Quit | A description waiting on an incoming change cannot be committed, so its text is kept as a note draft on the task. | `src/shell.rs` |

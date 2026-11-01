@@ -14,9 +14,9 @@ use aven_host::time_input::{
 };
 use chrono::{DateTime, Local, Utc};
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, FontWeight, HighlightStyle, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription, Window, div,
-    img, prelude::*,
+    AnyElement, ClipboardItem, Context, Entity, FocusHandle, FontWeight, HighlightStyle,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription,
+    Window, div, img, prelude::*,
 };
 
 use crate::actions::*;
@@ -31,6 +31,15 @@ use crate::theme::{Theme, theme};
 const DIALOG_WIDTH: f32 = 560.;
 const WIDE_WIDTH: f32 = 760.;
 const NARROW_WIDTH: f32 = 440.;
+const ABOUT_WIDTH: f32 = 300.;
+const ABOUT_LINKS: [(&str, &str); 3] = [
+    ("GitHub", "https://github.com/raine/aven"),
+    (
+        "Release notes",
+        "https://github.com/raine/aven/blob/main/CHANGELOG.md",
+    ),
+    ("License", "https://github.com/raine/aven/blob/main/LICENSE"),
+];
 const SEARCH_WIDTH: f32 = 660.;
 const SEARCH_LIST_HEIGHT: f32 = 312.;
 const SEARCH_ROW_HEIGHT: f32 = 50.;
@@ -189,6 +198,7 @@ pub enum Dialog {
         alt: Entity<Editor>,
     },
     Help,
+    About,
     /// Pages come from `Session::sync_page`; these outlive a page change.
     Sync {
         input: Entity<Editor>,
@@ -827,6 +837,15 @@ impl Root {
         self.close_dialog(window, cx);
     }
 
+    pub(crate) fn open_about(
+        &mut self,
+        _: &OpenAbout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_dialog(Dialog::About, Vec::new(), window, cx);
+    }
+
     pub(crate) fn open_help(&mut self, _: &OpenHelp, window: &mut Window, cx: &mut Context<Self>) {
         self.open_dialog(Dialog::Help, Vec::new(), window, cx);
     }
@@ -869,6 +888,7 @@ impl Root {
             Dialog::Sync { .. } => self.sync_accept(window, cx),
             Dialog::Project { .. } => self.save_project(window, cx),
             Dialog::Help
+            | Dialog::About
             | Dialog::Confirm { .. }
             | Dialog::Incoming { .. }
             | Dialog::Stop { .. }
@@ -1410,6 +1430,94 @@ impl Root {
         ]
     }
 
+    fn render_about(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+        let links = ABOUT_LINKS.iter().map(|(label, url)| {
+            bare_btn(*label, *label, t)
+                .role(Role::Link)
+                .hover({
+                    let raised = t.raised;
+                    move |style| style.bg(raised)
+                })
+                .on_click(move |_, _, cx| cx.open_url(url))
+                .child(*label)
+        });
+        vec![
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .items_center()
+                .pt(px(31.))
+                .px(px(22.))
+                .pb(px(18.))
+                .child(
+                    div().absolute().top(px(8.)).right(px(8.)).child(
+                        btn("about-close", "Close", t)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_dialog(window, cx);
+                            }))
+                            .child("Close"),
+                    ),
+                )
+                .child(
+                    gpui::img(if t.dark {
+                        "logo-dark.svg"
+                    } else {
+                        "logo-light.svg"
+                    })
+                    .size(px(64.))
+                    .mb(px(12.)),
+                )
+                .child(
+                    div()
+                        .text_size(px(17.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.ink)
+                        .child("Aven"),
+                )
+                .child(
+                    div()
+                        .id("about-version")
+                        .role(Role::Button)
+                        .aria_label("Copy version")
+                        .mt(px(7.))
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(5.))
+                        .text_size(px(12.))
+                        .text_color(t.muted)
+                        .hover({
+                            let (raised, ink) = (t.raised, t.ink);
+                            move |style| style.bg(raised).text_color(ink)
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let version = format!("Aven {}", env!("CARGO_PKG_VERSION"));
+                            cx.write_to_clipboard(ClipboardItem::new_string(version));
+                            this.session.show_toast("Version copied".to_string(), None);
+                            this.arm_toast(cx);
+                            cx.notify();
+                        }))
+                        .child(version),
+                )
+                .child(
+                    div()
+                        .mt(px(12.))
+                        .text_color(t.body)
+                        .child("Local-first task manager"),
+                )
+                .child(div().flex().gap(px(2.)).mt(px(14.)).children(links))
+                .child(
+                    div()
+                        .mt(px(12.))
+                        .text_size(px(12.))
+                        .text_color(t.faint)
+                        .child("© 2026 Raine Virta. MIT License."),
+                )
+                .into_any_element(),
+        ]
+    }
+
     fn render_help(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
         let mut columns = div().flex().flex_wrap().px(px(10.)).pb(px(14.));
         for (family, keys) in HELP {
@@ -1568,6 +1676,12 @@ impl Root {
                 "Dialog",
             ),
             Dialog::Image { .. } => ("Image", DIALOG_WIDTH, self.render_image(cx, &t), "Dialog"),
+            Dialog::About => (
+                "About Aven",
+                ABOUT_WIDTH,
+                self.render_about(cx, &t),
+                "Dialog",
+            ),
             Dialog::Help => (
                 "Keyboard shortcuts",
                 WIDE_WIDTH,

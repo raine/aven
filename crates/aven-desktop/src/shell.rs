@@ -12,14 +12,15 @@ use aven_host::store::TaskQuery;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle,
     Focusable, FontWeight, KeyContext, ListAlignment, ListOffset, ListState, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Subscription, Window, div,
-    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, relative, svg,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Subscription, Window,
+    WindowBounds, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
+    relative, svg,
 };
 
 use crate::actions::*;
 use crate::adapter::{
-    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, Note, Prefs, Replies, Reply, TaskRow,
-    ThemePref, supports_columns,
+    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, Note, Prefs, Replies, Reply,
+    SavedDrafts, SavedWindow, TaskRow, ThemePref, WindowMode, supports_columns,
 };
 use crate::bounce::{Bounce, ListBounce};
 use crate::commands::view_name;
@@ -39,6 +40,10 @@ use crate::settings::sync_icon;
 use crate::theme::{Theme, mix, theme};
 use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
+/// How long a quit waits for a sync round to end before leaving it unfinished,
+/// as a killed daemon would. Longer than one sync request can run on a live
+/// connection, and the window is already gone while it waits.
+const QUIT_BUDGET: Duration = Duration::from_secs(40);
 const NAV_WIDTH_RANGE: (f32, f32) = (170., 340.);
 const DETAIL_WIDTH_RANGE: (f32, f32) = (290., 620.);
 /// The prototype's resize handles overlap each neighbouring panel by this much.
@@ -425,12 +430,14 @@ pub struct Root {
     last_scroll: Option<Instant>,
     thumb_drag: Option<(Pixels, Pixels)>,
     subscriptions: Vec<Subscription>,
+    quitting: bool,
 }
 
 impl Root {
     pub fn new(
         session: Session,
         mut replies: Replies,
+        prefs: Prefs,
         prefs_path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -467,7 +474,13 @@ impl Root {
             cx.subscribe_in(&note, window, Self::on_note_event),
             cx.subscribe_in(&kid_input, window, Self::on_kid_event),
             cx.subscribe_in(&body, window, Self::on_body_event),
-            cx.observe_window_activation(window, |_, _, cx| cx.notify()),
+            cx.observe_window_activation(window, |this, window, cx| {
+                // Popups do not outlive the window's focus, as native ones do not.
+                if !window.is_window_active() {
+                    this.menu = None;
+                }
+                cx.notify();
+            }),
             cx.observe_pending_input(window, |this, window, cx| {
                 this.show_chord(window, cx);
             }),
@@ -487,8 +500,15 @@ impl Root {
         })
         .detach();
         let focus = cx.focus_handle();
-        let prefs = Prefs::load(&prefs_path);
         set_scale(prefs.zoom, prefs.compact);
+        let drafts = SavedDrafts::load(&Prefs::drafts_path(&prefs_path));
+        let mut session = session;
+        session.note_drafts.extend(
+            drafts
+                .notes
+                .into_iter()
+                .filter_map(|(id, text)| Some((id.parse().ok()?, text))),
+        );
         let new_label = cx.new(|cx| Editor::new(Mode::Single, "New label", window, cx));
         let mut this = Self {
             always_active: false,
@@ -499,8 +519,8 @@ impl Root {
             bounce: Rc::default(),
             glide: None,
             list_motion: ListMotion::default(),
-            details_open: true,
-            nav_open: true,
+            details_open: prefs.details_open,
+            nav_open: prefs.nav_open,
             narrow: None,
             list_wide: true,
             list_refs: true,
@@ -519,7 +539,7 @@ impl Root {
             detail_scroll: ScrollHandle::new(),
             menu: None,
             composer: None,
-            kept_draft: Draft::default(),
+            kept_draft: drafts.composer.map(Draft::from).unwrap_or_default(),
             discarded: None,
             dialog: None,
             body,
@@ -531,6 +551,7 @@ impl Root {
             last_scroll: None,
             thumb_drag: None,
             subscriptions,
+            quitting: false,
         };
         this.rebuild(false, &[]);
         this.load_selection(window, cx);
@@ -555,10 +576,7 @@ impl Root {
         let reduced = platform::reduce_motion();
         cx.set_reduce_motion(reduced);
         self.session.motion.set_reduced(reduced);
-        if self.active(window) || !cx.has_global::<Theme>() {
-            self.apply_theme(window, cx);
-        }
-        cx.notify();
+        self.apply_theme(window, cx);
     }
 
     pub(crate) fn apply_theme(&mut self, window: &Window, cx: &mut Context<Self>) {
@@ -586,6 +604,109 @@ impl Root {
         if let Err(error) = self.prefs.save(&self.prefs_path) {
             eprintln!("aven-desktop: {error:#}");
         }
+    }
+
+    /// Keeps what the next launch restores, in case this run never quits cleanly.
+    fn save_state(&mut self, window: &Window, cx: &App) {
+        let (bounds, mode) = match window.window_bounds() {
+            WindowBounds::Windowed(bounds) => (bounds, WindowMode::Windowed),
+            WindowBounds::Maximized(bounds) => (bounds, WindowMode::Zoomed),
+            WindowBounds::Fullscreen(bounds) => (bounds, WindowMode::FullScreen),
+        };
+        self.prefs.window = Some(SavedWindow {
+            display: window
+                .display(cx)
+                .and_then(|display| display.uuid().ok())
+                .map(|uuid| uuid.to_string()),
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            mode,
+        });
+        self.prefs.nav_open = self.nav_open;
+        if self.narrow == Some(false) {
+            self.prefs.details_open = self.details_open;
+        }
+        self.prefs.view = Some(self.session.saved_view());
+        self.save_prefs();
+        self.keep_note_draft(cx);
+        self.save_drafts(cx);
+    }
+
+    fn save_drafts(&self, cx: &App) {
+        let open = self.composer_draft(cx);
+        let draft = open.as_ref().unwrap_or(&self.kept_draft);
+        let mut notes: HashMap<String, String> = self
+            .session
+            .note_drafts
+            .iter()
+            .map(|(id, text)| (id.to_string(), text.clone()))
+            .collect();
+        // A description waiting on an incoming change cannot be committed, so
+        // its text comes back as a note on the task.
+        if let Some(edit) = self
+            .body_edit
+            .as_ref()
+            .filter(|edit| edit.incoming.is_some())
+        {
+            let note = notes.entry(edit.task.to_string()).or_default();
+            if !note.is_empty() {
+                note.push_str("\n\n");
+            }
+            note.push_str(self.description.read(cx).text());
+        }
+        let drafts = SavedDrafts {
+            composer: (*draft != Draft::default()).then(|| draft.into()),
+            notes: notes.into_iter().collect(),
+        };
+        if let Err(error) = drafts.save(&Prefs::drafts_path(&self.prefs_path)) {
+            eprintln!("aven-desktop: {error:#}");
+        }
+    }
+
+    /// Takes the window off screen with everything in it left running. The Dock
+    /// icon and Show Aven bring it back.
+    pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_state(window, cx);
+        // A full screen window owns its space, so ordering it out leaves that blank.
+        if window.is_fullscreen() {
+            cx.hide();
+        } else {
+            platform::order_out(window);
+        }
+    }
+
+    /// Saves what is unfinished and asks the store to wind down. Returns false
+    /// if a quit is already under way.
+    pub fn begin_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if std::mem::replace(&mut self.quitting, true) {
+            return false;
+        }
+        self.commit_title(cx);
+        let waiting = self
+            .body_edit
+            .as_ref()
+            .is_some_and(|edit| edit.incoming.is_some());
+        if !waiting {
+            self.commit_description(cx);
+        }
+        self.save_state(window, cx);
+        self.session.quit();
+        true
+    }
+
+    /// Quits once the store has wound down, or after `QUIT_BUDGET` if it cannot.
+    pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.begin_quit(window, cx) {
+            return;
+        }
+        platform::order_out(window);
+        cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(QUIT_BUDGET).await;
+            cx.update(|cx| cx.quit());
+        })
+        .detach();
     }
 
     /// Every database stays known, so one in use is there after a relaunch.
@@ -756,6 +877,11 @@ impl Root {
         }
         if let Some(task) = applied.composer_draft {
             self.return_failed_draft(Draft::from_task(*task), window, cx);
+        }
+        if applied.stopped {
+            // A write that failed during the quit has handed its text back.
+            self.save_drafts(cx);
+            cx.quit();
         }
         if let Some(task) = applied.intake {
             self.read_notes_back(Some(*task), cx);
@@ -1193,8 +1319,25 @@ impl Root {
         }
     }
 
-    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, _: &mut Context<Self>) {
-        window.remove_window();
+    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(window, cx);
+    }
+
+    fn minimize(&mut self, _: &Minimize, window: &mut Window, _: &mut Context<Self>) {
+        window.minimize_window();
+    }
+
+    fn zoom(&mut self, _: &Zoom, window: &mut Window, _: &mut Context<Self>) {
+        window.zoom_window();
+    }
+
+    fn toggle_full_screen(
+        &mut self,
+        _: &ToggleFullScreen,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        window.toggle_fullscreen();
     }
 
     fn render_item(
@@ -2616,8 +2759,8 @@ impl Render for Root {
         let t = theme(cx);
         let narrow = window.viewport_size().width <= px(DETAIL_MIN_WINDOW_WIDTH);
         if self.narrow != Some(narrow) {
+            self.details_open = !narrow && (self.narrow.is_some() || self.details_open);
             self.narrow = Some(narrow);
-            self.details_open = !narrow;
         }
         let mut key_context = KeyContext::default();
         key_context.add("Aven");
@@ -2646,7 +2789,7 @@ impl Render for Root {
         let expanded = self.session.expanded;
         let columns = self.session.snapshot.view.columns;
         let list_el = self.render_list(window, cx);
-        let board = (columns && !expanded).then(|| self.render_board(cx));
+        let board = (columns && !expanded).then(|| self.render_board(self.active(window), cx));
         let doc = expanded.then(|| self.render_doc(window, cx));
         let logged = self.session.snapshot.view.query == TaskQuery::RecentActions;
         let reviewing = self.session.review.is_some();
@@ -2697,10 +2840,20 @@ impl Render for Root {
                 .on_action(cx.listener(Self::next_field))
                 .on_action(cx.listener(Self::previous_field))
                 .on_action(cx.listener(Self::dismiss))
+                .on_action(cx.listener(Self::close_window))
+                .on_action(cx.listener(Self::minimize))
+                .on_action(cx.listener(Self::zoom))
+                .on_action(cx.listener(Self::toggle_full_screen))
                 .child(gate)
                 .children(dialog)
                 .children(toast);
         }
+        // A menu item with no handler here greys out, as it would do nothing. Popup
+        // menus do not count: palette entries dispatch from a frame that shows one.
+        let unblocked = !self.composer_open() && !self.dialog_open();
+        let settings_closed = self.session.settings.is_none();
+        let on_list = unblocked && settings_closed && !reviewing;
+        let has_task = self.session.target().is_some() || recurring;
         measured(div(), "app")
             .relative()
             .size_full()
@@ -2712,77 +2865,89 @@ impl Render for Root {
             .line_height(px(UI_LINE_HEIGHT))
             .key_context(key_context)
             .track_focus(&self.focus)
-            .on_action(cx.listener(Self::move_down))
-            .on_action(cx.listener(Self::move_up))
+            .when(unblocked, |el| {
+                el.on_action(cx.listener(Self::open_settings))
+                    .on_action(cx.listener(Self::open_palette))
+                    .on_action(cx.listener(Self::open_help))
+                    .on_action(cx.listener(Self::new_task))
+                    .on_action(cx.listener(Self::open_about))
+            })
+            .when(on_list, |el| {
+                el.on_action(cx.listener(Self::move_down))
+                    .on_action(cx.listener(Self::move_up))
+                    .on_action(cx.listener(Self::lane_back))
+                    .on_action(cx.listener(Self::lane_on))
+                    .on_action(cx.listener(Self::all_projects))
+                    .on_action(cx.listener(Self::pick_project))
+                    .on_action(cx.listener(Self::pick_workspace))
+                    .on_action(cx.listener(Self::toggle_layout))
+                    .on_action(cx.listener(Self::open_search))
+                    .on_action(cx.listener(Self::pick_filter))
+                    .on_action(cx.listener(Self::cycle_deleted))
+                    .on_action(cx.listener(Self::clear_filters))
+                    .on_action(cx.listener(Self::pick_order))
+                    .on_action(cx.listener(Self::show_view))
+                    .on_action(cx.listener(Self::toggle_mark))
+                    .on_action(cx.listener(Self::extend_marks_down))
+                    .on_action(cx.listener(Self::extend_marks_up))
+                    .on_action(cx.listener(Self::mark_visible))
+                    .on_action(cx.listener(Self::clear_marks))
+                    .on_action(cx.listener(Self::focus_child))
+                    .on_action(cx.listener(Self::new_epic))
+                    .on_action(cx.listener(Self::cycle_lifecycle))
+                    .on_action(cx.listener(Self::review_tasks))
+            })
+            .when(on_list && has_task, |el| {
+                el.on_action(cx.listener(Self::mark_done))
+                    .on_action(cx.listener(Self::cancel_task))
+                    .on_action(cx.listener(Self::change_status))
+                    .on_action(cx.listener(Self::edit_title))
+                    .on_action(cx.listener(Self::rename_task))
+                    .on_action(cx.listener(Self::edit_description))
+                    .on_action(cx.listener(Self::edit_due))
+                    .on_action(cx.listener(Self::change_project))
+                    .on_action(cx.listener(Self::edit_labels))
+                    .on_action(cx.listener(Self::edit_metadata))
+                    .on_action(cx.listener(Self::focus_note))
+                    .on_action(cx.listener(Self::delete_task))
+                    .on_action(cx.listener(Self::restore_task))
+                    .on_action(cx.listener(Self::add_blocker))
+                    .on_action(cx.listener(Self::remove_blocker))
+                    .on_action(cx.listener(Self::add_related))
+                    .on_action(cx.listener(Self::jump_to_blocker))
+                    .on_action(cx.listener(Self::jump_to_epic))
+                    .on_action(cx.listener(Self::expand))
+                    .on_action(cx.listener(Self::copy_ref))
+                    .on_action(cx.listener(Self::copy_id))
+                    .on_action(cx.listener(Self::copy_title))
+                    .on_action(cx.listener(Self::copy_description))
+                    .on_action(cx.listener(Self::copy_title_and_description))
+                    .on_action(cx.listener(Self::copy_notes))
+                    .on_action(cx.listener(Self::copy_report))
+                    .on_action(cx.listener(Self::add_to_epic))
+                    .on_action(cx.listener(Self::publish_gist))
+            })
+            .when(unblocked && settings_closed && has_task, |el| {
+                el.on_action(cx.listener(Self::change_priority))
+                    .on_action(cx.listener(Self::edit_availability))
+            })
+            .on_action(cx.listener(Self::minimize))
+            .on_action(cx.listener(Self::zoom))
+            .on_action(cx.listener(Self::toggle_full_screen))
             .on_action(cx.listener(Self::toggle_theme))
-            .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::close_settings))
             .on_action(cx.listener(Self::open_sync))
             .on_action(cx.listener(Self::sync_now))
             .on_action(cx.listener(Self::toggle_details))
             .on_action(cx.listener(Self::toggle_sidebar))
-            .on_action(cx.listener(Self::mark_done))
-            .on_action(cx.listener(Self::cancel_task))
-            .on_action(cx.listener(Self::change_status))
-            .on_action(cx.listener(Self::change_priority))
-            .on_action(cx.listener(Self::edit_title))
-            .on_action(cx.listener(Self::rename_task))
-            .on_action(cx.listener(Self::edit_description))
             .on_action(cx.listener(Self::save_description))
-            .on_action(cx.listener(Self::edit_availability))
-            .on_action(cx.listener(Self::edit_due))
-            .on_action(cx.listener(Self::change_project))
-            .on_action(cx.listener(Self::edit_labels))
-            .on_action(cx.listener(Self::edit_metadata))
-            .on_action(cx.listener(Self::focus_note))
-            .on_action(cx.listener(Self::delete_task))
-            .on_action(cx.listener(Self::restore_task))
-            .on_action(cx.listener(Self::add_blocker))
-            .on_action(cx.listener(Self::remove_blocker))
-            .on_action(cx.listener(Self::add_related))
-            .on_action(cx.listener(Self::jump_to_blocker))
-            .on_action(cx.listener(Self::lane_back))
-            .on_action(cx.listener(Self::lane_on))
-            .on_action(cx.listener(Self::all_projects))
-            .on_action(cx.listener(Self::pick_project))
-            .on_action(cx.listener(Self::pick_workspace))
-            .on_action(cx.listener(Self::toggle_layout))
-            .on_action(cx.listener(Self::open_search))
-            .on_action(cx.listener(Self::open_palette))
-            .on_action(cx.listener(Self::open_help))
-            .on_action(cx.listener(Self::pick_filter))
-            .on_action(cx.listener(Self::cycle_deleted))
-            .on_action(cx.listener(Self::clear_filters))
-            .on_action(cx.listener(Self::pick_order))
-            .on_action(cx.listener(Self::show_view))
-            .on_action(cx.listener(Self::expand))
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::paste_image))
-            .on_action(cx.listener(Self::copy_ref))
-            .on_action(cx.listener(Self::copy_id))
-            .on_action(cx.listener(Self::copy_title))
-            .on_action(cx.listener(Self::copy_description))
-            .on_action(cx.listener(Self::copy_title_and_description))
-            .on_action(cx.listener(Self::copy_notes))
-            .on_action(cx.listener(Self::copy_report))
-            .on_action(cx.listener(Self::new_task))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::next_field))
             .on_action(cx.listener(Self::previous_field))
             .on_action(cx.listener(Self::close_window))
-            .on_action(cx.listener(Self::toggle_mark))
-            .on_action(cx.listener(Self::extend_marks_down))
-            .on_action(cx.listener(Self::extend_marks_up))
-            .on_action(cx.listener(Self::mark_visible))
-            .on_action(cx.listener(Self::clear_marks))
-            .on_action(cx.listener(Self::focus_child))
-            .on_action(cx.listener(Self::jump_to_epic))
-            .on_action(cx.listener(Self::add_to_epic))
-            .on_action(cx.listener(Self::new_epic))
-            .on_action(cx.listener(Self::cycle_lifecycle))
-            .on_action(cx.listener(Self::publish_gist))
-            .on_action(cx.listener(Self::review_tasks))
             .on_action(cx.listener(Self::review_decide))
             .on_action(cx.listener(Self::review_keep))
             .on_action(cx.listener(Self::review_skip))

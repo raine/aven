@@ -239,6 +239,73 @@ pub struct Draft {
     pub replaces: Option<RecurrenceSeriesId>,
 }
 
+/// A draft as it is kept across launches.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SavedDraft {
+    pub title: String,
+    pub body: String,
+    pub schedule: String,
+    pub project: Option<String>,
+    pub status: Option<String>,
+    pub priority: String,
+    pub labels: Vec<String>,
+    pub metadata: Vec<(String, String)>,
+    pub is_epic: bool,
+    pub more: bool,
+    pub images: Vec<(String, Vec<u8>)>,
+    pub replaces: Option<RecurrenceSeriesId>,
+}
+
+impl From<&Draft> for SavedDraft {
+    fn from(draft: &Draft) -> Self {
+        Self {
+            title: draft.title.clone(),
+            body: draft.body.clone(),
+            schedule: draft.schedule.clone(),
+            project: draft.project.clone(),
+            status: draft.status.map(|status| status.as_str().to_string()),
+            priority: draft.priority.as_str().to_string(),
+            labels: draft.labels.clone(),
+            metadata: draft.metadata.clone(),
+            is_epic: draft.is_epic,
+            more: draft.more,
+            images: draft
+                .images
+                .iter()
+                .map(|image| (image.name.clone(), image.bytes.to_vec()))
+                .collect(),
+            replaces: draft.replaces.clone(),
+        }
+    }
+}
+
+impl From<SavedDraft> for Draft {
+    fn from(saved: SavedDraft) -> Self {
+        Self {
+            title: saved.title,
+            body: saved.body,
+            schedule: saved.schedule,
+            project: saved.project,
+            status: saved.status.and_then(|text| TaskStatus::parse(&text).ok()),
+            priority: TaskPriority::parse(&saved.priority).unwrap_or(TaskPriority::None),
+            labels: saved.labels,
+            metadata: saved.metadata,
+            is_epic: saved.is_epic,
+            more: saved.more,
+            images: saved
+                .images
+                .into_iter()
+                .map(|(name, bytes)| PendingImage {
+                    name,
+                    bytes: bytes.into(),
+                })
+                .collect(),
+            replaces: saved.replaces,
+        }
+    }
+}
+
 impl Default for Draft {
     fn default() -> Self {
         Self {

@@ -1149,6 +1149,7 @@ impl Root {
         entries.extend([
             Entry::head("App"),
             Entry::action("Keyboard shortcuts", "?", OpenHelp),
+            Entry::action("About Aven", "", OpenAbout),
             Entry::action("Sync now", "S", SyncNow),
             Entry::action("Open sync", "", OpenSync),
             Entry::action("Settings", "⌘,", OpenSettings),

@@ -41,7 +41,13 @@ impl Render for CardDrag {
 }
 
 impl Root {
-    fn card(&self, row: &TaskRow, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement + use<> {
+    fn card(
+        &self,
+        row: &TaskRow,
+        active: bool,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
         let selected = self.session.selected.as_ref() == Some(&row.id);
         let (id, menu_id) = (row.id.clone(), row.id.clone());
         let drag = CardDrag {
@@ -50,7 +56,11 @@ impl Root {
             position: Point::default(),
         };
         let marked = self.session.marks.contains(&row.id);
-        let ring = if selected || marked { t.accent } else { t.line };
+        let ring = match (selected || marked, active) {
+            (true, true) => t.accent,
+            (true, false) => t.line2,
+            (false, _) => t.line,
+        };
         div()
             .id(gpui::ElementId::Name(format!("card-{}", row.id).into()))
             .role(Role::ListItem)
@@ -106,6 +116,7 @@ impl Root {
         &self,
         index: usize,
         group: &Group,
+        active: bool,
         cx: &mut Context<Self>,
         t: &Theme,
     ) -> impl IntoElement + use<> {
@@ -121,7 +132,7 @@ impl Root {
             .flex_col()
             .gap(px(6.));
         for task in &group.rows {
-            cards = cards.child(self.card(&self.session.snapshot.tasks[*task], cx, t));
+            cards = cards.child(self.card(&self.session.snapshot.tasks[*task], active, cx, t));
         }
         div()
             .id(("column", index))
@@ -166,7 +177,11 @@ impl Root {
             .child(cards)
     }
 
-    pub(crate) fn render_board(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn render_board(
+        &self,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let t = theme(cx);
         let mut board = div()
             .id("board")
@@ -178,7 +193,7 @@ impl Root {
             .gap(px(10.))
             .overflow_x_scroll();
         for (index, group) in self.session.snapshot.groups.iter().enumerate() {
-            board = board.child(self.column(index, group, cx, &t));
+            board = board.child(self.column(index, group, active, cx, &t));
         }
         board
     }

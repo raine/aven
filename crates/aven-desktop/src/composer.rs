@@ -157,7 +157,7 @@ impl Root {
         }
     }
 
-    fn composer_draft(&self, cx: &Context<Self>) -> Option<Draft> {
+    pub(crate) fn composer_draft(&self, cx: &gpui::App) -> Option<Draft> {
         let composer = self
             .composer
             .as_ref()

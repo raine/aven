@@ -6,12 +6,12 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use aven_core::db::Database;
 use aven_core::ids::TaskId;
 use aven_core::sync::client::engine::Stage;
 use aven_core::sync::client::invitation::SetupInvitation;
-use aven_desktop::adapter::{self, ReplyBody, Snapshot, SyncPhase};
+use aven_desktop::adapter::{self, Prefs, ReplyBody, Snapshot, SyncPhase};
 use aven_desktop::assets::{Assets, load_fonts};
 use aven_desktop::capabilities::{self, CapabilityMap, source_surfaces};
 use aven_desktop::fixture::{self, Fixture, Seeded};
@@ -73,13 +73,14 @@ fn dispatch(args: &[String]) -> Result<bool> {
             Ok(true)
         }
         ["check-capabilities"] => check_capabilities().map(|()| true),
+        ["check-menus"] => check_menus().map(|()| true),
         ["sync-drive", ref rest @ ..] => sync_drive(rest),
         ["keychain-probe"] => keychain_probe().map(|()| true),
         ["list-bench", tasks] => list_bench(tasks.parse()?).map(|()| true),
         ["run", output] => run(Path::new(output), None),
         ["run", output, scene] => run(Path::new(output), Some(scene)),
         _ => bail!(
-            "usage: aven-desktop-capture export-fixture | seed | inventory | check-capabilities | keychain-probe | list-bench TASKS | run OUTPUT [SCENE]"
+            "usage: aven-desktop-capture export-fixture | seed | inventory | check-capabilities | check-menus | keychain-probe | list-bench TASKS | run OUTPUT [SCENE]"
         ),
     }
 }
@@ -232,11 +233,90 @@ fn open_root(
     cx.open_offscreen_window(size(px(width), px(height)), move |window, cx| {
         let (_, replies) = tokio::sync::mpsc::unbounded_channel();
         cx.new(|cx| {
-            let mut root = Root::new(session, replies, prefs, window, cx);
+            let saved = Prefs::load(&prefs);
+            let mut root = Root::new(session, replies, saved, prefs, window, cx);
             root.always_active = true;
             root
         })
     })
+}
+
+/// Whether the view, as rendered with its focus now, handles an action.
+fn handled(cx: &mut VisualTestAppContext, any: AnyWindowHandle, action: &dyn gpui::Action) -> bool {
+    cx.update_window(any, |_, window, cx| {
+        window.is_action_available(action, cx) || cx.is_action_available(action)
+    })
+    .expect("the window is open")
+}
+
+fn menu_actions() -> Vec<(String, Box<dyn gpui::Action>)> {
+    let mut items = Vec::new();
+    for menu in actions::menus() {
+        for item in menu.items {
+            if let gpui::MenuItem::Action { name, action, .. } = item {
+                items.push((format!("{} > {name}", menu.name), action));
+            }
+        }
+    }
+    items
+}
+
+/// Every menu item must reach a handler on a selected task, or in an editor for
+/// Edit, and task commands must stand down behind an overlay.
+fn check_menus() -> Result<()> {
+    let work = scratch()?;
+    let (requests, _keep) = tokio::sync::mpsc::unbounded_channel();
+    let group = adapter::Group {
+        name: "Group".to_string(),
+        hint: String::new(),
+        rows: vec![0, 1],
+        lane: None,
+    };
+    let session = Session::new(adapter::bench_snapshot(2, vec![group]), requests);
+    let mut cx = capture_context();
+    cx.update(aven_desktop::app::register_actions);
+    let window = open_root(
+        &mut cx,
+        session,
+        work.path().join("prefs.json"),
+        1440.,
+        900.,
+    )?;
+    let any: AnyWindowHandle = window.into();
+    cx.run_until_parked();
+    cx.update_window(any, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    let items = menu_actions();
+    let mut dead: Vec<&str> = items
+        .iter()
+        .filter(|(name, action)| !name.starts_with("Edit") && !handled(&mut cx, any, &**action))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    cx.simulate_keystrokes(any, "cmd-n");
+    cx.run_until_parked();
+    cx.update_window(any, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    dead.extend(
+        items
+            .iter()
+            .filter(|(name, action)| name.starts_with("Edit") && !handled(&mut cx, any, &**action))
+            .map(|(name, _)| name.as_str()),
+    );
+    ensure!(dead.is_empty(), "no handler for {dead:?}");
+    ensure!(
+        !handled(&mut cx, any, &actions::MarkDone),
+        "Mark Done stays live behind the composer"
+    );
+    ensure!(
+        !handled(&mut cx, any, &actions::ToggleLayout),
+        "a view command stays live behind the composer"
+    );
+    ensure!(
+        handled(&mut cx, any, &actions::Quit),
+        "Quit needs no window focus"
+    );
+    println!("{} menu items reach a handler", items.len());
+    Ok(())
 }
 
 /// Times layout of a generated queue, and checks its extent matches its entries.
