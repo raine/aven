@@ -413,6 +413,15 @@ impl Draft {
         self.more = !self.body.is_empty() || !self.schedule.is_empty();
     }
 
+    /// Takes the reader's task, unless the draft has moved on from `notes`.
+    pub fn fill_from_notes(&mut self, notes: &str, task: NewTask) -> bool {
+        let current = self.intake_text() == notes;
+        if current {
+            self.fill(task);
+        }
+        current
+    }
+
     /// The rough notes handed to the natural language reader.
     pub fn intake_text(&self) -> String {
         match (self.title.trim(), self.body.trim()) {
@@ -486,6 +495,22 @@ mod tests {
             "Creates \u{201c}Ship\u{201d} with #ios, Low priority. Write \\#tag to keep it as text."
         );
         assert_eq!(token_preview("Plain title"), "");
+    }
+
+    #[test]
+    fn a_reader_reply_leaves_a_draft_edited_since() {
+        let mut draft = Draft {
+            title: "Call the bank".to_string(),
+            ..Draft::default()
+        };
+        let notes = draft.intake_text();
+        draft.title = "Call the bank about the card".to_string();
+        assert!(!draft.fill_from_notes(&notes, NewTask::titled("From notes")));
+        assert_eq!(draft.title, "Call the bank about the card");
+
+        let notes = draft.intake_text();
+        assert!(draft.fill_from_notes(&notes, NewTask::titled("From notes")));
+        assert_eq!(draft.title, "From notes");
     }
 
     #[test]

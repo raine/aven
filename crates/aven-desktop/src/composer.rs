@@ -42,7 +42,8 @@ pub struct Composer {
     prior: Option<FocusHandle>,
     run: usize,
     pub closing: bool,
-    reading: bool,
+    /// The notes out with the reader. A reply to anything else is stale.
+    reading: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -114,7 +115,7 @@ impl Root {
             prior: window.focused(cx),
             run: self.session.motion.next_run(),
             closing: false,
-            reading: false,
+            reading: None,
             _subscriptions: subscriptions,
         };
         composer.show(draft, cx);
@@ -292,9 +293,9 @@ impl Root {
                 .show_toast("Add rough notes first".to_string(), None);
             self.arm_toast(cx);
         } else {
-            self.session.intake(notes, draft.project.clone());
+            self.session.intake(notes.clone(), draft.project.clone());
             if let Some(composer) = self.composer.as_mut() {
-                composer.reading = true;
+                composer.reading = Some(notes);
             }
         }
         cx.notify();
@@ -309,11 +310,14 @@ impl Root {
         let Some(composer) = self.composer.as_mut() else {
             return;
         };
-        composer.reading = false;
+        let Some(notes) = composer.reading.take() else {
+            return;
+        };
         if let Some(task) = task {
             let mut draft = composer.current(cx);
-            draft.fill(task);
-            composer.show(draft, cx);
+            if draft.fill_from_notes(&notes, task) {
+                composer.show(draft, cx);
+            }
         }
         cx.notify();
     }
@@ -841,7 +845,7 @@ impl Root {
             .child(
                 btn(
                     "c-read",
-                    if composer.reading {
+                    if composer.reading.is_some() {
                         "Reading…"
                     } else {
                         "Create with AI"
@@ -851,7 +855,7 @@ impl Root {
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.read_notes(&ReadNotes, window, cx);
                 }))
-                .child(if composer.reading {
+                .child(if composer.reading.is_some() {
                     "Reading…"
                 } else {
                     "Create with AI"
