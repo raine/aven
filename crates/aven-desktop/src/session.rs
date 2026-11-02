@@ -25,7 +25,6 @@ use crate::sync_ops::{
 pub const POP_DURATION: Duration = Duration::from_millis(320);
 pub const SETTLE_DURATION: Duration = Duration::from_millis(620);
 pub const PRIORITY_DURATION: Duration = Duration::from_millis(200);
-pub const COPIED_DURATION: Duration = Duration::from_millis(1300);
 pub const RING_DURATION: Duration = Duration::from_millis(700);
 pub const ALL_CLEAR_DURATION: Duration = Duration::from_millis(1000);
 pub const PULSE_DURATION: Duration = Duration::from_millis(1100);
@@ -39,7 +38,6 @@ pub struct Motion {
     runs: usize,
     completed: HashMap<TaskId, (TaskStatus, usize, Instant)>,
     repriced: HashMap<TaskId, (TaskPriority, usize, Instant)>,
-    copied: Option<(TaskId, usize, Instant)>,
     /// Epics whose ring sweeps on from an earlier count.
     rings: HashMap<TaskId, (usize, usize, Instant)>,
     all_clear: Option<(usize, Instant)>,
@@ -126,11 +124,6 @@ impl Motion {
         (at.elapsed() < PULSE_DURATION).then_some((changes, run))
     }
 
-    pub fn copied(&mut self, id: &TaskId) {
-        let run = self.next_run();
-        self.copied = Some((id.clone(), run, Instant::now()));
-    }
-
     /// What a just-completed task was, and its run.
     pub fn completion(&self, id: &TaskId) -> Option<(TaskStatus, usize)> {
         let (previous, run, at) = self.completed.get(id)?;
@@ -140,12 +133,6 @@ impl Motion {
     pub fn priority_change(&self, id: &TaskId) -> Option<(TaskPriority, usize)> {
         let (previous, run, at) = self.repriced.get(id)?;
         (at.elapsed() < PRIORITY_DURATION).then_some((*previous, *run))
-    }
-
-    /// The run of a copy still showing its feedback.
-    pub fn copy(&self, id: &TaskId) -> Option<usize> {
-        let (copied, run, at) = self.copied.as_ref()?;
-        (copied == id && at.elapsed() < COPIED_DURATION).then_some(*run)
     }
 }
 

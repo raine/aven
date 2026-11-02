@@ -1273,15 +1273,10 @@ impl Root {
         let Some(row) = self.session.target_row() else {
             return;
         };
-        let (id, reference) = (row.id.clone(), row.reference.clone());
+        let reference = row.reference.clone();
         cx.write_to_clipboard(ClipboardItem::new_string(reference.clone()));
-        self.session.motion.copied(&id);
-        // The header that confirms a copy only shows with the task.
-        if !self.details_open && !self.session.expanded {
-            self.session.show_toast(format!("Copied {reference}"), None);
-            self.arm_toast(cx);
-        }
-        self.repaint_after(crate::session::COPIED_DURATION, cx);
+        self.session.show_toast(format!("Copied {reference}"), None);
+        self.arm_toast(cx);
         cx.notify();
     }
 

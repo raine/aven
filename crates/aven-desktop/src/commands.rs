@@ -1177,6 +1177,7 @@ impl Root {
     fn copy_text(&mut self, text: String, what: &str, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.session.copied_toast(what);
+        self.arm_toast(cx);
         cx.notify();
     }
 

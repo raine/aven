@@ -4,8 +4,8 @@ use accesskit::Role;
 use aven_core::choices::TaskStatus;
 use aven_core::ids::TaskId;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, Div, Entity, ExternalPaths, FontWeight,
-    ObjectFit, Stateful, Window, div, img, prelude::*,
+    AnyElement, Context, Div, Entity, ExternalPaths, FontWeight, ObjectFit, Stateful, Window, div,
+    img, prelude::*,
 };
 
 use crate::actions::*;
@@ -14,7 +14,6 @@ use crate::commands::pasted_image;
 use crate::input::{Editor, EditorEvent};
 use crate::kit::*;
 use crate::schedule::DateField;
-use crate::session::COPIED_DURATION;
 use crate::shell::{BodyEdit, Root};
 use crate::theme::{Theme, theme};
 
@@ -64,44 +63,6 @@ fn side_action(id: impl Into<gpui::ElementId>, label: &'static str, t: &Theme) -
 }
 
 impl Root {
-    /// The ref in the header, confirming a copy before it returns.
-    fn detail_ref(&self, row: &TaskRow, cx: &Context<Self>, t: &Theme) -> AnyElement {
-        let label = ref_label(&row.reference, &row.project_key, None, t).into_any_element();
-        let Some(run) = self.session.motion.copy(&row.id) else {
-            return label;
-        };
-        let copied = || {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_size(px(12.))
-                .text_color(t.good)
-                .child(status_glyph(TaskStatus::Done, t))
-                .child("Copied")
-        };
-        // Without motion the confirmation holds still until it expires.
-        if cx.reduce_motion() {
-            return copied().into_any_element();
-        }
-        let shown =
-            |delta: f32| (delta / 0.08).min(1.) * (1. - ((delta - 0.86) / 0.14).clamp(0., 1.));
-        let animation = Animation::new(COPIED_DURATION);
-        div()
-            .relative()
-            .child(div().child(label).with_animation(
-                ("ref-out", run),
-                animation.clone(),
-                move |label, delta| label.opacity(1. - shown(delta)),
-            ))
-            .child(copied().absolute().top_0().left_0().with_animation(
-                ("ref-in", run),
-                animation,
-                move |copied, delta| copied.opacity(shown(delta)),
-            ))
-            .into_any_element()
-    }
-
     fn prop(&self, id: &'static str, label: &'static str, t: &Theme) -> Stateful<Div> {
         let raised = t.raised;
         div()
@@ -869,7 +830,7 @@ impl Root {
                     .on_click(
                         cx.listener(|this, _, window, cx| this.copy_ref(&CopyRef, window, cx)),
                     )
-                    .child(self.detail_ref(&row, cx, &t)),
+                    .child(ref_label(&row.reference, &row.project_key, None, &t)),
             )
             .children(self.epic_ring(&row, &t))
             .child(div().flex_1())
@@ -941,7 +902,12 @@ impl Root {
                                         .items_center()
                                         .gap(px(8.))
                                         .children(self.trail_button(cx, &t))
-                                        .child(self.detail_ref(&row, cx, &t)),
+                                        .child(ref_label(
+                                            &row.reference,
+                                            &row.project_key,
+                                            None,
+                                            &t,
+                                        )),
                                 )
                                 .child(self.render_title(26., window, cx, &t))
                                 .when_some(detail.as_ref(), |doc, detail| {
