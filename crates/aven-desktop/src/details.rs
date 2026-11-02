@@ -23,6 +23,8 @@ const THUMB_HEIGHT: f32 = 68.;
 const DOC_WIDTH: f32 = 1040.;
 const DOC_SIDE_WIDTH: f32 = 260.;
 const META_KEY_WIDTH: f32 = 100.;
+const ACTIVITY_LINE_HEIGHT: f32 = 18.;
+const ACTIVITY_DOT: f32 = 5.;
 const ROW_GROUP: &str = "task-row";
 
 fn section_head(heading: &'static str, t: &Theme) -> Div {
@@ -599,11 +601,19 @@ impl Root {
             section = section.child(
                 div()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .gap(px(8.))
                     .py(px(3.))
                     .text_size(px(12.))
-                    .child(div().flex_none().size(px(5.)).rounded_full().bg(t.faint))
+                    .line_height(px(ACTIVITY_LINE_HEIGHT))
+                    .child(
+                        div()
+                            .flex_none()
+                            .mt(px((ACTIVITY_LINE_HEIGHT - ACTIVITY_DOT) / 2.))
+                            .size(px(ACTIVITY_DOT))
+                            .rounded_full()
+                            .bg(t.faint),
+                    )
                     .child(
                         div()
                             .flex_1()
