@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use accesskit::Role;
 use aven_core::choices::{TaskPriority, TaskStatus};
+use chrono::NaiveDate;
 use gpui::{
     Action, Animation, AnimationExt, App, Bounds, Context, Entity, FocusHandle, FontWeight,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, SharedString,
@@ -12,6 +13,7 @@ use gpui::{
 
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
+use crate::schedule::{CALENDAR_HEIGHT, Calendar};
 use crate::session::ToastAction;
 use crate::shell::Root;
 use crate::theme::theme;
@@ -23,6 +25,8 @@ const MENU_WIDTH: f32 = 280.;
 const PLAIN_MENU_WIDTH: f32 = 236.;
 const WIDE_MENU_WIDTH: f32 = 620.;
 const MENU_PADDING: f32 = 5.;
+const MENU_HEADER_HEIGHT: f32 = 28.;
+const MENU_NOTE_HEIGHT: f32 = 52.;
 
 pub type Run = Rc<dyn Fn(&mut Root, &mut Window, &mut Context<Root>)>;
 
@@ -47,6 +51,10 @@ pub struct Entry {
     pub danger: bool,
     /// Checking one entry of a group unchecks the rest.
     pub group: u8,
+    /// Shown under the list while the entry is highlighted.
+    pub note: Option<String>,
+    /// Picking it swaps the list for the menu's calendar.
+    calendar: bool,
     key: Option<char>,
     run: Option<Run>,
 }
@@ -66,6 +74,8 @@ impl Entry {
             sep: false,
             danger: false,
             group: 0,
+            note: None,
+            calendar: false,
             key: None,
             run: Some(Rc::new(run)),
         }
@@ -122,6 +132,16 @@ impl Entry {
         self
     }
 
+    pub fn note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
+    }
+
+    pub fn calendar(mut self) -> Self {
+        self.calendar = true;
+        self
+    }
+
     /// The letter that picks this entry in a choice menu.
     pub fn key(mut self, key: char) -> Self {
         self.key = Some(key);
@@ -133,6 +153,17 @@ impl Entry {
 /// Makes the entry a create line stands for.
 pub type Create = Rc<dyn Fn(String) -> Entry>;
 
+/// Makes sense of typed text as an entry of its own, if it can.
+pub type Read = Rc<dyn Fn(&str) -> Option<Entry>>;
+
+/// Names what a menu sets, and the menu Tab swaps it for.
+pub struct MenuHeader {
+    pub title: &'static str,
+    pub subject: String,
+    pub other: &'static str,
+    pub swap: Run,
+}
+
 #[derive(Default)]
 pub struct MenuOptions {
     pub wide: bool,
@@ -141,12 +172,18 @@ pub struct MenuOptions {
     pub create: Option<Create>,
     /// The title of a menu of fixed choices, which takes letters instead of a search.
     pub choice: Option<String>,
+    pub read: Option<Read>,
+    /// What the empty list says about the text that left nothing.
+    pub unread: Option<fn(&str) -> String>,
+    pub header: Option<MenuHeader>,
+    pub calendar: Option<Calendar>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Shown {
     Item(usize),
     Create,
+    Read,
 }
 
 pub struct Menu {
@@ -159,6 +196,7 @@ pub struct Menu {
     run: usize,
     scroll: ScrollHandle,
     choice_focus: FocusHandle,
+    calendar_open: bool,
     _subscription: Subscription,
 }
 
@@ -259,17 +297,37 @@ impl Menu {
         self.input.read(cx).text().to_lowercase()
     }
 
+    /// What the typed text reads as, if the menu reads text.
+    fn read(&self, cx: &App) -> Option<Entry> {
+        let query = self.query(cx);
+        let query = query.trim();
+        let read = self.options.read.as_ref().filter(|_| !query.is_empty())?;
+        read(query)
+    }
+
+    /// The calendar, while it stands in for the list. Typing returns to the list.
+    fn calendar(&self, cx: &App) -> Option<&Calendar> {
+        let calendar = self.options.calendar.as_ref();
+        calendar.filter(|_| self.calendar_open && self.query(cx).trim().is_empty())
+    }
+
     /// The entries the typed text leaves, closest first and otherwise in order.
+    /// What it reads as leads, in place of the entries that say the same.
     fn shown(&self, cx: &App) -> Vec<Shown> {
         let query = self.query(cx);
         let query = query.trim();
+        let read = self.read(cx);
+        let said = |entry: &Entry| {
+            let said = read.as_ref();
+            said.is_some_and(|read| entry.label == read.label || entry.hint == read.label)
+        };
         let mut ranked: Vec<(Closeness, usize)> = (0..self.entries.len())
             .filter_map(|ix| {
                 let entry = &self.entries[ix];
                 if query.is_empty() {
                     return Some((Closeness::Exact, ix));
                 }
-                if entry.head {
+                if entry.head || said(entry) {
                     return None;
                 }
                 let label = entry.label.to_lowercase();
@@ -286,6 +344,9 @@ impl Menu {
         if self.options.create.is_some() && !query.is_empty() && !exact {
             shown.push(Shown::Create);
         }
+        if read.is_some() {
+            shown.insert(0, Shown::Read);
+        }
         shown
     }
 
@@ -293,7 +354,7 @@ impl Menu {
     fn picks(&self, cx: &App) -> Vec<Shown> {
         let can_pick = |line: &Shown| match line {
             Shown::Item(ix) => !self.entries[*ix].head && !self.entries[*ix].off,
-            Shown::Create => true,
+            Shown::Create | Shown::Read => true,
         };
         self.shown(cx).into_iter().filter(can_pick).collect()
     }
@@ -320,6 +381,7 @@ impl Root {
             index: if options.plain { usize::MAX } else { 0 },
             options,
             choice_focus: cx.focus_handle(),
+            calendar_open: false,
             run: self.session.motion.next_run(),
             input,
             anchor,
@@ -354,6 +416,21 @@ impl Root {
         cx.notify();
     }
 
+    /// Swaps the open menu for the one `open` opens, without animating it in again.
+    pub(crate) fn replace_menu(
+        &mut self,
+        open: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let run = self.menu.as_ref().map(|menu| menu.run);
+        self.close_menu(window, cx);
+        open(self, window, cx);
+        if let Some((menu, run)) = self.menu.as_mut().zip(run) {
+            menu.run = run;
+        }
+    }
+
     /// The labels checked in the open menu, for a pick to act on.
     pub(crate) fn menu_checked(&self) -> Vec<String> {
         let entries = self.menu.iter().flat_map(|menu| &menu.entries);
@@ -381,6 +458,13 @@ impl Root {
                 menu.entries.push(entry);
                 menu.entries.len() - 1
             }
+            Shown::Read => {
+                let Some(entry) = menu.read(cx) else {
+                    return;
+                };
+                menu.entries.push(entry);
+                menu.entries.len() - 1
+            }
         };
         self.activate(ix, window, cx);
     }
@@ -390,6 +474,13 @@ impl Root {
         let Some(menu) = self.menu.as_mut() else {
             return;
         };
+        if menu.entries[ix].calendar {
+            menu.calendar_open = true;
+            let input = menu.input.clone();
+            input.update(cx, |input, cx| input.set_text("", cx));
+            cx.notify();
+            return;
+        }
         let run = menu.entries[ix].run.clone();
         if menu.options.multi {
             let checked = !menu.entries[ix].checked;
@@ -413,6 +504,46 @@ impl Root {
         cx.notify();
     }
 
+    /// The open menu's calendar, for its controls to move.
+    pub(crate) fn menu_calendar(&mut self) -> Option<&mut Calendar> {
+        self.menu.as_mut()?.options.calendar.as_mut()
+    }
+
+    fn step_menu_calendar(&mut self, days: i64, cx: &mut Context<Self>) {
+        if let Some(calendar) = self.menu_calendar() {
+            calendar.move_days(days);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn pick_menu_day(
+        &mut self,
+        day: NaiveDate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pick = self.menu_calendar().map(|calendar| calendar.pick());
+        self.close_menu(window, cx);
+        if let Some(pick) = pick {
+            pick(self, day);
+        }
+        cx.notify();
+    }
+
+    fn on_menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "tab" {
+            return;
+        }
+        let header = self
+            .menu
+            .as_ref()
+            .and_then(|menu| menu.options.header.as_ref());
+        if let Some(swap) = header.map(|header| header.swap.clone()) {
+            cx.stop_propagation();
+            swap(self, window, cx);
+        }
+    }
+
     fn on_menu_event(
         &mut self,
         _: &Entity<Editor>,
@@ -423,6 +554,16 @@ impl Root {
         let Some(menu) = self.menu.as_ref() else {
             return;
         };
+        if let Some(day) = menu.calendar(cx).map(|calendar| calendar.day) {
+            match event {
+                EditorEvent::Up => return self.step_menu_calendar(-7, cx),
+                EditorEvent::Down => return self.step_menu_calendar(7, cx),
+                EditorEvent::Left => return self.step_menu_calendar(-1, cx),
+                EditorEvent::Right => return self.step_menu_calendar(1, cx),
+                EditorEvent::Submit => return self.pick_menu_day(day, window, cx),
+                _ => {}
+            }
+        }
         let count = menu.picks(cx).len();
         let index = if menu.index == usize::MAX {
             None
@@ -533,15 +674,35 @@ impl Root {
             (_, true) => 0.,
             _ => 38.,
         };
-        let body: f32 = shown.len().max(1) as f32 * row;
+        let header = menu.options.header.as_ref();
+        let header_height = header.map_or(0., |_| MENU_HEADER_HEIGHT);
+        let calendar = menu.calendar(cx);
+        let typed = menu.read(cx);
+        let entry_of = |line: &Shown| match line {
+            Shown::Item(item) => menu.entries.get(*item),
+            Shown::Create => None,
+            Shown::Read => typed.as_ref(),
+        };
+        let note = picks
+            .get(menu.index)
+            .and_then(entry_of)
+            .and_then(|entry| entry.note.clone())
+            .filter(|_| calendar.is_none());
+        let body: f32 = match calendar {
+            Some(_) => CALENDAR_HEIGHT - 10.,
+            None => shown.len().max(1) as f32 * row,
+        };
         let max_height = if wide {
             470.
         } else if plain {
             f32::MAX
+        } else if header.is_some() {
+            400.
         } else {
             340.
         };
-        let height = (input_height + 10. + body).min(max_height);
+        let note_height = note.as_ref().map_or(0., |_| MENU_NOTE_HEIGHT);
+        let height = (header_height + input_height + 10. + body + note_height).min(max_height);
         let (left, top) = if wide {
             ((viewport.width - px(width)) / 2., viewport.height * 0.13)
         } else {
@@ -575,9 +736,9 @@ impl Root {
             let on = pick.is_some() && pick == Some(menu.index);
             let created;
             let (label, entry): (&str, Option<&Entry>) = match line {
-                Shown::Item(item) => {
-                    let entry = &menu.entries[*item];
-                    (entry.label.as_str(), Some(entry))
+                Shown::Item(_) | Shown::Read => {
+                    let entry = entry_of(line);
+                    (entry.map_or("", |entry| entry.label.as_str()), entry)
                 }
                 Shown::Create => {
                     created = format!("+ create \"{}\"", normalize_label(&query));
@@ -650,7 +811,7 @@ impl Root {
                             },
                         ))
                     })
-                    .when(multi || choice.is_some(), |row| {
+                    .when(multi || choice.is_some() || header.is_some(), |row| {
                         let checked = entry.is_some_and(|entry| entry.checked);
                         row.child(
                             div()
@@ -681,7 +842,10 @@ impl Root {
                     .min_h(px(row))
                     .px(px(8.))
                     .text_color(t.body)
-                    .child("No results"),
+                    .child(menu.options.unread.map_or_else(
+                        || "No results".to_string(),
+                        |unread| unread(menu.input.read(cx).text().trim()),
+                    )),
             );
         }
         Some(
@@ -708,6 +872,9 @@ impl Root {
                             box_.track_focus(&menu.choice_focus)
                                 .on_key_down(cx.listener(Self::on_choice_key))
                         })
+                        .when(header.is_some(), |box_| {
+                            box_.on_key_down(cx.listener(Self::on_menu_key))
+                        })
                         .flex()
                         .flex_col()
                         .rounded(px(10.))
@@ -716,6 +883,45 @@ impl Root {
                         .overflow_hidden()
                         .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .when_some(header, |box_, header| {
+                            let raised = t.raised;
+                            let swap = header.swap.clone();
+                            let other = format!("⇥ {}", header.other);
+                            box_.child(
+                                small(12.)
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .h(px(MENU_HEADER_HEIGHT))
+                                    .pl(px(12.))
+                                    .pr(px(6.))
+                                    .text_color(t.faint)
+                                    .child(
+                                        div()
+                                            .text_color(t.muted)
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(header.title),
+                                    )
+                                    .child("·")
+                                    .child(div().min_w_0().truncate().child(header.subject.clone()))
+                                    .child(
+                                        div()
+                                            .id("menu-swap")
+                                            .role(Role::Button)
+                                            .aria_label(other.clone())
+                                            .ml_auto()
+                                            .flex_none()
+                                            .px(px(6.))
+                                            .rounded(px(5.))
+                                            .hover(move |style| style.bg(raised))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                swap(this, window, cx);
+                                            }))
+                                            .child(other),
+                                    ),
+                            )
+                        })
                         .child(
                             div()
                                 .flex_none()
@@ -737,7 +943,22 @@ impl Root {
                                     None => input.child(menu.input.clone()),
                                 }),
                         )
-                        .child(rows)
+                        .map(|box_| match calendar {
+                            Some(calendar) => box_.child(Self::render_calendar(calendar, cx, &t)),
+                            None => box_.child(rows),
+                        })
+                        .when_some(note, |box_, note| {
+                            box_.child(
+                                small(12.)
+                                    .flex_none()
+                                    .px(px(12.))
+                                    .py(px(8.))
+                                    .border_t_1()
+                                    .border_color(t.line)
+                                    .text_color(t.muted)
+                                    .child(note),
+                            )
+                        })
                         .with_animation(
                             ("menu-enter", menu.run),
                             Animation::new(MENU_ENTER),

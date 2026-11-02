@@ -145,7 +145,13 @@ impl Root {
         let known = self.anchors.borrow().get(key).copied();
         let details = self.details_open || self.session.expanded;
         known
-            .filter(|_| details || !matches!(key, "status" | "priority" | "labels" | "project"))
+            .filter(|_| {
+                details
+                    || !matches!(
+                        key,
+                        "status" | "priority" | "labels" | "project" | "available" | "due"
+                    )
+            })
             .unwrap_or_else(|| self.selected_row_bounds())
     }
 

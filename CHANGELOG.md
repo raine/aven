@@ -7,6 +7,8 @@ description: Release notes for aven.
 
 - New: Aven.app on macOS now includes a desktop app. Open it from Finder or the Dock; `aven` in a terminal and the background daemon work as before. An update relaunches the app once it is in the background.
 - UX: Clicking an Aven notification on macOS opens the desktop app.
+- UX: Set due and available dates in the desktop app from a menu that saves on selection, reads typed dates such as `3 days`, `friday`, or `Dec 24`, and opens a calendar for anything else. Tab switches between the two dates.
+- Fix: Typed dates such as `tomorrow` save correctly in the desktop app instead of failing with an invalid date error.
 - Perf: Search and task lists stay fast in workspaces with thousands of tasks, where they could take seconds.
 - Fix: Choosing an order now starts from that order's natural direction, so Title after Recently updated no longer sorts Z to A.
 - Fix: After a TUI sync restores Keychain access, wait for the background sync retry before showing the result, so the resolved error no longer stays on screen and asks you to sync again.

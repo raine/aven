@@ -19,6 +19,7 @@ mod lazy_row;
 mod markdown;
 mod overlays;
 mod platform;
+mod schedule;
 pub mod session;
 mod settings;
 mod shell;

@@ -13,6 +13,7 @@ use crate::adapter::{Command, Detail, Link, TaskRow};
 use crate::commands::pasted_image;
 use crate::input::{Editor, EditorEvent};
 use crate::kit::*;
+use crate::schedule::DateField;
 use crate::session::COPIED_DURATION;
 use crate::shell::{BodyEdit, Root};
 use crate::theme::{Theme, theme};
@@ -169,15 +170,17 @@ impl Root {
             .child(
                 self.prop("available", "Available", t)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_schedule(1, window, cx);
+                        this.open_date_menu(DateField::Available, window, cx);
                     }))
+                    .child(anchor_probe("available", &anchors))
                     .child(plain(available)),
             )
             .child(
                 self.prop("due", "Due", t)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_schedule(2, window, cx);
+                        this.open_date_menu(DateField::Due, window, cx);
                     }))
+                    .child(anchor_probe("due", &anchors))
                     .child(plain(if row.due.is_empty() {
                         "None".to_string()
                     } else {

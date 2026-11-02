@@ -144,6 +144,9 @@ pub enum EditorEvent {
     Blur,
     Up,
     Down,
+    /// An arrow pressed with no text for it to move through.
+    Left,
+    Right,
     /// A paste the editor cannot hold, for a surface that takes images.
     PastedImage(PastedImage),
 }
@@ -653,11 +656,19 @@ impl Editor {
     }
 
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
+        if self.emit_arrows && self.content.is_empty() {
+            cx.emit(EditorEvent::Left);
+            return;
+        }
         let offset = self.collapse_or(true, |this| this.previous_boundary(this.cursor()));
         self.move_to(offset, window, cx);
     }
 
     fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+        if self.emit_arrows && self.content.is_empty() {
+            cx.emit(EditorEvent::Right);
+            return;
+        }
         let offset = self.collapse_or(false, |this| this.next_boundary(this.cursor()));
         self.move_to(offset, window, cx);
     }

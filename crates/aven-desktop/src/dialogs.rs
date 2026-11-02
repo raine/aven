@@ -1,5 +1,5 @@
-//! Dialogs over the window: search, schedule, prompts, images, help and the
-//! incoming description. One shows at a time, above the composer, and focus goes
+//! Dialogs over the window: search, prompts, images, help and the incoming
+//! description. One shows at a time, above the composer, and focus goes
 //! back where it came from.
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -7,12 +7,7 @@ use std::rc::Rc;
 use accesskit::Role;
 use aven_core::ids::TaskId;
 use aven_core::recurrence::RecurrenceSeriesId;
-use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
 use aven_host::store::ConflictTarget;
-use aven_host::time_input::{
-    available_at_error_message, due_on_error_message, parse_available_at_input, parse_due_on_input,
-};
-use chrono::{DateTime, Local, Utc};
 use gpui::{
     AnyElement, ClipboardItem, Context, Entity, FocusHandle, FontWeight, HighlightStyle,
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription,
@@ -20,8 +15,7 @@ use gpui::{
 };
 
 use crate::actions::*;
-use crate::adapter::{Bulk, Command, Image, SearchHit, SearchInput, SyncPhase};
-use crate::draft::{dates_preview, schedule_preview};
+use crate::adapter::{Command, Image, SearchHit, SearchInput, SyncPhase};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::session::SyncPage;
@@ -48,7 +42,6 @@ const SEARCH_LIST_HEIGHT: f32 = 312.;
 const SEARCH_ROW_HEIGHT: f32 = 50.;
 
 type Save = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
-type ScheduleWrites = (Option<Option<String>>, Option<Option<String>>);
 
 const HELP: [(&str, &[(&str, &str)]); 6] = [
     (
@@ -157,15 +150,6 @@ pub enum Dialog {
         deleted: bool,
         index: usize,
     },
-    Schedule {
-        id: TaskId,
-        reference: String,
-        text: Entity<Editor>,
-        available: Entity<Editor>,
-        due: Entity<Editor>,
-        base: (String, String),
-        error: Option<String>,
-    },
     /// What becomes of a stopped series' current task.
     Stop {
         id: RecurrenceSeriesId,
@@ -248,34 +232,6 @@ pub struct Layer {
     container: FocusHandle,
     pub(crate) fields: Vec<FocusHandle>,
     _subscriptions: Vec<Subscription>,
-}
-
-/// A stored instant as the schedule field shows it.
-fn local_field(at: &str) -> String {
-    at.parse::<DateTime<Utc>>().map_or_else(
-        |_| at.to_string(),
-        |at| {
-            at.with_timezone(&Local)
-                .format("%Y-%m-%d at %H:%M")
-                .to_string()
-        },
-    )
-}
-
-/// One schedule field's parsed value.
-fn field_value(
-    text: &str,
-    parse: fn(&str) -> anyhow::Result<String>,
-    message: fn(&anyhow::Error) -> String,
-) -> Result<Option<String>, String> {
-    if text.trim().is_empty() {
-        return Ok(None);
-    }
-    match parse(text.trim()) {
-        Ok(value) if value.is_empty() => Ok(None),
-        Ok(value) => Ok(Some(value)),
-        Err(error) => Err(message(&error)),
-    }
 }
 
 impl Root {
@@ -542,169 +498,6 @@ impl Root {
         self.switch_view(Command::Search(input), window, cx);
     }
 
-    pub(crate) fn edit_availability(
-        &mut self,
-        _: &EditAvailability,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_schedule(0, window, cx);
-    }
-
-    pub(crate) fn edit_due(&mut self, _: &EditDue, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_schedule(2, window, cx);
-    }
-
-    /// Opens the schedule dialog with one of its fields focused.
-    pub(crate) fn open_schedule(
-        &mut self,
-        field: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(row) = self.session.target_row().cloned() else {
-            return;
-        };
-        let detail = self.session.detail.as_ref();
-        let at = detail.and_then(|detail| detail.available_at.as_deref());
-        // Marked tasks share no dates, so only what gets typed is written.
-        let base = if self.session.bulk_panel() {
-            (String::new(), String::new())
-        } else {
-            (
-                at.map(local_field).unwrap_or_default(),
-                detail
-                    .and_then(|detail| detail.due_on.clone())
-                    .unwrap_or_default(),
-            )
-        };
-        let field_editor = |value: &str,
-                            placeholder: &'static str,
-                            window: &mut Window,
-                            cx: &mut Context<Self>| {
-            cx.new(|cx| {
-                let mut editor = Editor::new(Mode::Single, placeholder, window, cx);
-                editor.set_text(value, cx);
-                editor
-            })
-        };
-        let text = field_editor("", "available tomorrow at 9am, due next friday", window, cx);
-        let available = field_editor(&base.0, "Available now", window, cx);
-        let due = field_editor(&base.1, "No deadline", window, cx);
-        let editors = vec![text.clone(), available.clone(), due.clone()];
-        let target = editors[field].read(cx).focus.clone();
-        let dialog = Dialog::Schedule {
-            id: row.id,
-            reference: row.reference,
-            text,
-            available,
-            due,
-            base,
-            error: None,
-        };
-        self.open_dialog(dialog, editors, window, cx);
-        window.focus(&target, cx);
-    }
-
-    /// The writes the schedule fields ask for, or why they cannot be made.
-    fn schedule_writes(&self, cx: &Context<Self>) -> Option<Result<ScheduleWrites, String>> {
-        let Dialog::Schedule {
-            text,
-            available,
-            due,
-            base,
-            ..
-        } = &self.dialog.as_ref()?.dialog
-        else {
-            return None;
-        };
-        let typed = text.read(cx).text().trim();
-        if !typed.is_empty() {
-            return Some(match parse_schedule_input(typed) {
-                Ok(ParsedScheduleInput::Once {
-                    available_at,
-                    due_on,
-                }) => Ok((
-                    Some(available_at).filter(|at| !at.is_empty()).map(Some),
-                    Some(due_on).filter(|due| !due.is_empty()).map(Some),
-                )),
-                Ok(ParsedScheduleInput::Recurring { .. }) => {
-                    Err("Repeating schedules are set when creating a task.".to_string())
-                }
-                Ok(ParsedScheduleInput::None) => Ok((None, None)),
-                Err(_) => Err(schedule_preview(typed).text),
-            });
-        }
-        let at = available.read(cx).text().trim().to_string();
-        let on = due.read(cx).text().trim().to_string();
-        let writes = (|| {
-            let at = (at != base.0)
-                .then(|| field_value(&at, parse_available_at_input, available_at_error_message))
-                .transpose()?;
-            let on = (on != base.1)
-                .then(|| field_value(&on, parse_due_on_input, due_on_error_message))
-                .transpose()?;
-            Ok((at, on))
-        })();
-        Some(writes)
-    }
-
-    fn schedule_preview_line(&self, cx: &Context<Self>) -> (String, bool) {
-        match self.schedule_writes(cx) {
-            Some(Err(message)) => (message, false),
-            Some(Ok((at, on))) => {
-                let detail = self.session.detail.as_ref();
-                let stored_at = detail.and_then(|detail| detail.available_at.clone());
-                let stored_on = detail.and_then(|detail| detail.due_on.clone());
-                let at = at.unwrap_or(stored_at).unwrap_or_default();
-                let on = on.unwrap_or(stored_on).unwrap_or_default();
-                (dates_preview(&at, &on, Local::now().date_naive()), true)
-            }
-            None => (String::new(), true),
-        }
-    }
-
-    fn apply_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(writes) = self.schedule_writes(cx) else {
-            return;
-        };
-        match writes {
-            Ok((available_at, due_on)) => {
-                if let Some(Layer {
-                    dialog: Dialog::Schedule { id, .. },
-                    ..
-                }) = self.dialog.as_ref()
-                    && (available_at.is_some() || due_on.is_some())
-                {
-                    let bulk = Bulk::Schedule {
-                        available_at: available_at.clone(),
-                        due_on: due_on.clone(),
-                    };
-                    let id = id.clone();
-                    if !self.session.bulk(bulk) {
-                        self.session.write(Command::SetSchedule {
-                            id,
-                            available_at,
-                            due_on,
-                        });
-                    }
-                    self.session.review_deferred();
-                }
-                self.close_dialog(window, cx);
-            }
-            Err(message) => {
-                if let Some(Layer {
-                    dialog: Dialog::Schedule { error, .. },
-                    ..
-                }) = self.dialog.as_mut()
-                {
-                    *error = Some(message);
-                }
-                cx.notify();
-            }
-        }
-    }
-
     fn set_field(&self, editor: &Entity<Editor>, value: &str, cx: &mut Context<Self>) {
         editor.update(cx, |editor, cx| editor.set_text(value, cx));
     }
@@ -877,7 +670,6 @@ impl Root {
                     self.open_hit(hit.id, window, cx);
                 }
             }
-            Dialog::Schedule { .. } => self.apply_schedule(window, cx),
             Dialog::Prompt { input, save, .. } => {
                 let (text, save) = (input.read(cx).text().to_string(), save.clone());
                 self.close_dialog(window, cx);
@@ -1259,81 +1051,6 @@ impl Root {
             )
     }
 
-    fn render_schedule(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
-        let Some(Layer {
-            dialog:
-                Dialog::Schedule {
-                    reference,
-                    text,
-                    available,
-                    due,
-                    error,
-                    ..
-                },
-            ..
-        }) = self.dialog.as_ref()
-        else {
-            return Vec::new();
-        };
-        let today = Local::now().date_naive();
-        let tomorrow = today + chrono::Days::new(1);
-        let days_to_monday =
-            7 - i64::from(chrono::Datelike::weekday(&today).num_days_from_monday());
-        let monday = today + chrono::Duration::days(days_to_monday);
-        let days_to_friday =
-            (4 + 7 - i64::from(chrono::Datelike::weekday(&today).num_days_from_monday())) % 7;
-        let friday = today + chrono::Duration::days(days_to_friday);
-        let morning = |date: chrono::NaiveDate| format!("{} at 09:00", date.format("%Y-%m-%d"));
-        let (line, valid) = self.schedule_preview_line(cx);
-        let (line, valid) = match error {
-            Some(error) if !valid => (error.clone(), false),
-            _ => (line, valid),
-        };
-        let starts = vec![
-            ("Now", String::new()),
-            ("Tomorrow morning", morning(tomorrow)),
-            ("Next Monday", morning(monday)),
-            ("In two weeks", morning(today + chrono::Days::new(14))),
-        ];
-        let ends = vec![
-            ("No deadline", String::new()),
-            ("Today", today.format("%Y-%m-%d").to_string()),
-            ("Friday", friday.format("%Y-%m-%d").to_string()),
-            (
-                "Next week",
-                (today + chrono::Days::new(7))
-                    .format("%Y-%m-%d")
-                    .to_string(),
-            ),
-        ];
-        vec![
-            Self::heading(format!("Schedule {reference}"), t).into_any_element(),
-            div()
-                .px(px(18.))
-                .pb(px(12.))
-                .child(Self::field_label("Type a schedule", t))
-                .child(Self::field_box(text, t))
-                .child(Self::field_label("Available", t))
-                .child(Self::field_box(available, t))
-                .child(self.quick_row("quick-available", available, starts, cx, t))
-                .child(Self::field_label("Due", t))
-                .child(Self::field_box(due, t))
-                .child(self.quick_row("quick-due", due, ends, cx, t))
-                .child(
-                    div()
-                        .mt(px(12.))
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(7.))
-                        .bg(t.raised)
-                        .text_color(if valid { t.body } else { t.bad })
-                        .child(line),
-                )
-                .into_any_element(),
-            self.cancel_and_accept("Apply", cx, t).into_any_element(),
-        ]
-    }
-
     fn render_prompt(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
         let Some(Layer {
             dialog:
@@ -1644,12 +1361,6 @@ impl Root {
                 SEARCH_WIDTH,
                 self.render_search(cx, &t),
                 "Dialog Search",
-            ),
-            Dialog::Schedule { .. } => (
-                "Schedule",
-                DIALOG_WIDTH,
-                self.render_schedule(cx, &t),
-                "Dialog",
             ),
             Dialog::Prompt { .. } => ("Edit", NARROW_WIDTH, self.render_prompt(cx, &t), "Dialog"),
             Dialog::Stop { .. } => ("Stop", NARROW_WIDTH, self.render_stop(cx, &t), "Dialog"),
