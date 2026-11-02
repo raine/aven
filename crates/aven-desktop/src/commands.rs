@@ -1230,7 +1230,11 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let snapshot = &self.session.snapshot;
-        let mut entries = vec![Entry::head("Task"), Entry::action("New task", "a", NewTask)];
+        let mut entries = vec![
+            Entry::head("Task"),
+            Entry::action("New task", "a", NewTask),
+            Entry::action("Search tasks", "/", OpenSearch),
+        ];
         if let Some(row) = self.session.target_row() {
             entries.extend([
                 Entry::action("Mark done", "d", MarkDone),
@@ -1301,25 +1305,14 @@ impl Root {
                 "",
                 ToggleTheme,
             ),
-            Entry::head("Tasks"),
         ]);
-        for task in &self.session.catalog {
-            let id = task.id.clone();
-            entries.push(
-                Entry::new(task.title.clone(), move |root, window, cx| {
-                    root.open_task(id.clone(), window, cx);
-                })
-                .hint(task.reference.clone())
-                .mark(Mark::Status(task.status)),
-            );
-        }
         let options = MenuOptions {
             wide: true,
             ..MenuOptions::default()
         };
         self.open_menu(
             entries,
-            "Type a command or a task",
+            "Type a command",
             Bounds::default(),
             options,
             window,
