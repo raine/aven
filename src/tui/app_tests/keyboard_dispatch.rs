@@ -122,7 +122,7 @@ async fn sort_shortcuts_update_order_and_direction() {
         ('d', TaskOrder::DueOn, "asc"),
         ('r', TaskOrder::DueOn, "desc"),
         ('c', TaskOrder::Created, "desc"),
-        ('d', TaskOrder::DueOn, "desc"),
+        ('d', TaskOrder::DueOn, "asc"),
     ] {
         app.handle_normal_key(KeyCode::Char('o')).await.unwrap();
         assert_pending(&app, &["o"]);

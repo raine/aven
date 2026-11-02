@@ -427,9 +427,11 @@ impl TuiStore {
             view_state.set_query(TaskQuery::Open);
         }
         view_state.order = order;
-        if matches!(order, TaskOrder::Created | TaskOrder::Updated) {
-            view_state.direction = SortDirection::Desc;
-        }
+        view_state.direction = if matches!(order, TaskOrder::Created | TaskOrder::Updated) {
+            SortDirection::Desc
+        } else {
+            SortDirection::Asc
+        };
     }
 
     pub(super) fn reverse_view_order(view_state: &mut super::TaskViewState) {
