@@ -6,13 +6,23 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use aven_core::db::Database;
 use aven_core::sync::seed_claim::{Secret, StorageNotEmpty};
+use axum::Router;
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
+use tower_http::compression::CompressionLayer;
+use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{info, warn};
 
+use crate::ai::{self, AiService};
 use crate::cli::{ServerArgs, ServerSetupArgs, ServerSubcommand};
 use crate::server_config::{self, ServerConfig, ServerPaths};
 use crate::signals::shutdown_signal;
@@ -42,6 +52,7 @@ pub(crate) async fn run_server(args: ServerArgs) -> Result<()> {
         Some(ServerSubcommand::Setup(setup)) => {
             return setup_server(setup, &paths, explicit_data).await;
         }
+        Some(ServerSubcommand::Ai(ai)) => return crate::commands::cmd_ai(paths, ai).await,
         None => {}
     }
     let config = ServerConfig::load(paths)?;
@@ -144,6 +155,35 @@ fn is_private_address(address: IpAddr) -> bool {
     }
 }
 
+async fn verify_ai_auth(
+    State(database): State<Database>,
+    headers: HeaderMap,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if headers
+        .get_all(axum::http::header::AUTHORIZATION)
+        .iter()
+        .count()
+        != 1
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(bearer) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(crate::http_admission::bearer)
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match database.verify_enrolled_device_bearer(&bearer).await {
+        Ok(()) => next.run(request).await,
+        Err(error) if error.is::<aven_core::sync::seed_claim::membership::Unauthorized>() => {
+            StatusCode::UNAUTHORIZED.into_response()
+        }
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 /// Serves the seed, enrollment and tail/image routers. Each operation
 /// authenticates against the stored vault. The server does not terminate TLS,
 /// so non-loopback binds need an independently protected network.
@@ -181,9 +221,29 @@ async fn serve(bind: SocketAddr, unsafe_public_bind: bool, config: &ServerConfig
         workspace_quota_bytes: u64::try_from(image_policy.quota_bytes).unwrap_or(0),
     };
     tokio::spawn(prune_images(database.clone(), image_policy.grace));
+    let ai_service = Arc::new(AiService::from_config(config));
+    log_ai_state(config, &ai_service);
+    let ai_app = Router::new()
+        .route("/ai/capabilities", get(ai::capabilities_handler))
+        .route(
+            "/ai/completions/stream",
+            post(ai::streaming_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(ai::MAX_REQUEST_BYTES)),
+        )
+        .layer(RequestDecompressionLayer::new())
+        // Uploaded audio stays outside request decompression, so the handler
+        // owns every rejection.
+        .route("/ai/transcriptions", post(ai::transcription_handler))
+        .layer(middleware::from_fn_with_state(
+            database.clone(),
+            verify_ai_auth,
+        ))
+        .layer(CompressionLayer::new())
+        .with_state(ai_service);
     let app = crate::seed_bootstrap_http::router(database.clone(), publication_policy)
         .merge(crate::peer_enrollment_http::router(database.clone()))
-        .merge(crate::encrypted_tail_http::router(database, image_policy));
+        .merge(crate::encrypted_tail_http::router(database, image_policy))
+        .merge(ai_app);
     let listener = TcpListener::bind(bind).await?;
     let addr = listener.local_addr()?;
     info!(bind = %addr, "sync server starting");
@@ -250,6 +310,17 @@ async fn serve_connections(
     }
     let _ = tokio::time::timeout(SHUTDOWN_GRACE, graceful.shutdown()).await;
     Ok(())
+}
+
+fn log_ai_state(config: &ServerConfig, service: &AiService) {
+    let capabilities = service.capabilities();
+    let provider = config.ai.provider.as_deref().unwrap_or("none");
+    let model = config.ai.model.as_deref().unwrap_or("none");
+    let status = capabilities.status.as_str();
+    match capabilities.setup_hint.as_deref() {
+        Some(hint) => info!(status = %status, provider = %provider, model = %model, hint, "ai"),
+        None => info!(status = %status, provider = %provider, model = %model, "ai"),
+    }
 }
 
 #[cfg(test)]

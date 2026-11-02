@@ -6,6 +6,8 @@ services:
       - "${AVEN_HOST_IP:-127.0.0.1}:3746:3746"
     volumes:
       - aven-data:/data
+    # API keys for the server's AI provider, one VAR=value per line.
+    # env_file: aven.env
     restart: unless-stopped
     stop_grace_period: 15s
 volumes:

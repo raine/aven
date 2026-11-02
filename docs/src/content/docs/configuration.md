@@ -165,7 +165,7 @@ agent:
 
 `aven server` does not read `config.yaml`. See
 [Server configuration](/server-configuration/) for its `server.yaml`, including
-server image limits.
+AI providers and server image limits.
 
 ## Database path
 

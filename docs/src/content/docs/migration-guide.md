@@ -44,3 +44,6 @@ upgraded server:
    into `server.yaml`, which rejects unknown keys.
 4. [Restart the server](/server-configuration/#restart-after-every-change).
    Check its startup log for the configuration path and any errors.
+
+AI is optional and is configured separately in `server.yaml`. To enable it,
+follow [AI for Tell Aven](/server-configuration/#ai-for-tell-aven).

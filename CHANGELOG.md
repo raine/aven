@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- New: Set up AI on your self-hosted sync server for [Tell Aven](https://aventasks.dev/mobile-app/#tell-aven) on iPhone and Android. `aven server ai setup` walks through choosing a provider and model, logging in, and checking that the model can call tools. The server logs its AI state at startup, and `aven ai status`, `aven ai check`, and `aven doctor` test the running server from any paired computer. When the provider is ChatGPT, the server can also transcribe voice recordings from the phone; see [Voice transcription](https://aventasks.dev/server-configuration/#voice-transcription). See [Server configuration](https://aventasks.dev/server-configuration/#ai-for-tell-aven).
 - Fix: Refuse project path conflicts instead of silently evicting the existing owner. Use `aven project path add --move` to explicitly reassign a managed mapping. ([#40](https://github.com/raine/aven/issues/40))
 
 ## v0.1.52 (2026-10-31)

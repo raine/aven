@@ -1,0 +1,18 @@
+{
+  "request_id": "test",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Say hello"
+        }
+      ]
+    }
+  ],
+  "output": {
+    "type": "text"
+  },
+  "tools": []
+}

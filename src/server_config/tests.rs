@@ -4,17 +4,26 @@ fn paths_in(dir: &Path) -> ServerPaths {
     ServerPaths::from_parts(dir.join("sync-server.sqlite"), None, None)
 }
 
-fn load_text(text: &str) -> Result<ServerConfig> {
+fn load_text(text: &str, env: &[(&str, &str)]) -> Result<ServerConfig> {
     let dir = tempfile::tempdir()?;
     let paths = paths_in(dir.path());
     fs::write(&paths.config_file, text)?;
-    ServerConfig::load(paths)
+    ServerConfig::load_with_env(paths, |name| {
+        env.iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.to_string())
+    })
+}
+
+fn error_text(result: Result<ServerConfig>) -> String {
+    format!("{:#}", result.unwrap_err())
 }
 
 #[test]
 fn config_lives_beside_the_data_unless_overridden() {
     let paths = ServerPaths::from_parts(PathBuf::from("/data/sync-server.sqlite"), None, None);
     assert_eq!(paths.config_file, Path::new("/data/server.yaml"));
+    assert_eq!(paths.ai_credentials_dir(), Path::new("/data/private/ai"));
 
     let relative = ServerPaths::from_parts(PathBuf::from("sync.sqlite"), None, None);
     assert_eq!(relative.config_file, Path::new("./server.yaml"));
@@ -25,6 +34,10 @@ fn config_lives_beside_the_data_unless_overridden() {
         Some("/etc/aven/server.yaml".into()),
     );
     assert_eq!(from_env.config_file, Path::new("/etc/aven/server.yaml"));
+    assert_eq!(
+        from_env.ai_credentials_dir(),
+        Path::new("/etc/aven/private/ai")
+    );
 
     let from_flag = ServerPaths::from_parts(
         PathBuf::from("/data/sync-server.sqlite"),
@@ -35,27 +48,44 @@ fn config_lives_beside_the_data_unless_overridden() {
 }
 
 #[test]
-fn missing_config_means_defaults() {
+fn missing_config_means_defaults_and_unconfigured_ai() {
     let dir = tempfile::tempdir().unwrap();
-    let config = ServerConfig::load(paths_in(dir.path())).unwrap();
+    let config = ServerConfig::load_with_env(paths_in(dir.path()), |_| None).unwrap();
+    assert!(config.ai.provider.is_none() && config.ai.model.is_none());
+    assert_eq!(config.ai_sources.provider, SettingSource::Unset);
     let policy = config.attachments.policy();
     assert_eq!(policy.grace, Duration::from_secs(30 * 24 * 60 * 60));
     assert_eq!(policy.quota_bytes, DEFAULT_ORIGINAL_QUOTA_BYTES);
 }
 
 #[test]
-fn reads_attachment_settings() {
-    let config =
-        load_text("attachments:\n  grace_days: 12\n  workspace_quota_bytes: 345\n").unwrap();
+fn reads_ai_and_attachment_settings() {
+    let config = load_text(
+        "ai:\n  provider: ollama\n  model: llama3.2\nattachments:\n  grace_days: 12\n  workspace_quota_bytes: 345\n",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(config.ai.provider.as_deref(), Some("ollama"));
+    assert_eq!(config.ai.timeout_seconds(), 45);
+    assert_eq!(config.ai_sources.model, SettingSource::File);
     let policy = config.attachments.policy();
     assert_eq!(policy.grace, Duration::from_secs(12 * 24 * 60 * 60));
     assert_eq!(policy.quota_bytes, 345);
 }
 
 #[test]
-fn invalid_settings_name_the_key_and_file() {
+fn invalid_settings_name_the_key() {
     for (text, key) in [
-        ("ai:\n  provider: ollama\n", "ai"),
+        ("ai:\n  provider: ollama\n", "ai.provider and ai.model"),
+        (
+            "ai:\n  provider: ollama\n  model: m\n  max_output_tokens: 0\n",
+            "ai.max_output_tokens",
+        ),
+        (
+            "ai:\n  provider: ollama\n  model: m\n  endpoint: file:///tmp/model\n",
+            "ai.endpoint",
+        ),
+        ("ai:\n  provder: ollama\n", "provder"),
         ("attachments:\n  grace: 3\n", "grace"),
         (
             "attachments:\n  workspace_quota_bytes: -1\n",
@@ -67,10 +97,34 @@ fn invalid_settings_name_the_key_and_file() {
         ),
         ("local:\n  db_path: x\n", "local"),
     ] {
-        let error = format!("{:#}", load_text(text).unwrap_err());
+        let error = error_text(load_text(text, &[]));
         assert!(error.contains(key), "{text:?} -> {error}");
         assert!(error.contains("server.yaml"), "{text:?} -> {error}");
     }
+}
+
+#[test]
+fn environment_overrides_win_and_must_still_pair_provider_and_model() {
+    let config = load_text(
+        "ai:\n  provider: ollama\n  model: llama3.2\n",
+        &[
+            ("AVEN_AI_MODEL", "qwen3"),
+            ("AVEN_AI_ENDPOINT", "http://127.0.0.1:9"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(config.ai.model.as_deref(), Some("qwen3"));
+    assert_eq!(config.ai.endpoint.as_deref(), Some("http://127.0.0.1:9"));
+    assert_eq!(config.ai_sources.provider, SettingSource::File);
+    assert_eq!(config.ai_sources.model, SettingSource::Env);
+    assert_eq!(config.ai_sources.endpoint, SettingSource::Env);
+
+    let error = error_text(load_text("", &[("AVEN_AI_PROVIDER", "ollama")]));
+    assert!(error.contains("ai.provider and ai.model"), "{error}");
+    assert!(error.contains("AVEN_AI_PROVIDER"), "{error}");
+
+    let empty = load_text("", &[("AVEN_AI_PROVIDER", "")]).unwrap();
+    assert_eq!(empty.ai_sources.provider, SettingSource::Unset);
 }
 
 #[test]
@@ -80,14 +134,16 @@ fn template_is_written_once_and_loads_as_defaults_or_uncommented() {
     assert!(write_template_if_missing(&paths.config_file).unwrap());
     let text = fs::read_to_string(&paths.config_file).unwrap();
     assert!(text.contains("restart"));
-    assert!(!text.contains("ai:"));
-    let config = ServerConfig::load(paths.clone()).unwrap();
-    assert_eq!(config.attachments.grace_days, 30);
+    let config = ServerConfig::load_with_env(paths.clone(), |_| None).unwrap();
+    assert!(config.ai.provider.is_none() && config.ai.model.is_none());
 
-    let custom = "attachments:\n  grace_days: 3\n";
-    fs::write(&paths.config_file, custom).unwrap();
+    fs::write(&paths.config_file, "ai:\n  provider: ollama\n  model: m\n").unwrap();
     assert!(!write_template_if_missing(&paths.config_file).unwrap());
-    assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), custom);
+    assert!(
+        fs::read_to_string(&paths.config_file)
+            .unwrap()
+            .contains("model: m")
+    );
 
     let uncommented: String = text
         .lines()
@@ -95,7 +151,51 @@ fn template_is_written_once_and_loads_as_defaults_or_uncommented() {
         .filter(|line| line.starts_with("  ") || line.ends_with(':'))
         .map(|line| format!("{line}\n"))
         .collect();
-    let config = load_text(&uncommented).unwrap();
+    let config = load_text(&uncommented, &[]).unwrap();
+    assert_eq!(config.ai.provider.as_deref(), Some("ollama"));
+    assert_eq!(
+        config.ai.endpoint.as_deref(),
+        Some("http://127.0.0.1:11434")
+    );
     assert_eq!(config.attachments.grace_days, 30);
-    assert_eq!(config.attachments.workspace_quota_bytes, 10737418240);
+}
+
+#[test]
+fn ai_selection_edits_only_the_ai_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.yaml");
+
+    write_ai_selection(&path, "ollama", "llama3.2", Some("http://127.0.0.1:11434")).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(&template()), "{text}");
+    assert!(
+        text.ends_with(
+            "\nai:\n  provider: ollama\n  model: llama3.2\n  endpoint: http://127.0.0.1:11434\n"
+        ),
+        "{text}"
+    );
+
+    fs::write(
+        &path,
+        "# mine\nai:\n  provider: ollama\n  endpoint: http://h:1\n  model: old\n  timeout_seconds: 90 # slow\nattachments:\n  grace_days: 3\n",
+    )
+    .unwrap();
+    write_ai_selection(&path, "chatgpt", "gpt-6-astra", None).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "# mine\nai:\n  provider: chatgpt\n  model: gpt-6-astra\n  timeout_seconds: 90 # slow\nattachments:\n  grace_days: 3\n"
+    );
+
+    let error = write_ai_selection(&path, "chatgpt", "m", Some("http://h:1")).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("ai.endpoint is supported only"),
+        "{error:#}"
+    );
+    fs::write(&path, "ai: {provider: ollama, model: m}\n").unwrap();
+    let error = write_ai_selection(&path, "ollama", "n", None).unwrap_err();
+    assert!(format!("{error:#}").contains("block mapping"), "{error:#}");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "ai: {provider: ollama, model: m}\n"
+    );
 }

@@ -145,6 +145,10 @@ impl Installation {
             .env_remove("AVEN_DEV_DB")
             .env_remove("AVEN_SYNC_DISABLED")
             .env_remove("AVEN_SERVER_CONFIG")
+            .env_remove("AVEN_AI_PROVIDER")
+            .env_remove("AVEN_AI_MODEL")
+            .env_remove("AVEN_AI_ENDPOINT")
+            .env_remove("ANTHROPIC_API_KEY")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -881,6 +885,167 @@ async fn cli_single_device_status_hint_uses_local_membership() {
                 .contains(super::SINGLE_DEVICE_HINT)
         );
     }
+}
+
+/// `aven ai status` and doctor ask the running server with this device's
+/// credential, and report AI as not applicable without sync.
+#[tokio::test]
+async fn cli_ai_status_asks_the_running_server_as_this_device() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let ai_status = |node: &Installation| {
+        let node = Installation::new(&node.root, node.name);
+        async move {
+            serde_json::from_str::<serde_json::Value>(&node.ok(&["ai", "status", "--json"]).await)
+                .unwrap()
+        }
+    };
+    let doctor_ai = |node: &Installation| {
+        let node = Installation::new(&node.root, node.name);
+        async move {
+            let report: serde_json::Value =
+                serde_json::from_str(&node.ok(&["doctor", "--json"]).await).unwrap();
+            report["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|section| section["code"] == "ai")
+                .unwrap()["rows"][0]
+                .clone()
+        }
+    };
+
+    let local = Installation::new(root, "local");
+    local.ok(&["add", "seed"]).await;
+    assert_eq!(ai_status(&local).await["state"], "sync_not_set_up");
+    let row = doctor_ai(&local).await;
+    assert_eq!(row["status"], "skipped");
+    assert_eq!(row["skipped_reason"], "sync is not set up");
+
+    std::fs::write(
+        root.join("server.yaml"),
+        "ai:\n  provider: anthropic\n  model: claude-test\n",
+    )
+    .unwrap();
+    let (mut server, a) = set_up(root).await;
+    let report = ai_status(&a).await;
+    assert_eq!(report["state"], "authentication_required");
+    assert_eq!(report["provider"], "anthropic");
+    assert_eq!(report["model"], "claude-test");
+    assert!(
+        report["setup_hint"]
+            .as_str()
+            .unwrap()
+            .contains("ANTHROPIC_API_KEY")
+    );
+    let server_url = report["server"].as_str().unwrap().to_string();
+    let text = a.ok(&["ai", "status"]).await;
+    assert!(text.contains(&format!("Server: {server_url}")), "{text}");
+    assert!(text.contains("Model: claude-test"), "{text}");
+    let row = doctor_ai(&a).await;
+    assert_eq!(row["status"], "warning");
+    assert!(row["value"].as_str().unwrap().contains(&server_url));
+
+    server.kill().await.unwrap();
+    server.wait().await.unwrap();
+    assert_eq!(ai_status(&a).await["state"], "unreachable");
+}
+
+/// Serves one canned Ollama chat reply per connection, in order.
+fn ollama_stub(replies: Vec<serde_json::Value>) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead as _, Read as _};
+    let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", upstream.local_addr().unwrap());
+    let handle = std::thread::spawn(move || {
+        for message in replies {
+            let (stream, _) = upstream.accept().unwrap();
+            let mut reader = std::io::BufReader::new(stream);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut request = vec![0; length];
+            reader.read_exact(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
+            assert_eq!(request["stream"], true);
+            let body = serde_json::json!({"model": "fixture-model", "created_at": "2026-10-19T00:00:00Z", "message": message, "done": true, "prompt_eval_count": 10, "eval_count": 5}).to_string() + "\n";
+            write!(
+                reader.get_mut(),
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    (endpoint, handle)
+}
+
+/// `aven ai check` runs the tool exchange through the running server with
+/// this device's credential and never prints provider responses.
+#[tokio::test]
+async fn cli_ai_check_runs_the_tool_exchange_through_the_running_server() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let local = Installation::new(root, "local");
+    let output = local.run(&["ai", "check", "--json"]).await;
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(report["steps"][0]["error"], "sync_not_set_up");
+
+    let (endpoint, stub) = ollama_stub(vec![
+        serde_json::json!({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "aven_check_lookup", "arguments": {"key": "status"}}}]}),
+        serde_json::json!({"role": "assistant", "content": "response-body-marker"}),
+        serde_json::json!({"role": "assistant", "content": "response-body-marker"}),
+    ]);
+    std::fs::write(
+        root.join("server.yaml"),
+        format!("ai:\n  provider: ollama\n  model: fixture-model\n  endpoint: {endpoint}\n"),
+    )
+    .unwrap();
+    let (mut server, a) = set_up(root).await;
+    let text = a.ok(&["ai", "check"]).await;
+    for expected in [
+        "✓ server",
+        "✓ tool_call",
+        "✓ tool_result",
+        "Tool calling works (20 input, 10 output tokens)",
+        "two billable requests",
+        "aven server ai check",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+    assert!(!text.contains("response-body-marker"), "{text}");
+
+    let output = a.run(&["ai", "check", "--json"]).await;
+    assert!(!output.status.success());
+    let text = stdout(&output);
+    assert!(!text.contains("response-body-marker"), "{text}");
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["provider"], "ollama");
+    assert!(
+        report["server"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:")
+    );
+    assert_eq!(report["steps"][1]["step"], "tool_call");
+    assert_eq!(report["steps"][1]["error"], "no_tool_call");
+    stub.join().unwrap();
+
+    server.kill().await.unwrap();
+    server.wait().await.unwrap();
+    let output = a.run(&["ai", "check", "--json"]).await;
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(report["steps"][0]["error"], "unreachable");
 }
 
 /// A waiting `sync invite` stops as soon as another command cancels its

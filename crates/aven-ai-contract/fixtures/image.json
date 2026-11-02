@@ -1,0 +1,19 @@
+{
+  "request_id": "image",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "image",
+          "media_type": "image/png",
+          "data": "iVBORw0KGgo="
+        }
+      ]
+    }
+  ],
+  "output": {
+    "type": "text"
+  },
+  "tools": []
+}
