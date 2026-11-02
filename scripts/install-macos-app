@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Builds the release Aven.app from this checkout and installs it to
+# /Applications, then moves the `aven` command and the daemon onto that bundle:
+# they share one database, so they must run the same version.
+#
+# With DIR, only places the signed bundle in DIR.
+
+if [[ $# -gt 1 ]]; then
+  echo "usage: install-macos-app [DIR]" >&2
+  exit 2
+fi
+output_dir=${1:-}
+if [[ $(uname -s) != Darwin ]]; then
+  echo "Aven.app builds only on macOS" >&2
+  exit 2
+fi
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+env SQLX_OFFLINE=true cargo build --release --offline --locked --features desktop
+pkgid=$(cargo pkgid --offline)
+version=${pkgid##*[#@]}
+
+staging=$(mktemp -d "${TMPDIR:-/tmp}/aven-app.XXXXXX")
+trap 'rm -rf "$staging"' EXIT
+scripts/assemble-macos-app target/release/aven "$version" "$staging" >/dev/null
+app="$staging/Aven.app"
+
+# Keychain ACLs follow the designated requirement, so a Developer ID signature
+# keeps access across rebuilds and matches published releases.
+identity=$(security find-identity -v -p codesigning |
+  sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}) "Developer ID Application:.*$/\1/p' |
+  head -n 1)
+if [[ -n $identity ]]; then
+  codesign --force --options runtime --timestamp --identifier fi.zendit.Aven \
+    --sign "$identity" "$app"
+  scripts/verify-macos-release "$app" >/dev/null
+else
+  echo "no Developer ID identity found; signing ad hoc" >&2
+  codesign --force --identifier fi.zendit.Aven --sign - "$app"
+fi
+
+if [[ -n $output_dir ]]; then
+  mv "$app" "$output_dir/Aven.app"
+  echo "Built $output_dir/Aven.app ($version)"
+  exit 0
+fi
+
+target=/Applications/Aven.app
+# Swap the whole bundle so a running daemon keeps its old executable.
+rm -rf /Applications/.Aven.app.old
+if [[ -d $target ]]; then mv "$target" /Applications/.Aven.app.old; fi
+mv "$app" "$target"
+rm -rf /Applications/.Aven.app.old
+
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$lsregister" -f "$target"
+
+bin="$HOME/.cargo/bin/aven"
+mkdir -p "$(dirname "$bin")"
+ln -sfn "$target/Contents/MacOS/aven" "$bin.tmp.$$"
+mv -f "$bin.tmp.$$" "$bin"
+if [[ $("$bin" config get sync.enabled) == true ]]; then "$bin" daemon install; fi
+
+# A second bundle with the same identifier could take Launch Services opens,
+# including clicked notifications. A daemon still pointing at it keeps it.
+old_app="$HOME/.local/share/aven/Aven.app"
+daemon_plist="$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
+if [[ -d $old_app ]] && ! grep -qs "$old_app" "$daemon_plist"; then
+  "$lsregister" -u "$old_app"
+  rm -rf "$old_app"
+fi
+
+echo "Installed $target ($version) and linked $bin"

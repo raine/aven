@@ -212,6 +212,10 @@ install:
     fi
     if [[ "$("$bin" config get sync.enabled)" == "true" ]]; then "$bin" daemon install; fi
 
+# Build the desktop Aven.app into /Applications and move the CLI and daemon onto it
+install-app:
+    scripts/install-macos-app
+
 # Install release binary globally from GitHub Actions
 install-ci:
     scripts/install-ci
