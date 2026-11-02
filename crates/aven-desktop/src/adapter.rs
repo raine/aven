@@ -56,7 +56,7 @@ use sqlx::ConnectOptions as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, MissedTickBehavior, interval, sleep, sleep_until};
+use tokio::time::{Instant, MissedTickBehavior, interval, interval_at, sleep, sleep_until};
 
 use crate::session::Session;
 use crate::sync_ops::{self, SyncEvent, SyncOp, SyncRequest, SyncWork};
@@ -3621,12 +3621,12 @@ impl Actor {
     }
 
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
-        self.send_catalog();
         let mut writes = OutsideWrites::open(&self.database).await.ok();
         let mut watched = self.database.clone();
         let mut poll = interval(POLL_INTERVAL);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut clock = interval(CLOCK_INTERVAL);
+        // The first tick lets what launch asked for go ahead of a full refresh.
+        let mut clock = interval_at(Instant::now() + POLL_INTERVAL, CLOCK_INTERVAL);
         clock.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
