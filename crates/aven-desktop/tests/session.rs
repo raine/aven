@@ -461,6 +461,37 @@ async fn an_outside_refresh_keeps_the_done_group_and_plays_no_motion() {
 }
 
 #[tokio::test]
+async fn undo_shows_on_the_row_before_the_store_answers() {
+    let mut h = harness(&["First"]).await;
+    let first = row(&h.session.snapshot, "First");
+    let status = |h: &Harness| h.session.snapshot.row(&first).unwrap().status;
+    let was = status(&h);
+    h.session.set_status(&first, TaskStatus::Done);
+    h.session.set_priority(&first, TaskPriority::Urgent);
+
+    h.session.undo();
+    let priority = h.session.snapshot.row(&first).unwrap().priority;
+    assert_eq!(priority, TaskPriority::None);
+    assert_eq!(status(&h), TaskStatus::Done);
+    h.session.undo();
+    assert_eq!(status(&h), was);
+    assert_eq!(h.session.motion.completion(&first), None);
+}
+
+#[tokio::test]
+async fn undo_after_another_write_waits_for_the_store() {
+    let mut h = harness(&["First"]).await;
+    let first = row(&h.session.snapshot, "First");
+    h.session.set_status(&first, TaskStatus::Done);
+    h.session
+        .write(Command::SetTitle(first.clone(), "Renamed".to_string()));
+
+    h.session.undo();
+    let status = h.session.snapshot.row(&first).unwrap().status;
+    assert_eq!(status, TaskStatus::Done);
+}
+
+#[tokio::test]
 async fn the_users_refresh_clears_the_done_group_without_motion() {
     let mut h = harness(&["First", "Second"]).await;
     let second = row(&h.session.snapshot, "Second");

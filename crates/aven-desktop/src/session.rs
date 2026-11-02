@@ -149,6 +149,13 @@ impl Motion {
     }
 }
 
+/// What the store's undo would put back, if the last write was this one.
+#[derive(Debug, Clone)]
+enum LocalChange {
+    Status(TaskId, TaskStatus),
+    Priority(TaskId, TaskPriority),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToastAction {
     /// Runs a command that did not save.
@@ -274,6 +281,7 @@ pub struct Session {
     pub detail: Option<Detail>,
     pub catalog: Vec<CatalogTask>,
     catalog_request: u64,
+    undoable: Vec<LocalChange>,
     pub search: SearchResults,
     pub search_recent: Vec<String>,
     pub note_drafts: HashMap<TaskId, String>,
@@ -423,6 +431,7 @@ impl Session {
             detail: None,
             catalog: Vec::new(),
             catalog_request: 0,
+            undoable: Vec::new(),
             search: SearchResults::default(),
             search_recent: Vec::new(),
             note_drafts: HashMap::new(),
@@ -466,6 +475,12 @@ impl Session {
         let id = self.next_request;
         if command.is_mutation() {
             self.last_mutation = id;
+            if !matches!(
+                command,
+                Command::SetStatus(..) | Command::SetPriority(..) | Command::Undo
+            ) {
+                self.undoable.clear();
+            }
         }
         let _ = self.requests.send(Request { id, command });
         id
@@ -928,8 +943,25 @@ impl Session {
         self.send(command);
     }
 
+    /// Takes back the last write. A status or priority shows at once, without
+    /// the motion of a change, and the list that follows has the final say.
     pub fn undo(&mut self) {
+        let change = self.undoable.pop();
         self.send(Command::Undo);
+        match change {
+            Some(LocalChange::Status(id, status)) => {
+                if let Some(row) = self.snapshot.tasks.iter_mut().find(|row| row.id == id) {
+                    row.status = status;
+                    self.motion.status_changed(&id, status, status);
+                }
+            }
+            Some(LocalChange::Priority(id, priority)) => {
+                if let Some(row) = self.snapshot.tasks.iter_mut().find(|row| row.id == id) {
+                    row.priority = priority;
+                }
+            }
+            None => {}
+        }
     }
 
     /// The task `delta` rows from the selection in display order.
@@ -947,6 +979,7 @@ impl Session {
     pub fn set_status(&mut self, id: &TaskId, status: TaskStatus) {
         let Some(row) = self.snapshot.tasks.iter_mut().find(|row| &row.id == id) else {
             self.send(Command::SetStatus(id.clone(), status));
+            self.undoable.clear();
             return;
         };
         if row.status == status {
@@ -954,6 +987,8 @@ impl Session {
         }
         let previous = std::mem::replace(&mut row.status, status);
         self.motion.status_changed(id, previous, status);
+        self.undoable
+            .push(LocalChange::Status(id.clone(), previous));
         let request = self.send(Command::SetStatus(id.clone(), status));
         self.moving = Some((request, id.clone()));
     }
@@ -974,6 +1009,7 @@ impl Session {
     pub fn set_priority(&mut self, id: &TaskId, priority: TaskPriority) {
         let Some(row) = self.snapshot.tasks.iter_mut().find(|row| &row.id == id) else {
             self.send(Command::SetPriority(id.clone(), priority));
+            self.undoable.clear();
             return;
         };
         if row.priority == priority {
@@ -981,6 +1017,8 @@ impl Session {
         }
         let previous = std::mem::replace(&mut row.priority, priority);
         self.motion.priority_changed(id, previous, priority);
+        self.undoable
+            .push(LocalChange::Priority(id.clone(), previous));
         let request = self.send(Command::SetPriority(id.clone(), priority));
         self.moving = Some((request, id.clone()));
     }
@@ -1483,6 +1521,7 @@ impl Session {
                 );
             }
             ReplyBody::SaveFailed(command, message) => {
+                self.undoable.clear();
                 self.review_save_failed(&command);
                 self.show_toast(
                     format!("Could not save: {message}"),
