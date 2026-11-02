@@ -1410,7 +1410,6 @@ impl Session {
         });
     }
 
-    /// Reports a copy without touching the row, which only the ref copy marks.
     pub fn copied_toast(&mut self, what: &str) {
         self.show_toast(format!("Copied {what}"), None);
     }
