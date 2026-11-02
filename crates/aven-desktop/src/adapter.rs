@@ -22,9 +22,9 @@ use aven_core::operations::{
     AttachmentAddInput, RecurrenceTemplateUpdate, TaskAttachmentAddInput, TaskDraft,
 };
 use aven_core::query::{
-    RecurrenceHistoryKind, RecurrenceSeriesLifecycleFilter, RecurrenceSeriesListItem,
-    SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem, TaskQueryMode,
-    TaskSearchQuery, TaskSort,
+    RecentActionItem, RecurrenceHistoryKind, RecurrenceSeriesLifecycleFilter,
+    RecurrenceSeriesListItem, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem,
+    TaskQueryMode, TaskSearchQuery, TaskSort,
 };
 use aven_core::queue::{
     QueueDateKind, QueueReason, STALE_ACTIVE_DAYS, STALE_TODO_DAYS, TriageReason, now_seconds,
@@ -1464,6 +1464,16 @@ pub(crate) fn capitalised(text: &str) -> String {
     })
 }
 
+/// One history line, which leaves out the task's title and spells out any
+/// availability instant in local time.
+fn activity_text(action: &RecentActionItem, title: &str, today: NaiveDate) -> String {
+    let summary = action.task_activity_summary(title);
+    match action.task_activity_available_at() {
+        Some(at) => format!("{summary} · {}", available_text(&at, today)),
+        None => summary,
+    }
+}
+
 /// What the task's history reads as, newest first, ending at its creation.
 fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> {
     let mut lines: Vec<(String, String)> = item
@@ -1471,7 +1481,7 @@ fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> 
         .iter()
         .map(|action| {
             (
-                capitalised(&action.summary),
+                capitalised(&activity_text(action, &item.task.title, now.date_naive())),
                 relative_time(&action.created_at, now),
             )
         })
@@ -4321,6 +4331,51 @@ mod tests {
         let item = &actor.store.tasks[0];
         let lines = activity(item, Local::now());
         assert_eq!(lines.last().unwrap().0, "Created");
+    }
+
+    #[test]
+    fn activity_leaves_out_the_title_and_shows_the_time() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let change = |field: &str, summary: &str, detail: Option<&str>| RecentActionItem {
+            change_id: String::new(),
+            entity_type: "task".to_string(),
+            entity_id: String::new(),
+            op_type: aven_core::change_log::op_type::SET_FIELD.to_string(),
+            field: Some(field.to_string()),
+            created_at: String::new(),
+            synced: true,
+            target: aven_core::query::RecentActionTarget {
+                display_ref: None,
+                title: None,
+                project_key: None,
+                status: None,
+                deleted: false,
+            },
+            verb: String::new(),
+            summary: summary.to_string(),
+            detail: detail.map(str::to_string),
+            accent: String::new(),
+            grouped_change_count: 1,
+        };
+
+        let status = change("status", "changed status to todo: Task", None);
+        assert_eq!(
+            activity_text(&status, "Task", today),
+            "changed status to todo"
+        );
+
+        let cleared = change("available_at", "cleared availability: Task", None);
+        assert_eq!(
+            activity_text(&cleared, "Task", today),
+            "cleared availability"
+        );
+
+        let at = "2026-11-05T10:30:00+00:00";
+        let moved = change("available_at", "changed availability: Task", Some(at));
+        assert_eq!(
+            activity_text(&moved, "Task", today),
+            format!("changed availability · {}", available_text(at, today))
+        );
     }
 
     fn draft(title: &str) -> TaskDraft {
