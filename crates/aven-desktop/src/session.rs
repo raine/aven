@@ -421,7 +421,17 @@ pub struct Trail {
 
 impl Session {
     pub fn new(snapshot: Snapshot, requests: UnboundedSender<Request>) -> Self {
-        let selected = first_row(&snapshot);
+        Self::new_with_selection(snapshot, requests, None)
+    }
+
+    pub(crate) fn new_with_selection(
+        snapshot: Snapshot,
+        requests: UnboundedSender<Request>,
+        selected: Option<TaskId>,
+    ) -> Self {
+        let selected = selected
+            .filter(|id| snapshot.row(id).is_some())
+            .or_else(|| first_row(&snapshot));
         let mut this = Self {
             snapshot,
             selected: None,

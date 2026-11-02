@@ -489,17 +489,6 @@ impl Root {
                 this.after_keystroke(event.action.is_some(), window, cx);
             }),
         ];
-        cx.spawn_in(window, async move |this, cx| {
-            while let Some(reply) = replies.recv().await {
-                let applied = this.update_in(cx, |this, window, cx| {
-                    this.take_reply(reply, window, cx);
-                });
-                if applied.is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
         let focus = cx.focus_handle();
         set_scale(prefs.zoom, prefs.compact);
         let drafts = SavedDrafts::load(&Prefs::drafts_path(&prefs_path));
@@ -558,6 +547,24 @@ impl Root {
         this.rebuild(false, &[]);
         this.load_selection(window, cx);
         window.focus(&this.focus, cx);
+        // Apply data already loaded during native initialization before drawing.
+        // Bound the drain so a busy producer cannot hold up the first frame.
+        for _ in 0..replies.len() {
+            if let Ok(reply) = replies.try_recv() {
+                this.take_reply(reply, window, cx);
+            }
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            while let Some(reply) = replies.recv().await {
+                let applied = this.update_in(cx, |this, window, cx| {
+                    this.take_reply(reply, window, cx);
+                });
+                if applied.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         this
     }
 
@@ -2747,6 +2754,11 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+        if FIRST.swap(false, std::sync::atomic::Ordering::Relaxed) && crate::startup::enabled() {
+            crate::startup::mark("first-render");
+            window.on_next_frame(|_, _| crate::startup::mark("first-frame-ready"));
+        }
         self.focus_sync_page(window, cx);
         let t = theme(cx);
         let narrow = window.viewport_size().width <= px(DETAIL_MIN_WINDOW_WIDTH);

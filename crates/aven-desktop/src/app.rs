@@ -158,6 +158,7 @@ fn window_placement(saved: Option<&SavedWindow>, cx: &App) -> (WindowBounds, Opt
 
 /// Runs on the owner's own configuration and database, as the CLI resolves them.
 pub fn run() -> Result<()> {
+    crate::startup::mark("desktop-entry");
     let config = AppConfig::load()?;
     let database = resolve_db_path(None, &config)?;
     let prefs = Prefs::path(&database);
@@ -167,19 +168,25 @@ pub fn run() -> Result<()> {
         config,
         storage: None,
     };
-    let (session, replies) = adapter::start(runtime.handle().clone(), launch)?;
+    crate::startup::mark("runtime-ready");
     let saved = Prefs::load(&prefs);
+    let finish_store = adapter::prepare(runtime.handle().clone(), launch, saved.view.clone())?;
     let app = application().with_assets(Assets);
+    crate::startup::mark("platform-ready");
+    let (session, replies) = finish_store()?;
+    crate::startup::mark("store-ready");
     app.on_reopen(show_window);
     app.run(move |cx: &mut App| {
+        crate::startup::mark("app-callback");
         load_fonts(cx);
+        crate::startup::mark("fonts-ready");
         cx.set_global(Theme::dark());
         cx.bind_keys(input::key_bindings());
         cx.bind_keys(actions::key_bindings());
         register_actions(cx);
         cx.set_menus(actions::menus());
         let (bounds, display_id) = window_placement(saved.window.as_ref(), cx);
-        let view = saved.view.clone();
+        crate::startup::mark("window-start");
         let window = cx
             .open_window(
                 WindowOptions {
@@ -194,12 +201,10 @@ pub fn run() -> Result<()> {
                     ..Default::default()
                 },
                 |window, cx| {
+                    crate::startup::mark("native-window-ready");
                     cx.new(|cx| {
                         let mut root = Root::new(session, replies, saved, prefs, window, cx);
                         root.follow_system(window, cx);
-                        if let Some(view) = &view {
-                            root.session.reopen_view(view);
-                        }
                         let this = cx.weak_entity();
                         window.on_window_should_close(cx, move |window, cx| {
                             let _ = this.update(cx, |root, cx| root.close(window, cx));
@@ -210,6 +215,7 @@ pub fn run() -> Result<()> {
                 },
             )
             .expect("the window opens");
+        crate::startup::mark("window-ready");
         cx.set_global(MainWindow(window));
         // Anything but Quit, such as logging out, ends here. Nothing runs on the
         // main thread after this, so the store gets a moment without a reply.

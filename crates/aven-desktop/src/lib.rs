@@ -22,6 +22,7 @@ mod platform;
 pub mod session;
 mod settings;
 mod shell;
+mod startup;
 mod sync_ops;
 mod theme;
 mod workflows;

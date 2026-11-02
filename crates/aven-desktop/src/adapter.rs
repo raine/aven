@@ -1571,15 +1571,47 @@ fn metadata_inputs(fields: &[(String, String)]) -> Vec<TaskMetadataInput> {
 /// Opens the store a launch resolves to: the queue's selected workspace on the
 /// default view.
 pub async fn open_store(path: &Path, config: &AppConfig) -> Result<TuiStore> {
+    open_store_in_view(path, config, None).await
+}
+
+fn initial_view(saved: Option<&SavedView>) -> TaskViewState {
+    let mut state = TaskViewState::default();
+    if let Some(saved) = saved {
+        if let Some((query, ..)) = crate::actions::VIEWS
+            .iter()
+            .find(|view| view.1 == saved.view)
+        {
+            state.set_query(*query);
+            state.reset_projection_origin();
+            if saved.columns && supports_columns(*query) {
+                state.layout = TaskLayout::Columns;
+            }
+        }
+        state.scope = saved
+            .project
+            .clone()
+            .map_or(TaskScope::Workspace, TaskScope::Project);
+    }
+    state
+}
+
+async fn open_store_in_view(
+    path: &Path,
+    config: &AppConfig,
+    saved: Option<&SavedView>,
+) -> Result<TuiStore> {
+    crate::startup::mark("database-start");
     let database = Database::open(path).await?;
+    crate::startup::mark("database-ready");
     let workspace = database.restore_queue_workspace().await?;
     let mut store = TuiStore::new_with_view_state_and_config(
         database,
         workspace,
-        TaskViewState::default(),
+        initial_view(saved),
         config.clone(),
     )
     .await?;
+    crate::startup::mark("projection-ready");
     // Core has no desktop source, and this one makes no claim.
     store.task_source = TaskSource::Unknown;
     Ok(store)
@@ -1855,6 +1887,7 @@ impl Actor {
 
     fn spawn_background_sync(&mut self) {
         if self.config.sync_is_allowed() {
+            crate::startup::mark("background-sync-start");
             self.background_sync = Some(tokio::spawn(run_sync(
                 self.store.database(),
                 self.config.clone(),
@@ -3792,6 +3825,20 @@ async fn run_sync(
 /// session. A database that does not open still gives a session, whose view
 /// offers ways out, and the thread waits for one.
 pub fn start(handle: tokio::runtime::Handle, launch: Launch) -> Result<(Session, Replies)> {
+    prepare(handle, launch, None)?()
+}
+
+/// Starts the store while the main thread initializes the native platform.
+/// The returned function waits for a fresh snapshot, never a persisted UI cache.
+pub(crate) fn prepare(
+    handle: tokio::runtime::Handle,
+    launch: Launch,
+    saved: Option<SavedView>,
+) -> Result<impl FnOnce() -> Result<(Session, Replies)>> {
+    let selected = saved
+        .as_ref()
+        .and_then(|view| view.selected.as_deref())
+        .and_then(|id| id.parse().ok());
     let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
     let (replies_tx, replies_rx) = mpsc::unbounded_channel();
     let (opened_tx, opened_rx) = std::sync::mpsc::channel();
@@ -3806,7 +3853,8 @@ pub fn start(handle: tokio::runtime::Handle, launch: Launch) -> Result<(Session,
                 let mut config = launch.config.clone();
                 let mut opened = Some(opened_tx);
                 let store = loop {
-                    let error = match open_store(&path, &config).await {
+                    let view = opened.as_ref().and(saved.as_ref());
+                    let error = match open_store_in_view(&path, &config, view).await {
                         Ok(store) => break store,
                         Err(error) => error,
                     };
@@ -3860,18 +3908,20 @@ pub fn start(handle: tokio::runtime::Handle, launch: Launch) -> Result<(Session,
                 actor.run(requests_rx).await;
             });
         })?;
-    match opened_rx.recv().context("the store thread stopped")? {
-        Ok(first) => {
-            let mut session = Session::new(first, requests_tx);
-            session.database = database;
-            Ok((session, replies_rx))
-        }
-        Err((path, message)) => {
-            let mut session = Session::new(Snapshot::default(), requests_tx);
-            session.database_failed(path, message);
-            Ok((session, replies_rx))
-        }
-    }
+    Ok(
+        move || match opened_rx.recv().context("the store thread stopped")? {
+            Ok(first) => {
+                let mut session = Session::new_with_selection(first, requests_tx, selected);
+                session.database = database;
+                Ok((session, replies_rx))
+            }
+            Err((path, message)) => {
+                let mut session = Session::new(Snapshot::default(), requests_tx);
+                session.database_failed(path, message);
+                Ok((session, replies_rx))
+            }
+        },
+    )
 }
 
 /// Waits, with no database open, for the view to name one to try.
@@ -4251,6 +4301,133 @@ mod tests {
         assert_eq!(prefs.nav_width, 240.);
         assert_eq!(prefs.theme, ThemePref::System);
         assert_eq!(prefs.zoom, 1.);
+    }
+
+    #[test]
+    fn saved_views_validate_query_and_layout() {
+        for (name, query, columns) in [
+            ("Open", TaskQuery::Open, true),
+            ("Upcoming", TaskQuery::Upcoming, false),
+            ("removed-view", TaskQuery::Queue, false),
+        ] {
+            let state = initial_view(Some(&SavedView {
+                view: name.to_string(),
+                project: Some("work".to_string()),
+                columns: true,
+                selected: None,
+            }));
+            assert_eq!(state.query, query);
+            assert_eq!(state.scope, TaskScope::Project("work".to_string()));
+            assert_eq!(state.layout == TaskLayout::Columns, columns);
+        }
+    }
+
+    #[test]
+    fn startup_loads_the_saved_view_before_exposing_a_session() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        let selected = runtime.block_on(async {
+            let mut store = open_store(&path, &AppConfig::default()).await.unwrap();
+            store.create_task(draft("Not in Done"), None).await.unwrap();
+            let mut done = draft("Previously completed");
+            done.status = Some("done".to_string());
+            store.create_task(done, None).await.unwrap();
+            let mut done = draft("Another completed task");
+            done.status = Some("done".to_string());
+            store.create_task(done, None).await.unwrap();
+            store
+                .show_view_restoring(TaskQuery::Done, &SelectionRestore::Default)
+                .await
+                .unwrap();
+            store.tasks[1].task.id.clone()
+        });
+        let finish = prepare(
+            runtime.handle().clone(),
+            Launch {
+                database: path,
+                config: AppConfig::default(),
+                storage: None,
+            },
+            Some(SavedView {
+                view: "Done".to_string(),
+                project: Some("deleted-project".to_string()),
+                columns: false,
+                selected: Some(selected.to_string()),
+            }),
+        )
+        .unwrap();
+        let (mut session, mut replies) = finish().unwrap();
+        assert!(session.database_error.is_none());
+        assert_eq!(session.snapshot.view.query, TaskQuery::Done);
+        assert_eq!(session.snapshot.view.project, None);
+        assert_eq!(session.snapshot.tasks.len(), 2);
+        assert!(
+            session
+                .snapshot
+                .tasks
+                .iter()
+                .all(|task| task.status == TaskStatus::Done)
+        );
+        assert_ne!(session.snapshot.tasks[0].id, selected);
+        assert_eq!(session.selected, Some(selected));
+        session.quit();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let reply = replies.recv().await.expect("store replies before stopping");
+                    if matches!(reply.body, ReplyBody::Stopped) {
+                        break;
+                    }
+                    session.apply(reply);
+                }
+            })
+            .await
+            .unwrap();
+        });
+        assert_eq!(session.snapshot.view.query, TaskQuery::Done);
+    }
+
+    #[test]
+    fn preparing_does_not_wait_for_the_database_open_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        let lock =
+            std::fs::File::create(directory.path().join("db.sqlite.aven-open.lock")).unwrap();
+        lock.lock().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let handle = runtime.handle().clone();
+        let (sent, received) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            assert!(
+                sent.send(prepare(
+                    handle,
+                    Launch {
+                        database: path,
+                        config: AppConfig::default(),
+                        storage: None,
+                    },
+                    None
+                ))
+                .is_ok()
+            );
+        });
+        let prepared = received.recv_timeout(Duration::from_secs(2));
+        drop(lock);
+        let (mut session, mut replies) = prepared
+            .expect("native initialization can proceed while SQLite is locked")
+            .unwrap()()
+        .unwrap();
+        thread.join().unwrap();
+        assert!(session.database_error.is_none());
+        session.quit();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !matches!(replies.recv().await.unwrap().body, ReplyBody::Stopped) {}
+            })
+            .await
+            .unwrap();
+        });
     }
 
     #[test]
