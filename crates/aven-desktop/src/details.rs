@@ -24,6 +24,8 @@ const THUMB_HEIGHT: f32 = 68.;
 const DOC_WIDTH: f32 = 1040.;
 const DOC_SIDE_WIDTH: f32 = 260.;
 const META_KEY_WIDTH: f32 = 100.;
+/// Narrower than this, the fields stack in one column.
+const PROP_MIN_WIDTH: f32 = 220.;
 const ACTIVITY_LINE_HEIGHT: f32 = 18.;
 const ACTIVITY_DOT: f32 = 5.;
 const ROW_GROUP: &str = "task-row";
@@ -109,7 +111,9 @@ impl Root {
             .relative()
             .flex()
             .items_center()
-            .w_full()
+            .flex_grow(1.)
+            .w(gpui::relative(0.5))
+            .min_w(px(PROP_MIN_WIDTH))
             .min_h(px(27.))
             .px(px(4.))
             .ml(px(-4.))
@@ -138,6 +142,8 @@ impl Root {
         let available = detail.map_or(String::new(), |detail| detail.available.clone());
         let project = detail.map_or(String::new(), |detail| detail.project_name.clone());
         div()
+            .flex()
+            .flex_wrap()
             .child(
                 self.prop("status", "Status", t)
                     .on_click(cx.listener(|this, _, window, cx| {
