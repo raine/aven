@@ -29,7 +29,7 @@ impl SyncController {
         let database = database.clone();
         let config = config.clone();
         self.task = Some(tokio::spawn(async move {
-            encrypted::run_to_completion(&database, &config).await
+            encrypted::run_to_completion_and_await_daemon(&database, &config).await
         }));
         self.started_at = Some(Instant::now());
         Ok(true)
@@ -135,6 +135,11 @@ impl App {
                     &error,
                 )
                 .message;
+                tracing::warn!(
+                    codes = ?crate::sync::error_explanations::codes(&error).collect::<Vec<_>>(),
+                    explanation = %message,
+                    "manual sync failed"
+                );
                 let message = match refresh_error {
                     Some(refresh_error) => {
                         format!("sync failed: {message} Refresh failed: {refresh_error:#}")

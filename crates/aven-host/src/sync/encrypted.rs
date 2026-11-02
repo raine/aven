@@ -235,13 +235,37 @@ pub async fn run_to_completion(database: &Database, config: &AppConfig) -> Resul
 
 /// Syncs until caught up on `host`, for an action someone is waiting on.
 pub async fn run_to_completion_with(database: &Database, host: &DesktopHost) -> Result<Outcome> {
+    Ok(run_and_retry_daemon(database, host).await?.0)
+}
+
+/// Like [`run_to_completion`], but also waits for a retry of a failed daemon, so
+/// a caller showing daemon health doesn't report the failure this sync resolved.
+pub async fn run_to_completion_and_await_daemon(
+    database: &Database,
+    config: &AppConfig,
+) -> Result<Outcome> {
+    let host = DesktopHost::foreground(config);
+    let (outcome, recorded) = run_and_retry_daemon(database, &host).await?;
+    if let Some(recorded) = recorded {
+        crate::daemon::await_daemon_retry(database, &recorded).await;
+    }
+    Ok(outcome)
+}
+
+/// Also returns the daemon health that a requested retry will replace.
+async fn run_and_retry_daemon(
+    database: &Database,
+    host: &DesktopHost,
+) -> Result<(Outcome, Option<aven_core::local_state::DaemonSyncState>)> {
     let outcome = driver()?
         .run(|link| engine::run_to_completion(link, database, host))
         .await?;
-    if outcome.metadata_caught_up && outcome.images != ImageTransfer::Failed {
-        crate::daemon::retry_after_foreground_sync(database, &host.config).await;
-    }
-    Ok(outcome)
+    let recorded = if outcome.metadata_caught_up && outcome.images != ImageTransfer::Failed {
+        crate::daemon::retry_after_foreground_sync(database, &host.config).await
+    } else {
+        None
+    };
+    Ok((outcome, recorded))
 }
 
 #[derive(Default)]

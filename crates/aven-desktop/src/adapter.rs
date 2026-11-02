@@ -533,7 +533,6 @@ pub struct Image {
 pub struct Byline {
     pub created_ago: String,
     pub created_on: String,
-    /// Core has no desktop source, so a task made here names none.
     pub source: Option<String>,
     /// Absent until the task changes after it was created.
     pub updated_ago: Option<String>,
@@ -1384,6 +1383,18 @@ pub fn relative_time(stamp: &str, now: DateTime<Local>) -> String {
     }
 }
 
+/// Core has no desktop source, so a task made here names none.
+fn source_name(source: TaskSource) -> Option<&'static str> {
+    match source {
+        TaskSource::Cli => Some("CLI"),
+        TaskSource::Tui => Some("TUI"),
+        TaskSource::Api => Some("API"),
+        TaskSource::Ios => Some("iOS"),
+        TaskSource::Android => Some("Android"),
+        TaskSource::Unknown => None,
+    }
+}
+
 fn byline(item: &TaskListItem, now: DateTime<Local>) -> Byline {
     let task = &item.task;
     let created = local_time(&task.created_at);
@@ -1395,7 +1406,7 @@ fn byline(item: &TaskListItem, now: DateTime<Local>) -> Byline {
         created_ago: relative_time(&task.created_at, now),
         created_on: created
             .map_or_else(String::new, |at| at.format("%b %-d, %Y, %H:%M").to_string()),
-        source: (task.source != TaskSource::Unknown).then(|| task.source.to_string()),
+        source: source_name(task.source).map(str::to_string),
         updated_ago: changed.then(|| relative_time(&task.updated_at, now)),
     }
 }
@@ -1444,11 +1455,10 @@ fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> 
         })
         .collect();
     lines.truncate(4);
-    // Core has no desktop source, so a task made here names none.
-    let created = match item.task.source {
-        TaskSource::Unknown => "Created".to_string(),
-        source => format!("Created from {source}"),
-    };
+    let created = source_name(item.task.source).map_or_else(
+        || "Created".to_string(),
+        |source| format!("Created from {source}"),
+    );
     lines.push((created, relative_time(&item.task.created_at, now)));
     lines
 }
@@ -4182,6 +4192,13 @@ mod tests {
     fn capitalised_raises_only_the_first_letter() {
         assert_eq!(capitalised("created task: keep"), "Created task: keep");
         assert_eq!(capitalised(""), "");
+    }
+
+    #[test]
+    fn a_source_reads_as_its_product_name() {
+        assert_eq!(source_name(TaskSource::Cli), Some("CLI"));
+        assert_eq!(source_name(TaskSource::Ios), Some("iOS"));
+        assert_eq!(source_name(TaskSource::Unknown), None);
     }
 
     #[tokio::test]
