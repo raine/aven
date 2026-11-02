@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: After a TUI sync restores Keychain access, wait for the background sync retry before showing the result, so the resolved error no longer stays on screen and asks you to sync again.
+
 ## v0.1.53 (2026-11-02)
 
 - New: Self-hosted sync servers can now power [Tell Aven](https://aventasks.dev/mobile-app/#tell-aven) on iPhone and Android. Run `aven server ai setup` to choose a provider and model, and `aven ai check` to test the running server. See [Server configuration](https://aventasks.dev/server-configuration/#ai-for-tell-aven).
