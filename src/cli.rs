@@ -15,7 +15,7 @@ mod tui;
 #[cfg(test)]
 mod tests;
 
-use administration::{AGENT_HELP, CONFIG_HELP};
+use administration::{AGENT_HELP, CONFIG_HELP, MCP_HELP};
 use data_safety::{BACKUP_HELP, EXPORT_HELP, IMPORT_HELP};
 use help::STYLES;
 use recurrence::RECUR_HELP;
@@ -26,7 +26,7 @@ use tasks::{
 
 pub(crate) use administration::{
     CodingAgentArg, ConfigCommand, ConfigKey, ConfigSubcommand, LabelCommand, LabelListArgs,
-    LabelSubcommand, MetadataCommand, MetadataSubcommand, ProjectCommand, ProjectListArgs,
+    LabelSubcommand, McpArgs, MetadataCommand, MetadataSubcommand, ProjectCommand, ProjectListArgs,
     ProjectPathSubcommand, ProjectSubcommand, SelfUpdateArgs, SkillCommand, SkillInstallArgs,
     SkillSubcommand, WorkspaceCommand, WorkspaceSubcommand,
 };
@@ -158,8 +158,9 @@ pub(crate) enum Commands {
     /// Import portable JSON data
     #[command(after_long_help = IMPORT_HELP)]
     Import(ImportArgs),
-    /// Run a stdio MCP server for AI assistants
-    Mcp,
+    /// Run an MCP server for AI assistants
+    #[command(after_long_help = MCP_HELP)]
+    Mcp(McpArgs),
     /// Print or install the coding-agent skill
     #[command(after_long_help = AGENT_HELP)]
     Skill(SkillCommand),

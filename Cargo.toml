@@ -35,7 +35,7 @@ zstd = "0.14.3"
 
 [package]
 name = "aven"
-version = "0.1.53"
+version = "0.1.54"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
@@ -81,6 +81,7 @@ crossterm = "0.29"
 pulldown-cmark = "0.13"
 ratatui = "0.30"
 sha2.workspace = true
+subtle.workspace = true
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tokio = { workspace = true, features = ["io-util", "process", "rt-multi-thread", "signal", "net"] }
 unicode-width = "0.2"
@@ -94,7 +95,7 @@ clap_complete = "4.6"
 rig-core = { version = "=0.42.0", default-features = false, features = ["rustls"] }
 inquire = "0.9.4"
 linkify = "0.11.0"
-rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io"] }
+rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
 
 [target.'cfg(unix)'.dependencies]

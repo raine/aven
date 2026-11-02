@@ -1,10 +1,14 @@
+use std::future::Future;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use aven_core::db::Database;
 use aven_core::sync::client::errors::is_access_refusal;
 use tokio::net::UdpSocket;
+use tokio::sync::Notify;
 use tokio::time::{Instant, sleep_until};
 
 #[cfg(unix)]
@@ -52,11 +56,8 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     if move_service_into_bundle().await {
         return Ok(());
     }
-    let interval_seconds = args.config.sync_interval_seconds();
     let database = Database::open(&args.db_path).await?;
-    let socket = UdpSocket::bind(wake_addr).await.with_context(|| {
-        format!("could not bind daemon wake address {wake_addr}; is another daemon running?")
-    })?;
+    let socket = bind_wake_socket(wake_addr).await?;
     println!(
         "daemon db={} wake={} sync={} reminders={}",
         args.db_path.display(),
@@ -65,29 +66,95 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         args.config.reminders.enabled
     );
     let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
-    let lifecycle_policy = args.config.local.attachment_lifecycle.policy();
     let binary_fingerprint = current_binary_fingerprint()?;
     run_loop(
         database,
         &args.config,
         socket,
-        interval_seconds,
+        &Notify::new(),
+        shutdown_signal(),
         blob_dir,
-        lifecycle_policy,
-        binary_fingerprint,
+        Some(binary_fingerprint),
     )
     .await
+}
+
+async fn bind_wake_socket(wake_addr: SocketAddr) -> Result<UdpSocket> {
+    UdpSocket::bind(wake_addr).await.with_context(|| {
+        format!(
+            "could not bind daemon wake address {wake_addr}; is `aven daemon` or `aven mcp --sync` already using it?"
+        )
+    })
+}
+
+/// A sync worker owned by another long-running process. It keeps the daemon's
+/// schedule and wake address, and leaves reminders and restarts on a changed
+/// executable to the daemon.
+pub(crate) struct EmbeddedSync {
+    database: Database,
+    config: AppConfig,
+    socket: UdpSocket,
+    wake: Arc<Notify>,
+    blob_dir: PathBuf,
+}
+
+impl EmbeddedSync {
+    /// Claims the wake address, so a failure surfaces before the owner starts
+    /// serving. Requesting a worker enables sync for it regardless of
+    /// `sync.enabled`; `AVEN_SYNC_DISABLED` still refuses.
+    pub(crate) async fn prepare(
+        database: Database,
+        config: &AppConfig,
+        blob_dir: PathBuf,
+    ) -> Result<Self> {
+        config.ensure_sync_allowed()?;
+        let socket = bind_wake_socket(config.wake_addr()?).await?;
+        let mut config = config.clone();
+        config.sync.enabled = true;
+        config.reminders.enabled = false;
+        Ok(Self {
+            database,
+            config,
+            socket,
+            wake: Arc::new(Notify::new()),
+            blob_dir,
+        })
+    }
+
+    /// Notifying this requests a round. A notification sent during a round is
+    /// kept and starts the next one.
+    pub(crate) fn wake(&self) -> Arc<Notify> {
+        self.wake.clone()
+    }
+
+    pub(crate) async fn run(self, shutdown: impl Future<Output = ()>) -> Result<()> {
+        run_loop(
+            self.database,
+            &self.config,
+            self.socket,
+            &self.wake,
+            shutdown,
+            self.blob_dir,
+            None,
+        )
+        .await
+    }
 }
 
 async fn run_loop(
     database: Database,
     config: &AppConfig,
     socket: UdpSocket,
-    interval_seconds: u64,
+    direct_wake: &Notify,
+    shutdown: impl Future<Output = ()>,
     blob_dir: PathBuf,
-    lifecycle_policy: aven_core::attachments::LifecyclePolicy,
-    binary_fingerprint: BinaryFingerprint,
+    binary_fingerprint: Option<BinaryFingerprint>,
 ) -> Result<()> {
+    let interval_seconds = config.sync_interval_seconds();
+    let lifecycle_policy = config.local.attachment_lifecycle.policy();
+    // Outlives each iteration, so a signal during a sync round still ends the
+    // loop once that round returns.
+    let mut shutdown = std::pin::pin!(shutdown);
     let sync_on = config.automatic_sync_is_enabled();
     let reminders_on = config.reminders.enabled;
     let mut next_reminder = Instant::now();
@@ -98,28 +165,20 @@ async fn run_loop(
     let mut sync = encrypted::DaemonSync::default();
     loop {
         tokio::select! {
-            _ = shutdown_signal() => {
+            () = &mut shutdown => {
                 info!("daemon shutting down");
                 break;
             }
-            result = socket.recv_from(&mut wake_buf) => {
-                let mut retry_now = false;
-                if let Ok((len, _)) = &result {
-                    retry_now = &wake_buf[..*len] == b"r";
-                }
-                if let Err(err) = result {
-                    warn!(error = %err, "daemon wake receive failed");
-                } else {
-                    debug!("daemon wake received");
-                }
-                retry_now |= drain_wakes(&socket, &mut wake_buf);
+            retry_now = next_wake(&socket, direct_wake, &mut wake_buf) => {
                 let now = Instant::now();
                 next_reminder = now;
                 scheduler.wake(retry_now, now);
             }
-            _ = sleep_until(next_binary_check) => {
-                if binary_changed(&binary_fingerprint)? {
-                    println!("daemon-executable-changed path={}", binary_fingerprint.path.display());
+            _ = sleep_until(next_binary_check), if binary_fingerprint.is_some() => {
+                if let Some(fingerprint) = &binary_fingerprint
+                    && binary_changed(fingerprint)?
+                {
+                    println!("daemon-executable-changed path={}", fingerprint.path.display());
                     break;
                 }
                 next_binary_check = Instant::now() + BINARY_CHECK_INTERVAL;
@@ -282,6 +341,29 @@ fn binary_fingerprint(launch_path: &Path) -> Result<BinaryFingerprint> {
         #[cfg(unix)]
         ino: metadata.ino(),
     })
+}
+
+/// Waits for a wake from another process or from this one, and returns whether
+/// it may bypass failure backoff.
+async fn next_wake(socket: &UdpSocket, direct_wake: &Notify, wake_buf: &mut [u8]) -> bool {
+    tokio::select! {
+        () = direct_wake.notified() => {
+            debug!("daemon wake notified");
+            false
+        }
+        result = socket.recv_from(wake_buf) => {
+            let mut retry_now = false;
+            if let Ok((len, _)) = &result {
+                retry_now = &wake_buf[..*len] == b"r";
+            }
+            if let Err(err) = result {
+                warn!(error = %err, "daemon wake receive failed");
+            } else {
+                debug!("daemon wake received");
+            }
+            retry_now | drain_wakes(socket, wake_buf)
+        }
+    }
 }
 
 fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) -> bool {

@@ -1,5 +1,7 @@
-//! `aven mcp`: a stdio Model Context Protocol server over the local replica.
+//! `aven mcp`: a Model Context Protocol server over the local replica, on stdio
+//! or Streamable HTTP.
 
+mod http;
 mod tools;
 
 use std::path::PathBuf;
@@ -17,6 +19,7 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use serde_json::Value;
 
+use crate::cli::McpArgs;
 use crate::config::AppConfig;
 use tools::{
     AddNoteArgs, CreateTaskArgs, EditRecurringArgs, ListRecurringArgs, ListTasksArgs,
@@ -218,6 +221,13 @@ impl Server {
 }
 
 impl Server {
+    fn new(tools: Tools) -> Self {
+        Self {
+            tools: std::sync::Arc::new(tools),
+            tool_router: Self::tool_router(),
+        }
+    }
+
     /// Returns an error naming any argument the tool's input schema lacks, since
     /// ignoring one would silently drop part of the caller's request.
     fn unknown_argument(&self, request: &CallToolRequestParams) -> Option<ToolError> {
@@ -272,12 +282,12 @@ pub(crate) async fn run(
     config: AppConfig,
     workspace: Option<String>,
     blob_dir: PathBuf,
+    args: McpArgs,
 ) -> Result<()> {
-    let server = Server {
-        tools: std::sync::Arc::new(Tools::new(database, config, workspace, blob_dir)),
-        tool_router: Server::tool_router(),
-    };
-    let service = server
+    if args.http {
+        return http::run(database, config, workspace, blob_dir, args).await;
+    }
+    let service = Server::new(Tools::new(database, config, workspace, blob_dir, None))
         .serve(rmcp::transport::stdio())
         .await
         .context("MCP handshake failed")?;

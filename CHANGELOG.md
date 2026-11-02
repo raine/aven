@@ -12,7 +12,12 @@ description: Release notes for aven.
 - Fix: Typed dates such as `tomorrow` save correctly in the desktop app instead of failing with an invalid date error.
 - Perf: Search and task lists stay fast in workspaces with thousands of tasks, where they could take seconds.
 - Fix: Choosing an order now starts from that order's natural direction, so Title after Recently updated no longer sorts Z to A.
-- Fix: After a TUI sync restores Keychain access, wait for the background sync retry before showing the result, so the resolved error no longer stays on screen and asks you to sync again.
+
+## v0.1.54 (2026-11-03)
+
+- New: `aven mcp --http` serves MCP Streamable HTTP with a bearer token from `AVEN_MCP_TOKEN`, and `--sync` runs sync inside that process, so an agent in another container needs only a URL and token. See [HTTP and containers](https://aventasks.dev/mcp/#http-and-containers). ([#35](https://github.com/raine/aven/issues/35))
+- Fix: Clear the TUI sync error once a sync restores Keychain access.
+- Fix: Keep the same task's details open after changing its status, even when it moves in the list or leaves the current filter. ([#44](https://github.com/raine/aven/issues/44))
 
 ## v0.1.53 (2026-11-02)
 

@@ -41,32 +41,64 @@ impl App {
             self.set_info("no selected task to edit");
             return Ok(());
         };
-        let preserve_task = false;
         let changed_task_id = self.changed_status_target(&selection, status);
-        let detail_anchor_id = self
-            .detail
-            .is_active()
-            .then(|| {
-                self.list
-                    .selected_task()
-                    .and_then(|index| self.store.tasks.get(index))
-                    .map(|item| item.task.id.clone())
-            })
-            .flatten();
-        let viewport_row = (!preserve_task)
-            .then(|| self.selected_task_viewport_row())
-            .flatten();
+        let detail_anchor_id = self.status_detail_anchor();
+        let viewport_row = self.selected_task_viewport_row();
         let result = self
             .store
-            .mutate_status_selection(&selection, status, preserve_task)
+            .mutate_status_selection(&selection, status, false)
             .await?;
-        let detail_anchor_hidden = changed_task_id.as_ref() == detail_anchor_id.as_ref()
-            && detail_anchor_id.as_ref().is_some_and(|task_id| {
-                self.store.tasks.iter().all(|item| &item.task.id != task_id)
-            });
-        self.apply_status_mutation_result(result, changed_task_id, viewport_row);
-        if detail_anchor_hidden {
-            self.clear_detail_session();
+        self.apply_detail_status_result(result, changed_task_id, detail_anchor_id, viewport_row)
+            .await
+    }
+
+    fn status_detail_anchor(&self) -> Option<crate::ids::TaskId> {
+        if !self.detail.is_active() {
+            return None;
+        }
+        self.store
+            .selected_task(self.list.selected_task())
+            .map(|item| item.task.id.clone())
+    }
+
+    async fn apply_detail_status_result(
+        &mut self,
+        mut result: crate::tui::store::MutationMessage,
+        changed_task_id: Option<crate::ids::TaskId>,
+        detail_anchor_id: Option<crate::ids::TaskId>,
+        viewport_row: Option<usize>,
+    ) -> Result<()> {
+        if let Some(task_id) = detail_anchor_id {
+            if let Some(index) = self
+                .store
+                .tasks
+                .iter()
+                .position(|item| item.task.id == task_id)
+            {
+                result.selected = Some(index);
+            } else {
+                // The filtered list stays truthful; the detail gets its own exact-task view.
+                self.list.select_task(result.selected);
+                let detail = std::mem::replace(
+                    &mut self.detail,
+                    crate::tui::detail_session::DetailSession::inactive(),
+                );
+                let opened = self.open_exact_task_detail_with_return(task_id).await;
+                self.detail = detail;
+                match opened {
+                    Ok(true) => {}
+                    Ok(false) => self.clear_detail_session(),
+                    Err(error) => {
+                        self.clear_detail_session();
+                        return Err(error);
+                    }
+                }
+                result.selected = self.list.selected_task();
+            }
+            self.apply_status_mutation_result(result, changed_task_id, None);
+            self.ensure_selected_task_detail().await?;
+        } else {
+            self.apply_status_mutation_result(result, changed_task_id, viewport_row);
         }
         Ok(())
     }
@@ -975,38 +1007,25 @@ impl App {
             .single_id()
             .filter(|task_id| *task_id != selection.anchor_id())
             .map(|_| selection.anchor_id().clone());
-        let preserve_task = false;
         let changed_task_id = self.changed_status_target(&selection, status);
-        let detail_anchor_id = self
-            .detail
-            .is_active()
-            .then(|| {
-                self.list
-                    .selected_task()
-                    .and_then(|index| self.store.tasks.get(index))
-                    .map(|item| item.task.id.clone())
-            })
-            .flatten();
-        let viewport_row = (!preserve_task)
-            .then(|| self.selected_task_viewport_row())
-            .flatten();
+        let detail_anchor_id = self.status_detail_anchor();
+        let viewport_row = self.selected_task_viewport_row();
         match self
             .store
-            .mutate_status_selection(&selection, status, preserve_task)
+            .mutate_status_selection(&selection, status, false)
             .await
         {
             Ok(mut result) => {
                 if let Some(anchor_id) = relationship_anchor {
                     result.selected = self.store.refresh(Some(&anchor_id)).await?;
                 }
-                let detail_anchor_hidden = changed_task_id.as_ref() == detail_anchor_id.as_ref()
-                    && detail_anchor_id.as_ref().is_some_and(|task_id| {
-                        self.store.tasks.iter().all(|item| &item.task.id != task_id)
-                    });
-                self.apply_status_mutation_result(result, changed_task_id, viewport_row);
-                if detail_anchor_hidden {
-                    self.clear_detail_session();
-                }
+                self.apply_detail_status_result(
+                    result,
+                    changed_task_id,
+                    detail_anchor_id,
+                    viewport_row,
+                )
+                .await?;
             }
             Err(error) => {
                 let committed = crate::tui::store::mutation_committed(&error);

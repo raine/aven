@@ -1,6 +1,7 @@
 //! Task tools, independent of any MCP transport.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
@@ -18,6 +19,7 @@ use chrono::NaiveDate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::sync::Notify;
 
 use crate::commands::skip_current_occurrence;
 use crate::config::AppConfig;
@@ -439,6 +441,9 @@ pub(super) struct Tools {
     config: AppConfig,
     workspace: Option<String>,
     blob_dir: PathBuf,
+    /// Reaches a sync worker in this process. Without one, writes wake the
+    /// daemon.
+    sync_wake: Option<Arc<Notify>>,
 }
 
 impl Tools {
@@ -447,12 +452,14 @@ impl Tools {
         config: AppConfig,
         workspace: Option<String>,
         blob_dir: PathBuf,
+        sync_wake: Option<Arc<Notify>>,
     ) -> Self {
         Self {
             database,
             config,
             workspace,
             blob_dir,
+            sync_wake,
         }
     }
 
@@ -492,7 +499,10 @@ impl Tools {
     }
 
     fn wake(&self) {
-        daemon::wake_if_enabled(&self.config);
+        match &self.sync_wake {
+            Some(wake) => wake.notify_one(),
+            None => daemon::wake_if_enabled(&self.config),
+        }
     }
 
     async fn filtered_items(

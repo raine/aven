@@ -850,16 +850,87 @@ async fn detail_done_shortcut_keeps_detail_and_sets_message() {
 }
 
 #[tokio::test]
-async fn detail_closes_when_status_change_removes_task_from_query() {
-    let mut app = test_app().await;
-    let selected = create_and_select_task(&mut app, test_task_draft("Filtered target")).await;
-    let task_id = app.store.tasks[selected].task.id.clone();
-    app.show_detail(0);
+async fn detail_status_change_follows_task_after_queue_reorder() {
+    for prefix in ['t', 's'] {
+        let mut app = test_app().await;
+        for title in ["First", "Changed", "Third"] {
+            let mut draft = test_task_draft(title);
+            draft.description = format!("Description for {title}");
+            create_and_select_task(&mut app, draft).await;
+        }
+        app.show_view(TaskQuery::Queue).await.unwrap();
+        app.list.select_task(Some(1));
+        app.ensure_selected_task_detail().await.unwrap();
+        let task_id = app.store.tasks[1].task.id.clone();
+        let description = app.store.tasks[1].task.description.clone();
+        assert!(!description.is_empty());
+        app.show_detail(4);
 
-    app.update_status(TaskStatus::Done).await.unwrap();
+        app.dispatch_key(key(KeyCode::Char(prefix)), (120, 40).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('a')), (120, 40).into())
+            .await
+            .unwrap();
 
-    assert!(app.detail.is_inactive());
-    assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+        assert!(app.detail.is_active());
+        assert_eq!(app.detail.state().unwrap().scroll(), 4);
+        assert_eq!(app.list.selected_task(), Some(0));
+        assert_eq!(app.store.tasks[0].task.id, task_id);
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Active);
+        assert_eq!(app.store.tasks[0].task.description, description);
+        assert!(!toast_message(&app).unwrap().contains("g . return"));
+    }
+}
+
+#[tokio::test]
+async fn detail_status_change_keeps_filtered_task_open_until_close() {
+    for prefix in ['t', 's'] {
+        let mut app = test_app().await;
+        for title in ["First", "Changed", "Third"] {
+            create_and_select_task(&mut app, test_task_draft(title)).await;
+        }
+        app.show_view(TaskQuery::Queue).await.unwrap();
+        app.list.select_task(Some(1));
+        app.list.set_task_offset(1);
+        let task_id = app.store.tasks[1].task.id.clone();
+        let successor_id = app.store.tasks[2].task.id.clone();
+        app.show_detail(4);
+
+        app.dispatch_key(key(KeyCode::Char(prefix)), (120, 40).into())
+            .await
+            .unwrap();
+        app.dispatch_key(key(KeyCode::Char('d')), (120, 40).into())
+            .await
+            .unwrap();
+
+        assert!(app.detail.is_active());
+        assert_eq!(app.detail.state().unwrap().scroll(), 4);
+        assert_eq!(app.store.view_state.query, TaskQuery::Search);
+        assert_eq!(app.store.tasks.len(), 1);
+        assert_eq!(app.store.tasks[0].task.id, task_id);
+        assert_eq!(app.store.tasks[0].task.status, TaskStatus::Done);
+
+        app.refresh().await.unwrap();
+        app.update_status(TaskStatus::Canceled).await.unwrap();
+        assert_eq!(app.store.tasks[0].task.id, task_id);
+        assert!(app.detail.is_active());
+
+        app.handle_overlay_key(key(KeyCode::Esc)).await.unwrap();
+
+        assert!(app.detail.is_inactive());
+        assert_eq!(app.store.view_state.query, TaskQuery::Queue);
+        assert_eq!(app.list.task_offset(), 1);
+        assert!(app.store.tasks.iter().all(|item| item.task.id != task_id));
+        assert_eq!(
+            app.store
+                .selected_task(app.list.selected_task())
+                .unwrap()
+                .task
+                .id,
+            successor_id
+        );
+    }
 }
 
 #[tokio::test]

@@ -1,14 +1,14 @@
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::UdpSocket;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpStream, UdpSocket};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use std::time::Duration;
 
-use common::{TestEnv, ok};
+use common::{TestEnv, fail, ok};
 use serde_json::{Value, json};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -777,4 +777,340 @@ fn every_write_wakes_the_daemon_and_nothing_else_does() {
     expect_quiet("reads");
     client.error("update_task", json!({"ref": "NOPE-0000", "title": "X"}));
     expect_quiet("a rejected write");
+}
+
+const HTTP_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+fn http_command(env: &TestEnv, db: &Path, args: &[&str]) -> Command {
+    let mut command = env.command(db);
+    command
+        .args(["mcp", "--http"])
+        .args(args)
+        .env("AVEN_MCP_TOKEN", HTTP_TOKEN);
+    command
+}
+
+struct HttpResponse {
+    status: u16,
+    head: String,
+    body: String,
+}
+
+impl HttpResponse {
+    fn has_header(&self, line: &str) -> bool {
+        self.head
+            .lines()
+            .any(|header| header.eq_ignore_ascii_case(line))
+    }
+
+    fn json(&self) -> Value {
+        serde_json::from_str(&self.body)
+            .unwrap_or_else(|error| panic!("non-JSON body {:?}: {error}", self.body))
+    }
+}
+
+/// An `aven mcp --http` child. Requests are written by hand so that tests see
+/// exactly what a client sends and what the server answers.
+struct HttpServer {
+    child: Child,
+    address: String,
+    stdout: Receiver<String>,
+}
+
+impl HttpServer {
+    fn start(env: &TestEnv, db: &Path, extra_args: &[&str]) -> Self {
+        let mut child = http_command(env, db, &["--bind", "127.0.0.1:0"])
+            .args(extra_args)
+            .env("AVEN_LOG", "aven=debug")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn aven mcp --http");
+        let stdout = child.stdout.take().expect("child stdout");
+        let (sender, lines) = channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let listening = lines
+            .recv_timeout(RESPONSE_TIMEOUT)
+            .expect("server announces its address");
+        let address = listening
+            .strip_prefix("listening url=http://")
+            .and_then(|rest| rest.strip_suffix("/mcp"))
+            .unwrap_or_else(|| panic!("unexpected first line {listening:?}"))
+            .to_string();
+        Self {
+            child,
+            address,
+            stdout: lines,
+        }
+    }
+
+    fn send(&self, method: &str, headers: &[String], body: &str) -> HttpResponse {
+        let mut stream = TcpStream::connect(&self.address).expect("connect");
+        let mut request = format!(
+            "{method} /mcp HTTP/1.1\r\nConnection: close\r\nContent-Length: {}\r\n",
+            body.len()
+        );
+        for header in headers {
+            request.push_str(header);
+            request.push_str("\r\n");
+        }
+        request.push_str("\r\n");
+        request.push_str(body);
+        stream.write_all(request.as_bytes()).expect("write request");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        let (head, body) = response
+            .split_once("\r\n\r\n")
+            .unwrap_or_else(|| panic!("no header end in {response:?}"));
+        let status = head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|status| status.parse().ok())
+            .unwrap_or_else(|| panic!("no status in {head:?}"));
+        HttpResponse {
+            status,
+            head: head.to_string(),
+            body: body.to_string(),
+        }
+    }
+
+    fn headers(&self, extra: &[String]) -> Vec<String> {
+        let mut headers = vec![
+            format!("Host: {}", self.address),
+            "Accept: application/json, text/event-stream".to_string(),
+            "Content-Type: application/json".to_string(),
+        ];
+        headers.extend_from_slice(extra);
+        headers
+    }
+
+    fn post(&self, extra: &[String], message: &Value) -> HttpResponse {
+        self.send("POST", &self.headers(extra), &message.to_string())
+    }
+
+    fn rpc(&self, method: &str, params: Value) -> Value {
+        let message = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let response = self.post(&[authorization()], &message);
+        assert_eq!(response.status, 200, "{}", response.body);
+        assert!(
+            !response.head.to_lowercase().contains("mcp-session-id"),
+            "{}",
+            response.head
+        );
+        response.json()
+    }
+
+    fn call(&self, tool: &str, arguments: Value) -> Value {
+        let response = self.rpc("tools/call", json!({"name": tool, "arguments": arguments}));
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{tool} returned no text: {response}"));
+        serde_json::from_str(text).expect("tool body")
+    }
+
+    fn wait_for_output(&self, prefix: &str) {
+        loop {
+            let line = self
+                .stdout
+                .recv_timeout(RESPONSE_TIMEOUT)
+                .unwrap_or_else(|error| panic!("no {prefix} line: {error}"));
+            if line.starts_with(prefix) {
+                return;
+            }
+        }
+    }
+}
+
+impl Drop for HttpServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn authorization() -> String {
+    format!("Authorization: Bearer {HTTP_TOKEN}")
+}
+
+fn tool_names(response: &Value) -> Vec<String> {
+    response["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name").to_string())
+        .collect()
+}
+
+#[test]
+fn http_serves_the_stdio_tools_as_independent_stateless_requests() {
+    let env = TestEnv::new();
+    let db = env.db("http.sqlite");
+    let server = HttpServer::start(&env, &db, &[]);
+
+    let initialized = server.rpc(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "cli_mcp", "version": "1"},
+        }),
+    );
+    assert_eq!(initialized["result"]["serverInfo"]["name"], "aven");
+    assert_eq!(initialized["result"]["protocolVersion"], "2025-06-18");
+    assert!(initialized["result"]["instructions"].is_string());
+    let notification = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+    assert_eq!(server.post(&[authorization()], &notification).status, 202);
+
+    let mut stdio = Client::started(&env, &db);
+    let stdio_tools = stdio.request("tools/list", json!({}));
+    assert_eq!(
+        tool_names(&server.rpc("tools/list", json!({}))),
+        tool_names(&stdio_tools)
+    );
+
+    let created = server.call("create_task", json!({"title": "Over HTTP"}));
+    let task = task_ref(&created["task"]);
+    assert_eq!(titles(&server.call("list_tasks", json!({}))), ["Over HTTP"]);
+    ok(env.aven(&db, ["show", task.as_str()]));
+
+    let unknown = server.rpc(
+        "tools/call",
+        json!({"name": "list_tasks", "arguments": {"bogus": 1}}),
+    );
+    assert_eq!(unknown["result"]["isError"], true, "{unknown}");
+
+    let listed = server.post(
+        &[
+            authorization(),
+            "MCP-Protocol-Version: 2025-06-18".to_string(),
+        ],
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+    );
+    assert_eq!(listed.status, 200, "{}", listed.body);
+
+    for method in ["GET", "DELETE"] {
+        let response = server.send(method, &server.headers(&[authorization()]), "");
+        assert_eq!(response.status, 405, "{method}");
+        assert!(response.has_header("allow: POST"), "{}", response.head);
+    }
+}
+
+#[test]
+fn http_rejects_bad_credentials_and_browsers_but_not_other_host_names() {
+    let env = TestEnv::new();
+    let db = env.db("auth.sqlite");
+    let server = HttpServer::start(&env, &db, &[]);
+    let create = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "create_task", "arguments": {"title": "Must not exist"}},
+    });
+
+    for headers in [
+        vec![],
+        vec!["Authorization: Bearer wrong".to_string()],
+        vec![format!("Authorization: Basic {HTTP_TOKEN}")],
+        vec![authorization(), authorization()],
+    ] {
+        let response = server.post(&headers, &create);
+        assert_eq!(response.status, 401, "{headers:?}");
+        assert!(
+            response.has_header("www-authenticate: Bearer"),
+            "{}",
+            response.head
+        );
+        assert!(!response.body.contains("Must not exist"));
+    }
+    // A rejected request's body is never read, so it can't be parsed either.
+    let malformed = server.send("POST", &server.headers(&[]), "{");
+    assert_eq!(malformed.status, 401);
+
+    let browser = server.post(
+        &[authorization(), "Origin: https://evil.example".to_string()],
+        &create,
+    );
+    assert_eq!(browser.status, 403, "{}", browser.body);
+
+    assert_eq!(server.call("count_tasks", json!({}))["count"], 0);
+
+    // Containers reach the server by a name chosen at deployment.
+    let mut headers = server.headers(&[authorization()]);
+    headers[0] = "Host: aven-mcp:3747".to_string();
+    let renamed = server.send(
+        "POST",
+        &headers,
+        &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).to_string(),
+    );
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+}
+
+#[test]
+fn http_startup_refuses_unsafe_configurations() {
+    let env = TestEnv::new();
+    let db = env.db("refused.sqlite");
+
+    let missing = fail(env.aven(&db, ["mcp", "--http"]));
+    assert!(missing.contains("AVEN_MCP_TOKEN"), "{missing}");
+
+    let short = env
+        .command(&db)
+        .args(["mcp", "--http"])
+        .env("AVEN_MCP_TOKEN", "short")
+        .output()
+        .expect("run aven mcp");
+    assert!(fail(short).contains("openssl rand -hex 32"));
+
+    let public = http_command(&env, &db, &["--bind", "0.0.0.0:0"])
+        .output()
+        .expect("run aven mcp");
+    assert!(fail(public).contains("--unsafe-public-bind"));
+
+    let disabled = http_command(&env, &db, &["--bind", "127.0.0.1:0", "--sync"])
+        .env("AVEN_SYNC_DISABLED", "1")
+        .output()
+        .expect("run aven mcp");
+    assert!(fail(disabled).contains("AVEN_SYNC_DISABLED"));
+
+    for args in [
+        vec!["mcp", "--sync"],
+        vec!["mcp", "--bind", "127.0.0.1:3747"],
+        vec!["mcp", "--unsafe-public-bind"],
+    ] {
+        fail(env.aven(&db, args));
+    }
+}
+
+#[test]
+fn http_without_sync_wakes_the_daemon_and_with_sync_owns_the_wake_address() {
+    let env = TestEnv::new();
+    let db = env.db("wake.sqlite");
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
+    socket
+        .set_read_timeout(Some(RESPONSE_TIMEOUT))
+        .expect("set read timeout");
+    let wake_addr = socket.local_addr().unwrap().to_string();
+    env.write_daemon_config(&db, &wake_addr, 3600);
+
+    let server = HttpServer::start(&env, &db, &[]);
+    server.call("create_task", json!({"title": "Wakes the daemon"}));
+    let mut buffer = [0; 16];
+    socket.recv(&mut buffer).expect("daemon wake");
+    drop(server);
+    drop(socket);
+
+    let first = HttpServer::start(&env, &db, &["--sync"]);
+    first.wait_for_output("daemon-sync-not-set-up");
+    let second = http_command(&env, &db, &["--bind", "127.0.0.1:0", "--sync"])
+        .output()
+        .expect("run aven mcp");
+    assert!(fail(second).contains("is `aven daemon` or `aven mcp --sync` already using it?"));
+    assert_eq!(first.call("count_tasks", json!({}))["count"], 1);
 }

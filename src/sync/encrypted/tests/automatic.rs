@@ -1,16 +1,20 @@
 //! The daemon drives the encrypted engine after a local mutation wakes it.
 use super::*;
 
-fn enable_automatic_sync(node: &Installation, wake: &str) {
+fn write_sync_config(node: &Installation, enabled: bool, interval_seconds: u64, wake: &str) {
     let dir = node.root.join(node.name).join("config");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("config.yaml"),
         format!(
-            "sync:\n  enabled: true\n  interval_seconds: 3600\ndaemon:\n  wake_addr: \"{wake}\"\n"
+            "sync:\n  enabled: {enabled}\n  interval_seconds: {interval_seconds}\ndaemon:\n  wake_addr: \"{wake}\"\n"
         ),
     )
     .unwrap();
+}
+
+fn enable_automatic_sync(node: &Installation, wake: &str) {
+    write_sync_config(node, true, 3600, wake);
 }
 
 fn free_wake_addr() -> String {
@@ -107,6 +111,119 @@ async fn daemon_waits_for_setup_then_syncs_encrypted_rounds_on_wake() {
     let log = log.lock().unwrap().clone();
     assert!(!log.contains("daemon sync completed"), "{log}");
     assert!(!log.contains("Synced by the daemon"));
+}
+
+const MCP_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+/// Leaves `sync.enabled` off, since `--sync` is what requests the worker.
+fn configure_mcp_sync(node: &Installation, interval_seconds: u64) {
+    write_sync_config(node, false, interval_seconds, &free_wake_addr());
+}
+
+struct McpServer {
+    child: Child,
+    lines: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    url: String,
+    http: reqwest::Client,
+}
+
+impl McpServer {
+    async fn start(node: &Installation) -> Self {
+        let mut child = node
+            .command(&["mcp", "--http", "--bind", "127.0.0.1:0", "--sync"])
+            .env("AVEN_MCP_TOKEN", MCP_TOKEN)
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let listening = wait_for_line(&mut lines, "listening url=").await;
+        Self {
+            child,
+            lines,
+            url: listening
+                .strip_prefix("listening url=")
+                .unwrap()
+                .to_string(),
+            http: reqwest::Client::builder().no_proxy().build().unwrap(),
+        }
+    }
+
+    async fn call(&self, tool: &str, arguments: serde_json::Value) -> serde_json::Value {
+        let response: serde_json::Value = self
+            .http
+            .post(&self.url)
+            .bearer_auth(MCP_TOKEN)
+            .header(
+                reqwest::header::ACCEPT,
+                "application/json, text/event-stream",
+            )
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": tool, "arguments": arguments},
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let text = response["result"]["content"][0]["text"].as_str();
+        serde_json::from_str(text.unwrap_or_else(|| panic!("{tool}: {response}"))).unwrap()
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mcp_write_reaches_the_sync_worker_directly_and_shutdown_exits_cleanly() {
+    let temp = tempfile::tempdir().unwrap();
+    let pair = pair(temp.path()).await;
+    // The hour-long interval leaves the direct wake as the only trigger.
+    configure_mcp_sync(&pair.a, 3600);
+    let mut server = McpServer::start(&pair.a).await;
+    wait_for_line(&mut server.lines, "daemon-synced").await;
+
+    let body = server
+        .call("create_task", serde_json::json!({"title": "Sent over MCP"}))
+        .await;
+    assert_eq!(body["task"]["title"], "Sent over MCP", "{body}");
+    wait_for_line(&mut server.lines, "daemon-synced").await;
+    pair.b.ok(&["sync"]).await;
+    assert!(titles(&pair.b).await.contains(&"Sent over MCP".to_string()));
+
+    let pid = server.child.id().unwrap() as libc::pid_t;
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    let status = tokio::time::timeout(Duration::from_secs(15), server.child.wait())
+        .await
+        .expect("the server exits after SIGTERM")
+        .unwrap();
+    assert!(status.success(), "{status}");
+}
+
+#[tokio::test]
+async fn mcp_sync_worker_brings_in_remote_changes_without_a_local_write() {
+    let temp = tempfile::tempdir().unwrap();
+    let pair = pair(temp.path()).await;
+    configure_mcp_sync(&pair.a, 1);
+    let server = McpServer::start(&pair.a).await;
+
+    pair.b.ok(&["add", "Written on the peer"]).await;
+    pair.b.ok(&["sync"]).await;
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let body = server
+            .call("search_tasks", serde_json::json!({"query": "peer"}))
+            .await;
+        if body["tasks"]
+            .as_array()
+            .is_some_and(|tasks| !tasks.is_empty())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "peer task never arrived: {body}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[tokio::test]

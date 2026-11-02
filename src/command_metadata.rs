@@ -112,7 +112,7 @@ impl Commands {
             Self::Import(_) => CommandMetadata::cli_wake(),
             Self::Doctor(_) => CommandMetadata::cli(),
             Self::Skill(_) => CommandMetadata::cli(),
-            Self::Mcp => CommandMetadata::server(),
+            Self::Mcp(_) => CommandMetadata::server(),
             Self::Sync(_) | Self::Ai(_) => CommandMetadata::cli(),
             Self::Server(args) => match &args.command {
                 Some(ServerSubcommand::Ai(_)) => CommandMetadata::cli(),
