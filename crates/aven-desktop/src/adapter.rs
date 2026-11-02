@@ -2914,6 +2914,7 @@ impl Actor {
             }
             Command::SetOrder(order) => {
                 self.arrange.order = *order;
+                let from_queue = self.store.view_state.query == TaskQuery::Queue;
                 let core = match order {
                     ViewOrder::Priority | ViewOrder::Available => TaskOrder::Priority,
                     ViewOrder::Due => TaskOrder::DueOn,
@@ -2923,6 +2924,9 @@ impl Actor {
                 self.store
                     .set_order_restoring(core, &SelectionRestore::Default)
                     .await?;
+                if from_queue && self.column_views.contains(&TaskQuery::Open) {
+                    self.set_columns(true).await?;
+                }
                 Ok(())
             }
             Command::SetGroup(group) => {
@@ -5067,6 +5071,17 @@ mod tests {
         run(&mut actor, Command::ShowView(TaskQuery::Open)).await;
         assert_eq!(actor.store.view_state.layout, TaskLayout::Columns);
         bodies(&mut replies);
+    }
+
+    #[tokio::test]
+    async fn ordering_the_queue_moves_to_open() {
+        let (_directory, mut actor, _replies) = actor("Stored").await;
+        run(&mut actor, Command::ShowView(TaskQuery::Queue)).await;
+
+        run(&mut actor, Command::SetOrder(ViewOrder::Title)).await;
+
+        assert_eq!(actor.store.view_state.query, TaskQuery::Open);
+        assert_eq!(actor.store.view_state.order, TaskOrder::Title);
     }
 
     #[tokio::test]

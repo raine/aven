@@ -1923,7 +1923,7 @@ impl Root {
         let can_columns = !settings && supports_columns(query) && self.session.review.is_none();
         let columns = view.columns;
         let reviewing = self.session.review.is_some();
-        let orderable = !settings && !fixed && !logged && !reviewing;
+        let orderable = !settings && query != TaskQuery::Upcoming && !logged && !reviewing;
         let groupable = !settings
             && !fixed
             && !logged

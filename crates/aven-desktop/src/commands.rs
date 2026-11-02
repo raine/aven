@@ -907,14 +907,14 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let view = &self.session.snapshot.view;
-        if matches!(view.query, TaskQuery::Queue | TaskQuery::Upcoming) {
+        if view.query == TaskQuery::Upcoming {
             let name = view_name(view.query);
             self.session
                 .show_toast(format!("{name} has a fixed order"), None);
             cx.notify();
             return;
         }
-        let current = view.order;
+        let current = (view.query != TaskQuery::Queue).then_some(view.order);
         let entries = ORDERS
             .iter()
             .map(|(order, name)| {
@@ -922,7 +922,11 @@ impl Root {
                 Entry::new(*name, move |root, _, _| {
                     root.session.write(Command::SetOrder(order));
                 })
-                .hint(if current == order { "Current" } else { "" })
+                .hint(if current == Some(order) {
+                    "Current"
+                } else {
+                    ""
+                })
             })
             .collect();
         self.open_menu(
