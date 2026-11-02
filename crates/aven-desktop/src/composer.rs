@@ -77,6 +77,7 @@ impl Root {
     }
 
     pub(crate) fn new_task(&mut self, _: &NewTask, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
         self.open_composer(window, cx);
     }
 

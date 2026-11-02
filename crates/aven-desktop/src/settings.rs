@@ -153,9 +153,10 @@ impl Root {
     pub(crate) fn open_settings(
         &mut self,
         _: &OpenSettings,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_menu(window, cx);
         let tab = self.session.settings.unwrap_or_default();
         self.show_settings(tab, cx);
     }
