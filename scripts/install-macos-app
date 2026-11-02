@@ -62,7 +62,10 @@ bin="$HOME/.cargo/bin/aven"
 mkdir -p "$(dirname "$bin")"
 ln -sfn "$target/Contents/MacOS/aven" "$bin.tmp.$$"
 mv -f "$bin.tmp.$$" "$bin"
-if [[ $("$bin" config get sync.enabled) == true ]]; then "$bin" daemon install; fi
+# Worktree shells disable sync for their dev database, but this is the real daemon.
+if [[ $("$bin" config get sync.enabled) == true ]]; then
+  env -u AVEN_SYNC_DISABLED "$bin" daemon install
+fi
 
 # A second bundle with the same identifier could take Launch Services opens,
 # including clicked notifications. A daemon still pointing at it keeps it.
