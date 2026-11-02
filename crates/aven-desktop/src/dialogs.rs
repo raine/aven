@@ -29,6 +29,9 @@ use crate::shell::Root;
 use crate::theme::{Theme, theme};
 
 const DIALOG_WIDTH: f32 = 560.;
+const IMAGE_DIALOG_WIDTH: f32 = 860.;
+/// What an image dialog needs besides the picture.
+const IMAGE_DIALOG_CHROME: f32 = 190.;
 const WIDE_WIDTH: f32 = 760.;
 const NARROW_WIDTH: f32 = 440.;
 const ABOUT_WIDTH: f32 = 300.;
@@ -1361,7 +1364,12 @@ impl Root {
         ]
     }
 
-    fn render_image(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
+    fn render_image(
+        &self,
+        viewport: gpui::Size<gpui::Pixels>,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> Vec<AnyElement> {
         let Some(Layer {
             dialog: Dialog::Image { id, image, alt },
             ..
@@ -1370,7 +1378,7 @@ impl Root {
             return Vec::new();
         };
         let viewer = div()
-            .h(px(300.))
+            .h((viewport.height * 0.78 - px(IMAGE_DIALOG_CHROME)).max(px(300.)))
             .rounded(px(7.))
             .bg(t.raised)
             .flex()
@@ -1379,9 +1387,12 @@ impl Root {
             .overflow_hidden()
             .text_color(t.faint);
         let viewer = match &image.preview {
-            Some(path) => {
-                viewer.child(img(path.clone()).size_full().object_fit(ObjectFit::Contain))
-            }
+            Some(path) => viewer.child(
+                img(path.clone())
+                    .size_full()
+                    .rounded(px(7.))
+                    .object_fit(ObjectFit::ScaleDown),
+            ),
             None => viewer.child("Not on this device"),
         };
         let (save_id, save_name) = (image.id.clone(), image.name.clone());
@@ -1671,7 +1682,12 @@ impl Root {
                 self.render_resolve(cx, &t),
                 "Dialog",
             ),
-            Dialog::Image { .. } => ("Image", DIALOG_WIDTH, self.render_image(cx, &t), "Dialog"),
+            Dialog::Image { .. } => (
+                "Image",
+                IMAGE_DIALOG_WIDTH,
+                self.render_image(viewport, cx, &t),
+                "Dialog",
+            ),
             Dialog::About => (
                 "About Aven",
                 ABOUT_WIDTH,

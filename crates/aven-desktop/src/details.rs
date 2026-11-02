@@ -394,9 +394,12 @@ impl Root {
                     this.open_image(shown.clone(), window, cx);
                 }));
             thumbs = thumbs.child(match &image.preview {
-                Some(path) => {
-                    thumb.child(img(path.clone()).size_full().object_fit(ObjectFit::Cover))
-                }
+                Some(path) => thumb.child(
+                    img(path.clone())
+                        .size_full()
+                        .rounded(px(6.))
+                        .object_fit(ObjectFit::Cover),
+                ),
                 None => thumb.child(
                     small(11.)
                         .text_center()
