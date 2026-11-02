@@ -2320,7 +2320,7 @@ impl Root {
         let snapshot = &self.session.snapshot;
         let view = &snapshot.view;
         let mut strips = Vec::new();
-        if self.session.expanded {
+        if !self.session.show_task_strips() {
             return strips;
         }
         let strip = || {

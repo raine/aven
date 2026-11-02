@@ -1086,6 +1086,11 @@ impl Session {
         self.database_error = Some(DatabaseError { path, message });
     }
 
+    /// Task scope strips belong below the list header, not Settings or expanded detail.
+    pub fn show_task_strips(&self) -> bool {
+        self.settings.is_none() && !self.expanded
+    }
+
     pub fn open_settings(&mut self, tab: SettingsTab) {
         self.settings = Some(tab);
         self.send(Command::LoadSettings);
@@ -1745,6 +1750,25 @@ mod tests {
         let (requests, received) = mpsc::unbounded_channel();
         std::mem::forget(received);
         Session::new(Snapshot::default(), requests)
+    }
+
+    #[test]
+    fn task_strips_stay_hidden_in_settings_and_return_to_the_previous_view() {
+        let mut session = session();
+        for project in [None, Some("aven".to_string())] {
+            session.snapshot.view.project = project.clone();
+            for expanded in [false, true] {
+                session.expanded = expanded;
+                assert_eq!(session.show_task_strips(), !expanded);
+
+                session.open_settings(SettingsTab::General);
+                assert!(!session.show_task_strips());
+                assert_eq!(session.snapshot.view.project, project);
+
+                session.close_settings();
+                assert_eq!(session.show_task_strips(), !expanded);
+            }
+        }
     }
 
     #[test]
