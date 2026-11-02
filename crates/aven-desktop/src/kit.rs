@@ -146,7 +146,7 @@ pub fn line_btn(
 ) -> Stateful<Div> {
     let label = label.into();
     btn(id, label.clone(), t)
-        .shadow(vec![t.inset_ring(t.line)])
+        .shadow(vec![t.inset_ring(t.line2)])
         .child(label)
 }
 

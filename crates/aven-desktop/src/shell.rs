@@ -2132,7 +2132,7 @@ impl Root {
             )
             .child(
                 btn("search", "Search", &t)
-                    .shadow(vec![t.inset_ring(t.line)])
+                    .shadow(vec![t.inset_ring(t.line2)])
                     .on_click(
                         cx.listener(|this, _, window, cx| {
                             this.open_search(&OpenSearch, window, cx)
@@ -2145,7 +2145,7 @@ impl Root {
             )
             .child(
                 btn("palette", "Commands", &t)
-                    .shadow(vec![t.inset_ring(t.line)])
+                    .shadow(vec![t.inset_ring(t.line2)])
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_palette(&OpenPalette, window, cx)
                     }))
@@ -2410,7 +2410,7 @@ impl Root {
                         .px(px(8.))
                         .rounded_full()
                         .text_size(px(12.))
-                        .shadow(vec![t.inset_ring(t.line)])
+                        .shadow(vec![t.inset_ring(t.line2)])
                         .hover(|style| style.bg(t.raised))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.session.write(command.clone());

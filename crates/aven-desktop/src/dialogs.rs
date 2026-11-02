@@ -1209,7 +1209,7 @@ impl Root {
                     .h(px(24.))
                     .px(px(8.))
                     .text_size(px(12.))
-                    .shadow(vec![t.inset_ring(t.line)])
+                    .shadow(vec![t.inset_ring(t.line2)])
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.set_field(&editor, &value, cx);
                         cx.notify();

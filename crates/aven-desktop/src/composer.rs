@@ -578,7 +578,7 @@ impl Root {
             .h(px(26.))
             .px(px(8.))
             .text_size(px(12.))
-            .shadow(vec![t.inset_ring(t.line)])
+            .shadow(vec![t.inset_ring(t.line2)])
             .child(anchor_probe(id, anchors))
             .children(leading)
             .child(name)
@@ -750,7 +750,7 @@ impl Root {
                     .h(px(24.))
                     .px(px(8.))
                     .text_size(px(12.))
-                    .shadow(vec![t.inset_ring(t.line)])
+                    .shadow(vec![t.inset_ring(t.line2)])
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.update_draft(cx, |draft| {
                             draft.images.remove(ix);
@@ -871,7 +871,7 @@ impl Root {
             )
             .child(
                 btn("c-another", "Add another", &t)
-                    .shadow(vec![t.inset_ring(t.line)])
+                    .shadow(vec![t.inset_ring(t.line2)])
                     .when(repeats, |button| button.opacity(0.5))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.create_another(&CreateAnother, window, cx);
