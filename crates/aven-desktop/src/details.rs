@@ -252,6 +252,45 @@ impl Root {
             .child(self.title.clone())
     }
 
+    fn render_byline(&self, detail: &Detail, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let byline = &detail.byline;
+        let when = if self.created_exact {
+            &byline.created_on
+        } else {
+            &byline.created_ago
+        };
+        let source = byline
+            .source
+            .as_ref()
+            .map_or_else(String::new, |source| format!(" from {source}"));
+        let ink = t.ink;
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_x(px(6.))
+            .mt(px(-8.))
+            .mb(px(12.))
+            .text_size(px(12.))
+            .line_height(px(18.))
+            .text_color(t.muted)
+            .child(
+                div()
+                    .id("byline-created")
+                    .role(Role::Button)
+                    .aria_label("Switch between relative and exact creation time")
+                    .hover(move |style| style.text_color(ink))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.created_exact = !this.created_exact;
+                        cx.notify();
+                    }))
+                    .child(format!("Created {when}{source}")),
+            )
+            .when_some(byline.updated_ago.clone(), |line, updated| {
+                line.child(div().text_color(t.faint).child("·"))
+                    .child(format!("Updated {updated}"))
+            })
+    }
+
     fn render_description(&self, row: &TaskRow, cx: &mut Context<Self>, t: &Theme) -> Div {
         let empty = self
             .session
@@ -839,6 +878,9 @@ impl Root {
             )
             .when(row.deleted, |body| body.child(self.deleted_banner(cx, &t)))
             .child(self.render_title(19., window, cx, &t))
+            .when_some(detail.as_ref(), |body, detail| {
+                body.child(self.render_byline(detail, cx, &t))
+            })
             .child(self.render_props(&row, detail.as_ref(), cx, &t))
             .children(self.render_sections(&row, window, cx, &t));
         panel.child(top).child(body)
@@ -890,6 +932,9 @@ impl Root {
                                         .child(self.detail_ref(&row, cx, &t)),
                                 )
                                 .child(self.render_title(26., window, cx, &t))
+                                .when_some(detail.as_ref(), |doc, detail| {
+                                    doc.child(self.render_byline(detail, cx, &t))
+                                })
                                 .child(self.top_actions(&row, cx, &t).ml(px(-8.)))
                                 .children(self.render_sections(&row, window, cx, &t)),
                         )

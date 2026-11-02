@@ -387,6 +387,8 @@ pub struct Root {
     glide: Option<Glide>,
     /// The Settings switch toggled last, with a run and when it was toggled.
     pub(crate) switched: Option<(&'static str, usize, Instant)>,
+    /// Whether the detail byline shows the exact creation time.
+    pub(crate) created_exact: bool,
     list_motion: ListMotion,
     pub(crate) details_open: bool,
     nav_open: bool,
@@ -517,6 +519,7 @@ impl Root {
             bounce: Rc::default(),
             glide: None,
             switched: None,
+            created_exact: false,
             list_motion: ListMotion::default(),
             details_open: prefs.details_open,
             nav_open: prefs.nav_open,

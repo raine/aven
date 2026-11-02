@@ -73,6 +73,8 @@ const CLOCK_INTERVAL: Duration = Duration::from_secs(60);
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(700);
 /// How often a quit looks at user-started sync work.
 const QUIT_POLL: Duration = Duration::from_millis(50);
+/// A save this soon after creation is part of creating the task.
+const BYLINE_UPDATE_GAP: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
 /// How long a quit waits for a sync round to end before leaving it unfinished,
 /// as a killed daemon would.
 const QUIT_SYNC_BUDGET: Duration = Duration::from_secs(3);
@@ -528,8 +530,19 @@ pub struct Image {
 
 /// What the details panel shows beyond the row.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Byline {
+    pub created_ago: String,
+    pub created_on: String,
+    /// Core has no desktop source, so a task made here names none.
+    pub source: Option<String>,
+    /// Absent until the task changes after it was created.
+    pub updated_ago: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Detail {
     pub task_id: TaskId,
+    pub byline: Byline,
     /// A task outside the list has no row there.
     pub row: TaskRow,
     pub description: String,
@@ -1371,6 +1384,22 @@ pub fn relative_time(stamp: &str, now: DateTime<Local>) -> String {
     }
 }
 
+fn byline(item: &TaskListItem, now: DateTime<Local>) -> Byline {
+    let task = &item.task;
+    let created = local_time(&task.created_at);
+    let updated = local_time(&task.updated_at);
+    let changed = created
+        .zip(updated)
+        .is_some_and(|(created, updated)| updated - created >= BYLINE_UPDATE_GAP);
+    Byline {
+        created_ago: relative_time(&task.created_at, now),
+        created_on: created
+            .map_or_else(String::new, |at| at.format("%b %-d, %Y, %H:%M").to_string()),
+        source: (task.source != TaskSource::Unknown).then(|| task.source.to_string()),
+        updated_ago: changed.then(|| relative_time(&task.updated_at, now)),
+    }
+}
+
 pub fn detail(item: &TaskListItem, now: DateTime<Local>) -> Detail {
     detail_with(item, now, String::new(), Vec::new())
 }
@@ -1435,6 +1464,7 @@ fn detail_with(
     let live_related = item.related.iter().filter(|link| !link.deleted);
     Detail {
         task_id: item.task.id.clone(),
+        byline: byline(item, now),
         row: task_row(item, today),
         description: item.task.description.clone(),
         available: available.map_or_else(
@@ -4152,6 +4182,23 @@ mod tests {
     fn capitalised_raises_only_the_first_letter() {
         assert_eq!(capitalised("created task: keep"), "Created task: keep");
         assert_eq!(capitalised(""), "");
+    }
+
+    #[tokio::test]
+    async fn the_byline_names_an_update_only_after_creation() {
+        let (_directory, actor, _replies) = actor("Keep").await;
+        let mut item = actor.store.tasks[0].clone();
+        item.task.created_at = "2026-10-23T10:00:00+00:00".to_string();
+        item.task.updated_at = "2026-10-23T10:02:00+00:00".to_string();
+        let now = local_time("2026-11-02T10:00:00+00:00").unwrap();
+        let fresh = byline(&item, now);
+        assert_eq!(fresh.created_ago, "10d ago");
+        assert_eq!(fresh.source, None);
+        assert_eq!(fresh.updated_ago, None);
+        assert!(fresh.created_on.starts_with("Oct 23, 2026, "));
+
+        item.task.updated_at = "2026-11-02T07:00:00+00:00".to_string();
+        assert_eq!(byline(&item, now).updated_ago.as_deref(), Some("3h ago"));
     }
 
     #[tokio::test]
