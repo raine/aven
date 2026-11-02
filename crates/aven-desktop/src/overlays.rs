@@ -149,26 +149,39 @@ pub struct Menu {
     _subscription: Subscription,
 }
 
+/// Whether `word`'s letters all appear in `text`, in order.
+fn in_order(word: &str, text: &str) -> bool {
+    let mut letters = text.chars();
+    word.chars()
+        .all(|wanted| letters.any(|letter| letter == wanted))
+}
+
 impl Menu {
     fn query(&self, cx: &App) -> String {
         self.input.read(cx).text().to_lowercase()
     }
 
-    /// The entries the typed text leaves, in order.
+    /// The entries the typed text leaves: whole matches, then loose ones.
     fn shown(&self, cx: &App) -> Vec<Shown> {
         let query = self.query(cx);
         let words: Vec<&str> = query.split_whitespace().collect();
-        let mut shown: Vec<Shown> = (0..self.entries.len())
-            .filter(|ix| {
-                let entry = &self.entries[*ix];
+        let mut ranked: Vec<(u8, usize)> = (0..self.entries.len())
+            .filter_map(|ix| {
+                let entry = &self.entries[ix];
                 if entry.head {
-                    return words.is_empty();
+                    return words.is_empty().then_some((0, ix));
                 }
-                let text = format!("{} {}", entry.label, entry.hint).to_lowercase();
-                words.iter().all(|word| text.contains(word))
+                let label = entry.label.to_lowercase();
+                let text = format!("{label} {}", entry.hint.to_lowercase());
+                if words.iter().all(|word| text.contains(word)) {
+                    return Some((0, ix));
+                }
+                let spaced = words.iter().all(|word| in_order(word, &label));
+                spaced.then_some((1, ix))
             })
-            .map(Shown::Item)
             .collect();
+        ranked.sort_by_key(|(rank, _)| *rank);
+        let mut shown: Vec<Shown> = ranked.into_iter().map(|(_, ix)| Shown::Item(ix)).collect();
         let exact = self
             .entries
             .iter()
@@ -622,5 +635,18 @@ impl Root {
                         }),
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_order;
+
+    #[test]
+    fn a_word_matches_across_the_gaps_in_a_name() {
+        assert!(in_order("claudehist", "claude-history"));
+        assert!(in_order("ch", "claude-history"));
+        assert!(!in_order("claudehistz", "claude-history"));
+        assert!(!in_order("hc", "ch"));
     }
 }
