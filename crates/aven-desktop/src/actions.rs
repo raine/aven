@@ -1,5 +1,6 @@
 //! Every command the app exposes. Keys, menus and the palette all dispatch these
 //! actions, so a command behaves the same however it is reached.
+use aven_core::choices::TaskStatus;
 use aven_host::store::TaskQuery;
 use gpui::{Action, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, actions};
 
@@ -108,6 +109,11 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = aven, no_json)]
 pub struct ShowView(pub TaskQuery);
+
+/// Sets a status outright, where `d` and `x` toggle.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = aven, no_json)]
+pub struct SetStatus(pub TaskStatus);
 
 /// Decides a review card with the status its key stands for.
 #[derive(Clone, PartialEq, Action)]
@@ -274,6 +280,12 @@ pub const CHORDS: [(&str, &[(&str, &str)]); 6] = [
     (
         "t",
         &[
+            ("i", "Inbox"),
+            ("b", "Backlog"),
+            ("t", "Todo"),
+            ("a", "Active"),
+            ("d", "Done"),
+            ("x", "Canceled"),
             ("D", "Delete"),
             ("R", "Restore"),
             ("B", "Blockers"),
@@ -362,6 +374,12 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("e u", EditDue, main),
         KeyBinding::new("e l", EditLabels, main),
         KeyBinding::new("e m", EditMetadata, main),
+        KeyBinding::new("t i", SetStatus(TaskStatus::Inbox), main),
+        KeyBinding::new("t b", SetStatus(TaskStatus::Backlog), main),
+        KeyBinding::new("t t", SetStatus(TaskStatus::Todo), main),
+        KeyBinding::new("t a", SetStatus(TaskStatus::Active), main),
+        KeyBinding::new("t d", SetStatus(TaskStatus::Done), main),
+        KeyBinding::new("t x", SetStatus(TaskStatus::Canceled), main),
         KeyBinding::new("t shift-d", DeleteTask, main),
         KeyBinding::new("t shift-r", RestoreTask, main),
         KeyBinding::new("t shift-b", AddBlocker, main),

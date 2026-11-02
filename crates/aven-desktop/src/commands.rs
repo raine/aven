@@ -10,7 +10,7 @@ use gpui::{Bounds, ClipboardItem, Context, Pixels, Window, size};
 
 use crate::actions::*;
 use crate::adapter::{
-    Bulk, Command, DeletedFilter, GroupBy, MetaFilter, PendingImage, TaskRow, ViewOrder,
+    Bulk, Command, DeletedFilter, GroupBy, MetaFilter, PendingImage, TaskRow, ViewInfo, ViewOrder,
 };
 use crate::input::{self, PastedImage, clipboard_image};
 use crate::kit::*;
@@ -24,13 +24,42 @@ enum FilterKind {
     Metadata,
 }
 
-const ORDERS: [(ViewOrder, &str); 5] = [
-    (ViewOrder::Priority, "Priority"),
-    (ViewOrder::Due, "Due date"),
-    (ViewOrder::Available, "Availability"),
-    (ViewOrder::Updated, "Recently updated"),
-    (ViewOrder::Title, "Title"),
+const ORDERS: [(ViewOrder, &str, char); 7] = [
+    (ViewOrder::Priority, "Priority", 'p'),
+    (ViewOrder::Due, "Due date", 'd'),
+    (ViewOrder::Available, "Availability", 'a'),
+    (ViewOrder::Created, "Recently created", 'c'),
+    (ViewOrder::Updated, "Recently updated", 'u'),
+    (ViewOrder::Project, "Project", 'j'),
+    (ViewOrder::Title, "Title", 't'),
 ];
+
+/// A choice menu's title, saying how many tasks a letter will change.
+fn choice_title(title: &str, marked: usize) -> String {
+    if marked > 0 {
+        format!("{title} · {marked} marked")
+    } else {
+        title.to_string()
+    }
+}
+
+/// What the order button says about the list.
+pub fn order_label(view: &ViewInfo) -> String {
+    if view.query == TaskQuery::Queue {
+        return "Order".to_string();
+    }
+    let name = match view.order {
+        ViewOrder::Priority => "Priority",
+        ViewOrder::Due => "Due",
+        ViewOrder::Available => "Available",
+        ViewOrder::Created => "Created",
+        ViewOrder::Updated => "Updated",
+        ViewOrder::Project => "Project",
+        ViewOrder::Title => "Title",
+    };
+    let arrow = if view.descending { "↓" } else { "↑" };
+    format!("{name} {arrow}")
+}
 const GROUPS: [(GroupBy, &str); 4] = [
     (GroupBy::Status, "Status"),
     (GroupBy::Project, "Project"),
@@ -88,7 +117,7 @@ pub fn pasted_image(pasted: PastedImage) -> Option<PendingImage> {
 
 impl Root {
     /// The epic's focused child takes task keys ahead of the epic itself.
-    fn target_id(&self) -> Option<TaskId> {
+    pub(crate) fn target_id(&self) -> Option<TaskId> {
         self.session
             .child
             .clone()
@@ -357,6 +386,11 @@ impl Root {
         let Some(id) = self.target_id() else {
             return;
         };
+        let current = self.target_row().map(|row| row.status);
+        let marked = self
+            .session
+            .bulk_targets()
+            .map_or(0, |targets| targets.len());
         let entries = STATUSES
             .iter()
             .map(|(status, name)| {
@@ -368,13 +402,18 @@ impl Root {
                     root.after_status_motion(cx);
                 })
                 .mark(Mark::Status(status))
+                .key(status_key(status))
+                .checked(marked == 0 && current == Some(status))
             })
             .collect();
         self.open_menu(
             entries,
             "Set status",
             anchor,
-            MenuOptions::default(),
+            MenuOptions {
+                choice: Some(choice_title("Set status", marked)),
+                ..MenuOptions::default()
+            },
             window,
             cx,
         );
@@ -389,6 +428,11 @@ impl Root {
         let Some(id) = self.target_id() else {
             return;
         };
+        let current = self.target_row().map(|row| row.priority);
+        let marked = self
+            .session
+            .bulk_targets()
+            .map_or(0, |targets| targets.len());
         let entries = PRIORITIES
             .iter()
             .map(|(priority, name)| {
@@ -401,13 +445,18 @@ impl Root {
                     root.repaint_after(crate::session::PRIORITY_DURATION, cx);
                 })
                 .mark(Mark::Priority(priority))
+                .key(priority_key(priority))
+                .checked(marked == 0 && current == Some(priority))
             })
             .collect();
         self.open_menu(
             entries,
             "Set priority",
             anchor,
-            MenuOptions::default(),
+            MenuOptions {
+                choice: Some(choice_title("Set priority", marked)),
+                ..MenuOptions::default()
+            },
             window,
             cx,
         );
@@ -980,33 +1029,46 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let view = &self.session.snapshot.view;
-        if view.query == TaskQuery::Upcoming {
+        if matches!(view.query, TaskQuery::Upcoming | TaskQuery::Overdue) {
             let name = view_name(view.query);
             self.session
                 .show_toast(format!("{name} has a fixed order"), None);
             cx.notify();
             return;
         }
-        let current = (view.query != TaskQuery::Queue).then_some(view.order);
-        let entries = ORDERS
+        let queue = view.query == TaskQuery::Queue;
+        let current = (!queue).then_some(view.order);
+        let mut entries: Vec<Entry> = ORDERS
             .iter()
-            .map(|(order, name)| {
+            .map(|(order, name, key)| {
                 let order = *order;
                 Entry::new(*name, move |root, _, _| {
                     root.session.write(Command::SetOrder(order));
                 })
-                .hint(if current == Some(order) {
-                    "Current"
-                } else {
-                    ""
-                })
+                .key(*key)
+                .checked(current == Some(order))
             })
             .collect();
+        entries.push(
+            Entry::new("Reverse", |root, _, _| {
+                root.session.write(Command::ReverseOrder);
+            })
+            .key('r')
+            .sep(),
+        );
+        let title = if queue {
+            "Order by · opens Open"
+        } else {
+            "Order by"
+        };
         self.open_menu(
             entries,
             "Order by",
             self.anchor("order"),
-            MenuOptions::default(),
+            MenuOptions {
+                choice: Some(title.to_string()),
+                ..MenuOptions::default()
+            },
             window,
             cx,
         );

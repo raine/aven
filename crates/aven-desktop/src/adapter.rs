@@ -276,7 +276,9 @@ pub enum ViewOrder {
     Priority,
     Due,
     Available,
+    Created,
     Updated,
+    Project,
     Title,
 }
 
@@ -294,6 +296,7 @@ pub struct ViewInfo {
     pub project: Option<String>,
     pub columns: bool,
     pub order: ViewOrder,
+    pub descending: bool,
     pub group: GroupBy,
     pub label: Option<String>,
     pub priority: Option<TaskPriority>,
@@ -313,6 +316,7 @@ impl Default for ViewInfo {
             project: None,
             columns: false,
             order: ViewOrder::default(),
+            descending: false,
             group: GroupBy::default(),
             label: None,
             priority: None,
@@ -674,6 +678,7 @@ pub enum Command {
     FilterMetadata(Option<MetaFilter>),
     ClearFilters,
     SetOrder(ViewOrder),
+    ReverseOrder,
     SetGroup(GroupBy),
     SetColumns(bool),
     Search(SearchInput),
@@ -1210,9 +1215,16 @@ fn list_groups(store: &TuiStore, now: DateTime<Local>, arrange: &Arrange) -> Vec
         _ => {
             let mut rows: Vec<usize> = (0..store.tasks.len()).collect();
             if arrange.order == ViewOrder::Available {
-                rows.sort_by_key(|row| {
-                    let at = store.tasks[*row].task.available_at.clone();
-                    (at.is_none(), at)
+                let descending = store.view_state.sort_direction() == SortDirection::Desc;
+                rows.sort_by(|a, b| {
+                    let at = |row: usize| store.tasks[row].task.available_at.as_ref();
+                    match (at(*a), at(*b)) {
+                        (None, None) => std::cmp::Ordering::Equal,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (Some(a), Some(b)) if descending => b.cmp(a),
+                        (Some(a), Some(b)) => a.cmp(b),
+                    }
                 });
             }
             flat_groups(store, rows, arrange.group)
@@ -1240,7 +1252,16 @@ fn view_info(store: &TuiStore, arrange: &Arrange) -> ViewInfo {
             TaskScope::Project(project) => Some(project.clone()),
         },
         columns: state.layout == TaskLayout::Columns,
-        order: arrange.order,
+        order: match (arrange.order, state.order) {
+            (ViewOrder::Available, _) => ViewOrder::Available,
+            (_, TaskOrder::Priority) => ViewOrder::Priority,
+            (_, TaskOrder::DueOn) => ViewOrder::Due,
+            (_, TaskOrder::Created) => ViewOrder::Created,
+            (_, TaskOrder::Updated) => ViewOrder::Updated,
+            (_, TaskOrder::Project) => ViewOrder::Project,
+            (_, TaskOrder::Title) => ViewOrder::Title,
+        },
+        descending: state.sort_direction() == SortDirection::Desc,
         group: arrange.group,
         label: filters.label.clone(),
         priority: filters
@@ -2918,11 +2939,23 @@ impl Actor {
                 let core = match order {
                     ViewOrder::Priority | ViewOrder::Available => TaskOrder::Priority,
                     ViewOrder::Due => TaskOrder::DueOn,
+                    ViewOrder::Created => TaskOrder::Created,
                     ViewOrder::Updated => TaskOrder::Updated,
+                    ViewOrder::Project => TaskOrder::Project,
                     ViewOrder::Title => TaskOrder::Title,
                 };
                 self.store
                     .set_order_restoring(core, &SelectionRestore::Default)
+                    .await?;
+                if from_queue && self.column_views.contains(&TaskQuery::Open) {
+                    self.set_columns(true).await?;
+                }
+                Ok(())
+            }
+            Command::ReverseOrder => {
+                let from_queue = self.store.view_state.query == TaskQuery::Queue;
+                self.store
+                    .reverse_sort_restoring(&SelectionRestore::Default)
                     .await?;
                 if from_queue && self.column_views.contains(&TaskQuery::Open) {
                     self.set_columns(true).await?;
@@ -3508,6 +3541,7 @@ impl Actor {
                 | Command::FilterMetadata(_)
                 | Command::ClearFilters
                 | Command::SetOrder(_)
+                | Command::ReverseOrder
                 | Command::SetGroup(_)
                 | Command::SetColumns(_)
                 | Command::Search(_)
@@ -5082,6 +5116,21 @@ mod tests {
 
         assert_eq!(actor.store.view_state.query, TaskQuery::Open);
         assert_eq!(actor.store.view_state.order, TaskOrder::Title);
+    }
+
+    #[tokio::test]
+    async fn a_new_order_starts_from_its_own_direction() {
+        let (_directory, mut actor, _replies) = actor("Stored").await;
+        run(&mut actor, Command::ShowView(TaskQuery::Open)).await;
+
+        run(&mut actor, Command::SetOrder(ViewOrder::Updated)).await;
+        run(&mut actor, Command::SetOrder(ViewOrder::Title)).await;
+        assert_eq!(actor.store.sort_direction_label(), "asc");
+
+        run(&mut actor, Command::ReverseOrder).await;
+        let view = view_info(&actor.store, &actor.arrange);
+        assert_eq!(view.order, ViewOrder::Title);
+        assert!(view.descending);
     }
 
     #[tokio::test]

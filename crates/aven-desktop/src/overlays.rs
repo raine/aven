@@ -6,8 +6,8 @@ use accesskit::Role;
 use aven_core::choices::{TaskPriority, TaskStatus};
 use gpui::{
     Action, Animation, AnimationExt, App, Bounds, Context, Entity, FocusHandle, FontWeight,
-    MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, SharedString, Subscription,
-    Window, div, point, prelude::*, relative,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, SharedString,
+    Subscription, Window, div, point, prelude::*, relative,
 };
 
 use crate::input::{Editor, EditorEvent, Mode};
@@ -47,6 +47,7 @@ pub struct Entry {
     pub danger: bool,
     /// Checking one entry of a group unchecks the rest.
     pub group: u8,
+    key: Option<char>,
     run: Option<Run>,
 }
 
@@ -65,6 +66,7 @@ impl Entry {
             sep: false,
             danger: false,
             group: 0,
+            key: None,
             run: Some(Rc::new(run)),
         }
     }
@@ -119,6 +121,13 @@ impl Entry {
         self.group = group;
         self
     }
+
+    /// The letter that picks this entry in a choice menu.
+    pub fn key(mut self, key: char) -> Self {
+        self.key = Some(key);
+        self.hint = key.to_string();
+        self
+    }
 }
 
 /// Makes the entry a create line stands for.
@@ -130,6 +139,8 @@ pub struct MenuOptions {
     pub plain: bool,
     pub multi: bool,
     pub create: Option<Create>,
+    /// The title of a menu of fixed choices, which takes letters instead of a search.
+    pub choice: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,6 +158,7 @@ pub struct Menu {
     prior: Option<FocusHandle>,
     run: usize,
     scroll: ScrollHandle,
+    choice_focus: FocusHandle,
     _subscription: Subscription,
 }
 
@@ -307,6 +319,7 @@ impl Root {
             entries,
             index: if options.plain { usize::MAX } else { 0 },
             options,
+            choice_focus: cx.focus_handle(),
             run: self.session.motion.next_run(),
             input,
             anchor,
@@ -314,7 +327,22 @@ impl Root {
             scroll: ScrollHandle::new(),
             _subscription: subscription,
         });
-        window.focus(&focus, cx);
+        if let Some(menu) = self
+            .menu
+            .as_mut()
+            .filter(|menu| menu.options.choice.is_some())
+        {
+            let entries = &menu.entries;
+            let current = menu
+                .picks(cx)
+                .iter()
+                .position(|line| matches!(line, Shown::Item(ix) if entries[*ix].checked));
+            menu.index = current.unwrap_or(0);
+            let focus = menu.choice_focus.clone();
+            window.focus(&focus, cx);
+        } else {
+            window.focus(&focus, cx);
+        }
         cx.notify();
     }
 
@@ -353,6 +381,14 @@ impl Root {
                 menu.entries.push(entry);
                 menu.entries.len() - 1
             }
+        };
+        self.activate(ix, window, cx);
+    }
+
+    /// Runs the entry at `ix`, however it was chosen.
+    fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.as_mut() else {
+            return;
         };
         let run = menu.entries[ix].run.clone();
         if menu.options.multi {
@@ -408,6 +444,37 @@ impl Root {
         }
     }
 
+    fn on_choice_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.as_ref() else {
+            return;
+        };
+        let stroke = &event.keystroke;
+        if stroke.modifiers.platform || stroke.modifiers.control {
+            return;
+        }
+        let index = menu.index;
+        let last = menu.picks(cx).len().saturating_sub(1);
+        match stroke.key.as_str() {
+            "escape" => self.close_menu(window, cx),
+            "enter" => self.pick(index, window, cx),
+            "up" => self.set_menu_index(index.saturating_sub(1), cx),
+            "down" => self.set_menu_index((index + 1).min(last), cx),
+            _ => {
+                let typed = stroke
+                    .key_char
+                    .as_deref()
+                    .and_then(|text| text.chars().next());
+                let entry = typed.and_then(|typed| {
+                    let keyed = |entry: &Entry| entry.key == Some(typed) && !entry.off;
+                    menu.entries.iter().position(keyed)
+                });
+                if let Some(ix) = entry {
+                    self.activate(ix, window, cx);
+                }
+            }
+        }
+    }
+
     fn set_menu_index(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.as_mut() {
             menu.index = index;
@@ -459,7 +526,9 @@ impl Root {
         };
         let viewport = window.viewport_size();
         let row = if plain { 28. } else { 30. };
+        let choice = menu.options.choice.clone();
         let input_height = match (wide, plain && !typing) {
+            _ if choice.is_some() => 34.,
             (true, _) => 48.,
             (_, true) => 0.,
             _ => 38.,
@@ -581,7 +650,7 @@ impl Root {
                             },
                         ))
                     })
-                    .when(multi, |row| {
+                    .when(multi || choice.is_some(), |row| {
                         let checked = entry.is_some_and(|entry| entry.checked);
                         row.child(
                             div()
@@ -635,6 +704,10 @@ impl Root {
                         .top(top)
                         .w(px(width))
                         .when(max_height < f32::MAX, |box_| box_.max_h(px(max_height)))
+                        .when(choice.is_some(), |box_| {
+                            box_.track_focus(&menu.choice_focus)
+                                .on_key_down(cx.listener(Self::on_choice_key))
+                        })
                         .flex()
                         .flex_col()
                         .rounded(px(10.))
@@ -656,7 +729,13 @@ impl Root {
                                 .items_center()
                                 .text_color(t.ink)
                                 .when(wide, |input| input.text_size(px(15.)))
-                                .child(menu.input.clone()),
+                                .map(|input| match &choice {
+                                    Some(title) => input
+                                        .text_size(px(12.))
+                                        .text_color(t.faint)
+                                        .child(title.clone()),
+                                    None => input.child(menu.input.clone()),
+                                }),
                         )
                         .child(rows)
                         .with_animation(

@@ -54,6 +54,29 @@ pub const PRIORITIES: [(TaskPriority, &str); 5] = [
     (TaskPriority::None, "None"),
 ];
 
+/// The letter that picks a status once the status menu is open.
+pub fn status_key(status: TaskStatus) -> char {
+    match status {
+        TaskStatus::Inbox => 'i',
+        TaskStatus::Backlog => 'b',
+        TaskStatus::Todo => 't',
+        TaskStatus::Active => 'a',
+        TaskStatus::Done => 'd',
+        TaskStatus::Canceled => 'x',
+    }
+}
+
+/// The letter that picks a priority once the priority menu is open.
+pub fn priority_key(priority: TaskPriority) -> char {
+    match priority {
+        TaskPriority::None => 'n',
+        TaskPriority::Low => 'l',
+        TaskPriority::Medium => 'm',
+        TaskPriority::High => 'h',
+        TaskPriority::Urgent => 'u',
+    }
+}
+
 pub fn status_name(status: TaskStatus) -> &'static str {
     STATUSES
         .iter()
@@ -315,4 +338,22 @@ pub fn ref_label(
                 .child(prefix.to_string()),
         )
         .child(rest.to_string())
+}
+
+#[cfg(test)]
+mod key_tests {
+    use std::collections::HashSet;
+
+    use super::{PRIORITIES, STATUSES, priority_key, status_key};
+
+    #[test]
+    fn each_choice_has_its_own_letter() {
+        let statuses: HashSet<_> = STATUSES.iter().map(|(one, _)| status_key(*one)).collect();
+        assert_eq!(statuses.len(), STATUSES.len());
+        let priorities: HashSet<_> = PRIORITIES
+            .iter()
+            .map(|(one, _)| priority_key(*one))
+            .collect();
+        assert_eq!(priorities.len(), PRIORITIES.len());
+    }
 }

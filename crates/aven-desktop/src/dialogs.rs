@@ -72,8 +72,8 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
         "Change",
         &[
             ("New task", "a"),
-            ("Status", "s"),
-            ("Priority", "!"),
+            ("Status", "s, then i b t a d x"),
+            ("Priority", "!, then n l m h u"),
             ("Done", "d"),
             ("Canceled", "x"),
             ("Mark", "Space"),
@@ -132,7 +132,7 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Metadata", "f m"),
             ("Recurring state", "f r"),
             ("Clear", "f c"),
-            ("Order", "o"),
+            ("Order", "o, then p d a c u j t, r reverses"),
         ],
     ),
     (

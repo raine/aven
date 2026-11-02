@@ -1209,6 +1209,21 @@ impl Root {
         cx.notify();
     }
 
+    pub(crate) fn set_status(
+        &mut self,
+        action: &SetStatus,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.target_id() else {
+            return;
+        };
+        if !self.session.bulk(Bulk::Status(action.0)) {
+            self.session.set_status(&id, action.0);
+        }
+        self.after_status_motion(cx);
+    }
+
     pub(crate) fn mark_done(&mut self, _: &MarkDone, _: &mut Window, cx: &mut Context<Self>) {
         if self.session.bulk(Bulk::Status(TaskStatus::Done)) {
             cx.notify();
@@ -1923,7 +1938,10 @@ impl Root {
         let can_columns = !settings && supports_columns(query) && self.session.review.is_none();
         let columns = view.columns;
         let reviewing = self.session.review.is_some();
-        let orderable = !settings && query != TaskQuery::Upcoming && !logged && !reviewing;
+        let orderable = !settings
+            && !matches!(query, TaskQuery::Upcoming | TaskQuery::Overdue)
+            && !logged
+            && !reviewing;
         let groupable = !settings
             && !fixed
             && !logged
@@ -2095,7 +2113,7 @@ impl Root {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.pick_order(&PickOrder, window, cx);
                         }))
-                        .child("Order"),
+                        .child(crate::commands::order_label(view)),
                 )
             })
             .when(!expanded && groupable, |top| {
@@ -2915,6 +2933,7 @@ impl Render for Root {
             })
             .when(on_list && has_task, |el| {
                 el.on_action(cx.listener(Self::mark_done))
+                    .on_action(cx.listener(Self::set_status))
                     .on_action(cx.listener(Self::cancel_task))
                     .on_action(cx.listener(Self::change_status))
                     .on_action(cx.listener(Self::edit_title))
