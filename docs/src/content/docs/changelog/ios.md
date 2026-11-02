@@ -5,7 +5,7 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
-## 1.0.4 — in review
+## 1.0.4 (2026-11-02)
 
 - **Tell Aven** turns a typed or spoken request into task drafts you review before anything changes. It can search and answer questions about your tasks, take a photo or screenshot as context, and open from task detail with that task attached. Chats stay on your iPhone.
 - Voice input in Tell Aven offers on-device and alternative transcription providers, with a choice in Settings.
