@@ -6,6 +6,7 @@ description: Release notes for aven.
 ## Unreleased
 
 - Fix: After a TUI sync restores Keychain access, wait for the background sync retry before showing the result, so the resolved error no longer stays on screen and asks you to sync again.
+- Fix: Keep the same task's details open after changing its status, even when it moves in the list or leaves the current filter. ([#44](https://github.com/raine/aven/issues/44))
 
 ## v0.1.53 (2026-11-02)
 

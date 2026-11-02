@@ -174,6 +174,8 @@ Use the `e` family to edit task fields:
 
 The `t` family contains lifecycle, priority, relationship, recurrence, delete, and restore actions. Press `t` and follow the footer hints, or search by action name with `:`.
 
+Changing status while a task's details are open keeps that task open, even if it moves in the list or no longer matches the current view. Close the details to return to the list.
+
 ### Delete and restore
 
 `t D` deletes the selected task. Show deleted tasks with `f x`, then press `t R` to restore one. Use `x` instead to keep a task as canceled.
