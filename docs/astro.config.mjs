@@ -14,6 +14,7 @@ export default defineConfig({
   },
   redirects: {
     '/workflows': '/getting-started/#next-steps',
+    '/ai-completions': '/server-configuration/#ai-for-tell-aven',
   },
   integrations: [
     starlight({

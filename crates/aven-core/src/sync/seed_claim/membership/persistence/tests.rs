@@ -725,3 +725,19 @@ async fn startup_verification_accepts_intact_and_unpublished_storage() {
         .unwrap();
     empty.verify_membership_history().await.unwrap();
 }
+
+#[tokio::test]
+async fn unclaimed_storage_cannot_authenticate_a_device_bearer() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::open(&dir.path().join("server.db")).await.unwrap();
+    let secret = Secret::new([5; 32]);
+    db.issue_e2ee_server_setup(&secret, [4; 32], u64::MAX)
+        .await
+        .unwrap();
+    assert!(
+        db.verify_enrolled_device_bearer(&secret)
+            .await
+            .unwrap_err()
+            .is::<Unauthorized>()
+    );
+}

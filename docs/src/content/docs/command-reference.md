@@ -1076,6 +1076,7 @@ aven server setup [--data <path>] --url <url> [--invitation-only]
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Server SQLite database path. Defaults to `$STATE_DIRECTORY/sync-server.sqlite` when systemd sets `StateDirectory=`, otherwise `$XDG_STATE_HOME/aven/server/sync-server.sqlite` (`~/.local/state/aven/server/sync-server.sqlite`). Pass the same path to both commands. |
+| `--config <path>` | Server configuration file. Defaults to `server.yaml` beside the storage. Overrides `AVEN_SERVER_CONFIG`. |
 | `--bind <ip:port>` | Listen address. Defaults to `127.0.0.1:3746`. Loopback, private, and VPN addresses are accepted directly. |
 | `--unsafe-public-bind` | Allow binding a public or wildcard address. Prints a warning because payload encryption does not protect credentials or setup invitations. |
 | `--url <url>` | For `setup`: the HTTP or HTTPS origin devices use to reach the server, with no path, query, or credentials, and at most 255 bytes. |
@@ -1098,10 +1099,137 @@ signal. Server settings come from an optional `server.yaml` beside the storage;
 `--config PATH` or `AVEN_SERVER_CONFIG` chooses another file. See
 [Server configuration](/server-configuration/).
 
+With an AI provider configured, the server also answers
+[Tell Aven](/mobile-app/#tell-aven) requests. Those requests require a currently
+enrolled device's sync credential, including on loopback. Configure the provider
+with [`aven server ai`](#aven-server-ai).
+
 ```sh
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746
 aven server --data /srv/aven/server.sqlite --bind 100.100.20.30:3746
 ```
+
+### `aven server ai`
+
+Configure and check the sync server's optional AI provider. Run these commands
+on the server host as the user the server runs as, with the same `--data` or
+`--config` as the server. They read its `server.yaml` and store login
+credentials in `private/ai` beside it. AI changes apply after the server
+restarts.
+
+See [Server configuration](/server-configuration/#ai-for-tell-aven) for
+walkthroughs, limits, and troubleshooting.
+
+#### `aven server ai setup`
+
+```sh
+aven server ai setup [--provider <provider>] [--model <model>] [--endpoint <url>] [--yes] [--no-check]
+```
+
+Prompts for a tool-capable provider, a model and, for local or custom endpoints,
+the endpoint URL. ChatGPT and GitHub Copilot log in during setup. Setup writes
+the choice to `server.yaml`, keeping the rest of the file, warns about
+`AVEN_AI_*` overrides, runs `aven server ai check`, and prints how to restart
+the server.
+
+| Option | Description |
+| --- | --- |
+| `--provider <provider>` | Provider from `aven server ai providers`. Required without a terminal. |
+| `--model <model>` | Model name at the provider. Required without a terminal. |
+| `--endpoint <url>` | Endpoint URL for `llamafile`, `ollama`, or an OpenAI-compatible server. |
+| `-y`, `--yes` | Skip confirmation and keep an existing login. |
+| `--no-check` | Skip the billable check. |
+
+Setup also skips the check when an API-key provider's key isn't set in this
+shell. If the check fails, `server.yaml` keeps the new settings and the command
+exits nonzero.
+
+#### `aven server ai providers`
+
+```sh
+aven server ai providers
+```
+
+Lists supported providers with their credential sources, JSON-schema strategies,
+and tool support, followed by excluded providers and the reason for each.
+
+#### `aven server ai login`
+
+```sh
+aven server ai login [provider]
+```
+
+Starts an interactive OAuth device flow for `chatgpt` or `copilot`. Without a
+provider, it uses the configured `ai.provider`, or lists the OAuth providers when
+none is set. For an API-key provider, it explains which environment variable the
+server reads. Login stores credentials but does not select the provider.
+
+#### `aven server ai logout`
+
+```sh
+aven server ai logout <provider>
+```
+
+Removes stored OAuth credentials without revoking them at the provider.
+
+#### `aven server ai status`
+
+```sh
+aven server ai status [--json]
+```
+
+Shows the config path, credential directory, provider and model with their
+sources, availability, and a next-step hint. Makes no provider request.
+
+It reads `server.yaml` and this shell's environment, not the running server. To
+test the running server from a paired device, use [`aven ai`](#aven-ai).
+
+#### `aven server ai check`
+
+```sh
+aven server ai check [--json]
+```
+
+Makes two synthetic, billable completions: one expects a native tool call, and
+the next replays a tool result and expects a text answer. Prints each step, with
+a hint on failure, and exits nonzero when a step fails.
+
+Like `status`, it runs from `server.yaml` and this shell's environment. To send
+the same requests through the running server, use
+[`aven ai check`](#aven-ai-check).
+
+### `aven ai`
+
+Test the running sync server's AI from this device, using the configured sync
+server URL and this device's sync credential. Requests pass through any reverse
+proxy in front of the server. Sync must be set up on the database. Neither
+command prints credentials or provider responses.
+
+#### `aven ai status`
+
+```sh
+aven ai status [--json]
+```
+
+Shows the server URL, status, provider, model, and the server's setup hint.
+Reports a refused device credential (HTTP 401), a server or reverse proxy without
+AI routes (HTTP 404), a provider that cannot make tool calls, and network
+failures separately. Makes no billable request.
+
+See [Troubleshooting](/server-configuration/#troubleshooting) for what to do
+about each result, including a status that hasn't changed after a configuration
+change.
+
+#### `aven ai check`
+
+```sh
+aven ai check [--json]
+```
+
+Asks the server for its AI status first, and stops without a billable request
+unless the status is `ready`. Otherwise makes the same two billable completions
+as [`aven server ai check`](#aven-server-ai-check) through the running server.
+Prints each step, with a hint on failure, and exits nonzero when a step fails.
 
 ### `aven conflict`
 
@@ -1317,9 +1445,9 @@ aven doctor [--integrity] [--json] [--fail-on-error]
 
 Doctor has a standalone bootstrap path. It can report malformed or invalid configuration, an unreadable or missing database path, invalid SQLite files, pending or failed migrations, and unsupported future schemas even when ordinary commands cannot start. Database path precedence remains `--db`, `AVEN_DEV_DB` in debug builds, `AVEN_DB`, `local.db_path`, and the platform default. When strict config loading fails, doctor can still use a syntactically readable `local.db_path` while marking config-dependent checks as skipped.
 
-Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, network request, or repair. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
+Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, or repair. Its only network request asks the sync server for its AI capabilities with this device's credential when sync is set up; that request is not billable and never fails doctor. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
 
-The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
+The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, the running sync server's AI status, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
 
 Normal doctor checks attachment records and local image availability. `--integrity` also runs read-only SQLite and relationship checks, verifies recurring schedules, generated tasks, history, pauses, and lifecycle state, verifies stored image hashes and sizes, decodes images, and confirms formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup.
 

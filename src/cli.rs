@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod administration;
+mod ai;
 mod data_safety;
 mod help;
 mod recurrence;
@@ -29,6 +30,7 @@ pub(crate) use administration::{
     ProjectPathSubcommand, ProjectSubcommand, SelfUpdateArgs, SkillCommand, SkillInstallArgs,
     SkillSubcommand, WorkspaceCommand, WorkspaceSubcommand,
 };
+pub(crate) use ai::{AiClientCommand, AiClientSubcommand, AiCommand, AiSetupArgs, AiSubcommand};
 pub(crate) use data_safety::{
     AttachmentAddArgs, AttachmentCommand, AttachmentDeleteArgs, AttachmentGetArgs,
     AttachmentListArgs, AttachmentPruneArgs, AttachmentSubcommand, BackupCommand,
@@ -170,6 +172,8 @@ pub(crate) enum Commands {
     /// Run the sync server
     #[command(after_long_help = SERVER_HELP)]
     Server(ServerArgs),
+    /// Check the running sync server's AI from this device
+    Ai(AiClientCommand),
     /// Sync with a remote server
     #[command(after_long_help = SYNC_HELP)]
     Sync(SyncArgs),

@@ -5,7 +5,18 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
-## 1.0.4 — in review
+## 1.0.5 — in review
+
+- Tell Aven has a Hide keyboard button next to the microphone.
+- Update cards in Tell Aven show only the fields that change.
+- Settings can prepare AI diagnostics for you to share. They stay on your iPhone until you share them and contain no prompts, answers, or task content.
+- The photo quality prompt explains what each option does.
+- Fix: Linked tasks open from a task reached through Tell Aven, and the whole row responds to taps.
+- Fix: Saved chats open for reading without bringing up the keyboard.
+- Fix: The search header no longer overlaps the list when the keyboard opens.
+- Fix: The undo toast stays at full size while it is shown.
+
+## 1.0.4 (2026-11-02)
 
 - **Tell Aven** turns a typed or spoken request into task drafts you review before anything changes. It can search and answer questions about your tasks, take a photo or screenshot as context, and open from task detail with that task attached. Chats stay on your iPhone.
 - Voice input in Tell Aven offers on-device and alternative transcription providers, with a choice in Settings.

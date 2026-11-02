@@ -1,7 +1,7 @@
 [workspace]
-members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance", "crates/aven-desktop"]
+members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance", "crates/aven-ai-contract", "crates/aven-desktop"]
 # GPUI builds only for the macOS app, through the `desktop` feature.
-default-members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance"]
+default-members = [".", "crates/aven-core", "crates/aven-host", "crates/aven-protocol", "crates/aven-conformance", "crates/aven-ai-contract"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -35,7 +35,7 @@ zstd = "0.14.3"
 
 [package]
 name = "aven"
-version = "0.1.52"
+version = "0.1.53"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
@@ -50,8 +50,9 @@ exclude = ["docs/", "macos/", "meta/"]
 desktop = ["dep:aven-desktop"]
 
 [dependencies]
+aven-ai-contract = { path = "crates/aven-ai-contract", version = "=0.1.0" }
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
-aven-core = { path = "crates/aven-core", version = "=0.1.37" }
+aven-core = { path = "crates/aven-core", version = "=0.1.38" }
 aven-host = { path = "crates/aven-host", version = "=0.1.0" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
@@ -62,7 +63,10 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["http1", "server", "server-graceful", "service", "tokio"] }
 image.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+tower-http = { version = "0.7", features = ["compression-full", "decompression-full"] }
 flate2.workspace = true
+futures = "0.3"
+http = "1.0"
 serde.workspace = true
 serde_json.workspace = true
 serde-saphyr = "1.3"
@@ -71,6 +75,7 @@ tar.workspace = true
 tempfile.workspace = true
 anyhow.workspace = true
 base64.workspace = true
+bytes = "1.0"
 chrono.workspace = true
 crossterm = "0.29"
 pulldown-cmark = "0.13"
@@ -86,6 +91,8 @@ zeroize.workspace = true
 qrcode = { version = "0.14.1", default-features = false }
 terminal-colorsaurus = "1.0.3"
 clap_complete = "4.6"
+rig-core = { version = "=0.42.0", default-features = false, features = ["rustls"] }
+inquire = "0.9.4"
 linkify = "0.11.0"
 rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io"] }
 schemars = "1.2"
@@ -104,7 +111,7 @@ notify-rust = "4"
 [dev-dependencies]
 aven-conformance = { path = "crates/aven-conformance" }
 tokio = { workspace = true, features = ["test-util"] }
-aven-core = { path = "crates/aven-core", version = "=0.1.37", features = ["test-support"] }
+aven-core = { path = "crates/aven-core", version = "=0.1.38", features = ["test-support"] }
 aven-host = { path = "crates/aven-host", version = "=0.1.0", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 zstd.workspace = true

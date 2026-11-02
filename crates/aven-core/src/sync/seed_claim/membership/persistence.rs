@@ -266,6 +266,40 @@ impl Database {
     }
 }
 impl Database {
+    /// Authenticates an active device credential without requiring a sync operation.
+    /// Membership is read on every call so revocations take effect without restart.
+    pub async fn verify_enrolled_device_bearer(&self, bearer: &Secret) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        let mut tx = begin_immediate(&mut conn).await?;
+        let published: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_e2ee_membership_head)")
+                .fetch_one(&mut *tx)
+                .await?;
+        ensure!(published, Unauthorized);
+        let current = current(self, &mut tx).await?;
+        let membership = &current.membership;
+        let mut authorized = false;
+        // Check every active member using the same constant-time verifier as sync.
+        // No early return reveals which member's credential matched.
+        for device in membership.devices() {
+            authorized |= membership
+                .authenticate(
+                    &Authentication {
+                        vault: membership.genesis().context().vault_id,
+                        genesis: membership.genesis().commitment(),
+                        device,
+                        head: membership.head(),
+                        bearer,
+                    },
+                    false,
+                )
+                .is_ok();
+        }
+        ensure!(authorized, Unauthorized);
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Replays the complete stored membership history and fills the cache.
     /// Servers run this before accepting requests; storage without published
     /// membership has nothing to verify.

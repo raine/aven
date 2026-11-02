@@ -1,0 +1,124 @@
+{
+  "requests": [
+    {
+      "request_id": "round-1",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "How many tasks?"
+            }
+          ]
+        }
+      ],
+      "output": {
+        "type": "text"
+      },
+      "tools": [
+        {
+          "name": "count_tasks",
+          "description": "Count tasks",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ]
+    },
+    {
+      "request_id": "round-2",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "How many tasks?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "reasoning",
+              "opaque": "fixture.opaque-reasoning"
+            },
+            {
+              "type": "tool_call",
+              "id": "fixture.opaque-call-token",
+              "name": "count_tasks",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "content": [
+            {
+              "type": "tool_result",
+              "call_id": "fixture.opaque-call-token",
+              "name": "count_tasks",
+              "output": "3"
+            }
+          ]
+        }
+      ],
+      "output": {
+        "type": "text"
+      },
+      "tools": [
+        {
+          "name": "count_tasks",
+          "description": "Count tasks",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ]
+    }
+  ],
+  "completion": {
+    "request_id": "round-1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "reasoning",
+          "opaque": "fixture.opaque-reasoning"
+        },
+        {
+          "type": "tool_call",
+          "id": "fixture.opaque-call-token",
+          "name": "count_tasks",
+          "arguments": {}
+        }
+      ]
+    },
+    "finish_reason": "tool_calls",
+    "usage": {
+      "input_tokens": 4,
+      "output_tokens": 2
+    }
+  },
+  "final_completion": {
+    "request_id": "round-2",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "You have 3 tasks."
+        }
+      ]
+    },
+    "finish_reason": "stop",
+    "usage": {
+      "input_tokens": 12,
+      "output_tokens": 6
+    }
+  }
+}

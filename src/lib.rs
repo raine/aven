@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 
 use aven_core::{change_log, choices, db, ids, labels, query, queue, refs, task_fields, types};
+mod ai;
 #[cfg(target_os = "macos")]
 use aven_host::app_bundle;
 use aven_host::attachments;
@@ -58,12 +59,12 @@ use cli::{
     SkillSubcommand, SyncSubcommand,
 };
 use commands::{
-    cmd_add, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict, cmd_context,
-    cmd_daemon_status, cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit, cmd_epic,
-    cmd_export, cmd_import, cmd_internal_demo_snapshot, cmd_internal_natural_add, cmd_label,
-    cmd_list, cmd_metadata, cmd_move, cmd_note, cmd_note_delete, cmd_note_show, cmd_prime,
-    cmd_project, cmd_recur, cmd_related, cmd_search, cmd_self_update, cmd_show, cmd_skill,
-    cmd_skill_install, cmd_text, cmd_workspace,
+    cmd_add, cmd_ai_client, cmd_attachment, cmd_backup, cmd_bulk_update, cmd_config, cmd_conflict,
+    cmd_context, cmd_daemon_status, cmd_delete_restore, cmd_demo, cmd_dep, cmd_doctor, cmd_edit,
+    cmd_epic, cmd_export, cmd_import, cmd_internal_demo_snapshot, cmd_internal_natural_add,
+    cmd_label, cmd_list, cmd_metadata, cmd_move, cmd_note, cmd_note_delete, cmd_note_show,
+    cmd_prime, cmd_project, cmd_recur, cmd_related, cmd_search, cmd_self_update, cmd_show,
+    cmd_skill, cmd_skill_install, cmd_text, cmd_workspace,
 };
 use sync::run_server;
 use workspaces::resolve_active_workspace_with_routing;
@@ -200,6 +201,7 @@ enum StandaloneCommand {
 
 enum DatabaseCommand {
     Add(cli::AddArgs),
+    Ai(cli::AiClientCommand),
     Attachment(cli::AttachmentCommand),
     Backup { output: Option<std::path::PathBuf> },
     BulkUpdate(cli::BulkUpdateArgs),
@@ -286,6 +288,7 @@ impl From<Commands> for CliDispatch {
             Commands::Mcp => Self::Standalone(StandaloneCommand::Mcp),
             Commands::Server(args) => Self::Standalone(StandaloneCommand::Server(args)),
             Commands::Sync(args) => Self::database(DatabaseCommand::Sync(args)),
+            Commands::Ai(args) => Self::database(DatabaseCommand::Ai(args)),
             Commands::Tui(args) => Self::Tui(args),
             Commands::Internal(args) => Self::Standalone(StandaloneCommand::Internal(args)),
         }
@@ -563,6 +566,7 @@ async fn dispatch_database(
             }
             None => sync::encrypted::sync(&database, &config, args.json).await,
         },
+        DatabaseCommand::Ai(args) => cmd_ai_client(&database, &config, args).await,
         DatabaseCommand::Workspace(args) => cmd_workspace(&database, &config, args).await,
         DatabaseCommand::Text(args) => {
             let workspace =

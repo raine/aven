@@ -40,13 +40,33 @@ impl TestServer {
             "server setup failed\n{}",
             String::from_utf8_lossy(&setup.stderr)
         );
+        Self::start_prepared(env, &data, &bind, envs)
+    }
+
+    /// Serves already prepared storage, including enrolled-device fixtures.
+    pub fn start_prepared_with_env<I, K, V>(env: &TestEnv, data: &std::path::Path, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        Self::start_prepared(env, data, &env.free_loopback_addr(), envs)
+    }
+
+    fn start_prepared<I, K, V>(env: &TestEnv, data: &std::path::Path, bind: &str, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let config_dir = env.config_dir().join("aven");
         let output = Arc::new(Mutex::new(String::new()));
         let (url_tx, url_rx) = mpsc::channel();
         let mut command = command();
         env.configure_command(&mut command);
         command
-            .args(["server", "--bind", &bind, "--data"])
-            .arg(&data)
+            .args(["server", "--bind", bind, "--data"])
+            .arg(data)
             .env("AVEN_CONFIG_DIR", config_dir)
             .env_remove("AVEN_DB");
         for (key, value) in envs {
