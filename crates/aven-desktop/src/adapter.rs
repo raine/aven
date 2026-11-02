@@ -16,7 +16,7 @@ use anyhow::{Context as _, Result, anyhow};
 use aven_core::attachments::{ImageOptimizationPolicy, object_path};
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::db::Database;
-use aven_core::ids::{TaskId, new_id};
+use aven_core::ids::{TaskId, WorkspaceId, new_id};
 use aven_core::metadata::TaskMetadataInput;
 use aven_core::operations::{
     AttachmentAddInput, RecurrenceTemplateUpdate, TaskAttachmentAddInput, TaskDraft,
@@ -1523,6 +1523,35 @@ pub async fn open_store(path: &Path, config: &AppConfig) -> Result<TuiStore> {
     Ok(store)
 }
 
+async fn catalog(database: &Database, workspace: &WorkspaceId) -> Result<Vec<CatalogTask>> {
+    let items = database
+        .list_task_summary_items_from_current_projection(
+            workspace,
+            TaskFilters::default(),
+            TaskQueryMode::Flat,
+            TaskSort::Updated,
+            SortDirection::Desc,
+            None,
+        )
+        .await?;
+    Ok(items
+        .iter()
+        .map(|item| CatalogTask {
+            id: item.task.id.clone(),
+            reference: item.display_ref.clone(),
+            project: item
+                .display_ref
+                .split('-')
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+            title: item.task.title.clone(),
+            status: item.task.status,
+            is_epic: item.task.is_epic,
+        })
+        .collect())
+}
+
 /// `PRAGMA data_version` on its own connection, which sees every commit made by
 /// any other connection, in this process or another.
 struct OutsideWrites {
@@ -2066,41 +2095,19 @@ impl Actor {
         Ok(items.into_iter().map(|item| item.task.id).collect())
     }
 
-    async fn catalog(&self) -> Result<Vec<CatalogTask>> {
-        let items = self
-            .store
-            .database()
-            .list_task_summary_items_from_current_projection(
-                &self.store.active_workspace.id,
-                TaskFilters::default(),
-                TaskQueryMode::Flat,
-                TaskSort::Updated,
-                SortDirection::Desc,
-                None,
-            )
-            .await?;
-        Ok(items
-            .iter()
-            .map(|item| CatalogTask {
-                id: item.task.id.clone(),
-                reference: item.display_ref.clone(),
-                project: item
-                    .display_ref
-                    .split('-')
-                    .next()
-                    .unwrap_or_default()
-                    .to_string(),
-                title: item.task.title.clone(),
-                status: item.task.status,
-                is_epic: item.task.is_epic,
-            })
-            .collect())
-    }
-
-    async fn send_catalog(&self) {
-        if let Ok(catalog) = self.catalog().await {
-            self.send(ReplyBody::Catalog(catalog));
-        }
+    /// Reads off the actor, because the read covers every task and commands
+    /// should not queue behind it.
+    fn send_catalog(&self) {
+        let database = self.store.database();
+        let workspace = self.store.active_workspace.id.clone();
+        let replies = self.replies.clone();
+        let request = self.handled;
+        tokio::spawn(async move {
+            if let Ok(catalog) = catalog(&database, &workspace).await {
+                let body = ReplyBody::Catalog(catalog);
+                let _ = replies.send(Reply { request, body });
+            }
+        });
     }
 
     async fn send_list(&mut self) {
@@ -2113,7 +2120,7 @@ impl Actor {
             list.fields = fields.into_iter().map(|field| field.key).collect();
         }
         self.send(ReplyBody::List(Box::new(list)));
-        self.send_catalog().await;
+        self.send_catalog();
     }
 
     /// A desktop launch has no directory to infer a project from, so a new task
@@ -3614,7 +3621,7 @@ impl Actor {
     }
 
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
-        self.send_catalog().await;
+        self.send_catalog();
         let mut writes = OutsideWrites::open(&self.database).await.ok();
         let mut watched = self.database.clone();
         let mut poll = interval(POLL_INTERVAL);
@@ -4670,6 +4677,14 @@ mod tests {
             .collect()
     }
 
+    fn detail_in(bodies: Vec<ReplyBody>) -> Box<Detail> {
+        let details = bodies.into_iter().filter_map(|body| match body {
+            ReplyBody::Detail(detail) => Some(detail),
+            _ => None,
+        });
+        details.into_iter().next().expect("no detail")
+    }
+
     fn last_toast(bodies: &[ReplyBody]) -> Option<(String, bool)> {
         bodies.iter().rev().find_map(|body| match body {
             ReplyBody::Saved { message, undo, .. } => Some((message.clone(), *undo)),
@@ -4925,9 +4940,7 @@ mod tests {
 
         run(&mut actor, Command::LoadDetail(id.clone())).await;
         let seen = bodies(&mut replies);
-        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
-            panic!("no detail");
-        };
+        let detail = detail_in(seen);
         assert_eq!(detail.due_on.as_deref(), Some("2031-05-01"));
         assert_eq!(detail.row.labels, ["bug"]);
         assert_eq!(detail.blocked_by[0].id, blocker);
@@ -4949,9 +4962,7 @@ mod tests {
         bodies(&mut replies);
         run(&mut actor, Command::LoadDetail(id)).await;
         let seen = bodies(&mut replies);
-        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
-            panic!("no detail");
-        };
+        let detail = detail_in(seen);
         assert!(detail.blocked_by.is_empty() && detail.related.is_empty());
         assert!(detail.notes.is_empty());
     }
@@ -4980,9 +4991,7 @@ mod tests {
         bodies(&mut replies);
         run(&mut actor, Command::LoadDetail(id.clone())).await;
         let seen = bodies(&mut replies);
-        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
-            panic!("no detail");
-        };
+        let detail = detail_in(seen);
         assert_eq!(detail.images[0].name, "chart.png");
         assert!(detail.images[0].preview.as_ref().unwrap().exists());
         let image = detail.images[0].id.clone();
@@ -4992,9 +5001,7 @@ mod tests {
         bodies(&mut replies);
         run(&mut actor, Command::LoadDetail(id)).await;
         let seen = bodies(&mut replies);
-        let Some(ReplyBody::Detail(detail)) = seen.into_iter().next() else {
-            panic!("no detail");
-        };
+        let detail = detail_in(seen);
         assert_eq!(detail.images.len(), 1);
         assert_eq!(detail.images[0].alt, "A chart");
     }

@@ -273,6 +273,7 @@ pub struct Session {
     pub expanded: bool,
     pub detail: Option<Detail>,
     pub catalog: Vec<CatalogTask>,
+    catalog_request: u64,
     pub search: SearchResults,
     pub search_recent: Vec<String>,
     pub note_drafts: HashMap<TaskId, String>,
@@ -421,6 +422,7 @@ impl Session {
             expanded: false,
             detail: None,
             catalog: Vec::new(),
+            catalog_request: 0,
             search: SearchResults::default(),
             search_recent: Vec::new(),
             note_drafts: HashMap::new(),
@@ -1421,7 +1423,13 @@ impl Session {
                     Err(message) => self.show_toast(message, None),
                 }
             }
-            ReplyBody::Catalog(catalog) => self.catalog = catalog,
+            // Catalogs are read off the actor, so they can arrive out of order.
+            ReplyBody::Catalog(catalog) => {
+                if reply.request >= self.catalog_request {
+                    self.catalog_request = reply.request;
+                    self.catalog = catalog;
+                }
+            }
             ReplyBody::Search(results) => {
                 if reply.request == self.last_search {
                     self.search = results;
