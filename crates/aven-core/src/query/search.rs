@@ -711,14 +711,16 @@ async fn load_fts_search_documents(
     display_refs: &DisplayRefContext,
 ) -> Result<Vec<SearchDocument>> {
     let fts_match = workspace_scoped_fts_match(workspace_id, raw_fts_match);
+    // CROSS JOIN pins the match as the outer loop; otherwise the planner can
+    // visit every task and run the match again for each.
     let rows = sqlx::query(
         "SELECT t.id, t.workspace_id, t.title, t.description, t.project_id,
          p.key AS project_key, p.name AS project_name, p.prefix AS project_prefix,
          t.status, t.priority, t.source, t.created_at, t.updated_at, t.queue_activity_at, t.available_at, t.due_on, t.deleted, t.is_epic,
          d.labels AS fts_labels, d.notes AS fts_notes
          FROM task_search_fts f
-         JOIN task_search_documents d ON d.doc_id = f.rowid
-         JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
+         CROSS JOIN task_search_documents d ON d.doc_id = f.rowid
+         CROSS JOIN tasks t ON t.workspace_id = d.workspace_id AND t.id = d.task_id
          JOIN projects p ON p.workspace_id = t.workspace_id AND p.id = t.project_id
          WHERE task_search_fts MATCH ? AND d.workspace_id = ? AND (? OR t.deleted = 0)
            AND (? OR t.project_id = ?)
