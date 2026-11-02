@@ -214,14 +214,16 @@ The server speaks MCP Streamable HTTP at `/mcp`, so this example is reached at
 | `--http` | Serve HTTP instead of standard input and output |
 | `--bind <addr>` | Listen address, `127.0.0.1:3747` by default |
 | `--unsafe-public-bind` | Allow a public or wildcard address such as `0.0.0.0` |
-| `--sync` | Sync this database from within the server process |
+| `--sync` | Sync from the server process instead of the daemon |
 | `AVEN_MCP_TOKEN` | Required token, at least 32 visible ASCII characters |
 
-The token is only read from the environment, so it doesn't appear on the command
-line. The server won't start with `--http` without a valid token. Keep any
-`.env` or client configuration file that holds it private. Clients that only
-support OAuth login can't connect. Requests that carry a browser `Origin` header
-are refused, so web pages can't reach the server.
+Keep any `.env` or client configuration file that holds the token private.
+Clients that only support OAuth login can't connect. Requests that carry a
+browser `Origin` header are refused, so web pages can't reach the server.
+
+`--sync` means a container doesn't need `aven daemon`. It syncs even when
+`sync.enabled` is false, but it doesn't send reminders. Don't also run
+`aven daemon` with the same `daemon.wake_addr`: whichever starts second fails.
 
 Keep these limits in mind:
 
@@ -352,21 +354,16 @@ tasks.
 
 ## Sync
 
-Without `--sync`, `aven mcp` does not sync. Each write tells the [background
+`aven mcp` doesn't sync on its own. Each write asks the [background
 daemon](/sync/setup/#automate-sync-with-the-daemon) on the same device to sync,
-so changes reach your other devices only while the daemon is running. Check it
-with `aven daemon status`.
+so set it up if you want changes to reach your other devices automatically.
+Check it with `aven daemon status`. Over HTTP, [`--sync`](#http-and-containers)
+replaces the daemon.
 
-`--sync`, which needs `--http`, runs the same sync in the server process instead.
-It syncs even when `sync.enabled` is false, but it doesn't send reminders, and the
-server won't start if `AVEN_SYNC_DISABLED` turns sync off. It uses the daemon's
-wake address, so `aven daemon` and `--sync` can't run together with the same
-`daemon.wake_addr`: whichever starts second fails.
-
-Each write starts a sync right away, or at the next retry while sync is failing.
-A write succeeds once it's saved locally, and changes from other devices arrive
-every `sync.interval_seconds`, 30 by default. Changes still waiting at shutdown
-are sent at the next start.
+A tool call succeeds once the change is saved locally, and the change syncs in
+the background. If sync fails or Aven stops first, the change stays queued for a
+later sync. Aven checks for changes from other devices every
+`sync.interval_seconds`, 30 by default.
 
 ## Available tools
 
