@@ -150,11 +150,84 @@ pub struct Menu {
     _subscription: Subscription,
 }
 
-/// Whether `word`'s letters all appear in `text`, in order.
-fn in_order(word: &str, text: &str) -> bool {
-    let mut letters = text.chars();
-    word.chars()
-        .all(|wanted| letters.any(|letter| letter == wanted))
+/// How closely typed text matches a menu entry, tightest first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Closeness {
+    Exact,
+    Prefix,
+    /// Unbroken, starting at a word of the label such as `agent` in `slack-agent`.
+    Segment,
+    /// Unbroken, starting partway through a word of the label.
+    Inside,
+    /// Unbroken in the hint only.
+    Hint,
+    /// Letters in order, spread over `span` letters from `start` in the label.
+    Scattered {
+        span: usize,
+        start: usize,
+    },
+}
+
+/// How `word` sits unbroken in `label`, if it does.
+fn unbroken(word: &str, label: &str) -> Option<Closeness> {
+    let starts_segment = |(at, _): (usize, char)| {
+        !label[..at].ends_with(char::is_alphanumeric) && label[at..].starts_with(word)
+    };
+    if label == word {
+        Some(Closeness::Exact)
+    } else if label.starts_with(word) {
+        Some(Closeness::Prefix)
+    } else if label.char_indices().any(starts_segment) {
+        Some(Closeness::Segment)
+    } else if label.contains(word) {
+        Some(Closeness::Inside)
+    } else {
+        None
+    }
+}
+
+/// The fewest letters of `text` that hold all of `word`'s letters in order, and
+/// where the earliest such stretch starts.
+fn shortest_span(word: &str, text: &str) -> Option<(usize, usize)> {
+    let first = word.chars().next()?;
+    text.char_indices()
+        .filter(|(_, letter)| *letter == first)
+        .filter_map(|(start, _)| {
+            let mut letters = text[start..].chars().enumerate();
+            let mut span = 0;
+            let found = word.chars().all(|wanted| {
+                letters.any(|(ix, letter)| {
+                    span = ix + 1;
+                    letter == wanted
+                })
+            });
+            found.then_some((span, start))
+        })
+        .min()
+}
+
+/// How closely a lowercase `query` matches a lowercase entry, if at all. The
+/// query as a whole counts first; otherwise each word must match and the
+/// loosest word decides. Loose matching skips hints, where long text would
+/// match almost anything.
+fn closeness(query: &str, label: &str, hint: &str) -> Option<Closeness> {
+    let phrase = unbroken(query, label);
+    if phrase.is_some() {
+        return phrase;
+    }
+    let mut words = query.split_whitespace();
+    let whole: Option<Vec<Closeness>> = words
+        .clone()
+        .map(|word| unbroken(word, label).or(hint.contains(word).then_some(Closeness::Hint)))
+        .collect();
+    if let Some(whole) = whole {
+        return whole.into_iter().max();
+    }
+    let (span, start) = words.try_fold((0, 0), |(span, start), word| {
+        let (word_span, word_start) = shortest_span(word, label)?;
+        Some((span + word_span, start + word_start))
+    })?;
+    Some(Closeness::Scattered { span, start })
 }
 
 /// The scroll offset that shows `row` inside `view` with the list's padding around it.
@@ -174,32 +247,31 @@ impl Menu {
         self.input.read(cx).text().to_lowercase()
     }
 
-    /// The entries the typed text leaves: whole matches, then loose ones.
+    /// The entries the typed text leaves, closest first and otherwise in order.
     fn shown(&self, cx: &App) -> Vec<Shown> {
         let query = self.query(cx);
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let mut ranked: Vec<(u8, usize)> = (0..self.entries.len())
+        let query = query.trim();
+        let mut ranked: Vec<(Closeness, usize)> = (0..self.entries.len())
             .filter_map(|ix| {
                 let entry = &self.entries[ix];
+                if query.is_empty() {
+                    return Some((Closeness::Exact, ix));
+                }
                 if entry.head {
-                    return words.is_empty().then_some((0, ix));
+                    return None;
                 }
                 let label = entry.label.to_lowercase();
-                let text = format!("{label} {}", entry.hint.to_lowercase());
-                if words.iter().all(|word| text.contains(word)) {
-                    return Some((0, ix));
-                }
-                let spaced = words.iter().all(|word| in_order(word, &label));
-                spaced.then_some((1, ix))
+                let found = closeness(query, &label, &entry.hint.to_lowercase());
+                found.map(|closeness| (closeness, ix))
             })
             .collect();
-        ranked.sort_by_key(|(rank, _)| *rank);
+        ranked.sort_by_key(|(closeness, _)| *closeness);
         let mut shown: Vec<Shown> = ranked.into_iter().map(|(_, ix)| Shown::Item(ix)).collect();
         let exact = self
             .entries
             .iter()
-            .any(|entry| entry.label.to_lowercase() == query.trim());
-        if self.options.create.is_some() && !words.is_empty() && !exact {
+            .any(|entry| entry.label.to_lowercase() == query);
+        if self.options.create.is_some() && !query.is_empty() && !exact {
             shown.push(Shown::Create);
         }
         shown
@@ -672,7 +744,7 @@ impl Root {
 mod tests {
     use gpui::{Bounds, point, size};
 
-    use super::{MENU_PADDING, in_order, px, revealed_offset};
+    use super::{Closeness, MENU_PADDING, closeness, px, revealed_offset, shortest_span};
 
     #[test]
     fn a_revealed_row_keeps_the_padding_around_it() {
@@ -686,11 +758,143 @@ mod tests {
         assert_eq!(revealed_offset(row(200.), view, px(-10.)), px(-10.));
     }
 
+    /// The labels `query` leaves, as a menu lists them.
+    fn ranked<'a>(query: &str, entries: &[(&'a str, &str)]) -> Vec<&'a str> {
+        let mut found: Vec<(Closeness, &str)> = entries
+            .iter()
+            .filter_map(|(label, hint)| Some((closeness(query, label, hint)?, *label)))
+            .collect();
+        found.sort_by_key(|(closeness, _)| *closeness);
+        found.into_iter().map(|(_, label)| label).collect()
+    }
+
+    fn labels<'a>(labels: &[&'a str]) -> Vec<(&'a str, &'static str)> {
+        labels.iter().map(|label| (*label, "")).collect()
+    }
+
     #[test]
     fn a_word_matches_across_the_gaps_in_a_name() {
-        assert!(in_order("claudehist", "claude-history"));
-        assert!(in_order("ch", "claude-history"));
-        assert!(!in_order("claudehistz", "claude-history"));
-        assert!(!in_order("hc", "ch"));
+        assert!(shortest_span("claudehist", "claude-history").is_some());
+        assert!(shortest_span("ch", "claude-history").is_some());
+        assert!(shortest_span("claudehistz", "claude-history").is_none());
+        assert!(shortest_span("hc", "ch").is_none());
+    }
+
+    #[test]
+    fn the_shortest_span_is_not_always_the_first_one() {
+        assert_eq!(shortest_span("ab", "a---ab"), Some((2, 4)));
+        assert_eq!(shortest_span("sa", "slack-agent"), Some((3, 0)));
+    }
+
+    #[test]
+    fn tighter_matches_list_first() {
+        let menu = labels(&[
+            "s-l-a-c-k",
+            "backslack",
+            "team-slack",
+            "slack-agent",
+            "slack",
+        ]);
+        assert_eq!(
+            ranked("slack", &menu),
+            [
+                "slack",
+                "slack-agent",
+                "team-slack",
+                "backslack",
+                "s-l-a-c-k"
+            ],
+        );
+    }
+
+    #[test]
+    fn slack_agent_leads_for_each_way_of_typing_it() {
+        let menu = labels(&[
+            "a-slack-agent",
+            "backslack",
+            "skills-agent",
+            "slack-agent",
+            "snack-bag",
+            "support-team-agent",
+        ]);
+        assert_eq!(ranked("slack", &menu)[0], "slack-agent");
+        assert_eq!(ranked("slack-a", &menu)[0], "slack-agent");
+        assert_eq!(ranked("slackag", &menu)[0], "slack-agent");
+        assert_eq!(
+            ranked("sa", &menu),
+            [
+                "slack-agent",
+                "snack-bag",
+                "a-slack-agent",
+                "backslack",
+                "skills-agent",
+                "support-team-agent",
+            ],
+        );
+    }
+
+    #[test]
+    fn a_compact_scatter_beats_a_spread_one() {
+        let menu = labels(&["slack-big-agent", "slack-agent"]);
+        assert_eq!(ranked("slackag", &menu), ["slack-agent", "slack-big-agent"]);
+    }
+
+    #[test]
+    fn equal_matches_keep_their_order() {
+        let menu = labels(&["slack-beta", "slack-agent", "slack-alpha"]);
+        assert_eq!(
+            ranked("slack", &menu),
+            ["slack-beta", "slack-agent", "slack-alpha"],
+        );
+    }
+
+    #[test]
+    fn a_hint_counts_below_the_label_and_above_a_scatter() {
+        let menu = [("sl-a-ck", ""), ("inbox", "slack"), ("team-slack", "")];
+        assert_eq!(ranked("slack", &menu), ["team-slack", "inbox", "sl-a-ck"]);
+    }
+
+    #[test]
+    fn a_hint_never_matches_loosely() {
+        assert_eq!(closeness("slk", "inbox", "slack"), None);
+    }
+
+    #[test]
+    fn an_equal_scatter_prefers_the_earlier_start() {
+        let menu = labels(&["a-slack-agent", "slack-agent"]);
+        assert_eq!(ranked("slackag", &menu), ["slack-agent", "a-slack-agent"]);
+    }
+
+    #[test]
+    fn segments_end_at_any_separator() {
+        let menu = labels(&["reagent", "slack_agent", "slack agent", "slack-agent"]);
+        assert_eq!(
+            ranked("agent", &menu),
+            ["slack_agent", "slack agent", "slack-agent", "reagent"],
+        );
+    }
+
+    #[test]
+    fn the_whole_query_counts_before_its_words() {
+        let menu = labels(&["agent slack", "slack agent tools", "slack agent"]);
+        assert_eq!(
+            ranked("slack agent", &menu),
+            ["slack agent", "slack agent tools", "agent slack"],
+        );
+    }
+
+    #[test]
+    fn the_loosest_word_decides() {
+        let menu = labels(&["sxlxaxcxk one", "one slack"]);
+        assert_eq!(ranked("one slack", &menu), ["one slack", "sxlxaxcxk one"]);
+    }
+
+    #[test]
+    fn every_word_must_match() {
+        assert_eq!(closeness("slack zebra", "slack-agent", ""), None);
+        assert_eq!(
+            closeness("slack zebra", "slack-agent", "zebra"),
+            Some(Closeness::Hint)
+        );
     }
 }
