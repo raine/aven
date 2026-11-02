@@ -1076,6 +1076,7 @@ aven server setup [--data <path>] --url <url> [--invitation-only]
 | Option | Description |
 | --- | --- |
 | `--data <path>` | Server SQLite database path. Defaults to `$STATE_DIRECTORY/sync-server.sqlite` when systemd sets `StateDirectory=`, otherwise `$XDG_STATE_HOME/aven/server/sync-server.sqlite` (`~/.local/state/aven/server/sync-server.sqlite`). Pass the same path to both commands. |
+| `--config <path>` | Server configuration file. Defaults to `server.yaml` beside the storage. Overrides `AVEN_SERVER_CONFIG`. |
 | `--bind <ip:port>` | Listen address. Defaults to `127.0.0.1:3746`. Loopback, private, and VPN addresses are accepted directly. |
 | `--unsafe-public-bind` | Allow binding a public or wildcard address. Prints a warning because payload encryption does not protect credentials or setup invitations. |
 | `--url <url>` | For `setup`: the HTTP or HTTPS origin devices use to reach the server, with no path, query, or credentials, and at most 255 bytes. |
@@ -1094,19 +1095,14 @@ proxy in front of it. Both commands refuse storage
 that holds
 change history, including storage from the unencrypted sync of earlier
 releases. The server shuts down gracefully on an operating-system termination
-signal. The server also exposes authenticated `GET /ai/capabilities` and
-`POST /ai/completions/stream` for server-sent events. Both routes require a currently enrolled device’s
-encrypted-sync bearer credential, including on loopback. Unknown and revoked
-credentials are refused. AI configuration controls provider availability, not
-device enrollment.
+signal. Server settings come from an optional `server.yaml` beside the storage;
+`--config PATH` or `AVEN_SERVER_CONFIG` chooses another file. See
+[Server configuration](/server-configuration/).
 
-Completions always stream as JSON SSE events: `text_delta` contains `request_id` and provisional `text`; `completion`
-contains the full completion response, including replay metadata and tool calls.
-Only the final completion authorizes tool execution or conversation replay.
-An `error` event carries `request_id` and `error.category`; EOF without a
-completion is an incomplete answer. All completions enforce authentication, request limits, a shared concurrency
-budget and an overall timeout.
-Reverse proxies must forward SSE without buffering.
+With an AI provider configured, the server also answers
+[Tell Aven](/mobile-app/#tell-aven) requests. Those requests require a currently
+enrolled device's sync credential, including on loopback. Configure the provider
+with [`aven server ai`](#aven-server-ai).
 
 ```sh
 aven server setup --data /srv/aven/server.sqlite --url http://100.100.20.30:3746
@@ -1115,65 +1111,125 @@ aven server --data /srv/aven/server.sqlite --bind 100.100.20.30:3746
 
 ### `aven server ai`
 
-Configure and check the sync server's optional AI provider without opening the
-task database. Run these commands on the server host as the user the server
-runs as, with the same `--data` or `--config` as the server, because they read
-its `server.yaml` and store login credentials in `private/ai` beside it. AI
-changes apply after the server restarts.
+Configure and check the sync server's optional AI provider. Run these commands
+on the server host as the user the server runs as, with the same `--data` or
+`--config` as the server. They read its `server.yaml` and store login
+credentials in `private/ai` beside it. AI changes apply after the server
+restarts.
+
+See [Server configuration](/server-configuration/#ai-for-tell-aven) for
+walkthroughs, limits, and troubleshooting.
+
+#### `aven server ai setup`
 
 ```sh
-aven server ai setup [--provider <provider> --model <model>] [--endpoint <url>] [--yes] [--no-check]
+aven server ai setup [--provider <provider>] [--model <model>] [--endpoint <url>] [--yes] [--no-check]
+```
+
+Prompts for a tool-capable provider, a model and, for local or custom endpoints,
+the endpoint URL. ChatGPT and GitHub Copilot log in during setup. Setup writes
+the choice to `server.yaml`, keeping the rest of the file, warns about
+`AVEN_AI_*` overrides, runs `aven server ai check`, and prints how to restart
+the server.
+
+| Option | Description |
+| --- | --- |
+| `--provider <provider>` | Provider from `aven server ai providers`. Required without a terminal. |
+| `--model <model>` | Model name at the provider. Required without a terminal. |
+| `--endpoint <url>` | Endpoint URL for `llamafile`, `ollama`, or an OpenAI-compatible server. |
+| `-y`, `--yes` | Skip confirmation and keep an existing login. |
+| `--no-check` | Skip the billable check. |
+
+Setup also skips the check when an API-key provider's key isn't set in this
+shell. If the check fails, `server.yaml` keeps the new settings and the command
+exits nonzero.
+
+#### `aven server ai providers`
+
+```sh
 aven server ai providers
+```
+
+Lists supported providers with their credential sources, JSON-schema strategies,
+and tool support, followed by excluded providers and the reason for each.
+
+#### `aven server ai login`
+
+```sh
 aven server ai login [provider]
+```
+
+Starts an interactive OAuth device flow for `chatgpt` or `copilot`. Without a
+provider, it uses the configured `ai.provider`, or lists the OAuth providers when
+none is set. For an API-key provider, it explains which environment variable the
+server reads. Login stores credentials but does not select the provider.
+
+#### `aven server ai logout`
+
+```sh
 aven server ai logout <provider>
+```
+
+Removes stored OAuth credentials without revoking them at the provider.
+
+#### `aven server ai status`
+
+```sh
 aven server ai status [--json]
+```
+
+Shows the config path, credential directory, provider and model with their
+sources, availability, and a next-step hint. Makes no provider request.
+
+It reads `server.yaml` and this shell's environment, not the running server. To
+test the running server from a paired device, use [`aven ai`](#aven-ai).
+
+#### `aven server ai check`
+
+```sh
 aven server ai check [--json]
 ```
 
-`setup` is a guided wizard: it prompts for a tool-capable provider (tested
-ones first), a model and, for local or custom endpoints, the endpoint URL; logs
-in to ChatGPT or GitHub Copilot inline; writes the `ai` choice to `server.yaml`
-atomically while keeping the rest of the file; warns about `AVEN_AI_*`
-overrides; runs `check`; and prints how to restart the server. Without a
-terminal it requires `--provider` and `--model`. `--yes` skips confirmation and
-keeps an existing login, and `--no-check` skips the billable check.
-`providers` lists supported providers, credential sources, JSON-schema
-strategies, tool support, and exclusions. `login` starts an interactive OAuth
-device flow for ChatGPT or GitHub Copilot; without a provider it lists them, and
-for API-key providers it explains which environment variable the server reads.
-`logout` removes stored OAuth credentials without revoking them at the provider.
-`status` shows the config path, credential directory, provider and model with
-their sources, availability, and a next-step hint, without contacting a
-provider. `check` makes two synthetic, billable completions that verify a
-native tool call and a tool-result replay, and prints each step with a hint on
-failure. `status` and `check` read the configuration from the current process,
-not the running server; use [`aven ai`](#aven-ai) to test the running server
-from a paired device.
+Makes two synthetic, billable completions: one expects a native tool call, and
+the next replays a tool result and expects a text answer. Prints each step, with
+a hint on failure, and exits nonzero when a step fails.
 
-See [Server configuration](/server-configuration/#ai-for-tell-aven) for
-`server.yaml`, credential storage, limits, and troubleshooting.
+Like `status`, it runs from `server.yaml` and this shell's environment. To send
+the same requests through the running server, use
+[`aven ai check`](#aven-ai-check).
 
 ### `aven ai`
 
-Test the running sync server's AI from this device, over the configured sync
-server URL and with this device's sync credential, as paired devices such as
-the iPhone app do. Sync must be set up on the database.
+Test the running sync server's AI from this device, using the configured sync
+server URL and this device's sync credential. Requests pass through any reverse
+proxy in front of the server. Sync must be set up on the database. Neither
+command prints credentials or provider responses.
+
+#### `aven ai status`
 
 ```sh
 aven ai status [--json]
+```
+
+Shows the server URL, status, provider, model, and the server's setup hint.
+Reports a refused device credential (HTTP 401), a server or reverse proxy without
+AI routes (HTTP 404), a provider that cannot make tool calls, and network
+failures separately. Makes no billable request.
+
+See [Troubleshooting](/server-configuration/#troubleshooting) for what to do
+about each result, including a status that hasn't changed after a configuration
+change.
+
+#### `aven ai check`
+
+```sh
 aven ai check [--json]
 ```
 
-`status` reads the server's AI capabilities and shows the server URL, status,
-provider, model, and the server's setup hint. It reports a refused device
-credential (HTTP 401), a server or reverse proxy without AI routes (HTTP 404), a
-provider that cannot make tool calls, and network failures separately, and
-makes no billable request. `check` makes the same two synthetic, billable
-completions as `aven server ai check`, but through the running server, and
-prints each step with a hint on failure. It exits nonzero when a step fails.
-Neither command prints credentials or provider responses. A server that still
-reports an old state usually needs a restart, because server AI changes apply
-only after the server restarts.
+Asks the server for its AI status first, and stops without a billable request
+unless the status is `ready`. Otherwise makes the same two billable completions
+as [`aven server ai check`](#aven-server-ai-check) through the running server.
+Prints each step, with a hint on failure, and exits nonzero when a step fails.
 
 ### `aven conflict`
 

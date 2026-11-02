@@ -82,6 +82,10 @@ location / {
 
 Default Caddy body and timeout settings need no changes.
 
+Tell Aven completions stream from `/ai/` paths as server-sent events. The server
+turns off nginx response buffering for them with an `X-Accel-Buffering: no`
+header. Configure any other proxy not to buffer those responses.
+
 ### Run with Docker
 
 The image is the aven CLI: with no arguments it starts the sync server.
