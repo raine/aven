@@ -7,7 +7,7 @@ use aven_core::choices::{TaskPriority, TaskStatus};
 use gpui::{
     Action, Animation, AnimationExt, App, Bounds, Context, Entity, FocusHandle, FontWeight,
     MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, SharedString, Subscription,
-    Window, div, prelude::*, relative,
+    Window, div, point, prelude::*, relative,
 };
 
 use crate::input::{Editor, EditorEvent, Mode};
@@ -22,6 +22,7 @@ const MENU_ENTER: Duration = Duration::from_millis(140);
 const MENU_WIDTH: f32 = 280.;
 const PLAIN_MENU_WIDTH: f32 = 236.;
 const WIDE_MENU_WIDTH: f32 = 620.;
+const MENU_PADDING: f32 = 5.;
 
 pub type Run = Rc<dyn Fn(&mut Root, &mut Window, &mut Context<Root>)>;
 
@@ -154,6 +155,18 @@ fn in_order(word: &str, text: &str) -> bool {
     let mut letters = text.chars();
     word.chars()
         .all(|wanted| letters.any(|letter| letter == wanted))
+}
+
+/// The scroll offset that shows `row` inside `view` with the list's padding around it.
+fn revealed_offset(row: Bounds<Pixels>, view: Bounds<Pixels>, offset: Pixels) -> Pixels {
+    let padding = px(MENU_PADDING);
+    if row.top() + offset < view.top() + padding {
+        view.top() + padding - row.top()
+    } else if row.bottom() + offset > view.bottom() - padding {
+        view.bottom() - padding - row.bottom()
+    } else {
+        offset
+    }
 }
 
 impl Menu {
@@ -328,9 +341,26 @@ impl Root {
             menu.index = index;
             let picks = menu.picks(cx);
             let line = picks.get(index).copied();
-            let position = menu.shown(cx).iter().position(|shown| Some(*shown) == line);
-            if let Some(position) = position {
-                menu.scroll.scroll_to_item(position);
+            let shown = menu.shown(cx);
+            let position = shown.iter().position(|shown| Some(*shown) == line);
+            if index == 0 {
+                // The list may have just been filtered, so old row bounds can't be trusted.
+                menu.scroll.set_offset(point(px(0.), px(0.)));
+            } else if let Some(position) = position {
+                // A separator is a child of the list too.
+                let typing = !menu.query(cx).trim().is_empty();
+                let separators = shown[..=position]
+                    .iter()
+                    .filter(|line| {
+                        matches!(line, Shown::Item(item) if menu.entries[*item].sep && !typing)
+                    })
+                    .count();
+                let child = position + separators;
+                if let Some(row) = menu.scroll.bounds_for_item(child) {
+                    let offset = menu.scroll.offset();
+                    let y = revealed_offset(row, menu.scroll.bounds(), offset.y);
+                    menu.scroll.set_offset(point(offset.x, y));
+                }
             }
             cx.notify();
         }
@@ -396,7 +426,7 @@ impl Root {
             .id("menu-rows")
             .flex_1()
             .min_h_0()
-            .p(px(5.))
+            .p(px(MENU_PADDING))
             .overflow_y_scroll()
             .track_scroll(&menu.scroll);
         for (ix, line) in shown.iter().enumerate() {
@@ -640,7 +670,21 @@ impl Root {
 
 #[cfg(test)]
 mod tests {
-    use super::in_order;
+    use gpui::{Bounds, point, size};
+
+    use super::{MENU_PADDING, in_order, px, revealed_offset};
+
+    #[test]
+    fn a_revealed_row_keeps_the_padding_around_it() {
+        let view = Bounds::new(point(px(0.), px(100.)), size(px(200.), px(300.)));
+        let row = |top: f32| Bounds::new(point(px(0.), px(top)), size(px(200.), px(30.)));
+
+        let below = revealed_offset(row(500.), view, px(0.));
+        assert_eq!(px(530.) + below, view.bottom() - px(MENU_PADDING));
+        let above = revealed_offset(row(120.), view, px(-200.));
+        assert_eq!(px(120.) + above, view.top() + px(MENU_PADDING));
+        assert_eq!(revealed_offset(row(200.), view, px(-10.)), px(-10.));
+    }
 
     #[test]
     fn a_word_matches_across_the_gaps_in_a_name() {
