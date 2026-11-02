@@ -17,6 +17,13 @@ use crate::kit::*;
 use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::shell::Root;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FilterKind {
+    Priority,
+    Label,
+    Metadata,
+}
+
 const ORDERS: [(ViewOrder, &str); 5] = [
     (ViewOrder::Priority, "Priority"),
     (ViewOrder::Due, "Due date"),
@@ -795,10 +802,55 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_filter_menu(None, window, cx);
+    }
+
+    pub(crate) fn pick_priority_filter(
+        &mut self,
+        _: &PickPriorityFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_filter_menu(Some(FilterKind::Priority), window, cx);
+    }
+
+    pub(crate) fn pick_label_filter(
+        &mut self,
+        _: &PickLabelFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_filter_menu(Some(FilterKind::Label), window, cx);
+    }
+
+    pub(crate) fn pick_metadata_filter(
+        &mut self,
+        _: &PickMetadataFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_filter_menu(Some(FilterKind::Metadata), window, cx);
+    }
+
+    /// The filter menu, narrowed to one kind of filter when `only` names it.
+    fn open_filter_menu(
+        &mut self,
+        only: Option<FilterKind>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let snapshot = &self.session.snapshot;
         let view = snapshot.view.clone();
-        let mut entries = vec![Entry::head("Priority")];
-        for (priority, name) in PRIORITIES {
+        let mut entries = Vec::new();
+        let priorities = if only.is_none_or(|kind| kind == FilterKind::Priority) {
+            PRIORITIES.as_slice()
+        } else {
+            &[]
+        };
+        if only.is_none() {
+            entries.push(Entry::head("Priority"));
+        }
+        for &(priority, name) in priorities {
             entries.push(
                 Entry::new(name, move |root, _, _| {
                     let on = root.menu_checked().iter().any(|label| label == name);
@@ -810,8 +862,15 @@ impl Root {
                 .group(1),
             );
         }
-        entries.push(Entry::head("Labels"));
-        for label in &snapshot.labels {
+        if only.is_none() {
+            entries.push(Entry::head("Labels"));
+        }
+        let labels = if only.is_none_or(|kind| kind == FilterKind::Label) {
+            snapshot.labels.as_slice()
+        } else {
+            &[]
+        };
+        for label in labels {
             let value = label.clone();
             entries.push(
                 Entry::new(label.clone(), move |root, _, _| {
@@ -823,8 +882,15 @@ impl Root {
                 .group(2),
             );
         }
-        entries.push(Entry::head("Metadata"));
-        for field in &snapshot.fields {
+        if only.is_none() {
+            entries.push(Entry::head("Metadata"));
+        }
+        let fields = if only.is_none_or(|kind| kind == FilterKind::Metadata) {
+            snapshot.fields.as_slice()
+        } else {
+            &[]
+        };
+        for field in fields {
             for (present, word) in [(true, "present"), (false, "missing")] {
                 let label = format!("{field} {word}");
                 let (key, name) = (field.clone(), label.clone());
@@ -846,20 +912,22 @@ impl Root {
                 );
             }
         }
-        entries.push(Entry::head("Deleted"));
-        for (filter, name) in [
-            (DeletedFilter::Show, "Include deleted"),
-            (DeletedFilter::Only, "Deleted only"),
-        ] {
-            entries.push(
-                Entry::new(name, move |root, _, _| {
-                    let on = root.menu_checked().iter().any(|label| label == name);
-                    let value = if on { filter } else { DeletedFilter::Hide };
-                    root.session.write(Command::FilterDeleted(value));
-                })
-                .checked(view.deleted == filter)
-                .group(4),
-            );
+        if only.is_none() {
+            entries.push(Entry::head("Deleted"));
+            for (filter, name) in [
+                (DeletedFilter::Show, "Include deleted"),
+                (DeletedFilter::Only, "Deleted only"),
+            ] {
+                entries.push(
+                    Entry::new(name, move |root, _, _| {
+                        let on = root.menu_checked().iter().any(|label| label == name);
+                        let value = if on { filter } else { DeletedFilter::Hide };
+                        root.session.write(Command::FilterDeleted(value));
+                    })
+                    .checked(view.deleted == filter)
+                    .group(4),
+                );
+            }
         }
         let options = MenuOptions {
             multi: true,
@@ -867,7 +935,12 @@ impl Root {
         };
         self.open_menu(
             entries,
-            "Filter this view",
+            match only {
+                None => "Filter this view",
+                Some(FilterKind::Priority) => "Filter by priority",
+                Some(FilterKind::Label) => "Filter by label",
+                Some(FilterKind::Metadata) => "Filter by metadata",
+            },
             self.anchor("filter"),
             options,
             window,
