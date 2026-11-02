@@ -40,9 +40,9 @@ use crate::settings::sync_icon;
 use crate::theme::{Theme, mix, theme};
 use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
-/// How long a quit waits for a sync round to end before leaving it unfinished,
-/// as a killed daemon would. Longer than one sync request can run on a live
-/// connection, and the window is already gone while it waits.
+/// How long a quit waits for the store before giving up on it. Writes queued
+/// before the quit decide when it ends, and each can wait on another writer's
+/// lock. The window is already gone while it waits.
 const QUIT_BUDGET: Duration = Duration::from_secs(40);
 const NAV_WIDTH_RANGE: (f32, f32) = (170., 340.);
 const DETAIL_WIDTH_RANGE: (f32, f32) = (290., 620.);

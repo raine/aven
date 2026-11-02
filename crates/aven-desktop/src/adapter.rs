@@ -56,7 +56,9 @@ use sqlx::ConnectOptions as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, MissedTickBehavior, interval, interval_at, sleep, sleep_until};
+use tokio::time::{
+    Instant, MissedTickBehavior, interval, interval_at, sleep, sleep_until, timeout,
+};
 
 use crate::session::Session;
 use crate::sync_ops::{self, SyncEvent, SyncOp, SyncRequest, SyncWork};
@@ -71,6 +73,9 @@ const CLOCK_INTERVAL: Duration = Duration::from_secs(60);
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(700);
 /// How often a quit looks at user-started sync work.
 const QUIT_POLL: Duration = Duration::from_millis(50);
+/// How long a quit waits for a sync round to end before leaving it unfinished,
+/// as a killed daemon would.
+const QUIT_SYNC_BUDGET: Duration = Duration::from_secs(3);
 
 /// The name and hint for each store group.
 const GROUP_NAMES: [(&str, &str, &str); 10] = [
@@ -3567,16 +3572,21 @@ impl Actor {
         }
     }
 
-    /// A background round runs to its end, because `run_sync` only looks at the
-    /// stop signal between rounds.
+    /// Every earlier write has returned by now, so its text is stored or handed
+    /// back. A background round gets `QUIT_SYNC_BUDGET` to end, because `run_sync`
+    /// only looks at the stop signal between rounds.
     async fn quit(&mut self) {
         self.sync_stop.notify_one();
-        if let Some(sync) = self.background_sync.take() {
-            let _ = sync.await;
-        }
-        while self.sync_busy.load(Ordering::SeqCst) {
-            sleep(QUIT_POLL).await;
-        }
+        let background = self.background_sync.take();
+        let rounds = async {
+            if let Some(sync) = background {
+                let _ = sync.await;
+            }
+            while self.sync_busy.load(Ordering::SeqCst) {
+                sleep(QUIT_POLL).await;
+            }
+        };
+        let _ = timeout(QUIT_SYNC_BUDGET, rounds).await;
         self.send(ReplyBody::Stopped);
     }
 
@@ -3989,6 +3999,17 @@ mod tests {
         }));
         actor.quit().await;
         assert!(finished.load(Ordering::SeqCst));
+        let reply = replies.recv().await.unwrap();
+        assert!(matches!(reply.body, ReplyBody::Stopped));
+    }
+
+    #[tokio::test]
+    async fn a_quit_leaves_a_round_that_outlasts_its_budget() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        actor.background_sync = Some(tokio::spawn(sleep(Duration::from_secs(60))));
+        tokio::time::timeout(QUIT_SYNC_BUDGET + Duration::from_secs(2), actor.quit())
+            .await
+            .expect("the quit did not wait for the round");
         let reply = replies.recv().await.unwrap();
         assert!(matches!(reply.body, ReplyBody::Stopped));
     }
