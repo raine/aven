@@ -73,7 +73,7 @@ fn row_height() -> f32 {
         ROW_HEIGHT
     }
 }
-const GLIDE_DURATION: Duration = Duration::from_millis(140);
+const GLIDE_DURATION: Duration = Duration::from_millis(100);
 /// The farthest the highlight glides, enough for a neighbour across a section
 /// header. A longer jump lands at once.
 const GLIDE_REACH: f32 = 70.;
@@ -175,13 +175,18 @@ impl Glide {
     }
 
     fn top(self, delta: f32) -> f32 {
-        self.from + (self.to - self.from) * ease_out(delta)
+        self.from + (self.to - self.from) * (1. - (1. - delta).powi(4))
     }
 
     fn top_now(self) -> f32 {
         let delta = self.at.elapsed().as_secs_f32() / GLIDE_DURATION.as_secs_f32();
         self.top(delta.min(1.))
     }
+}
+
+/// A held key keeps the highlight within `reach` of the row it is heading for.
+fn close_behind(from: f32, to: f32, reach: f32) -> f32 {
+    from.clamp(to - reach, to + reach)
 }
 
 fn ease_out(delta: f32) -> f32 {
@@ -1133,10 +1138,9 @@ impl Root {
         }
         let viewport = f32::from(self.list.viewport_bounds().size.height);
         let offset = self.list_offset();
-        let from = self
-            .glide
-            .filter(|glide| glide.live())
-            .map(Glide::top_now)
+        let moving = self.glide.filter(|glide| glide.live()).map(Glide::top_now);
+        let trailing = moving.is_some();
+        let from = moving
             .or_else(|| {
                 self.session
                     .selected
@@ -1147,7 +1151,11 @@ impl Root {
         let target = from.zip(self.row_top(id));
         let near = target.filter(|(from, to)| (from - to).abs() <= GLIDE_REACH);
         self.glide = near.map(|(from, to)| Glide {
-            from,
+            from: if trailing {
+                close_behind(from, to, row_height())
+            } else {
+                from
+            },
             to,
             run: self.session.motion.next_run(),
             at: Instant::now(),
@@ -3129,6 +3137,13 @@ mod tests {
             row: 0,
             id: id.clone(),
         }
+    }
+
+    #[test]
+    fn a_held_key_keeps_the_highlight_one_row_behind() {
+        assert_eq!(close_behind(0., 90., 31.), 59.);
+        assert_eq!(close_behind(180., 90., 31.), 121.);
+        assert_eq!(close_behind(70., 90., 31.), 70.);
     }
 
     #[test]
