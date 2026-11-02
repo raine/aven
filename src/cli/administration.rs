@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
@@ -5,6 +6,12 @@ use clap::{Args, Subcommand};
 pub(super) const AGENT_HELP: &str = r#"`prime` emits the coding-agent guidance plus live project work. `skill install`
 installs the reusable guidance without live task context for detected or
 selected agents."#;
+
+pub(super) const MCP_HELP: &str = r#"Without --http the server uses standard input and output and leaves syncing to
+the daemon. With --http it serves Streamable HTTP at /mcp and requires
+AVEN_MCP_TOKEN, a secret of at least 32 visible ASCII characters such as the
+output of `openssl rand -hex 32`. Clients send it as `Authorization: Bearer <token>`.
+With --sync the process also syncs this database, in place of `aven daemon`."#;
 
 pub(super) const CONFIG_HELP: &str = r#"`config get` and `config set` manage the listed scalar keys. `config show` prints
 the configuration file path and contents for settings that require direct file
@@ -20,6 +27,22 @@ pub(super) const CONFIG_SET_HELP: &str = r#"Accepted values:
   local.image_optimization                    off | paste | on
 
 Use `aven config show` to locate settings managed by direct file editing."#;
+
+#[derive(Args)]
+pub(crate) struct McpArgs {
+    /// Serve Streamable HTTP instead of standard input and output
+    #[arg(long)]
+    pub(crate) http: bool,
+    /// Listen address; defaults to loopback
+    #[arg(long, default_value = "127.0.0.1:3747", requires = "http")]
+    pub(crate) bind: SocketAddr,
+    /// Allow a public or wildcard bind
+    #[arg(long, requires = "http")]
+    pub(crate) unsafe_public_bind: bool,
+    /// Sync this database from within the server process
+    #[arg(long, requires = "http")]
+    pub(crate) sync: bool,
+}
 
 #[derive(Args)]
 pub(crate) struct SkillCommand {

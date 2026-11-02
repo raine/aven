@@ -1403,15 +1403,18 @@ Pi receives the bundled skill at `~/.pi/agent/skills/aven/SKILL.md`. The other u
 
 ### `aven mcp`
 
-Run a [Model Context Protocol](/mcp/) server over standard input and output.
+Run a [Model Context Protocol](/mcp/) server over standard input and output, or over HTTP.
 
 ```sh
 aven mcp
 aven --workspace work mcp
 aven mcp --workspace work
+AVEN_MCP_TOKEN=... aven mcp --http --bind 127.0.0.1:3747 --sync
 ```
 
-The server runs until the client closes its input. `--workspace` sets the default workspace, and clients can still reach others. Logs go to standard error.
+The stdio server runs until the client closes its input. `--workspace` sets the default workspace, and clients can still reach others. Logs go to standard error.
+
+`--http` serves MCP Streamable HTTP at `/mcp` until stopped and requires a bearer token of at least 32 visible ASCII characters in `AVEN_MCP_TOKEN`. `--bind` sets the listen address, `--unsafe-public-bind` allows a public or wildcard address, and `--sync` runs sync in the server process in place of the daemon. See [HTTP and containers](/mcp/#http-and-containers).
 
 ## Setup commands
 

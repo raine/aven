@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- New: `aven mcp --http` serves MCP Streamable HTTP with a bearer token from `AVEN_MCP_TOKEN`, and `--sync` runs sync inside that process, so an agent in another container needs only a URL and token. See [HTTP and containers](https://aventasks.dev/mcp/#http-and-containers). ([#35](https://github.com/raine/aven/issues/35))
 - Fix: After a TUI sync restores Keychain access, wait for the background sync retry before showing the result, so the resolved error no longer stays on screen and asks you to sync again.
 - Fix: Keep the same task's details open after changing its status, even when it moves in the list or leaves the current filter. ([#44](https://github.com/raine/aven/issues/44))
 

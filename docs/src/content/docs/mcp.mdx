@@ -8,7 +8,8 @@ import McpChat from '../../components/mcp-section/McpChat.astro';
 `aven mcp` lets AI assistants read and change your tasks through the
 [Model Context Protocol](https://modelcontextprotocol.io). It runs as a local
 process, talks to the client over standard input and output, and works on your
-device's local database.
+device's local database. It can also serve clients on other machines or in
+other containers [over HTTP](#http-and-containers).
 
 For coding agents working in a repository, [the aven skill](/agents/) is
 usually a better fit. It also covers project inference and handoff notes. Use
@@ -194,6 +195,134 @@ Run only one `tunnel-client` per tunnel at a time, including during restarts.
 Stop the old process before starting a new one, or requests can reach different
 server processes.
 
+## HTTP and containers
+
+An agent that can't start `aven` itself, such as one in its own container, can
+connect over HTTP to a separate Aven process that owns the database:
+
+```sh
+export AVEN_MCP_TOKEN="$(openssl rand -hex 32)"
+aven mcp --http --bind 127.0.0.1:3747 --sync
+```
+
+The server speaks MCP Streamable HTTP at `/mcp`, so this example is reached at
+`http://127.0.0.1:3747/mcp`. Clients authenticate with the header
+`Authorization: Bearer <token>`.
+
+| Option | Effect |
+| --- | --- |
+| `--http` | Serve HTTP instead of standard input and output |
+| `--bind <addr>` | Listen address, `127.0.0.1:3747` by default |
+| `--unsafe-public-bind` | Allow a public or wildcard address such as `0.0.0.0` |
+| `--sync` | Sync this database from within the server process |
+| `AVEN_MCP_TOKEN` | Required token, at least 32 visible ASCII characters |
+
+The token is only read from the environment, so it doesn't appear on the command
+line. The server won't start with `--http` without a valid token. Keep any
+`.env` or client configuration file that holds it private. Clients that only
+support OAuth login can't connect. Requests that carry a browser `Origin` header
+are refused, so web pages can't reach the server.
+
+Keep these limits in mind:
+
+- The token gives full access to every tool and every workspace in the database.
+  `--workspace` only changes the default.
+- The server has no TLS. The token and your task text travel in plaintext, and
+  sync's end-to-end encryption doesn't cover this connection. Use it on loopback,
+  a private container network, or a VPN, or put an HTTPS proxy in front of it.
+
+### Two containers with Compose
+
+Here the Aven container keeps its own database and syncs with your existing sync
+server. The agent container needs only the URL and token, with no Aven executable
+and no Aven volume.
+
+```yaml
+name: aven-agent
+services:
+  aven-mcp:
+    image: ${AVEN_IMAGE:?Set AVEN_IMAGE to a versioned ghcr.io/raine/aven image}
+    command: ["mcp", "--http", "--bind", "0.0.0.0:3747", "--unsafe-public-bind", "--sync"]
+    environment:
+      AVEN_MCP_TOKEN: ${AVEN_MCP_TOKEN:?Set AVEN_MCP_TOKEN}
+      AVEN_DB: /data/db.sqlite
+      AVEN_CONFIG_DIR: /data/config
+      XDG_STATE_HOME: /data/state
+    volumes:
+      - aven-data:/data
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  agent:
+    image: your-agent-image
+    environment:
+      AVEN_MCP_URL: http://aven-mcp:3747/mcp
+      AVEN_MCP_TOKEN: ${AVEN_MCP_TOKEN:?Set AVEN_MCP_TOKEN}
+
+volumes:
+  aven-data:
+```
+
+The container binds `0.0.0.0` because the agent connects through the Compose
+network, and `--unsafe-public-bind` acknowledges that. No port is published, so
+only containers on this network can connect. `/data` holds the database and also
+this device's sync keys, which is why `XDG_STATE_HOME` points inside it.
+
+Set it up in this order:
+
+1. Put a generated token and your image in an `.env` file beside `compose.yaml`:
+
+   ```sh
+   printf 'AVEN_MCP_TOKEN=%s\nAVEN_IMAGE=%s\n' \
+     "$(openssl rand -hex 32)" ghcr.io/raine/aven:VERSION > .env
+   ```
+
+2. On a device that already syncs, run `aven sync invite` and leave it running.
+
+3. Join from a one-off container on the same volume, and paste the invitation:
+
+   ```sh
+   docker compose run --rm -it aven-mcp sync join
+   ```
+
+   Pass a non-interactive invitation with
+   `docker compose run --rm -T aven-mcp sync join --yes < invitation.txt`. The
+   invitation carries the sync server's address, so there's nothing else to
+   configure and no need to run `aven server` here.
+
+4. Start both services with `docker compose up -d`, then check the Aven container
+   with `docker compose logs aven-mcp`. `daemon-synced` lines mean sync is working.
+
+Join before the first `up`, because joining needs an empty database. If the agent
+has already created tasks, stop the services, change `AVEN_DB` to a new path under
+`/data`, and join again. Those tasks stay in the old database and don't sync. To
+start over instead, `docker compose down --volumes` deletes the volume, including
+the tasks and this device's sync keys.
+
+Point the agent at the URL and token however its MCP client takes them. For
+Claude Code:
+
+```sh
+claude mcp add --transport http aven "$AVEN_MCP_URL" \
+  --header "Authorization: Bearer $AVEN_MCP_TOKEN"
+```
+
+For a file-based configuration:
+
+```json
+{
+  "mcpServers": {
+    "aven": {
+      "type": "http",
+      "url": "http://aven-mcp:3747/mcp",
+      "headers": { "Authorization": "Bearer ${AVEN_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+Give each deployment its own volume. Don't mount it into another Aven process.
+
 ## Workspaces and projects
 
 Tools pick the default workspace in this order:
@@ -223,10 +352,21 @@ tasks.
 
 ## Sync
 
-`aven mcp` does not sync. Each write tells the [background
-daemon](/sync/setup/#automate-sync-with-the-daemon) to sync, so changes reach
-your other devices only while the daemon is running. Check it with
-`aven daemon status`.
+Without `--sync`, `aven mcp` does not sync. Each write tells the [background
+daemon](/sync/setup/#automate-sync-with-the-daemon) on the same device to sync,
+so changes reach your other devices only while the daemon is running. Check it
+with `aven daemon status`.
+
+`--sync`, which needs `--http`, runs the same sync in the server process instead.
+It syncs even when `sync.enabled` is false, but it doesn't send reminders, and the
+server won't start if `AVEN_SYNC_DISABLED` turns sync off. It uses the daemon's
+wake address, so `aven daemon` and `--sync` can't run together with the same
+`daemon.wake_addr`: whichever starts second fails.
+
+Each write starts a sync right away, or at the next retry while sync is failing.
+A write succeeds once it's saved locally, and changes from other devices arrive
+every `sync.interval_seconds`, 30 by default. Changes still waiting at shutdown
+are sent at the next start.
 
 ## Available tools
 
