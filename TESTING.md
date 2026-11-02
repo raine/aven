@@ -138,8 +138,9 @@ To compare test-profile builds, use separate empty target directories with
 `CARGO_PROFILE_TEST_DEBUG=2` or `1` in each environment.
 
 The test profile keeps workspace crates at opt-level 0 and builds dependencies
-at opt-level 2. This speeds warm full-suite runs at the cost of slower cold
-no-run builds. Debug level 1 retains line tables, but optimized dependency code
+at opt-level 2, except the proc macros and build tools named under
+`[profile.dev.package]`, which it inherits at opt-level 0. This speeds warm
+full-suite runs at the cost of slower cold no-run builds. Debug level 1 retains line tables, but optimized dependency code
 can inline frames and omit locals, reducing stepping and backtrace detail.
 
 To rebenchmark, compare this profile with the package override removed, using

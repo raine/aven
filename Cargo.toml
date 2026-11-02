@@ -130,12 +130,34 @@ async-process = { git = "https://github.com/zed-industries/async-process.git", r
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 debug = 1
 
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# Proc macros and build tools compile faster than they would gain from running
+# faster. They are named because `package."*"` outranks `build-override`.
+[profile.dev.package]
+cbindgen.opt-level = 0
+clap_derive.opt-level = 0
+darling_core.opt-level = 0
+derive_more-impl.opt-level = 0
+gpui_macros.opt-level = 0
+proc-macro2.opt-level = 0
+quote.opt-level = 0
+schemars_derive.opt-level = 0
+serde_derive.opt-level = 0
+serde_derive_internals.opt-level = 0
+sqlx-macros-core.opt-level = 0
+strum_macros.opt-level = 0
+syn.opt-level = 0
+synstructure.opt-level = 0
+thiserror-impl.opt-level = 0
+yoke-derive.opt-level = 0
+zerocopy-derive.opt-level = 0
+zerofrom-derive.opt-level = 0
 
 [profile.test]
 opt-level = 0
