@@ -579,6 +579,9 @@ fn absolute_path(path: PathBuf) -> Result<PathBuf> {
 fn stable_program_path(current_exe: &Path) -> PathBuf {
     let home = dirs::home_dir();
     let mut candidates = vec![
+        Path::new("/Applications")
+            .join(BUNDLE_NAME)
+            .join(BUNDLE_EXECUTABLE),
         Path::new("/opt/homebrew/opt/aven")
             .join(BUNDLE_NAME)
             .join(BUNDLE_EXECUTABLE),
