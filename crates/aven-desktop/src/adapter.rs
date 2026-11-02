@@ -51,6 +51,7 @@ use aven_host::store::{
 use aven_host::sync::encrypted::{DaemonRound, DaemonSync};
 use aven_host::sync::error_explanations::ErrorAction;
 use aven_host::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
+use aven_host::time_input::{parse_available_at_input, parse_due_on_input};
 use chrono::{DateTime, Local, NaiveDate, NaiveTime};
 use sqlx::ConnectOptions as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
@@ -3032,8 +3033,16 @@ impl Actor {
                 available_at,
                 due_on,
             } => (
-                Some(available_at).filter(|at| !at.is_empty()),
-                Some(due_on).filter(|due| !due.is_empty()),
+                Some(available_at)
+                    .filter(|at| !at.is_empty())
+                    .map(|at| parse_available_at_input(&at))
+                    .transpose()?
+                    .filter(|at| !at.is_empty()),
+                Some(due_on)
+                    .filter(|due| !due.is_empty())
+                    .map(|due| parse_due_on_input(&due))
+                    .transpose()?
+                    .filter(|due| !due.is_empty()),
             ),
             ParsedScheduleInput::Recurring { .. } => {
                 return self.create_recurring(task, project).await;
@@ -4627,6 +4636,24 @@ mod tests {
             priority: "none".to_string(),
             ..NewTask::default()
         }
+    }
+
+    #[tokio::test]
+    async fn a_typed_schedule_saves_the_dates_it_means() {
+        let (_directory, mut actor, _replies) = actor("One").await;
+        actor
+            .create(&new_task("Later", "tomorrow at 9am"))
+            .await
+            .unwrap();
+        actor
+            .create(&new_task("Dated", "due next friday"))
+            .await
+            .unwrap();
+        let id = task_id(&actor, "Dated");
+        let mut tasks = actor.store.tasks.iter();
+        let task = &tasks.find(|item| item.task.id == id).unwrap().task;
+        let due = task.due_on.clone().unwrap();
+        assert!(due.parse::<NaiveDate>().is_ok(), "{due}");
     }
 
     #[tokio::test]
