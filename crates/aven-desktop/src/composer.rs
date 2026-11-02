@@ -380,7 +380,7 @@ impl Root {
                     root.update_draft(cx, |draft| draft.project = Some(key));
                 })
                 .hint(project.prefix.clone())
-                .mark(Mark::Project(project.prefix.clone())),
+                .mark(Mark::Project(project.key.clone())),
             );
         }
         let anchor = self.anchor("c-project");

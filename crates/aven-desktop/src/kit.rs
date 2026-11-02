@@ -96,13 +96,13 @@ pub fn icon(path: &'static str, color: Hsla) -> Svg {
     svg().path(path).size(px(16.)).flex_none().text_color(color)
 }
 
-pub fn project_dot(prefix: &str, t: &Theme) -> Div {
+pub fn project_dot(key: &str, t: &Theme) -> Div {
     div()
         .flex_none()
         .mx(px(4.))
         .size(px(8.))
         .rounded(px(3.))
-        .bg(t.project_dot(prefix))
+        .bg(t.project_dot(key))
 }
 
 pub fn nav_item(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
@@ -296,11 +296,11 @@ pub fn priority_icon(priority: TaskPriority, t: &Theme) -> impl IntoElement + us
 
 pub fn ref_label(
     reference: &str,
-    project: &str,
+    project_key: &str,
     width: Option<f32>,
     t: &Theme,
 ) -> impl IntoElement + use<> {
-    let (prefix, rest) = reference.split_at(project.len().min(reference.len()));
+    let (prefix, rest) = reference.split_at(reference.find('-').unwrap_or(reference.len()));
     div()
         .flex()
         .flex_none()
@@ -311,7 +311,7 @@ pub fn ref_label(
         .text_color(t.faint)
         .child(
             div()
-                .text_color(t.project(project))
+                .text_color(t.project(project_key))
                 .child(prefix.to_string()),
         )
         .child(rest.to_string())

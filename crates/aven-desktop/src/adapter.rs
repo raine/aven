@@ -51,7 +51,7 @@ use aven_host::store::{
 use aven_host::sync::encrypted::{DaemonRound, DaemonSync};
 use aven_host::sync::error_explanations::ErrorAction;
 use aven_host::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime};
 use sqlx::ConnectOptions as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use tokio::sync::{Notify, mpsc};
@@ -116,6 +116,7 @@ pub struct TaskRow {
     pub reference: String,
     /// The project prefix of `reference`.
     pub project: String,
+    pub project_key: String,
     pub title: String,
     pub status: TaskStatus,
     pub priority: TaskPriority,
@@ -360,6 +361,7 @@ pub struct CatalogTask {
     pub id: TaskId,
     pub reference: String,
     pub project: String,
+    pub project_key: String,
     pub title: String,
     pub status: TaskStatus,
     pub is_epic: bool,
@@ -510,6 +512,7 @@ pub struct Link {
     pub id: TaskId,
     pub reference: String,
     pub project: String,
+    pub project_key: String,
     pub title: String,
     pub status: TaskStatus,
 }
@@ -622,6 +625,7 @@ pub struct SearchHit {
     pub id: TaskId,
     pub reference: String,
     pub project: String,
+    pub project_key: String,
     pub title: String,
     pub status: TaskStatus,
     pub snippet: Option<String>,
@@ -858,7 +862,7 @@ pub fn due_text(due: &str, today: NaiveDate) -> String {
 
 /// The reason a queue row shows, with whether it reads as a problem. Urgency and
 /// dates are left to the priority icon and the date column.
-fn reason_text(item: &TaskListItem) -> Option<(String, bool)> {
+fn reason_text(item: &TaskListItem, today: NaiveDate) -> Option<(String, bool)> {
     match item.queue.reason? {
         QueueReason::Conflict => {
             let label = item
@@ -869,8 +873,8 @@ fn reason_text(item: &TaskListItem) -> Option<(String, bool)> {
         }
         QueueReason::Stale { days } => Some((format!("No activity for {days}d"), false)),
         QueueReason::AvailableAfterDeferral => {
-            let at = item.task.available_at.as_deref().and_then(local_clock);
-            Some((format!("Available since {}", at.unwrap_or_default()), false))
+            let at = item.task.available_at.as_deref().and_then(local_time);
+            Some((available_text(at, today), false))
         }
         QueueReason::Urgent
         | QueueReason::DueToday
@@ -879,13 +883,23 @@ fn reason_text(item: &TaskListItem) -> Option<(String, bool)> {
     }
 }
 
+/// A deferral to a date lands on midnight, which is no time to show.
+fn available_text(at: Option<DateTime<Local>>, today: NaiveDate) -> String {
+    let Some(at) = at else {
+        return "Available".to_string();
+    };
+    if at.date_naive() != today {
+        return format!("Available since {}", at.format("%b %-d"));
+    }
+    if at.time() == NaiveTime::MIN {
+        return "Available today".to_string();
+    }
+    format!("Available since {}", at.format("%H:%M"))
+}
+
 fn local_time(stamp: &str) -> Option<DateTime<Local>> {
     let parsed = DateTime::parse_from_rfc3339(stamp).ok()?;
     Some(parsed.with_timezone(&Local))
-}
-
-fn local_clock(stamp: &str) -> Option<String> {
-    Some(local_time(stamp)?.format("%H:%M").to_string())
 }
 
 /// Open tasks warn from the day before they are due.
@@ -919,10 +933,11 @@ fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
         id: task.id.clone(),
         reference: item.display_ref.clone(),
         project: prefix.to_string(),
+        project_key: task.project_key.clone(),
         title: task.title.clone(),
         status: task.status,
         priority: task.priority,
-        reason: reason_text(item),
+        reason: reason_text(item, today),
         blocked: item.unresolved_blocker_count > 0,
         recurring: item.recurrence.is_some(),
         progress: item
@@ -1374,6 +1389,7 @@ fn dependency(link: &aven_core::query::TaskDependencyLink) -> Link {
             .next()
             .unwrap_or_default()
             .to_string(),
+        project_key: link.project_key.clone(),
         title: link.title.clone(),
         status: status_of(&link.status),
     }
@@ -1460,6 +1476,7 @@ fn detail_with(
                     .next()
                     .unwrap_or_default()
                     .to_string(),
+                project_key: link.project_key.clone(),
                 title: link.title.clone(),
                 status: link.status,
             })
@@ -1550,6 +1567,7 @@ async fn catalog(database: &Database, workspace: &WorkspaceId) -> Result<Vec<Cat
                 .next()
                 .unwrap_or_default()
                 .to_string(),
+            project_key: item.task.project_key.clone(),
             title: item.task.title.clone(),
             status: item.task.status,
             is_epic: item.task.is_epic,
@@ -3330,6 +3348,7 @@ impl Actor {
                         .next()
                         .unwrap_or_default()
                         .to_string(),
+                    project_key: hit.project_key.clone(),
                     title: hit.title.clone(),
                     status: status_of(&hit.status),
                     snippet: hit.snippet.clone(),
@@ -3481,6 +3500,7 @@ impl Actor {
                         self.send(ReplyBody::Notice(message));
                     }
                     Err(error) => {
+                        self.send_settings().await;
                         self.send(ReplyBody::Notice(format!("Could not save: {error}")));
                     }
                 }
@@ -4001,6 +4021,23 @@ mod tests {
         assert!(finished.load(Ordering::SeqCst));
         let reply = replies.recv().await.unwrap();
         assert!(matches!(reply.body, ReplyBody::Stopped));
+    }
+
+    #[test]
+    fn availability_shows_a_clock_only_for_a_time_today() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let at = |day: u32, hour: u32| {
+            let naive = NaiveDate::from_ymd_opt(2026, 11, day)
+                .and_then(|date| date.and_hms_opt(hour, 30, 0));
+            naive.and_then(|naive| naive.and_local_timezone(Local).single())
+        };
+        let midnight = NaiveDate::from_ymd_opt(2026, 11, 2)
+            .and_then(|date| date.and_hms_opt(0, 0, 0))
+            .and_then(|naive| naive.and_local_timezone(Local).single());
+        assert_eq!(available_text(midnight, today), "Available today");
+        assert_eq!(available_text(at(2, 14), today), "Available since 14:30");
+        assert_eq!(available_text(at(1, 14), today), "Available since Nov 1");
+        assert_eq!(available_text(None, today), "Available");
     }
 
     #[tokio::test]

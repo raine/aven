@@ -63,7 +63,7 @@ fn side_action(id: impl Into<gpui::ElementId>, label: &'static str, t: &Theme) -
 impl Root {
     /// The ref in the header, confirming a copy before it returns.
     fn detail_ref(&self, row: &TaskRow, cx: &Context<Self>, t: &Theme) -> AnyElement {
-        let label = ref_label(&row.reference, &row.project, None, t).into_any_element();
+        let label = ref_label(&row.reference, &row.project_key, None, t).into_any_element();
         let Some(run) = self.session.motion.copy(&row.id) else {
             return label;
         };
@@ -190,7 +190,11 @@ impl Root {
                         this.change_project(&ChangeProject, window, cx)
                     }))
                     .child(anchor_probe("project", &anchors))
-                    .child(value().child(project_dot(&row.project, t)).child(project)),
+                    .child(
+                        value()
+                            .child(project_dot(&row.project_key, t))
+                            .child(project),
+                    ),
             )
             .child(
                 self.prop("labels", "Labels", t)
@@ -402,7 +406,7 @@ impl Root {
                 this.follow(target.clone(), window, cx);
             }))
             .child(status_glyph(link.status, t))
-            .child(ref_label(&link.reference, &link.project, None, t))
+            .child(ref_label(&link.reference, &link.project_key, None, t))
             .child(
                 div()
                     .flex_1()

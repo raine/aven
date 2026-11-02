@@ -448,6 +448,7 @@ impl Root {
                 id: task.id.clone(),
                 reference: task.reference.clone(),
                 project: task.project.clone(),
+                project_key: task.project_key.clone(),
                 title: task.title.clone(),
                 status: task.status,
                 snippet: None,
@@ -1151,7 +1152,7 @@ impl Root {
             .when(hit.deleted, |row| {
                 row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
             })
-            .child(ref_label(&hit.reference, &hit.project, None, t))
+            .child(ref_label(&hit.reference, &hit.project_key, None, t))
     }
 
     /// Prefixes are capitals, so typing shows them as they will save.

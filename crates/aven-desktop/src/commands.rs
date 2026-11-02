@@ -183,7 +183,7 @@ impl Root {
                     root.scope_to(Some(key.clone()), window, cx);
                 })
                 .hint(project.prefix.clone())
-                .mark(Mark::Project(project.prefix.clone())),
+                .mark(Mark::Project(project.key.clone())),
             );
         }
         let anchor = self.anchors.borrow().get("scope").copied();
@@ -461,7 +461,7 @@ impl Root {
                     }
                 })
                 .hint(project.prefix.clone())
-                .mark(Mark::Project(project.prefix.clone()))
+                .mark(Mark::Project(project.key.clone()))
             })
             .collect();
         let anchor = self.anchor("project");
@@ -1142,7 +1142,7 @@ impl Root {
                     },
                 )
                 .hint("g p")
-                .mark(Mark::Project(project.prefix.clone())),
+                .mark(Mark::Project(project.key.clone())),
             );
         }
         entries.push(Entry::action("All projects", "g a", AllProjects));

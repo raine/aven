@@ -427,7 +427,7 @@ impl Root {
                 Mark::Status(status) => Some(status_glyph(status, &t).into_any_element()),
                 Mark::Priority(priority) => Some(priority_icon(priority, &t).into_any_element()),
                 Mark::Icon(path) => Some(icon(path, color).into_any_element()),
-                Mark::Project(prefix) => Some(project_dot(&prefix, &t).into_any_element()),
+                Mark::Project(key) => Some(project_dot(&key, &t).into_any_element()),
             };
             let hint = entry.map(|entry| entry.hint.clone()).unwrap_or_default();
             rows = rows.child(

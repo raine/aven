@@ -685,7 +685,7 @@ impl Root {
             .child(status_glyph(child.link.status, t))
             .child(ref_label(
                 &child.link.reference,
-                &child.link.project,
+                &child.link.project_key,
                 None,
                 t,
             ))
@@ -2166,10 +2166,10 @@ impl Root {
                                 .flex()
                                 .items_center()
                                 .gap(px(6.))
-                                .child(project_dot(&row.project, &t))
+                                .child(project_dot(&row.project_key, &t))
                                 .child(row.project.clone()),
                         )
-                        .child(ref_label(&row.reference, &row.project, None, &t))
+                        .child(ref_label(&row.reference, &row.project_key, None, &t))
                         .when(!row.due.is_empty(), |facts| {
                             facts.child(format!("Due {}", row.due))
                         }),

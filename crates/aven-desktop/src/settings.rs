@@ -1,6 +1,7 @@
 //! The settings surface, the Sync dialog and data recovery.
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use accesskit::Role;
 use aven_core::sync::client::engine::Stage;
@@ -8,8 +9,9 @@ use aven_core::sync::client::invitation::InvitationCheck;
 use aven_host::store::TaskQuery;
 use chrono::Local;
 use gpui::{
-    AnyElement, Bounds, ClipboardItem, Context, Div, Entity, FocusHandle, FontWeight, Hsla,
-    SharedString, Stateful, Window, canvas, div, fill, point, prelude::*, size,
+    Animation, AnimationExt as _, AnyElement, Bounds, ClipboardItem, Context, Div, Entity,
+    FocusHandle, FontWeight, Hsla, SharedString, Stateful, Window, canvas, div, ease_in_out, fill,
+    point, prelude::*, size,
 };
 use qrcode::{Color, EcLevel, QrCode};
 
@@ -21,7 +23,7 @@ use crate::kit::*;
 use crate::session::{SettingsTab, SyncPage, SyncTone, count_text};
 use crate::shell::Root;
 use crate::sync_ops::{Secret, SetupFacts, SyncKind, SyncOp, SyncRequest, steps};
-use crate::theme::{Theme, theme};
+use crate::theme::{Theme, mix, theme};
 use crate::workflows::tab_stop;
 
 const TABS: [(SettingsTab, &str); 9] = [
@@ -38,6 +40,7 @@ const TABS: [(SettingsTab, &str); 9] = [
 
 const CLOUD_URL: &str = "https://cloud.aventasks.dev";
 const QR_SIZE: f32 = 184.;
+const SWITCH_DURATION: Duration = Duration::from_millis(160);
 
 fn row_title(title: impl Into<SharedString>, note: Option<String>, t: &Theme) -> Div {
     div()
@@ -255,6 +258,7 @@ impl Root {
     fn edit_reminders(&mut self, edit: impl FnOnce(&mut Reminders)) {
         let mut reminders = self.session.settings_data.reminders.clone();
         edit(&mut reminders);
+        self.session.settings_data.reminders = reminders.clone();
         self.session
             .write(Command::Settings(SettingsEdit::Reminders(reminders)));
     }
@@ -657,8 +661,25 @@ impl Root {
         edit: fn(&mut Reminders),
         cx: &mut Context<Self>,
         t: &Theme,
-    ) -> Stateful<Div> {
-        div()
+    ) -> AnyElement {
+        let (off_color, on_color) = (t.line2, t.fill);
+        let travel = move |delta: f32| if on { delta } else { 1. - delta };
+        let thumb_left = move |delta: f32| 2. + 14. * travel(delta);
+        let track_color = move |delta: f32| mix(off_color, on_color, travel(delta));
+        let run = self.switched.map_or(0, |(_, run, _)| run + 1);
+        let moving = self
+            .switched
+            .filter(|(toggled, _, at)| {
+                *toggled == name && at.elapsed() < SWITCH_DURATION && !cx.reduce_motion()
+            })
+            .map(|(_, run, _)| run);
+        let thumb = div()
+            .absolute()
+            .top(px(2.))
+            .size(px(16.))
+            .rounded_full()
+            .bg(gpui::white());
+        let track = div()
             .id(name)
             .role(Role::Switch)
             .aria_label(name)
@@ -667,20 +688,28 @@ impl Root {
             .w(px(34.))
             .h(px(20.))
             .rounded(px(99.))
-            .bg(if on { t.fill } else { t.line2 })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.edit_reminders(edit);
+                this.switched = Some((name, run, Instant::now()));
                 cx.notify();
-            }))
-            .child(
-                div()
-                    .absolute()
-                    .top(px(2.))
-                    .left(px(if on { 16. } else { 2. }))
-                    .size(px(16.))
-                    .rounded_full()
-                    .bg(gpui::white()),
-            )
+            }));
+        let Some(run) = moving else {
+            return track
+                .bg(track_color(1.))
+                .child(thumb.left(px(thumb_left(1.))))
+                .into_any_element();
+        };
+        let animation = Animation::new(SWITCH_DURATION).with_easing(ease_in_out);
+        track
+            .child(thumb.with_animation(
+                ("switch-thumb", run),
+                animation.clone(),
+                move |thumb, delta| thumb.left(px(thumb_left(delta))),
+            ))
+            .with_animation(("switch-track", run), animation, move |track, delta| {
+                track.bg(track_color(delta))
+            })
+            .into_any_element()
     }
 
     fn general_tab(&self, _: &Window, cx: &mut Context<Self>, t: &Theme) -> Div {

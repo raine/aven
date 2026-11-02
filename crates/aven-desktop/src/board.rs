@@ -96,7 +96,7 @@ impl Root {
                     .items_center()
                     .gap(px(6.))
                     .child(status_glyph(row.status, t))
-                    .child(ref_label(&row.reference, &row.project, None, t))
+                    .child(ref_label(&row.reference, &row.project_key, None, t))
                     .child(div().flex_1())
                     .child(priority_icon(row.priority, t)),
             )

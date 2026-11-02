@@ -385,6 +385,8 @@ pub struct Root {
     list: ListState,
     bounce: Rc<RefCell<Bounce>>,
     glide: Option<Glide>,
+    /// The Settings switch toggled last, with a run and when it was toggled.
+    pub(crate) switched: Option<(&'static str, usize, Instant)>,
     list_motion: ListMotion,
     pub(crate) details_open: bool,
     nav_open: bool,
@@ -514,6 +516,7 @@ impl Root {
             list: ListState::new(0, ListAlignment::Top, px(300.)).measure_all(),
             bounce: Rc::default(),
             glide: None,
+            switched: None,
             list_motion: ListMotion::default(),
             details_open: prefs.details_open,
             nav_open: prefs.nav_open,
@@ -1771,7 +1774,7 @@ impl Root {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.scope_to(Some(key.clone()), window, cx);
                     }))
-                    .child(project_dot(&project.prefix, &t).mx(px(4.)))
+                    .child(project_dot(&project.key, &t).mx(px(4.)))
                     .child(project.name.clone())
                     .child(nav_count(project.count.to_string(), false, &t)),
             );

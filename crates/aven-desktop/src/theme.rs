@@ -2,6 +2,22 @@
 
 use gpui::{App, BoxShadow, Global, Hsla, Rgba, point, px, rgb, rgba};
 
+const PROJECT_DARK: [u32; 14] = [
+    0xae7fff, 0x3ccba2, 0xffb14a, 0xff745c, 0xf270a6, 0x95d555, 0x5cb5ff, 0xffcf57, 0x78dfe1,
+    0xc78fff, 0xff8b68, 0x7edc87, 0x7b9cff, 0xe880d6,
+];
+const PROJECT_LIGHT: [u32; 14] = [
+    0x7640d4, 0x108a68, 0xb87008, 0xc83e28, 0xb83070, 0x548c18, 0x1870c0, 0xa87c00, 0x10888c,
+    0x8850d4, 0xc44c28, 0x28883c, 0x385cd0, 0xb0389c,
+];
+
+fn project_slot(key: &str) -> usize {
+    let hash = key
+        .bytes()
+        .fold(5381usize, |acc, byte| acc.wrapping_mul(33) ^ byte as usize);
+    hash % PROJECT_DARK.len()
+}
+
 fn c(hex: u32) -> Hsla {
     rgb(hex).into()
 }
@@ -120,16 +136,14 @@ impl Theme {
         }
     }
 
+    /// The same hash and palette as the TUI, so a project keeps its colour in both.
     pub fn project(&self, key: &str) -> Hsla {
-        let (dark, light) = match key {
-            "AVN" => (0xb68af5, 0x743db3),
-            "APP" => (0x5cb5ff, 0x0064b3),
-            "WEB" => (0x5ea732, 0x1c7600),
-            "INF" => (0xd3a66b, 0x845500),
-            "PAY" => (0xe15b8b, 0xa4265a),
-            _ => (0x3fb8a8, 0x00766a),
+        let palette = if self.dark {
+            PROJECT_DARK
+        } else {
+            PROJECT_LIGHT
         };
-        c(if self.dark { dark } else { light })
+        c(palette[project_slot(key)])
     }
 
     /// The dot beside a project keeps its raw colour in both themes.
@@ -219,4 +233,18 @@ pub fn mix(a: Hsla, b: Hsla, d: f32) -> Hsla {
 
 pub fn theme(cx: &App) -> Theme {
     *cx.global::<Theme>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_project_lands_on_the_tui_palette_slot() {
+        for (key, slot) in [("aven", 9), ("workmux", 6), ("Zendit", 11), ("inbox", 1)] {
+            assert_eq!(project_slot(key), slot, "{key}");
+        }
+        assert_eq!(Theme::dark().project("aven"), c(0xc78fff));
+        assert_eq!(Theme::light().project("aven"), c(0x8850d4));
+    }
 }
