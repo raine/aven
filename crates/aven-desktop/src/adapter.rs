@@ -2594,11 +2594,13 @@ impl Actor {
             let current = self.store.view_state.query;
             self.column_views.retain(|view| *view != current);
         }
-        let mut state = self.store.view_state.clone();
-        state.layout = TaskLayout::List;
-        self.store
-            .restore_view_state_with_restore(state, &SelectionRestore::Default)
-            .await?;
+        if self.store.view_state.layout != TaskLayout::List {
+            let mut state = self.store.view_state.clone();
+            state.layout = TaskLayout::List;
+            self.store
+                .restore_view_state_with_restore(state, &SelectionRestore::Default)
+                .await?;
+        }
         self.store
             .show_view_restoring(query, &SelectionRestore::Default)
             .await?;

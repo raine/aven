@@ -548,7 +548,7 @@ impl Session {
 
     /// Changes what the list shows, which counts as refreshing the view.
     pub fn switch_view(&mut self, command: Command) {
-        self.refresh_view();
+        self.leave_done();
         self.leave_peek();
         self.expanded = false;
         if !matches!(command, Command::Goto(_)) {
@@ -1012,9 +1012,13 @@ impl Session {
 
     /// A refresh the user asked for: the Done group empties.
     pub fn refresh_view(&mut self) {
+        self.leave_done();
+        self.send(Command::RefreshView);
+    }
+
+    fn leave_done(&mut self) {
         self.done.clear();
         self.moving = None;
-        self.send(Command::RefreshView);
     }
 
     pub fn run_toast_action(&mut self) {

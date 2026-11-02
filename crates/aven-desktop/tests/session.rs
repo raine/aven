@@ -669,10 +669,7 @@ async fn switching_views_clears_the_done_group_and_the_selection() {
     h.session.switch_view(Command::ShowView(TaskQuery::Inbox));
     assert_eq!(h.session.selected, None);
     let commands: Vec<_> = h.take_requests().into_iter().map(|r| r.command).collect();
-    assert_eq!(
-        commands,
-        [Command::RefreshView, Command::ShowView(TaskQuery::Inbox)]
-    );
+    assert_eq!(commands, [Command::ShowView(TaskQuery::Inbox)]);
     let list = h.store_list();
     h.session
         .apply(reply(u64::MAX, ReplyBody::List(Box::new(list))));
