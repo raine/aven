@@ -1398,6 +1398,7 @@ impl Session {
     }
 
     pub fn show_toast(&mut self, message: String, action: Option<ToastAction>) {
+        let message = sentence_case(&message);
         let run = self.motion.next_run();
         self.toast = Some(Toast {
             run,
@@ -1736,6 +1737,14 @@ fn first_row(snapshot: &Snapshot) -> Option<TaskId> {
     Some(snapshot.tasks[first].id.clone())
 }
 
+/// Shared store messages start in lowercase for the terminal.
+fn sentence_case(message: &str) -> String {
+    let mut chars = message.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc;
@@ -1747,6 +1756,12 @@ mod tests {
         let (requests, received) = mpsc::unbounded_channel();
         std::mem::forget(received);
         Session::new(Snapshot::default(), requests)
+    }
+
+    #[test]
+    fn a_toast_starts_with_a_capital() {
+        assert_eq!(sentence_case("deleted ZND-8JAD"), "Deleted ZND-8JAD");
+        assert_eq!(sentence_case(""), "");
     }
 
     #[test]

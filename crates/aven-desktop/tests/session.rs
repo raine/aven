@@ -876,7 +876,7 @@ async fn review_moves_on_after_a_decision_and_undo_returns_to_the_card() {
     assert!(h.session.review.is_none());
     assert!(h.session.marks.contains(&two), "marks come back");
     let toast = h.session.toast.as_ref().unwrap();
-    assert_eq!(toast.message, "left triage · 0 decided · 2 undecided");
+    assert_eq!(toast.message, "Left triage · 0 decided · 2 undecided");
 }
 
 async fn settle(session: &mut Session, replies: &mut adapter::Replies) {

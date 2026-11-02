@@ -874,7 +874,7 @@ fn reason_text(item: &TaskListItem, today: NaiveDate) -> Option<(String, bool)> 
         QueueReason::Stale { days } => Some((format!("No activity for {days}d"), false)),
         QueueReason::AvailableAfterDeferral => {
             let at = item.task.available_at.as_deref().and_then(local_time);
-            Some((available_text(at, today), false))
+            Some((availability_reason(at, today), false))
         }
         QueueReason::Urgent
         | QueueReason::DueToday
@@ -884,7 +884,7 @@ fn reason_text(item: &TaskListItem, today: NaiveDate) -> Option<(String, bool)> 
 }
 
 /// A deferral to a date lands on midnight, which is no time to show.
-fn available_text(at: Option<DateTime<Local>>, today: NaiveDate) -> String {
+fn availability_reason(at: Option<DateTime<Local>>, today: NaiveDate) -> String {
     let Some(at) = at else {
         return "Available".to_string();
     };
@@ -4034,10 +4034,16 @@ mod tests {
         let midnight = NaiveDate::from_ymd_opt(2026, 11, 2)
             .and_then(|date| date.and_hms_opt(0, 0, 0))
             .and_then(|naive| naive.and_local_timezone(Local).single());
-        assert_eq!(available_text(midnight, today), "Available today");
-        assert_eq!(available_text(at(2, 14), today), "Available since 14:30");
-        assert_eq!(available_text(at(1, 14), today), "Available since Nov 1");
-        assert_eq!(available_text(None, today), "Available");
+        assert_eq!(availability_reason(midnight, today), "Available today");
+        assert_eq!(
+            availability_reason(at(2, 14), today),
+            "Available since 14:30"
+        );
+        assert_eq!(
+            availability_reason(at(1, 14), today),
+            "Available since Nov 1"
+        );
+        assert_eq!(availability_reason(None, today), "Available");
     }
 
     #[tokio::test]
