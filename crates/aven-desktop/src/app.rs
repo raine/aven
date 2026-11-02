@@ -86,7 +86,9 @@ impl Global for MainWindow {}
 
 fn with_root(cx: &mut App, f: impl FnOnce(&mut Root, &mut gpui::Window, &mut gpui::Context<Root>)) {
     let window = cx.global::<MainWindow>().0;
-    let _ = window.update(cx, f);
+    if let Err(error) = window.update(cx, f) {
+        tracing::error!(%error, "the window could not be reached");
+    }
 }
 
 fn show_window(cx: &mut App) {
@@ -94,13 +96,15 @@ fn show_window(cx: &mut App) {
     cx.activate(true);
 }
 
-/// Actions that need no window, so they work with it closed.
+/// Actions that need no window, so they work with it closed. An action from an
+/// open window runs while GPUI holds that window, which nothing else can update
+/// until the action returns, so those that use it wait with `defer`.
 pub fn register_actions(cx: &mut App) {
-    cx.on_action(|_: &actions::Quit, cx| with_root(cx, Root::quit));
+    cx.on_action(|_: &actions::Quit, cx| cx.defer(|cx| with_root(cx, Root::quit)));
     cx.on_action(|_: &actions::Hide, cx| cx.hide());
     cx.on_action(|_: &actions::HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &actions::ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &actions::ShowWindow, cx| show_window(cx));
+    cx.on_action(|_: &actions::ShowWindow, cx| cx.defer(show_window));
 }
 
 /// The default frame, which also stands in for a saved one no display can show.
