@@ -946,7 +946,7 @@ impl Root {
             edit.incoming = moved.then(|| detail.description.clone());
         }
         let rendered = markdown::render(&detail.description);
-        if self.description.read(cx).text() != rendered.text {
+        if !self.description.read(cx).shows(&rendered) {
             self.description
                 .update(cx, |editor, cx| editor.set_rendered(rendered, cx));
         }

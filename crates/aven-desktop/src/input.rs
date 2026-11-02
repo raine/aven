@@ -19,7 +19,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::markdown::{Rendered, Span};
+use crate::markdown::{Quote, Rendered, Span};
 use crate::theme::theme;
 
 actions!(
@@ -181,6 +181,10 @@ enum DragUnit {
     Paragraph,
 }
 
+/// How far each level of block quote moves its text in.
+const QUOTE_INDENT: Pixels = px(14.);
+const QUOTE_BAR_WIDTH: Pixels = px(2.);
+
 struct Snapshot {
     content: String,
     selected: Range<usize>,
@@ -198,6 +202,7 @@ struct Para {
     end: usize,
     line: std::rc::Rc<WrappedLine>,
     rows: Vec<Row>,
+    left: Pixels,
     top: Pixels,
 }
 
@@ -221,6 +226,7 @@ impl TextLayout {
             .unwrapped_layout
             .x_for_index(offset.saturating_sub(para.start))
             - row.x0
+            + para.left
     }
 
     fn locate(&self, offset: usize) -> Option<(&Para, &Row)> {
@@ -245,7 +251,8 @@ impl TextLayout {
     }
 
     fn offset_in_row(para: &Para, row: &Row, x: Pixels, text: &str) -> usize {
-        let index = para.line.unwrapped_layout.closest_index_for_x(x + row.x0) + para.start;
+        let x = x - para.left + row.x0;
+        let index = para.line.unwrapped_layout.closest_index_for_x(x) + para.start;
         let is_last_row = para.rows.last().is_some_and(|last| last.start == row.start);
         let index = if !is_last_row && index >= row.end {
             prev_char(text, row.end)
@@ -301,6 +308,7 @@ pub struct Editor {
     marked: Option<Range<usize>>,
     spans: Vec<Span>,
     tight: Vec<usize>,
+    quotes: Vec<Quote>,
     paragraph_gap: Option<Pixels>,
     layout: Option<TextLayout>,
     bounds: Option<Bounds<Pixels>>,
@@ -366,6 +374,7 @@ impl Editor {
             marked: None,
             spans: Vec::new(),
             tight: Vec::new(),
+            quotes: Vec::new(),
             paragraph_gap: None,
             layout: None,
             bounds: None,
@@ -424,6 +433,7 @@ impl Editor {
         self.marked = None;
         self.spans.clear();
         self.tight.clear();
+        self.quotes.clear();
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
@@ -436,6 +446,15 @@ impl Editor {
         self.set_text(&rendered.text, cx);
         self.spans = rendered.spans;
         self.tight = rendered.tight;
+        self.quotes = rendered.quotes;
+    }
+
+    /// Whether this is what the editor shows already, down to its styling.
+    pub fn shows(&self, rendered: &Rendered) -> bool {
+        self.content == rendered.text
+            && self.spans == rendered.spans
+            && self.tight == rendered.tight
+            && self.quotes == rendered.quotes
     }
 
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
@@ -1165,6 +1184,8 @@ impl Editor {
         let sources: Vec<&str> = text.split('\n').collect();
         for (ix, source) in sources.iter().enumerate() {
             let end = start + source.len();
+            let depth = self.quotes.iter().filter(|quote| quote.lines.contains(&ix));
+            let left = QUOTE_INDENT * depth.count() as f32;
             let runs = if is_placeholder {
                 let mut runs = self.runs(0..0, style, color, cx);
                 runs.push(TextRun {
@@ -1185,7 +1206,7 @@ impl Editor {
                     SharedString::from(source.to_string()),
                     font_size,
                     &runs,
-                    wrap_width,
+                    wrap_width.map(|width| (width - left).max(px(0.))),
                     None,
                 )
                 .ok()
@@ -1213,7 +1234,7 @@ impl Editor {
             for boundary in boundaries {
                 let x0 = layout.unwrapped_layout.x_for_index(row_start);
                 let right = layout.unwrapped_layout.x_for_index(boundary) - x0;
-                width = width.max(right);
+                width = width.max(left + right);
                 rows.push(Row {
                     start: start + row_start,
                     end: start + boundary,
@@ -1234,6 +1255,7 @@ impl Editor {
                 end,
                 line: line.into(),
                 rows,
+                left,
                 top: para_top,
             });
             start = end + 1;
@@ -1515,6 +1537,7 @@ struct EditorElement {
 }
 
 struct Prepaint {
+    quote_bars: Vec<PaintQuad>,
     selections: Vec<PaintQuad>,
     caret: Option<PaintQuad>,
     paints: Vec<(std::rc::Rc<WrappedLine>, Point<Pixels>)>,
@@ -1603,6 +1626,24 @@ impl Element for EditorElement {
         let origin = bounds.origin - editor.scroll;
         let layout = editor.layout.as_ref().expect("layout was just stored");
 
+        let quote_bars = editor
+            .quotes
+            .iter()
+            .filter_map(|quote| {
+                let paras = layout.paras.get(quote.lines.clone())?;
+                let top = paras.first()?.top;
+                let bottom = paras.last()?.rows.last()?.top + line_height;
+                let left = QUOTE_INDENT * quote.depth as f32;
+                Some(fill(
+                    Bounds::new(
+                        origin + point(left, top),
+                        size(QUOTE_BAR_WIDTH, bottom - top),
+                    ),
+                    colors.line2,
+                ))
+            })
+            .collect();
+
         let mut selections = Vec::new();
         if !editor.selected.is_empty() {
             let color = if focused && active {
@@ -1648,10 +1689,11 @@ impl Element for EditorElement {
         let paints = layout
             .paras
             .iter()
-            .map(|para| (para.line.clone(), origin + point(px(0.), para.top)))
+            .map(|para| (para.line.clone(), origin + point(para.left, para.top)))
             .collect();
 
         Prepaint {
+            quote_bars,
             selections,
             caret,
             paints,
@@ -1685,6 +1727,7 @@ impl Element for EditorElement {
             bounds.bottom_right() + point(px(2.), px(0.)),
         );
         let line_height = prepaint.line_height;
+        let quote_bars = std::mem::take(&mut prepaint.quote_bars);
         let selections = std::mem::take(&mut prepaint.selections);
         let paints = std::mem::take(&mut prepaint.paints);
         let caret = prepaint.caret.take();
@@ -1693,7 +1736,7 @@ impl Element for EditorElement {
                 bounds: mask_bounds,
             }),
             |window| {
-                for quad in selections {
+                for quad in quote_bars.into_iter().chain(selections) {
                     window.paint_quad(quad);
                 }
                 for (line, origin) in paints {

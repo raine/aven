@@ -20,6 +20,14 @@ pub struct Span {
     pub style: Style,
 }
 
+/// A block quote, as lines of the rendered text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quote {
+    pub lines: Range<usize>,
+    /// How many quotes this one sits inside.
+    pub depth: usize,
+}
+
 /// Lines joined by newlines, with the styles laid over them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rendered {
@@ -27,6 +35,7 @@ pub struct Rendered {
     pub spans: Vec<Span>,
     /// Lines that follow the next one with no paragraph gap.
     pub tight: Vec<usize>,
+    pub quotes: Vec<Quote>,
 }
 
 struct Table {
@@ -38,8 +47,8 @@ struct Table {
 struct Writer {
     out: Rendered,
     style: Style,
-    /// Where nesting puts each new line.
-    prefix: Vec<String>,
+    /// The quotes around the next line, as indices into `out.quotes`.
+    open_quotes: Vec<usize>,
     lists: Vec<Option<u64>>,
     /// A marker waiting for the item's first text.
     pending_marker: Option<String>,
@@ -71,7 +80,7 @@ impl Writer {
 
     /// Starts a line, keeping it close to the last one when `tight`.
     fn next_line(&mut self, tight: bool) {
-        if !self.out.text.is_empty() {
+        if !self.out.text.is_empty() || !self.fresh {
             if tight {
                 let line = self.line_count();
                 self.out.tight.push(line);
@@ -86,8 +95,14 @@ impl Writer {
             return;
         }
         self.fresh = false;
-        let prefix = self.prefix.concat();
-        self.push(&prefix, &Style::default());
+        for &quote in &self.open_quotes {
+            let line = self.line_count();
+            let lines = &mut self.out.quotes[quote].lines;
+            if lines.start == lines.end {
+                lines.start = line;
+            }
+            lines.end = line + 1;
+        }
         if let Some(marker) = self.pending_marker.take() {
             self.push(&marker, &Style::default());
         }
@@ -212,7 +227,11 @@ impl Writer {
                 self.pending_marker = Some(format!("{}{marker}", "   ".repeat(depth)));
             }
             Tag::BlockQuote(_) => {
-                self.prefix.push("▎ ".to_string());
+                self.open_quotes.push(self.out.quotes.len());
+                self.out.quotes.push(Quote {
+                    lines: 0..0,
+                    depth: self.open_quotes.len() - 1,
+                });
                 self.style.dim = true;
             }
             Tag::Emphasis => self.style.italic = true,
@@ -257,8 +276,8 @@ impl Writer {
                 self.lists.pop();
             }
             TagEnd::BlockQuote(_) => {
-                self.prefix.pop();
-                self.style.dim = !self.prefix.is_empty();
+                self.open_quotes.pop();
+                self.style.dim = !self.open_quotes.is_empty();
             }
             TagEnd::Emphasis => self.style.italic = false,
             TagEnd::Strong => self.style.bold = false,
@@ -267,7 +286,7 @@ impl Writer {
                 self.in_link = false;
                 self.style.link = None;
             }
-            TagEnd::Image => self.style.dim = !self.prefix.is_empty(),
+            TagEnd::Image => self.style.dim = !self.open_quotes.is_empty(),
             TagEnd::Table => self.finish_table(),
             _ => {}
         }
@@ -303,6 +322,13 @@ pub fn render(source: &str) -> Rendered {
             _ => {}
         }
     }
+    // A list keeps close to the line before it, but not across a quote's edge.
+    let Rendered { tight, quotes, .. } = &mut writer.out;
+    tight.retain(|line| {
+        !quotes
+            .iter()
+            .any(|quote| [quote.lines.start, quote.lines.end].contains(&(line + 1)))
+    });
     writer.out
 }
 
@@ -336,7 +362,7 @@ mod tests {
         );
         assert_eq!(
             out.text,
-            "Title\nFirst\nline\n•  one\n•  two\n   •  deep\n1. a\n2. b\n▎ said\n────────────────────────\nlet a;\nlet b;"
+            "Title\nFirst\nline\n•  one\n•  two\n   •  deep\n1. a\n2. b\nsaid\n────────────────────────\nlet a;\nlet b;"
         );
         assert!(styled(&out, "Title").bold);
         assert!(styled(&out, "said").dim);
@@ -345,6 +371,65 @@ mod tests {
         assert!(out.tight.contains(&1));
         assert!(out.tight.contains(&3));
         assert!(!out.tight.contains(&0));
+    }
+
+    #[test]
+    fn a_contiguous_quote_is_one_block_across_paragraphs_and_lists() {
+        let out = render(
+            "Before\n\n> One **bold**\n>\n> Two\n> - a\n> - b\n>\n> > Inner\n>\n> Last `code`\n\nAfter",
+        );
+        assert_eq!(
+            out.text,
+            "Before\nOne bold\nTwo\n•  a\n•  b\nInner\nLast code\nAfter"
+        );
+        assert_eq!(
+            out.quotes,
+            [
+                Quote {
+                    lines: 1..7,
+                    depth: 0
+                },
+                Quote {
+                    lines: 5..6,
+                    depth: 1
+                }
+            ]
+        );
+        let bold = styled(&out, "bold");
+        assert!(bold.bold && bold.dim);
+        assert!(styled(&out, "code").code);
+        assert!(!styled(&out, "After").dim);
+    }
+
+    #[test]
+    fn a_wrapping_quote_holds_all_its_lines() {
+        let out = render("> ```\n> a\n>\n> b\n> ```\n>\n> one\ntwo");
+        assert_eq!(out.text, "a\n\nb\none\ntwo");
+        assert_eq!(out.quotes[0].lines, 0..5);
+    }
+
+    #[test]
+    fn an_empty_first_line_keeps_its_place() {
+        let out = render("> ```\n>\n> ```\n\nAfter");
+        assert_eq!(out.text, "\nAfter");
+        assert_eq!(out.quotes[0].lines, 0..1);
+        assert_eq!(render("> ```\n>\n> code\n> ```").text, "\ncode");
+    }
+
+    #[test]
+    fn separate_quotes_stay_separate_and_lists_keep_clear_of_them() {
+        let out = render("> a\n\n> b\n\ntext\n\n> c\n\n- d\n\ntext\n\n> - e");
+        assert_eq!(out.text, "a\nb\ntext\nc\n•  d\ntext\n•  e");
+        let lines: Vec<_> = out.quotes.iter().map(|q| q.lines.clone()).collect();
+        assert_eq!(lines, [0..1, 1..2, 3..4, 6..7]);
+        assert!(out.tight.is_empty());
+    }
+
+    #[test]
+    fn a_quote_inside_a_list_item_includes_the_marker_line() {
+        let out = render("- > quoted");
+        assert_eq!(out.text, "•  quoted");
+        assert_eq!(out.quotes[0].lines, 0..1);
     }
 
     #[test]
