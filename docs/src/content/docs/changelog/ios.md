@@ -5,6 +5,8 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
+## 1.0.6 — in review
+
 - Swiping down in Tell Aven now hides the keyboard smoothly. Swipe again to close the chat.
 - Fix: Resending a request after a Tell Aven cloud failure no longer sends it twice.
 - Fix: Tell Aven messages fade out under the project pill instead of being cut off.
