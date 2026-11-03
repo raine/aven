@@ -13,9 +13,9 @@ use gpui::{
     App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     FontWeight, GlobalElementId, Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Size, Style,
-    TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill,
-    point, prelude::*, px, relative, size,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, PathBuilder, Pixels, Point, ScrollEvent, SharedString,
+    Size, Style, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions,
+    div, fill, point, prelude::*, px, quad, relative, size, transparent_black,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -192,6 +192,8 @@ enum DragUnit {
 /// How far each level of block quote moves its text in.
 const QUOTE_INDENT: Pixels = px(14.);
 const QUOTE_BAR_WIDTH: Pixels = px(2.);
+/// A task list checkbox's side, relative to the font size.
+const CHECK_SCALE: f32 = 0.93;
 
 struct Snapshot {
     content: String,
@@ -1145,7 +1147,9 @@ impl Editor {
                     font.family = crate::kit::MONO.into();
                 }
                 let link = marks.link.is_some();
-                let tint = if link {
+                let tint = if marks.check.is_some() {
+                    transparent_black()
+                } else if link {
                     theme.accent
                 } else if marks.dim {
                     theme.muted
@@ -1554,6 +1558,8 @@ struct EditorElement {
 
 struct Prepaint {
     quote_bars: Vec<PaintQuad>,
+    /// Task list checkboxes and whether each is done.
+    checks: Vec<(Bounds<Pixels>, bool)>,
     selections: Vec<PaintQuad>,
     caret: Option<PaintQuad>,
     paints: Vec<(std::rc::Rc<WrappedLine>, Point<Pixels>)>,
@@ -1660,6 +1666,23 @@ impl Element for EditorElement {
             })
             .collect();
 
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let side = (font_size * CHECK_SCALE).round();
+        let checks = editor
+            .spans
+            .iter()
+            .filter_map(|span| {
+                let checked = span.style.check?;
+                let (para, row) = layout.locate(span.range.start)?;
+                let left = TextLayout::x_of(para, row, span.range.start);
+                let top = row.top + ((line_height - side) / 2.).round();
+                Some((
+                    Bounds::new(origin + point(left, top), size(side, side)),
+                    checked,
+                ))
+            })
+            .collect();
+
         let mut selections = Vec::new();
         if !editor.selected.is_empty() {
             let color = if focused && active {
@@ -1710,6 +1733,7 @@ impl Element for EditorElement {
 
         Prepaint {
             quote_bars,
+            checks,
             selections,
             caret,
             paints,
@@ -1744,6 +1768,7 @@ impl Element for EditorElement {
         );
         let line_height = prepaint.line_height;
         let quote_bars = std::mem::take(&mut prepaint.quote_bars);
+        let checks = std::mem::take(&mut prepaint.checks);
         let selections = std::mem::take(&mut prepaint.selections);
         let paints = std::mem::take(&mut prepaint.paints);
         let caret = prepaint.caret.take();
@@ -1758,6 +1783,9 @@ impl Element for EditorElement {
                 for (line, origin) in paints {
                     line.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx)
                         .ok();
+                }
+                for (bounds, checked) in checks {
+                    paint_check(bounds, checked, window, cx);
                 }
                 if let Some(caret) = caret {
                     window.paint_quad(caret);
@@ -1781,5 +1809,40 @@ impl Element for EditorElement {
                 }
             });
         }
+    }
+}
+
+/// A rounded box, filled with a tick when done, matching the task list's
+/// mark boxes.
+fn paint_check(bounds: Bounds<Pixels>, checked: bool, window: &mut Window, cx: &App) {
+    let colors = theme(cx);
+    let side = bounds.size.width;
+    let radius = side * 0.28;
+    if !checked {
+        window.paint_quad(quad(
+            bounds,
+            radius,
+            transparent_black(),
+            px(1.),
+            colors.faint,
+            Default::default(),
+        ));
+        return;
+    }
+    window.paint_quad(quad(
+        bounds,
+        radius,
+        colors.accent,
+        px(0.),
+        transparent_black(),
+        Default::default(),
+    ));
+    let at = |x: f32, y: f32| bounds.origin + point(side * x, side * y);
+    let mut tick = PathBuilder::stroke(px(1.5));
+    tick.move_to(at(0.27, 0.52));
+    tick.line_to(at(0.44, 0.69));
+    tick.line_to(at(0.74, 0.34));
+    if let Ok(tick) = tick.build() {
+        window.paint_path(tick, colors.on_fill);
     }
 }

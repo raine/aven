@@ -12,6 +12,8 @@ pub struct Style {
     pub code: bool,
     pub dim: bool,
     pub link: Option<String>,
+    /// A task list checkbox, drawn in place of its glyph: whether it is done.
+    pub check: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -279,6 +281,22 @@ impl Writer {
         }
     }
 
+    /// Swaps the item's bullet for a checkbox, or puts one after its number.
+    fn task_marker(&mut self, checked: bool) {
+        let Some(marker) = self.pending_marker.take() else {
+            return;
+        };
+        let lead = marker.strip_suffix("•  ").unwrap_or(&marker);
+        self.pending_marker = Some(lead.to_string());
+        self.start_text();
+        let check = Style {
+            check: Some(checked),
+            ..Style::default()
+        };
+        self.push(if checked { "☑" } else { "☐" }, &check);
+        self.push("  ", &Style::default());
+    }
+
     fn end(&mut self, tag: TagEnd) {
         if matches!(
             tag,
@@ -311,7 +329,8 @@ impl Writer {
 }
 
 pub fn render(source: &str) -> Rendered {
-    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut writer = Writer {
         fresh: true,
         ..Writer::default()
@@ -322,6 +341,7 @@ pub fn render(source: &str) -> Rendered {
             Event::End(tag) => writer.end(tag),
             Event::Text(text) => writer.text(&text),
             Event::Code(text) => writer.inline_code(&text),
+            Event::TaskListMarker(checked) => writer.task_marker(checked),
             Event::Html(html) | Event::InlineHtml(html) => writer.text(html.trim_end()),
             Event::SoftBreak | Event::HardBreak => {
                 writer.next_line(true);
@@ -480,6 +500,37 @@ mod tests {
         assert!(styled(&out, "a    bb").bold);
         assert!(out.text.contains("<b>raw</b>"));
         assert!(out.text.ends_with("alt text"));
+    }
+
+    #[test]
+    fn task_items_swap_their_bullet_for_a_checkbox() {
+        let out =
+            render("- [ ] open\n- [x] done\n- plain\n  - [X] deep\n    wraps\n\n1. [ ] first");
+        assert_eq!(
+            out.text,
+            "☐  open\n☑  done\n•  plain\n   ☑  deep\nwraps\n1. ☐  first"
+        );
+        assert_eq!(styled(&out, "☐").check, Some(false));
+        assert_eq!(styled(&out, "☑").check, Some(true));
+        assert_eq!(styled(&out, "1. ☐").check, None);
+        assert_eq!(styled(&out, "  open"), Style::default());
+        assert_eq!(styled(&out, "•"), Style::default());
+        assert_eq!(out.tight, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn task_lists_keep_their_gaps_and_quotes() {
+        let out = render("## Criteria\n\n- [ ] a\n\n- [x] b\n\n> - [ ] c\n\n[ ] plain\n- d [ ] e");
+        assert_eq!(
+            out.text,
+            "Criteria\n☐  a\n☑  b\n☐  c\n[ ] plain\n•  d [ ] e"
+        );
+        assert_eq!(out.tight, [1, 4]);
+        assert_eq!(out.quotes[0].lines, 3..4);
+        assert_eq!(
+            out.spans.iter().filter(|s| s.style.check.is_some()).count(),
+            3
+        );
     }
 
     #[test]
