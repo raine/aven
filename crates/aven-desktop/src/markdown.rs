@@ -56,6 +56,11 @@ struct Writer {
     in_link: bool,
     table: Option<Table>,
     fresh: bool,
+    /// The next item is the first in its list.
+    list_start: bool,
+    /// The last line ends a block that keeps a gap below it, unlike a
+    /// paragraph or list item that a list may follow closely.
+    after_block: bool,
 }
 
 impl Writer {
@@ -201,17 +206,22 @@ impl Writer {
     }
 
     fn start(&mut self, tag: Tag<'_>) {
+        let after_block = !matches!(tag, Tag::List(_)) && std::mem::take(&mut self.after_block);
         match tag {
             Tag::Paragraph if self.pending_marker.is_none() => self.next_line(false),
             Tag::Heading { .. } => {
                 self.next_line(false);
                 self.style.bold = true;
             }
+            Tag::HtmlBlock => self.next_line(false),
             Tag::CodeBlock(_) => {
                 self.next_line(false);
                 self.in_code_block = true;
             }
-            Tag::List(first) => self.lists.push(first),
+            Tag::List(first) => {
+                self.lists.push(first);
+                self.list_start = true;
+            }
             Tag::Item => {
                 let depth = self.lists.len().saturating_sub(1);
                 let marker = match self.lists.last_mut() {
@@ -223,7 +233,8 @@ impl Writer {
                     _ => "•  ".to_string(),
                 };
                 let first_in_list = self.fresh || self.out.text.is_empty();
-                self.next_line(!first_in_list);
+                let hugs = !std::mem::take(&mut self.list_start) || !after_block;
+                self.next_line(!first_in_list && hugs);
                 self.pending_marker = Some(format!("{}{marker}", "   ".repeat(depth)));
             }
             Tag::BlockQuote(_) => {
@@ -269,6 +280,12 @@ impl Writer {
     }
 
     fn end(&mut self, tag: TagEnd) {
+        if matches!(
+            tag,
+            TagEnd::Heading(_) | TagEnd::CodeBlock | TagEnd::Table | TagEnd::HtmlBlock
+        ) {
+            self.after_block = true;
+        }
         match tag {
             TagEnd::Heading(_) => self.style.bold = false,
             TagEnd::CodeBlock => self.in_code_block = false,
@@ -318,6 +335,7 @@ pub fn render(source: &str) -> Rendered {
                     ..Style::default()
                 };
                 writer.push(&"─".repeat(24), &dim);
+                writer.after_block = true;
             }
             _ => {}
         }
@@ -371,6 +389,18 @@ mod tests {
         assert!(out.tight.contains(&1));
         assert!(out.tight.contains(&3));
         assert!(!out.tight.contains(&0));
+    }
+
+    #[test]
+    fn a_list_keeps_close_to_a_paragraph_but_not_to_other_blocks() {
+        let out = render(
+            "## Scope\n\n- a\n- b\n\nIntro\n- c\n  - d\n\n```\nx\n```\n\n- e\n\n---\n\n- f\n\n| t |\n| - |\n\n- g\n\n<div>h</div>\n\n- i",
+        );
+        assert_eq!(
+            out.text,
+            "Scope\n•  a\n•  b\nIntro\n•  c\n   •  d\nx\n•  e\n────────────────────────\n•  f\nt\n•  g\n<div>h</div>\n•  i"
+        );
+        assert_eq!(out.tight, [1, 3, 4]);
     }
 
     #[test]
