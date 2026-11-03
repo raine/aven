@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Opens the app on a fresh demo database, apart from real data: its own
+# identifier, home, config, state and data directories, with sync disabled.
+#
+#   demo-app            the installed /Applications/Aven.app
+#   demo-app --debug    a debug build of this checkout
+
+usage() {
+  echo "usage: demo-app [--debug]" >&2
+  exit 2
+}
+
+debug=false
+case $# in
+  0) ;;
+  1) [[ $1 == --debug ]] || usage; debug=true ;;
+  *) usage ;;
+esac
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root=$(mktemp -d /tmp/aven-demo.XXXXXX)
+mkdir -p "$root/home" "$root/config" "$root/state" "$root/data"
+app="$root/AvenDemo.app"
+
+if $debug; then
+  (cd "$repo" && SQLX_OFFLINE=true cargo build --offline --features desktop)
+  "$repo/scripts/assemble-macos-app" "$repo/target/debug/aven" 0.0.0 "$root" >/dev/null
+  mv "$root/Aven.app" "$app"
+  name="Aven Demo (debug)"
+else
+  source=/Applications/Aven.app
+  if [[ ! -x $source/Contents/MacOS/aven ]]; then
+    echo "error: $source is not installed" >&2
+    exit 1
+  fi
+  cp -R "$source" "$app"
+  name="Aven Demo"
+fi
+
+# Its own identifier lets it run beside the installed app with its own
+# preferences.
+plist="$app/Contents/Info.plist"
+plutil -replace CFBundleIdentifier -string fi.zendit.AvenDemo "$plist"
+plutil -replace CFBundleName -string "$name" "$plist"
+plutil -replace CFBundleDisplayName -string "$name" "$plist"
+codesign --force --sign - "$app" 2>/dev/null
+
+isolated=(
+  HOME="$root/home"
+  XDG_CONFIG_HOME="$root/config"
+  XDG_STATE_HOME="$root/state"
+  XDG_DATA_HOME="$root/data"
+  AVEN_DB="$root/demo.sqlite"
+  AVEN_DEV_DB="$root/demo.sqlite"
+  AVEN_SYNC_DISABLED=1
+)
+env "${isolated[@]}" "$app/Contents/MacOS/aven" internal demo-snapshot \
+  --output "$root/demo.sqlite" >/dev/null
+
+open_args=()
+for setting in "${isolated[@]}"; do
+  open_args+=(--env "$setting")
+done
+open -n "${open_args[@]}" "$app"
+echo "$name opened from $root"

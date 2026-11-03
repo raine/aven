@@ -250,40 +250,11 @@ tui:
 
 # Open the installed app on a fresh demo database, kept apart from real data
 demo-app:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source=/Applications/Aven.app
-    if [[ ! -x "$source/Contents/MacOS/aven" ]]; then
-        echo "Error: $source is not installed" >&2
-        exit 1
-    fi
-    root=$(mktemp -d /tmp/aven-demo.XXXXXX)
-    mkdir -p "$root/home" "$root/config" "$root/state" "$root/data"
-    isolated=(
-        HOME="$root/home"
-        XDG_CONFIG_HOME="$root/config"
-        XDG_STATE_HOME="$root/state"
-        XDG_DATA_HOME="$root/data"
-        AVEN_DB="$root/demo.sqlite"
-        AVEN_DEV_DB="$root/demo.sqlite"
-        AVEN_SYNC_DISABLED=1
-    )
-    env "${isolated[@]}" "$source/Contents/MacOS/aven" internal demo-snapshot \
-        --output "$root/demo.sqlite" >/dev/null
-    # A copy under its own identifier, so it runs beside the installed app and
-    # keeps its own preferences.
-    app="$root/AvenDemo.app"
-    cp -R "$source" "$app"
-    plutil -replace CFBundleIdentifier -string fi.zendit.AvenDemo "$app/Contents/Info.plist"
-    plutil -replace CFBundleName -string "Aven Demo" "$app/Contents/Info.plist"
-    plutil -replace CFBundleDisplayName -string "Aven Demo" "$app/Contents/Info.plist"
-    codesign --force --sign - "$app" 2>/dev/null
-    open_args=()
-    for setting in "${isolated[@]}"; do
-        open_args+=(--env "$setting")
-    done
-    open -n "${open_args[@]}" "$app"
-    echo "Aven Demo opened from $root"
+    scripts/demo-app
+
+# Open a debug build of this checkout on a fresh demo database
+demo-app-dev:
+    scripts/demo-app --debug
 
 # Run the docs development server
 docs:
