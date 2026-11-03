@@ -98,7 +98,11 @@ EOF
 ```
 
 - Plain tasks default to `inbox`. Use `--status` when the task is already
-  triaged.
+  triaged. Interpret “up next,” “do soon,” and “add to my todo list” as
+  `--status todo`; interpret “someday” and “later” as `--status backlog`.
+  Otherwise keep the default unless the user specifies a status.
+- Status expresses readiness; priority expresses importance. Near-term intent
+  alone does not imply high priority or an exact queue position.
 - Include enough context for a follow-up task to stand alone. Capture rationale,
   scope, acceptance criteria, and related tasks when established; do not invent
   missing details.
