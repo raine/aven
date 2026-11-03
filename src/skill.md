@@ -97,12 +97,18 @@ Acceptance criteria:
 EOF
 ```
 
-- Plain tasks default to `inbox`. Use `--status` when the task is already
-  triaged. Interpret “up next,” “do soon,” and “add to my todo list” as
-  `--status todo`; interpret “someday” and “later” as `--status backlog`.
-  Otherwise keep the default unless the user specifies a status.
-- Status expresses readiness; priority expresses importance. Near-term intent
-  alone does not imply high priority or an exact queue position.
+- Plain tasks default to `inbox` with priority `none`. Setting medium, high,
+  or urgent priority with no explicit status defaults the task to `todo`.
+- Status describes where work stands; priority controls how strongly it competes
+  for attention. For available, unblocked todo tasks, medium puts work in Soon,
+  high in Focus, and low or none in Later. Urgent means attention now and puts
+  work in Needs action. Deadlines, conflicts, and other queue rules can override
+  these placements; priority does not specify an exact queue position.
+- Interpret “up next” or “do soon” as `--status todo --priority medium`;
+  “do this next” or “make this a top priority” as `--status todo --priority high`;
+  and “someday” or “later” as `--status backlog`. “Add to my todo list” specifies
+  `todo` without necessarily assigning priority. Preserve explicit status and
+  priority choices; otherwise leave unspecified values at their defaults.
 - Include enough context for a follow-up task to stand alone. Capture rationale,
   scope, acceptance criteria, and related tasks when established; do not invent
   missing details.
