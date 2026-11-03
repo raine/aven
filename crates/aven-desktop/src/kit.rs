@@ -7,13 +7,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use accesskit::Role;
 use aven_core::choices::{TaskPriority, TaskStatus};
 use gpui::{
-    Animation, AnimationExt, App, Bounds, BoxShadow, Div, ElementId, Hsla, IntoElement,
-    MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, Svg, Transformation, Window,
-    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, size, svg,
+    Animation, AnimationExt, AnyView, App, Bounds, BoxShadow, Context, Div, ElementId, Hsla,
+    IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, Svg, Transformation,
+    Window, canvas, div, linear_color_stop, linear_gradient, point, prelude::*, size, svg,
 };
 
 use crate::session::POP_DURATION;
-use crate::theme::Theme;
+use crate::theme::{Theme, theme};
 
 /// The text size setting, as thousandths. Drawing goes through [`px`], so the
 /// whole window scales with it.
@@ -220,6 +220,30 @@ pub fn bare_btn(
         .rounded(px(6.))
         .text_color(t.body)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+/// One line shown while the pointer rests on an element.
+pub struct Tip(SharedString);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx);
+        small(12.)
+            .font_family(".SystemUIFont")
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(6.))
+            .bg(t.pop)
+            .shadow(t.menu_shadow())
+            .text_color(t.body)
+            .child(self.0.clone())
+    }
+}
+
+/// Builds a [`Tip`] for an element's `tooltip`.
+pub fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView {
+    let text = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone())).into()
 }
 
 /// Reports where a control is, so a menu can open from it.

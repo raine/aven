@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use accesskit::Role;
@@ -11,21 +12,22 @@ use aven_core::ids::TaskId;
 use aven_host::store::TaskQuery;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle,
-    Focusable, FontWeight, KeyContext, ListAlignment, ListOffset, ListState, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Subscription, Window,
-    WindowBounds, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
-    relative, svg,
+    Focusable, FontFeatures, FontWeight, KeyContext, ListAlignment, ListOffset, ListState,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Stateful,
+    Subscription, Window, WindowBounds, div, ease_in_out, linear_color_stop, linear_gradient, list,
+    point, prelude::*, relative, svg,
 };
 
 use crate::actions::*;
 use crate::adapter::{
-    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, Note, Prefs, Replies, Reply,
+    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, Note, Prefs, Replies, Reply, RowDate,
     SavedDrafts, SavedWindow, TaskRow, ThemePref, WindowMode, supports_columns,
 };
 use crate::bounce::{Bounce, ListBounce};
 use crate::commands::view_name;
 use crate::composer::Composer;
 use crate::dialogs::Layer;
+use crate::display::DisplayPop;
 use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
@@ -54,7 +56,7 @@ const LIST_MIN_WIDTH: f32 = 300.;
 const SHEET_MARGIN: f32 = 6.;
 /// At or below this list width, rows drop their labels and reasons.
 const LIST_COLUMNS_MIN_WIDTH: f32 = 680.;
-/// At or below this list width, rows also drop their refs and tags.
+/// At or below this list width, rows also drop their refs, tags and dates.
 const LIST_REFS_MIN_WIDTH: f32 = 540.;
 /// At or below this window width, the header drops its count and key hints.
 const HEADER_HINTS_MIN_WINDOW_WIDTH: f32 = 1100.;
@@ -391,7 +393,7 @@ pub struct Root {
     list: ListState,
     bounce: Rc<RefCell<Bounce>>,
     glide: Option<Glide>,
-    /// The Settings switch toggled last, with a run and when it was toggled.
+    /// The switch toggled last, with a run and when it was toggled.
     pub(crate) switched: Option<(&'static str, usize, Instant)>,
     /// Whether the detail byline shows the exact creation time.
     pub(crate) created_exact: bool,
@@ -403,6 +405,8 @@ pub struct Root {
     list_wide: bool,
     /// Whether rows have room for refs and tags.
     list_refs: bool,
+    /// Whether any task in the list has a date for the date column.
+    list_dues: bool,
     pub(crate) prefs: Prefs,
     prefs_path: PathBuf,
     pub(crate) new_label: Entity<Editor>,
@@ -421,6 +425,7 @@ pub struct Root {
     pub(crate) note_views: Vec<(Note, Entity<Editor>)>,
     pub(crate) detail_scroll: ScrollHandle,
     pub(crate) menu: Option<Menu>,
+    pub(crate) display: Option<DisplayPop>,
     pub(crate) composer: Option<Composer>,
     /// What the composer opens with.
     pub(crate) kept_draft: Draft,
@@ -523,6 +528,7 @@ impl Root {
             narrow: None,
             list_wide: true,
             list_refs: true,
+            list_dues: true,
             prefs,
             new_label,
             prefs_path,
@@ -537,6 +543,7 @@ impl Root {
             note_views: Vec::new(),
             detail_scroll: ScrollHandle::new(),
             menu: None,
+            display: None,
             composer: None,
             kept_draft: drafts.composer.map(Draft::from).unwrap_or_default(),
             discarded: None,
@@ -1569,6 +1576,14 @@ impl Root {
             .join(" ");
         let (select_id, toggle_id, menu_id) = (id.clone(), id.clone(), id.clone());
         let deleted = data.deleted;
+        let shown = self.prefs.row_fields;
+        let dates = [
+            ("created", "Created", data.created.filter(|_| shown.created)),
+            ("updated", "Updated", data.updated.filter(|_| shown.updated)),
+        ]
+        .into_iter()
+        .filter(|_| self.list_refs && !query_is_epics)
+        .filter_map(|(key, name, date)| Some(date_cell((key, row), name, date?, &t)));
         let body = div()
             .relative()
             .id(("row", row))
@@ -1661,6 +1676,17 @@ impl Root {
             .when(data.blocked && self.list_refs, |row| {
                 row.child(small(12.).flex_none().text_color(t.warn).child("Blocked"))
             })
+            .when(wide && shown.labels && !labels.is_empty(), |row| {
+                row.child(
+                    small(12.)
+                        .flex_none()
+                        .max_w(px(112.))
+                        .text_right()
+                        .truncate()
+                        .text_color(t.faint)
+                        .child(labels),
+                )
+            })
             .children(epic_cells.into_iter().flatten())
             .when_some(
                 data.progress.filter(|_| !query_is_epics),
@@ -1676,25 +1702,17 @@ impl Root {
                     )
                 },
             )
-            .when(wide, |row| {
+            .when(self.list_dues, |row| {
                 row.child(
                     small(12.)
                         .flex_none()
-                        .w(px(112.))
+                        .w(px(64.))
                         .text_right()
-                        .truncate()
-                        .text_color(t.faint)
-                        .child(labels),
+                        .text_color(date_color)
+                        .child(data.due),
                 )
             })
-            .child(
-                small(12.)
-                    .flex_none()
-                    .w(px(64.))
-                    .text_right()
-                    .text_color(date_color)
-                    .child(data.due),
-            );
+            .children(dates);
         let place = div().px(px(8.)).child(body);
         match self.list_motion.row(&id) {
             Some(start) => glide_to_place(place, start),
@@ -1958,6 +1976,11 @@ impl Root {
             && !reviewing
             && !columns
             && !matches!(query, TaskQuery::Epics | TaskQuery::Conflicts);
+        let dated = !settings
+            && !logged
+            && !reviewing
+            && !columns
+            && !matches!(query, TaskQuery::Epics | TaskQuery::Recurring);
         let width = window.viewport_size().width;
         let hints = width > px(HEADER_HINTS_MIN_WINDOW_WIDTH);
         let crumbs = !settings && width > px(CRUMBS_MIN_WINDOW_WIDTH);
@@ -2158,6 +2181,18 @@ impl Root {
                     )
                 },
             )
+            .when(!expanded && dated, |top| {
+                top.child(
+                    btn("display", "Display", &t)
+                        .relative()
+                        .aria_expanded(self.display_open())
+                        .child(anchor_probe("display", &self.anchors))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_display(window, cx);
+                        }))
+                        .child("Display"),
+                )
+            })
             .child(
                 btn("search", "Search", &t)
                     .shadow(vec![t.inset_ring(t.line2)])
@@ -2696,6 +2731,22 @@ impl Root {
 }
 
 /// The box a marked row carries, and the gap an unmarked one keeps.
+/// A row's date in figures that line up, naming the full time on hover.
+fn date_cell(id: (&'static str, usize), name: &str, date: RowDate, t: &Theme) -> Stateful<Div> {
+    let full = format!("{name} {}", date.full);
+    small(12.)
+        .id(id)
+        .flex_none()
+        .min_w(px(44.))
+        .text_right()
+        .whitespace_nowrap()
+        .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
+        .text_color(t.faint)
+        .aria_label(full.clone())
+        .tooltip(tip(full))
+        .child(date.day)
+}
+
 fn mark_box(marked: bool, t: &Theme) -> Div {
     if !marked {
         return div().flex_none().w(px(3.)).h(px(16.)).ml(px(-5.));
@@ -2811,7 +2862,8 @@ impl Render for Root {
         if self.session.review.is_some() {
             key_context.add("Review");
         }
-        if self.menu.is_some() || self.composer_open() || self.dialog_open() {
+        if self.menu.is_some() || self.display_open() || self.composer_open() || self.dialog_open()
+        {
             key_context.add("Overlay");
         }
         let nav = self.nav_open.then(|| self.render_nav(window, cx));
@@ -2827,6 +2879,12 @@ impl Render for Root {
             f32::from(window.viewport_size().width) - nav_space - detail_space - SHEET_MARGIN;
         self.list_wide = list_width > LIST_COLUMNS_MIN_WIDTH;
         self.list_refs = list_width > LIST_REFS_MIN_WIDTH;
+        self.list_dues = self
+            .session
+            .snapshot
+            .tasks
+            .iter()
+            .any(|task| !task.due.is_empty());
         let expanded = self.session.expanded;
         let columns = self.session.snapshot.view.columns;
         let list_el = self.render_list(window, cx);
@@ -2858,6 +2916,7 @@ impl Render for Root {
         let chord = self.render_chord(cx);
         let dialog = self.render_dialog(window, cx);
         let menu = self.render_menu(window, cx);
+        let display = self.render_display(window, cx);
         let composer = self.render_composer(window, cx);
         let toast = self.render_toast(cx);
         let nav_edge = self.prefs.nav_width;
@@ -3110,6 +3169,7 @@ impl Render for Root {
             .when_some(composer, |root, composer| root.child(composer))
             .when_some(dialog, |root, dialog| root.child(dialog))
             .when_some(menu, |root, menu| root.child(menu))
+            .when_some(display, |root, display| root.child(display))
             .when_some(toast, |root, toast| root.child(toast))
     }
 }

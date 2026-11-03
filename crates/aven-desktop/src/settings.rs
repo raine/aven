@@ -9,7 +9,7 @@ use aven_core::sync::client::invitation::InvitationCheck;
 use aven_host::store::TaskQuery;
 use chrono::Local;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, Bounds, ClipboardItem, Context, Div, Entity,
+    Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div, Entity,
     FocusHandle, FontWeight, Hsla, SharedString, Stateful, Window, canvas, div, ease_in_out, fill,
     point, prelude::*, size,
 };
@@ -663,11 +663,39 @@ impl Root {
         cx: &mut Context<Self>,
         t: &Theme,
     ) -> AnyElement {
+        let track = div()
+            .id(name)
+            .role(Role::Switch)
+            .aria_label(name)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.edit_reminders(edit);
+                this.mark_switched(name);
+                cx.notify();
+            }));
+        self.switch_track(track, name, on, 1., cx, t)
+    }
+
+    /// Starts the slide of the switch named `name`.
+    pub(crate) fn mark_switched(&mut self, name: &'static str) {
+        let run = self.switched.map_or(0, |(_, run, _)| run + 1);
+        self.switched = Some((name, run, Instant::now()));
+    }
+
+    /// Draws a switch on `track`, sliding while `name` was just toggled. `scale`
+    /// shrinks it for tight rows.
+    pub(crate) fn switch_track(
+        &self,
+        track: Stateful<Div>,
+        name: &'static str,
+        on: bool,
+        scale: f32,
+        cx: &App,
+        t: &Theme,
+    ) -> AnyElement {
         let (off_color, on_color) = (t.line2, t.fill);
         let travel = move |delta: f32| if on { delta } else { 1. - delta };
-        let thumb_left = move |delta: f32| 2. + 14. * travel(delta);
+        let thumb_left = move |delta: f32| (2. + 14. * travel(delta)) * scale;
         let track_color = move |delta: f32| mix(off_color, on_color, travel(delta));
-        let run = self.switched.map_or(0, |(_, run, _)| run + 1);
         let moving = self
             .switched
             .filter(|(toggled, _, at)| {
@@ -676,24 +704,16 @@ impl Root {
             .map(|(_, run, _)| run);
         let thumb = div()
             .absolute()
-            .top(px(2.))
-            .size(px(16.))
+            .top(px(2. * scale))
+            .size(px(16. * scale))
             .rounded_full()
             .bg(gpui::white());
-        let track = div()
-            .id(name)
-            .role(Role::Switch)
-            .aria_label(name)
+        let track = track
             .flex_none()
             .relative()
-            .w(px(34.))
-            .h(px(20.))
-            .rounded(px(99.))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.edit_reminders(edit);
-                this.switched = Some((name, run, Instant::now()));
-                cx.notify();
-            }));
+            .w(px(34. * scale))
+            .h(px(20. * scale))
+            .rounded(px(99.));
         let Some(run) = moving else {
             return track
                 .bg(track_color(1.))

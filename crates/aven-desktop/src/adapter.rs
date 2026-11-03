@@ -52,7 +52,7 @@ use aven_host::sync::encrypted::{DaemonRound, DaemonSync};
 use aven_host::sync::error_explanations::ErrorAction;
 use aven_host::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
 use aven_host::time_input::{parse_available_at_input, parse_due_on_input};
-use chrono::{DateTime, Local, NaiveDate, NaiveTime};
+use chrono::{DateTime, Datelike as _, Local, NaiveDate, NaiveTime};
 use sqlx::ConnectOptions as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use tokio::sync::{Notify, mpsc};
@@ -136,6 +136,15 @@ pub struct TaskRow {
     pub is_epic: bool,
     /// How far an epic's children have got.
     pub epic: Option<EpicProgress>,
+    pub created: Option<RowDate>,
+    pub updated: Option<RowDate>,
+}
+
+/// A moment a row shows as a date, with its full time for a closer look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowDate {
+    pub day: String,
+    pub full: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -942,6 +951,22 @@ fn availability_reason(at: Option<DateTime<Local>>, today: NaiveDate) -> String 
     format!("Available since {}", at.format("%H:%M"))
 }
 
+/// The month and day, with the year when it is not this year's.
+pub fn short_date(day: NaiveDate, today: NaiveDate) -> String {
+    if day.year() == today.year() {
+        day.format("%b %-d").to_string()
+    } else {
+        day.format("%b %-d, %Y").to_string()
+    }
+}
+
+fn row_date(stamp: &str, today: NaiveDate) -> Option<RowDate> {
+    local_time(stamp).map(|at| RowDate {
+        day: short_date(at.date_naive(), today),
+        full: at.format("%b %-d, %Y, %H:%M").to_string(),
+    })
+}
+
 fn local_time(stamp: &str) -> Option<DateTime<Local>> {
     let parsed = DateTime::parse_from_rfc3339(stamp).ok()?;
     Some(parsed.with_timezone(&Local))
@@ -999,6 +1024,8 @@ fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
         date_tone: date_tone(item, today),
         deleted: task.deleted,
         is_epic: task.is_epic,
+        created: row_date(&task.created_at, today),
+        updated: row_date(&task.updated_at, today),
     }
 }
 
@@ -4081,6 +4108,26 @@ pub struct Prefs {
     pub details_open: bool,
     pub window: Option<SavedWindow>,
     pub view: Option<SavedView>,
+    pub row_fields: RowFields,
+}
+
+/// Which optional fields task rows show, the same in every view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RowFields {
+    pub labels: bool,
+    pub created: bool,
+    pub updated: bool,
+}
+
+impl Default for RowFields {
+    fn default() -> Self {
+        Self {
+            labels: true,
+            created: true,
+            updated: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -4126,6 +4173,7 @@ impl Default for Prefs {
             details_open: true,
             window: None,
             view: None,
+            row_fields: RowFields::default(),
         }
     }
 }
@@ -4423,6 +4471,29 @@ mod tests {
             due_on: None,
             is_epic: false,
         }
+    }
+
+    #[test]
+    fn row_fields_show_labels_and_created_until_changed_and_keep_the_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prefs.json");
+        std::fs::write(&path, r#"{"nav_width":240.0}"#).unwrap();
+        let mut prefs = Prefs::load(&path);
+        assert_eq!(
+            prefs.row_fields,
+            RowFields {
+                labels: true,
+                created: true,
+                updated: false,
+            }
+        );
+        prefs.row_fields = RowFields {
+            labels: false,
+            created: false,
+            updated: true,
+        };
+        prefs.save(&path).unwrap();
+        assert_eq!(Prefs::load(&path).row_fields, prefs.row_fields);
     }
 
     #[test]
@@ -5508,6 +5579,31 @@ mod tests {
         assert_eq!(detail.images.len(), 1);
         assert_eq!(detail.images[0].name, "pasted.png");
         assert!(detail.images[0].preview.as_ref().unwrap().exists());
+    }
+
+    #[test]
+    fn short_dates_name_the_year_only_outside_this_one() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+        for (day, expected) in [
+            ((2026, 11, 3), "Nov 3"),
+            ((2026, 1, 12), "Jan 12"),
+            ((2025, 10, 12), "Oct 12, 2025"),
+            ((2027, 2, 1), "Feb 1, 2027"),
+        ] {
+            let day = NaiveDate::from_ymd_opt(day.0, day.1, day.2).unwrap();
+            assert_eq!(short_date(day, today), expected);
+        }
+    }
+
+    #[test]
+    fn row_dates_read_in_local_time() {
+        use chrono::TimeZone as _;
+        let today = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+        let at = Local.with_ymd_and_hms(2026, 11, 3, 9, 14, 0).unwrap();
+        let date = row_date(&at.to_rfc3339(), today).unwrap();
+        assert_eq!(date.day, "Nov 3");
+        assert_eq!(date.full, "Nov 3, 2026, 09:14");
+        assert_eq!(row_date("", today), None);
     }
 
     #[test]

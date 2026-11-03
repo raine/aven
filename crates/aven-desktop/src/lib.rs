@@ -12,6 +12,7 @@ mod commands;
 mod composer;
 mod details;
 mod dialogs;
+mod display;
 mod draft;
 mod input;
 mod kit;

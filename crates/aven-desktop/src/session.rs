@@ -1870,6 +1870,8 @@ mod tests {
             deleted: false,
             is_epic: false,
             epic: None,
+            created: None,
+            updated: None,
         };
         let group = |name: &str, rows: Vec<usize>| Group {
             name: name.to_string(),
