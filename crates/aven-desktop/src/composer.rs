@@ -12,7 +12,7 @@ use gpui::{
 
 use crate::actions::*;
 use crate::commands::{pasted_image, read_image};
-use crate::draft::{Draft, DraftProblem, schedule_preview, token_preview};
+use crate::draft::{Draft, DraftProblem, schedule_preview};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::overlays::{Entry, Mark, MenuOptions};
@@ -619,7 +619,6 @@ impl Root {
         };
         let labels = parts.labels.iter().chain(&draft.labels).count();
         let anchors = &self.anchors;
-        let preview = token_preview(&draft.title);
         let schedule = schedule_preview(&draft.schedule);
         let chips = div()
             .flex()
@@ -931,15 +930,6 @@ impl Root {
                     .text_color(t.ink)
                     .child(composer.title.clone()),
             )
-            .when(!preview.is_empty(), |panel| {
-                panel.child(
-                    small(12.)
-                        .px(px(16.))
-                        .pb(px(8.))
-                        .text_color(t.faint)
-                        .child(preview),
-                )
-            })
             .child(chips)
             .when(draft.more, |panel| panel.child(more))
             .child(actions);

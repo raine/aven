@@ -104,27 +104,6 @@ pub fn parse_title(text: &str) -> TitleParts {
     parts
 }
 
-/// Says what the tokens in a title will do, or nothing without any.
-pub fn token_preview(text: &str) -> String {
-    let parts = parse_title(text);
-    if parts.labels.is_empty() && parts.priority.is_none() {
-        return String::new();
-    }
-    let mut line = format!("Creates \u{201c}{}\u{201d}", parts.title);
-    if !parts.labels.is_empty() {
-        let labels: Vec<String> = parts.labels.iter().map(|l| format!("#{l}")).collect();
-        line.push_str(&format!(" with {}", labels.join(" ")));
-    }
-    if let Some(priority) = parts.priority {
-        line.push_str(&format!(
-            ", {} priority",
-            crate::kit::priority_name(priority)
-        ));
-    }
-    line.push_str(". Write \\#tag to keep it as text.");
-    line
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulePreview {
     pub text: String,
@@ -490,11 +469,6 @@ mod tests {
         assert_eq!(parts.title, "Ship the #build today #2 !nope");
         assert_eq!(parts.labels, ["mobile-app"]);
         assert_eq!(parts.priority, Some(TaskPriority::High));
-        assert_eq!(
-            token_preview("Ship #ios !low"),
-            "Creates \u{201c}Ship\u{201d} with #ios, Low priority. Write \\#tag to keep it as text."
-        );
-        assert_eq!(token_preview("Plain title"), "");
     }
 
     #[test]
