@@ -592,21 +592,25 @@ impl Root {
         let draft = composer.current(cx);
         let parts = crate::draft::parse_title(&draft.title);
         let priority = parts.priority.unwrap_or(draft.priority);
-        let project_name = draft
+        let project = draft
             .project
             .as_ref()
             .and_then(|key| {
                 let projects = &self.session.snapshot.projects;
                 projects.iter().find(|project| project.key == *key)
             })
-            .map(|project| project.name.clone())
+            .map(|project| (project.name.clone(), project.key.as_str()))
             .or_else(|| {
                 let scope = self.session.snapshot.view.project.as_ref()?;
                 let projects = &self.session.snapshot.projects;
                 let project = projects.iter().find(|project| project.key == *scope)?;
-                Some(format!("{} (inferred)", project.name))
-            })
-            .unwrap_or_else(|| "Project (inferred)".to_string());
+                Some((format!("{} (inferred)", project.name), project.key.as_str()))
+            });
+        let project_name = project.as_ref().map_or_else(
+            || "Project (inferred)".to_string(),
+            |(name, _)| name.clone(),
+        );
+        let project_mark = project.map(|(_, key)| project_dot(key, &t).into_any_element());
         let status = draft.shown_status();
         let status_name_shown = if draft.status.is_some() {
             status_name(status).to_string()
@@ -623,7 +627,7 @@ impl Root {
             .px(px(14.))
             .pb(px(10.))
             .child(
-                Self::chip("c-project", project_name, None, anchors, &t).on_click(
+                Self::chip("c-project", project_name, project_mark, anchors, &t).on_click(
                     cx.listener(|this, _, window, cx| this.pick_composer_project(window, cx)),
                 ),
             )
