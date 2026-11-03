@@ -531,7 +531,7 @@ impl Root {
         cells.push(
             div()
                 .flex_none()
-                .w(px(132.))
+                .min_w(px(132.))
                 .text_right()
                 .whitespace_nowrap()
                 .text_size(px(12.))
