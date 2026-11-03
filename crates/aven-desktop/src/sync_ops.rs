@@ -28,6 +28,7 @@ use tokio::sync::mpsc;
 use zeroize::Zeroizing;
 
 use crate::adapter::{Reply, ReplyBody};
+use crate::toast::Toast;
 
 /// An invitation's text. It grants access to synced data, so `Debug` hides it.
 #[derive(Clone, PartialEq, Eq)]
@@ -164,9 +165,9 @@ pub enum SyncEvent {
         expires_at: u64,
     },
     /// The invitation is gone, with what the toast says about it.
-    InvitationEnded(String),
+    InvitationEnded(Toast),
     /// An invitation stays open and the toast says why.
-    InvitationKept(String),
+    InvitationKept(Toast),
     InvitationFailed(String),
 }
 
@@ -504,15 +505,19 @@ impl SyncWork {
         }
         .await;
         let ended = match admitted {
-            Ok(Admission::Admitted) => "Device added".to_string(),
-            Ok(Admission::Cancelled) => "Invitation cancelled".to_string(),
+            Ok(Admission::Admitted) => Toast::done("Device added"),
+            Ok(Admission::Cancelled) => Toast::done("Invitation cancelled"),
             Err(_) if self.keys_may_have_been_sent().await => {
-                "Invitation expired; the next sync changes keys".to_string()
+                Toast::warn("Invitation expired").detail("The next sync changes keys")
             }
             Err(error) if error_explanations::has_code(&error, "sync-invitation-unused") => {
-                "Invitation expired unused".to_string()
+                Toast::info("Invitation expired unused")
             }
-            Err(error) => explain(ErrorAction::General, &error, DEVICES_FALLBACK),
+            Err(error) => Toast::error("The invitation ended").detail(explain(
+                ErrorAction::General,
+                &error,
+                DEVICES_FALLBACK,
+            )),
         };
         self.send(SyncEvent::InvitationEnded(ended));
     }
@@ -536,31 +541,34 @@ impl SyncWork {
         .await;
         match cancelled {
             Ok(Cancellation::Cancelled) => {
-                self.send(SyncEvent::InvitationEnded(
-                    "Invitation cancelled".to_string(),
-                ));
+                self.send(SyncEvent::InvitationEnded(Toast::done(
+                    "Invitation cancelled",
+                )));
                 true
             }
             Ok(Cancellation::None) => {
-                self.send(SyncEvent::InvitationEnded(
-                    "No invitation is open".to_string(),
-                ));
+                self.send(SyncEvent::InvitationEnded(Toast::info(
+                    "No invitation is open",
+                )));
                 true
             }
             Ok(Cancellation::KeysMayHaveBeenSent { expires_at }) => {
-                self.send(SyncEvent::InvitationKept(format!(
-                    "Keys may already have been sent; the invitation expires at {}, and the next \
-                     sync then changes keys",
-                    expiry_time(expires_at)
-                )));
+                self.send(SyncEvent::InvitationKept(
+                    Toast::warn("Keys may already have been sent").detail(format!(
+                        "The invitation expires at {}, and the next sync then changes keys",
+                        expiry_time(expires_at)
+                    )),
+                ));
                 false
             }
             Err(error) => {
-                self.send(SyncEvent::InvitationKept(explain(
-                    ErrorAction::General,
-                    &error,
-                    DEVICES_FALLBACK,
-                )));
+                self.send(SyncEvent::InvitationKept(
+                    Toast::error("Could not cancel the invitation").detail(explain(
+                        ErrorAction::General,
+                        &error,
+                        DEVICES_FALLBACK,
+                    )),
+                ));
                 false
             }
         }

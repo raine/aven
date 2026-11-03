@@ -12,6 +12,7 @@ description: Release notes for aven.
 - Fix: Typed dates such as `tomorrow` save correctly in the desktop app instead of failing with an invalid date error.
 - Perf: Search and task lists stay fast in workspaces with thousands of tasks, where they could take seconds.
 - Fix: Choosing an order now starts from that order's natural direction, so Title after Recently updated no longer sorts Z to A.
+- UX: Desktop messages show an icon for what happened and the task they are about. Errors and gist publishing stay until resolved, a message pauses while the pointer is over it, and `⌘↩` runs its Retry, Refresh, Restore, Open, or Go action. Undo appears only while it would take back that change.
 
 ## v0.1.54 (2026-11-03)
 

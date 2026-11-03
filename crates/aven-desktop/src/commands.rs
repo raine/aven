@@ -16,6 +16,7 @@ use crate::input::{self, PastedImage, clipboard_image};
 use crate::kit::*;
 use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::shell::Root;
+use crate::toast::Toast;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FilterKind {
@@ -183,8 +184,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         if action.0 == TaskQuery::Search && self.session.snapshot.view.search.is_none() {
-            self.session
-                .show_toast("No search results".to_string(), None);
+            self.session.show_toast(Toast::info("No search results"));
             cx.notify();
             return;
         }
@@ -289,7 +289,7 @@ impl Root {
         } else {
             let name = view_name(view.query);
             self.session
-                .show_toast(format!("{name} is list only"), None);
+                .show_toast(Toast::info(format!("{name} is list only")));
         }
         cx.notify();
     }
@@ -334,6 +334,9 @@ impl Root {
         } else if self.is_narrow() && self.details_open {
             self.details_open = false;
             cx.notify();
+        } else if self.session.toast().is_some() {
+            self.session.dismiss_toast();
+            cx.notify();
         }
     }
 
@@ -377,7 +380,7 @@ impl Root {
         match blocker.and_then(|detail| detail.blocked_by.first()) {
             Some(link) => self.follow(link.id.clone(), window, cx),
             None => {
-                self.session.show_toast("No blocker".to_string(), None);
+                self.session.show_toast(Toast::info("No blocker"));
                 cx.notify();
             }
         }
@@ -503,9 +506,10 @@ impl Root {
             .is_some_and(|detail| detail.epic.is_some());
         let epic = marked.iter().any(|row| row.is_epic);
         if epic || (marked.is_empty() && (row.is_epic || linked)) {
-            let message =
-                "Epic children stay in the epic's project. Remove them from the epic first.";
-            self.session.show_toast(message.to_string(), None);
+            self.session.show_toast(
+                Toast::info("Epic children stay in the epic's project")
+                    .detail("Remove them from the epic first"),
+            );
             cx.notify();
             return;
         }
@@ -1038,7 +1042,7 @@ impl Root {
         if matches!(view.query, TaskQuery::Upcoming | TaskQuery::Overdue) {
             let name = view_name(view.query);
             self.session
-                .show_toast(format!("{name} has a fixed order"), None);
+                .show_toast(Toast::info(format!("{name} has a fixed order")));
             cx.notify();
             return;
         }
@@ -1127,7 +1131,7 @@ impl Root {
             Some(row) => self.session.write(Command::SetDeleted(row.id, false)),
             None => self
                 .session
-                .show_toast("Select a deleted task to restore".to_string(), None),
+                .show_toast(Toast::info("Select a deleted task to restore")),
         }
         cx.notify();
     }
@@ -1177,7 +1181,6 @@ impl Root {
     fn copy_text(&mut self, text: String, what: &str, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.session.copied_toast(what);
-        self.arm_toast(cx);
         cx.notify();
     }
 
@@ -1237,11 +1240,24 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let snapshot = &self.session.snapshot;
-        let mut entries = vec![
+        let mut entries = Vec::new();
+        if let Some(toast) = self.session.toast()
+            && let Some(action) = &toast.action
+        {
+            entries.extend([
+                Entry::head("Toast"),
+                Entry::action(
+                    format!("{}: {}", action.label(), toast.title),
+                    "⌘↩",
+                    RunToastAction,
+                ),
+            ]);
+        }
+        entries.extend([
             Entry::head("Task"),
             Entry::action("New task", "a", NewTask),
             Entry::action("Search tasks", "/", OpenSearch),
-        ];
+        ]);
         if let Some(row) = self.session.target_row() {
             entries.extend([
                 Entry::action("Mark done", "d", MarkDone),

@@ -29,6 +29,7 @@ use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::session::{ALL_CLEAR_DURATION, RING_DURATION, Review};
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
+use crate::toast::Toast;
 
 pub(crate) const SERIES_ROW_HEIGHT: f32 = 34.;
 pub(crate) const SERIES_HEAD_HEIGHT: f32 = 26.;
@@ -295,7 +296,6 @@ impl Root {
 
     pub(crate) fn toggle_mark(&mut self, _: &ToggleMark, _: &mut Window, cx: &mut Context<Self>) {
         self.session.toggle_selected_mark();
-        self.arm_toast(cx);
         cx.notify();
     }
 
@@ -330,7 +330,6 @@ impl Root {
 
     pub(crate) fn mark_visible(&mut self, _: &MarkVisible, _: &mut Window, cx: &mut Context<Self>) {
         self.session.mark_visible();
-        self.arm_toast(cx);
         cx.notify();
     }
 
@@ -407,8 +406,7 @@ impl Root {
         match parent {
             Some(epic) => self.follow(epic.id, window, cx),
             None => {
-                self.session.show_toast("Not in an epic".to_string(), None);
-                self.arm_toast(cx);
+                self.session.show_toast(Toast::info("Not in an epic"));
                 cx.notify();
             }
         }
@@ -449,11 +447,10 @@ impl Root {
             (None, Some(first)) => Some(first),
             (None, None) => {
                 self.session
-                    .show_toast("This epic has no tasks yet".to_string(), None);
+                    .show_toast(Toast::info("This epic has no tasks yet"));
                 None
             }
         };
-        self.arm_toast(cx);
         cx.notify();
     }
 
@@ -1059,8 +1056,8 @@ impl Root {
             Lifecycle::Stopped => "stopped",
             Lifecycle::All => "all",
         };
-        self.session.show_toast(format!("Recurring: {name}"), None);
-        self.arm_toast(cx);
+        self.session
+            .show_toast(Toast::info(format!("Showing {name} recurring tasks")));
     }
 
     pub(crate) fn cycle_lifecycle(
@@ -1464,11 +1461,8 @@ impl Root {
             .map(|detail| detail.conflicts.clone())
             .filter(|targets| !targets.is_empty())
         else {
-            self.session.show_toast(
-                "selected task has no unresolved conflicts".to_string(),
-                None,
-            );
-            self.arm_toast(cx);
+            self.session
+                .show_toast(Toast::info("This task has no unresolved conflicts"));
             cx.notify();
             return;
         };
@@ -1800,7 +1794,7 @@ impl Root {
                     move |this, window, cx| {
                         this.close_dialog(window, cx);
                         this.session.publish_gist(id.clone());
-                        this.arm_toast(cx);
+                        cx.notify();
                     },
                 ))
                 .into_any_element(),
@@ -1832,13 +1826,11 @@ impl Root {
             _ => TaskStatus::Canceled,
         };
         self.session.review_status(decide.0, status);
-        self.arm_toast(cx);
         self.after_status_motion(cx);
     }
 
     pub(crate) fn review_keep(&mut self, _: &ReviewKeep, _: &mut Window, cx: &mut Context<Self>) {
         self.session.review_keep();
-        self.arm_toast(cx);
         cx.notify();
     }
 
@@ -1865,7 +1857,6 @@ impl Root {
     ) {
         self.session.exit_review();
         self.load_selection(window, cx);
-        self.arm_toast(cx);
         cx.notify();
     }
 

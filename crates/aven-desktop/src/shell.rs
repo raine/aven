@@ -31,13 +31,14 @@ use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::lazy_row::LazyRow;
 use crate::markdown;
-use crate::overlays::{Menu, TOAST_DURATION};
+use crate::overlays::Menu;
 use crate::platform;
 use crate::session::{
     Applied, PRIORITY_DURATION, PULSE_DURATION, SETTLE_DURATION, Session, SyncTone, count_text,
 };
 use crate::settings::sync_icon;
 use crate::theme::{Theme, mix, theme};
+use crate::toast::{Pause, Subject, Toast, ToastAction};
 use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
 /// How long a quit waits for the store before giving up on it. Writes queued
@@ -412,8 +413,8 @@ pub struct Root {
     /// The stored title the editor last showed. Only a difference from it is an
     /// edit, so a blur never writes back a title that changed elsewhere.
     title_base: String,
-    /// The toast whose expiry is running.
-    armed_toast: Option<usize>,
+    /// When the timer running for the toast fires.
+    toast_timer: Option<Instant>,
     pub(crate) description: Entity<Editor>,
     pub(crate) note: Entity<Editor>,
     pub(crate) kid_input: Entity<Editor>,
@@ -485,6 +486,8 @@ impl Root {
                 if !window.is_window_active() {
                     this.menu = None;
                 }
+                this.session
+                    .pause_toast(Pause::Away, !window.is_window_active());
                 cx.notify();
             }),
             cx.observe_pending_input(window, |this, window, cx| {
@@ -527,7 +530,7 @@ impl Root {
             title,
             title_task: None,
             title_base: String::new(),
-            armed_toast: None,
+            toast_timer: None,
             description,
             note,
             kid_input,
@@ -905,33 +908,43 @@ impl Root {
             }
             self.sync_editors(window, cx);
         }
-        self.arm_toast(cx);
         cx.notify();
     }
 
-    pub(crate) fn arm_toast(&mut self, cx: &mut Context<Self>) {
-        let Some(run) = self.session.toast.as_ref().map(|toast| toast.run) else {
+    /// Keeps a timer running for the toast's deadline. Every frame checks, so
+    /// a toast shown from anywhere expires without its caller arming it.
+    fn arm_toast(&mut self, cx: &mut Context<Self>) {
+        let Some(deadline) = self.session.toasts.wake() else {
             return;
         };
-        if self.armed_toast.replace(run) == Some(run) {
+        if self.toast_timer.replace(deadline) == Some(deadline) {
             return;
         }
+        let wait = deadline.saturating_duration_since(Instant::now());
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(TOAST_DURATION).await;
+            cx.background_executor().timer(wait).await;
             this.update(cx, |this, cx| {
-                if this
-                    .session
-                    .toast
-                    .as_ref()
-                    .is_some_and(|toast| toast.run == run)
-                {
-                    this.session.toast = None;
+                if this.session.expire_toast() {
                     cx.notify();
                 }
             })
             .ok();
         })
         .detach();
+    }
+
+    pub(crate) fn run_toast_action(
+        &mut self,
+        _: &RunToastAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.session.run_toast_action() {
+            Some(ToastAction::RestoreDraft) => self.restore_draft(window, cx),
+            Some(ToastAction::Open(url)) => cx.open_url(&url),
+            _ => {}
+        }
+        cx.notify();
     }
 
     /// Brings open editors up to date with stored data. Focused editors keep
@@ -1101,8 +1114,7 @@ impl Root {
         self.chord = None;
         if !handled {
             self.session
-                .show_toast("No command on that key".to_string(), None);
-            self.arm_toast(cx);
+                .show_toast(Toast::info("No command on that key"));
         }
         cx.notify();
     }
@@ -1273,10 +1285,13 @@ impl Root {
         let Some(row) = self.session.target_row() else {
             return;
         };
-        let reference = row.reference.clone();
-        cx.write_to_clipboard(ClipboardItem::new_string(reference.clone()));
-        self.session.show_toast(format!("Copied {reference}"), None);
-        self.arm_toast(cx);
+        let subject = Some(Subject {
+            reference: row.reference.clone(),
+            project_key: row.project_key.clone(),
+        });
+        cx.write_to_clipboard(ClipboardItem::new_string(row.reference.clone()));
+        self.session
+            .show_toast(Toast::done("Copied").subject(subject));
         cx.notify();
     }
 
@@ -2780,6 +2795,7 @@ impl Render for Root {
             crate::startup::mark("first-render");
             window.on_next_frame(|_, _| crate::startup::mark("first-frame-ready"));
         }
+        self.arm_toast(cx);
         self.focus_sync_page(window, cx);
         let t = theme(cx);
         let narrow = window.viewport_size().width <= px(DETAIL_MIN_WINDOW_WIDTH);
@@ -2870,6 +2886,7 @@ impl Render for Root {
                 .on_action(cx.listener(Self::minimize))
                 .on_action(cx.listener(Self::zoom))
                 .on_action(cx.listener(Self::toggle_full_screen))
+                .on_action(cx.listener(Self::run_toast_action))
                 .child(gate)
                 .children(dialog)
                 .children(toast);
@@ -2877,6 +2894,10 @@ impl Render for Root {
         // A menu item with no handler here greys out, as it would do nothing. Popup
         // menus do not count: palette entries dispatch from a frame that shows one.
         let unblocked = !self.composer_open() && !self.dialog_open();
+        let toast_action = self
+            .session
+            .toast()
+            .is_some_and(|toast| toast.action.is_some());
         let settings_closed = self.session.settings.is_none();
         let on_list = unblocked && settings_closed && !reviewing;
         let has_task = self.session.target().is_some() || recurring;
@@ -2973,6 +2994,9 @@ impl Render for Root {
             .on_action(cx.listener(Self::save_description))
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(Self::undo))
+            .when(toast_action, |el| {
+                el.on_action(cx.listener(Self::run_toast_action))
+            })
             .on_action(cx.listener(Self::paste_image))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::next_field))

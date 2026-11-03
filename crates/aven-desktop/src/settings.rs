@@ -24,6 +24,7 @@ use crate::session::{SettingsTab, SyncPage, SyncTone, count_text};
 use crate::shell::Root;
 use crate::sync_ops::{Secret, SetupFacts, SyncKind, SyncOp, SyncRequest, steps};
 use crate::theme::{Theme, mix, theme};
+use crate::toast::Toast;
 use crate::workflows::tab_stop;
 
 const TABS: [(SettingsTab, &str); 9] = [
@@ -289,7 +290,7 @@ impl Root {
             Rc::new(move |root, text, _, cx| {
                 let text = text.trim().to_string();
                 if text.is_empty() {
-                    root.session.show_toast("Add a name".to_string(), None);
+                    root.session.show_toast(Toast::info("Add a name"));
                 } else {
                     root.session.write(Command::Settings(edit(text)));
                 }
@@ -531,7 +532,7 @@ impl Root {
             Rc::new(|root, text, _, cx| {
                 let text = text.trim();
                 if text.is_empty() {
-                    root.session.show_toast("Add a path".to_string(), None);
+                    root.session.show_toast(Toast::info("Add a path"));
                 } else {
                     root.session
                         .write(Command::OpenDatabase(PathBuf::from(text)));
@@ -1384,7 +1385,7 @@ impl Root {
         let check = InvitationCheck::of(&text);
         if check == InvitationCheck::Empty {
             self.session
-                .show_toast("Paste the invitation first.".to_string(), None);
+                .show_toast(Toast::info("Paste the invitation first"));
         }
         let fits = matches!(
             (kind, &check),
@@ -2387,9 +2388,8 @@ impl Root {
                                     copied.text().to_string(),
                                 ));
                                 this.session.show_toast(
-                                    "Invitation copied: it grants access to your synced data"
-                                        .to_string(),
-                                    None,
+                                    Toast::warn("Invitation copied")
+                                        .detail("Anyone who has it can read your synced tasks"),
                                 );
                                 cx.notify();
                             },

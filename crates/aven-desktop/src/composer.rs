@@ -18,6 +18,7 @@ use crate::kit::*;
 use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
+use crate::toast::{Toast, ToastAction};
 
 const DIALOG_CLOSE: Duration = Duration::from_millis(120);
 const COMPOSER_WIDTH: f32 = 560.;
@@ -173,11 +174,8 @@ impl Root {
         };
         if draft.has_text() {
             self.discarded = Some(draft);
-            self.session.show_toast(
-                "Draft discarded".to_string(),
-                Some(crate::session::ToastAction::RestoreDraft),
-            );
-            self.arm_toast(cx);
+            self.session
+                .show_toast(Toast::done("Draft discarded").action(Some(ToastAction::RestoreDraft)));
         }
         self.close_composer(None, window, cx);
     }
@@ -255,8 +253,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.session.show_toast(problem.message().to_string(), None);
-        self.arm_toast(cx);
+        self.session.show_toast(problem.toast());
         if let Some(focus) = focus {
             window.focus(&focus, cx);
         }
@@ -291,8 +288,7 @@ impl Root {
         let notes = draft.intake_text();
         if notes.is_empty() {
             self.session
-                .show_toast("Add rough notes first".to_string(), None);
-            self.arm_toast(cx);
+                .show_toast(Toast::info("Add rough notes first"));
         } else {
             self.session.intake(notes.clone(), draft.project.clone());
             if let Some(composer) = self.composer.as_mut() {

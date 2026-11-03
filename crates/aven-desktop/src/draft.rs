@@ -10,6 +10,7 @@ use aven_host::schedule_input::{ParsedScheduleInput, format_schedule_input, pars
 use chrono::{Local, NaiveDate, Utc};
 
 use crate::adapter::{NewTask, PendingImage, available_text, due_text};
+use crate::toast::Toast;
 
 /// The schedule a recurring text describes.
 pub fn recurrence_schedule(text: &str) -> Result<RecurrenceSchedule> {
@@ -441,18 +442,15 @@ pub enum DraftProblem {
 }
 
 impl DraftProblem {
-    /// What the terminal app says when it refuses the same draft.
-    pub fn message(self) -> &'static str {
+    /// Why the draft was refused, as the terminal app refuses it.
+    pub fn toast(self) -> Toast {
         match self {
-            Self::Title => "Add a title",
-            Self::Schedule => "Check the schedule",
-            Self::RecurringEpic => "recurring tasks cannot be epic containers",
-            Self::RecurringStatus => {
-                "recurring tasks require an open initial status: inbox, backlog, todo, or active"
-            }
-            Self::RecurringAttachments => {
-                "create the recurring task before adding occurrence attachments"
-            }
+            Self::Title => Toast::info("Add a title"),
+            Self::Schedule => Toast::info("Check the schedule"),
+            Self::RecurringEpic => Toast::info("A recurring task cannot be an epic"),
+            Self::RecurringStatus => Toast::info("A recurring task starts open")
+                .detail("Choose Inbox, Backlog, Todo or Active"),
+            Self::RecurringAttachments => Toast::info("Add images once the recurring task exists"),
         }
     }
 }
@@ -521,10 +519,7 @@ mod tests {
         };
         let problem = draft.task().unwrap_err();
         assert_eq!(problem, DraftProblem::RecurringEpic);
-        assert_eq!(
-            problem.message(),
-            "recurring tasks cannot be epic containers"
-        );
+        assert_eq!(problem.toast().title, "A recurring task cannot be an epic");
 
         draft.is_epic = false;
         draft.status = Some(TaskStatus::Done);
@@ -538,8 +533,8 @@ mod tests {
         let problem = draft.task().unwrap_err();
         assert_eq!(problem, DraftProblem::RecurringAttachments);
         assert_eq!(
-            problem.message(),
-            "create the recurring task before adding occurrence attachments"
+            problem.toast().title,
+            "Add images once the recurring task exists"
         );
 
         draft.schedule = "tomorrow".to_string();

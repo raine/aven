@@ -14,13 +14,15 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::actions::VIEWS;
 use crate::adapter::{
-    Bulk, CatalogTask, Command, Detail, Go, Group, KnownDatabase, NewTask, Reply, ReplyBody,
-    Request, ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData,
-    Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group,
+    Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, NewTask, Reply, ReplyBody, Request,
+    ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot,
+    SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed,
 };
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
 };
+use crate::toast::{Pause, Subject, Toasts};
+pub use crate::toast::{Toast, ToastAction, Tone};
 
 pub const POP_DURATION: Duration = Duration::from_millis(320);
 pub const SETTLE_DURATION: Duration = Duration::from_millis(620);
@@ -143,37 +145,6 @@ enum LocalChange {
     Priority(TaskId, TaskPriority),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ToastAction {
-    /// Runs a command that did not save.
-    Retry(Command),
-    /// Reloads after a save whose refresh failed. It never repeats the write.
-    Refresh,
-    /// Moves somewhere the write made interesting.
-    Go(Go),
-    /// Brings a discarded draft back, which the window holds.
-    RestoreDraft,
-}
-
-impl ToastAction {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Retry(_) => "Retry",
-            Self::Refresh => "Refresh",
-            Self::Go(go) => go.label,
-            Self::RestoreDraft => "Restore",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Toast {
-    pub run: usize,
-    pub message: String,
-    pub action: Option<ToastAction>,
-    pub undo: bool,
-}
-
 /// What a reply changed, for the view.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Applied {
@@ -272,7 +243,7 @@ pub struct Session {
     pub search: SearchResults,
     pub search_recent: Vec<String>,
     pub note_drafts: HashMap<TaskId, String>,
-    pub toast: Option<Toast>,
+    pub toasts: Toasts,
     pub sync: Option<SyncHealth>,
     /// When this app last finished a round. Desktop-local, never the daemon's.
     pub synced_at: Option<i64>,
@@ -298,7 +269,8 @@ pub struct Session {
     pub child: Option<TaskId>,
     /// An epic's finished children are listed.
     pub show_finished: bool,
-    gist_running: bool,
+    /// A gist on its way, with the task it reports on.
+    publishing: Option<Option<Subject>>,
     /// Tasks closed during this visit to the view, oldest first. They stay in
     /// the Done group until the user refreshes the view.
     done: Vec<TaskId>,
@@ -307,6 +279,8 @@ pub struct Session {
     requests: UnboundedSender<Request>,
     next_request: u64,
     last_mutation: u64,
+    /// The newest request that changes stored data.
+    last_write: u64,
     last_detail: u64,
     /// The selection when the newest create was sent.
     create_from: Option<TaskId>,
@@ -432,7 +406,7 @@ impl Session {
             search: SearchResults::default(),
             search_recent: Vec::new(),
             note_drafts: HashMap::new(),
-            toast: None,
+            toasts: Toasts::default(),
             sync: None,
             synced_at: None,
             sync_run: None,
@@ -451,12 +425,13 @@ impl Session {
             review: None,
             child: None,
             show_finished: false,
-            gist_running: false,
+            publishing: None,
             done: Vec::new(),
             moving: None,
             requests,
             next_request: 0,
             last_mutation: 0,
+            last_write: 0,
             last_detail: 0,
             create_from: None,
             last_search: 0,
@@ -470,6 +445,10 @@ impl Session {
     fn send(&mut self, command: Command) -> u64 {
         self.next_request += 1;
         let id = self.next_request;
+        if command.is_write() {
+            self.last_write = id;
+            self.toasts.drop_undo(Instant::now());
+        }
         if command.is_mutation() {
             self.last_mutation = id;
             if !matches!(
@@ -630,15 +609,14 @@ impl Session {
     pub fn toggle_selected_mark(&mut self) {
         if self.snapshot.view.query == TaskQuery::Recurring {
             self.show_toast(
-                "recurring rows select series and cannot be marked. press enter to open an occurrence."
-                    .to_string(),
-                None,
+                Toast::info("Recurring rows cannot be marked")
+                    .detail("Press Enter to open an occurrence"),
             );
             return;
         }
         match self.selected.clone() {
             Some(id) => self.toggle_mark(id),
-            None => self.show_toast("no selected task to mark".to_string(), None),
+            None => self.show_toast(Toast::info("No selected task to mark")),
         }
     }
 
@@ -657,7 +635,7 @@ impl Session {
     pub fn mark_visible(&mut self) {
         let order = order(&self.snapshot);
         if order.is_empty() {
-            self.show_toast("no visible tasks to mark".to_string(), None);
+            self.show_toast(Toast::info("No visible tasks to mark"));
         } else if order.iter().all(|id| self.marks.contains(id)) {
             self.marks.clear();
         } else {
@@ -708,7 +686,12 @@ impl Session {
 
     fn take_review_page(&mut self, cards: Vec<ReviewCard>, more: usize) {
         if cards.is_empty() {
-            self.show_toast("nothing else to triage".to_string(), None);
+            let title = match (&self.review, &self.snapshot.view.project) {
+                (Some(_), _) => "Nothing else to triage".to_string(),
+                (None, Some(key)) => format!("Nothing to triage in {key}"),
+                (None, None) => "Nothing to triage".to_string(),
+            };
+            self.show_toast(Toast::info(title));
             return;
         }
         let seen = cards.iter().map(|card| card.id.clone());
@@ -807,7 +790,7 @@ impl Session {
             return;
         };
         if !card.stale {
-            self.show_toast("choose a destination for inbox tasks".to_string(), None);
+            self.show_toast(Toast::info("Choose a destination for inbox tasks"));
             return;
         }
         let at = self.review.as_ref().map_or(0, |review| review.at);
@@ -906,8 +889,7 @@ impl Session {
         }
         self.prune_marks();
         self.show_toast(
-            format!("left triage · {decided} decided · {undecided} undecided"),
-            None,
+            Toast::done("Left triage").detail(format!("{decided} decided, {undecided} undecided")),
         );
     }
 
@@ -920,12 +902,13 @@ impl Session {
 
     /// Publishes a report once at a time, as the TUI does.
     pub fn publish_gist(&mut self, id: TaskId) {
-        if self.gist_running {
-            self.show_toast("gist creation already in progress".to_string(), None);
+        if self.publishing.is_some() {
+            self.show_toast(Toast::info("Already publishing a gist"));
             return;
         }
-        self.gist_running = true;
-        self.show_toast("creating secret gist".to_string(), None);
+        let subject = self.subject(&id);
+        self.publishing = Some(subject.clone());
+        self.show_toast(Toast::progress("Publishing secret gist").subject(subject));
         self.send(Command::PublishGist(id));
     }
 
@@ -1058,28 +1041,52 @@ impl Session {
         self.moving = None;
     }
 
-    pub fn run_toast_action(&mut self) {
-        match self.toast.take().and_then(|toast| toast.action) {
-            Some(ToastAction::Retry(command)) => {
+    /// The toast on screen.
+    pub fn toast(&self) -> Option<&Toast> {
+        self.toasts.current()
+    }
+
+    /// Runs the toast's action, other than Undo, and ends the toast. Returns
+    /// an action only the window can carry out.
+    pub fn run_toast_action(&mut self) -> Option<ToastAction> {
+        let action = self.toast()?.action.clone()?;
+        self.dismiss_toast();
+        match action {
+            ToastAction::Retry(command) => {
                 self.send(command);
             }
-            Some(ToastAction::Refresh) => {
+            ToastAction::Refresh => {
                 self.send(Command::Refresh);
                 if let Some(id) = self.selected.clone() {
                     self.load_detail(id);
                 }
             }
-            Some(ToastAction::Go(go)) => match go.command {
+            ToastAction::Go(go) => match go.command {
                 Command::Goto(id) => self.goto(id),
                 command => self.switch_view(command),
             },
-            Some(ToastAction::RestoreDraft) | None => {}
+            action @ (ToastAction::RestoreDraft | ToastAction::Open(_)) => return Some(action),
         }
+        None
     }
 
+    /// Undo from the toast: the store's undo, which this toast's change is the
+    /// newest entry of, since any later write drops the toast.
     pub fn run_toast_undo(&mut self) {
-        self.toast = None;
         self.undo();
+    }
+
+    pub fn dismiss_toast(&mut self) {
+        self.toasts.dismiss(Instant::now());
+    }
+
+    /// Ends the toast whose time is up. Returns whether one ended.
+    pub fn expire_toast(&mut self) -> bool {
+        self.toasts.expire(Instant::now())
+    }
+
+    pub fn pause_toast(&mut self, pause: Pause, on: bool) {
+        self.toasts.set_paused(pause, on, Instant::now());
     }
 
     pub fn database_failed(&mut self, path: PathBuf, message: String) {
@@ -1315,11 +1322,11 @@ impl Session {
                 if self.sync_page == SyncPage::AddDevice {
                     self.sync_page = SyncPage::Home;
                 }
-                self.show_toast(message, None);
+                self.show_toast(message);
                 self.load_devices();
                 self.send(Command::Refresh);
             }
-            SyncEvent::InvitationKept(message) => self.show_toast(message, None),
+            SyncEvent::InvitationKept(message) => self.show_toast(message),
             SyncEvent::InvitationFailed(message) => {
                 self.sync_page = SyncPage::Failed(message);
             }
@@ -1362,8 +1369,11 @@ impl Session {
                 self.sync_page = SyncPage::Done { kind, note };
             }
             (Err(message), Some(_)) if watching => self.sync_page = SyncPage::Failed(message),
-            (Ok(message) | Err(message), _) => {
-                self.show_toast(message, None);
+            (result, _) => {
+                self.show_toast(match result {
+                    Ok(message) => Toast::done(message),
+                    Err(message) => Toast::error(failure_title(&op)).detail(message),
+                });
                 if op.kind().is_some() {
                     self.sync_page = SyncPage::Home;
                 }
@@ -1392,26 +1402,39 @@ impl Session {
         self.synced_at = None;
         self.devices = None;
         self.invitation = None;
-        self.show_toast(format!("Opened {}", path.display()), None);
+        let name = path.file_name().unwrap_or(path.as_os_str());
+        self.show_toast(
+            Toast::done(format!("Opened {}", name.to_string_lossy()))
+                .detail(path.display().to_string()),
+        );
         applied.opened = Some((
             KnownDatabase { path, tasks },
             previous.map(|(path, tasks)| KnownDatabase { path, tasks }),
         ));
     }
 
-    pub fn show_toast(&mut self, message: String, action: Option<ToastAction>) {
-        let message = capitalised(&message);
+    pub fn show_toast(&mut self, toast: Toast) {
         let run = self.motion.next_run();
-        self.toast = Some(Toast {
-            run,
-            message,
-            action,
-            undo: false,
-        });
+        self.toasts.show(Toast { run, ..toast }, Instant::now());
+    }
+
+    /// Resolves the toast for work under way, in place if it still shows.
+    fn settle_toast(&mut self, toast: Toast) {
+        let run = self.motion.next_run();
+        self.toasts.settle(Toast { run, ..toast }, Instant::now());
     }
 
     pub fn copied_toast(&mut self, what: &str) {
-        self.show_toast(format!("Copied {what}"), None);
+        self.show_toast(Toast::done(format!("Copied {what}")));
+    }
+
+    /// The task a toast about `id` names, if the list shows it.
+    pub fn subject(&self, id: &TaskId) -> Option<Subject> {
+        let row = self.snapshot.row(id)?;
+        Some(Subject {
+            reference: row.reference.clone(),
+            project_key: row.project_key.clone(),
+        })
     }
 
     /// Puts text typed while a failed note was on its way after the note.
@@ -1453,15 +1476,16 @@ impl Session {
             ReplyBody::Review(cards, more) => self.take_review_page(cards, more),
             ReplyBody::AskStop(id) => applied.stop = Some(id),
             ReplyBody::Gist(result) => {
-                self.gist_running = false;
-                match result {
+                let subject = self.publishing.take().flatten();
+                self.settle_toast(match result {
                     Ok(url) => {
-                        applied.copy = Some(url);
-                        let message = "created secret gist and copied its URL";
-                        self.show_toast(message.to_string(), None);
+                        applied.copy = Some(url.clone());
+                        Toast::done("Gist link copied")
+                            .subject(subject)
+                            .action(Some(ToastAction::Open(url)))
                     }
-                    Err(message) => self.show_toast(message, None),
-                }
+                    Err(message) => failed("Could not publish the gist", &message).subject(subject),
+                });
             }
             // Catalogs are read off the actor, so they can arrive out of order.
             ReplyBody::Catalog(catalog) => {
@@ -1482,7 +1506,7 @@ impl Session {
             ReplyBody::Intake(task) => applied.intake = Some(task),
             ReplyBody::IntakeFailed(message) => {
                 applied.intake_failed = true;
-                self.show_toast(format!("Could not read that: {message}"), None);
+                self.show_toast(failed("Could not read that", &message));
             }
             ReplyBody::Created(id) => {
                 // Moving on while the write ran keeps the newer selection.
@@ -1497,49 +1521,46 @@ impl Session {
                 self.select(id);
                 applied.selection = true;
             }
-            ReplyBody::Saved { message, go, undo } => {
-                self.show_toast(message, go.map(ToastAction::Go));
-                if let Some(toast) = &mut self.toast {
-                    toast.undo = undo;
-                }
+            ReplyBody::Saved(toast) => {
+                // A write sent since would be what undo takes back.
+                let undo = toast.undo && reply.request >= self.last_write;
+                self.show_toast(toast.undo(undo));
                 // Details of a peeked task are not refreshed by its list.
                 if let Some(id) = self.peek.clone() {
                     self.last_detail = self.send(Command::Peek(id));
                 }
             }
-            ReplyBody::Notice(message) => self.show_toast(message, None),
+            ReplyBody::Notice(toast) => self.show_toast(toast),
             ReplyBody::Stopped => applied.stopped = true,
             ReplyBody::SaveFailed(Command::AddNote(id, body), message) => {
                 applied.draft = self.selected.as_ref() == Some(&id);
                 let draft = self.note_drafts.entry(id).or_default();
                 *draft = join_drafts(&body, draft);
-                self.show_toast(format!("Could not save the note: {message}"), None);
+                self.show_toast(failed("Could not save the note", &message));
             }
             ReplyBody::SaveFailed(Command::Create(task), message) => {
                 applied.composer_draft = Some(task);
                 self.show_toast(
-                    format!("Could not create the task, it is back in New task: {message}"),
-                    None,
+                    failed("Could not create the task", &message)
+                        .detail(format!("It is back in New task. {}", capitalised(&message))),
                 );
             }
             ReplyBody::SaveFailed(command, message) => {
                 self.undoable.clear();
                 self.review_save_failed(&command);
                 self.show_toast(
-                    format!("Could not save: {message}"),
-                    Some(ToastAction::Retry(command)),
+                    failed("Could not save", &message).action(Some(ToastAction::Retry(command))),
                 );
             }
             ReplyBody::SavedRefreshFailed(message) => {
                 self.show_toast(
-                    format!("Saved, but the list did not refresh: {message}"),
-                    Some(ToastAction::Refresh),
+                    failed("Saved, but the list did not refresh", &message)
+                        .action(Some(ToastAction::Refresh)),
                 );
             }
             ReplyBody::RefreshFailed(message) => {
                 self.show_toast(
-                    format!("Could not refresh: {message}"),
-                    Some(ToastAction::Refresh),
+                    failed("Could not refresh", &message).action(Some(ToastAction::Refresh)),
                 );
             }
             ReplyBody::Sync(health) => {
@@ -1562,10 +1583,11 @@ impl Session {
                 if self.database_error.is_some() {
                     self.database_failed(path, message);
                 } else {
-                    self.show_toast(
-                        format!("Could not open {}: {message}", path.display()),
-                        None,
-                    );
+                    let name = path.file_name().unwrap_or(path.as_os_str());
+                    self.show_toast(failed(
+                        &format!("Could not open {}", name.to_string_lossy()),
+                        &message,
+                    ));
                 }
             }
         }
@@ -1747,6 +1769,17 @@ fn order(snapshot: &Snapshot) -> Vec<TaskId> {
 fn first_row(snapshot: &Snapshot) -> Option<TaskId> {
     let first = snapshot.ordered().next()?;
     Some(snapshot.tasks[first].id.clone())
+}
+
+/// What failed, for a toast about user-started sync work.
+fn failure_title(op: &SyncOp) -> &'static str {
+    match op {
+        SyncOp::Now => "Could not sync",
+        SyncOp::Setup(_) | SyncOp::ResumeSetup => "Could not set up sync",
+        SyncOp::Join { .. } => "Could not join sync",
+        SyncOp::RemoveDevice { .. } | SyncOp::FinishRemoval => "Could not remove the device",
+        SyncOp::Reset { .. } => "Could not reset sync",
+    }
 }
 
 #[cfg(test)]

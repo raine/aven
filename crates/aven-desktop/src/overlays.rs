@@ -1,4 +1,5 @@
 //! Surfaces above the window: menus and the toast.
+use std::f32::consts::{PI, TAU};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -6,20 +7,24 @@ use accesskit::Role;
 use aven_core::choices::{TaskPriority, TaskStatus};
 use chrono::NaiveDate;
 use gpui::{
-    Action, Animation, AnimationExt, App, Bounds, Context, Entity, FocusHandle, FontWeight,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, SharedString,
-    Subscription, Window, div, point, prelude::*, relative,
+    Action, Animation, AnimationExt, App, Bounds, Context, Div, Entity, FocusHandle, FontWeight,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollHandle, Stateful,
+    Subscription, Transformation, Window, div, point, prelude::*, radians, relative, svg,
 };
 
+use crate::actions::RunToastAction;
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::schedule::{CALENDAR_HEIGHT, Calendar};
-use crate::session::ToastAction;
 use crate::shell::Root;
-use crate::theme::theme;
+use crate::theme::{Theme, theme};
+use crate::toast::{LEAVE, Pause, Tone};
 use aven_core::labels::normalize_label;
 
-pub const TOAST_DURATION: Duration = Duration::from_secs(5);
+const TOAST_ENTER: Duration = Duration::from_millis(200);
+const TOAST_BUMP: Duration = Duration::from_millis(180);
+const TOAST_SPIN: Duration = Duration::from_millis(800);
+const TOAST_MAX_WIDTH: f32 = 560.;
 const MENU_ENTER: Duration = Duration::from_millis(140);
 const MENU_WIDTH: f32 = 280.;
 const PLAIN_MENU_WIDTH: f32 = 236.;
@@ -972,72 +977,292 @@ impl Root {
     }
 
     pub(crate) fn render_toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        let toast = self.session.toast.as_ref()?;
-        let t = theme(cx);
-        let toast_button = |id: &'static str, label: SharedString| {
-            div()
-                .id(id)
-                .role(Role::Button)
-                .aria_label(label.clone())
-                .flex_none()
-                .text_color(t.accent)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(label)
+        // An ended toast stays only to fade out, so it takes no input.
+        let (toast, leaving) = match self.session.toast() {
+            Some(toast) => (toast, false),
+            None => (self.session.toasts.leaving()?, true),
         };
-        let action = toast.action.as_ref();
-        let restore = matches!(action, Some(ToastAction::RestoreDraft));
-        Some(
-            div()
-                .absolute()
-                .bottom(px(22.))
-                .left_0()
-                .right_0()
-                .flex()
-                .justify_center()
-                .child(
+        let t = theme(cx);
+        let tone = match toast.tone {
+            Tone::Done => t.good,
+            Tone::Info => t.muted,
+            Tone::Warn => t.warn,
+            Tone::Error => t.bad,
+            Tone::Progress => t.accent,
+        };
+        let icon = match toast.tone {
+            Tone::Done => "icons/toast-done.svg",
+            Tone::Info => "icons/toast-info.svg",
+            Tone::Warn => "icons/toast-warn.svg",
+            Tone::Error => "icons/toast-error.svg",
+            Tone::Progress => "icons/toast-progress.svg",
+        };
+        let glyph = svg().path(icon).size(px(16.)).text_color(tone);
+        let glyph = if toast.tone == Tone::Progress {
+            glyph
+                .with_animation(
+                    ("toast-spin", toast.run),
+                    Animation::new(TOAST_SPIN).repeat(),
+                    |glyph, delta| {
+                        glyph.with_transformation(Transformation::rotate(radians(delta * TAU)))
+                    },
+                )
+                .into_any_element()
+        } else {
+            glyph.into_any_element()
+        };
+        let error = toast.tone == Tone::Error;
+        let mut spoken = toast.title.clone();
+        if let Some(subject) = &toast.subject {
+            spoken = format!("{spoken} {}", subject.reference);
+        }
+        if toast.times > 1 {
+            spoken = format!("{spoken}, {} times", toast.times);
+        }
+        if let Some(detail) = &toast.detail {
+            spoken = format!("{spoken}. {detail}");
+        }
+        let title = div()
+            .flex()
+            .items_baseline()
+            .min_w_0()
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(div().min_w_0().truncate().child(toast.title.clone()))
+            .when_some(toast.subject.as_ref(), |title, subject| {
+                title.child(
                     div()
-                        .id("toast")
-                        .role(Role::Alert)
-                        .aria_label(toast.message.clone())
-                        .max_w(relative(0.7))
-                        .min_h(px(34.))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .px(px(12.))
-                        .py(px(4.))
-                        .rounded(px(8.))
-                        .bg(t.pop)
-                        .shadow(t.menu_shadow())
-                        .text_color(t.body)
-                        .occlude()
-                        .child(div().min_w_0().truncate().child(toast.message.clone()))
-                        .when(toast.undo, |el| {
-                            el.child(toast_button("toast-undo", "Undo".into()).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.session.run_toast_undo();
-                                    cx.notify();
-                                }),
-                            ))
-                        })
-                        .when_some(action, |el, action| {
-                            el.child(
-                                toast_button("toast-action", action.label().into()).on_click(
-                                    cx.listener(move |this, _, window, cx| {
-                                        if restore {
-                                            this.session.toast = None;
-                                            this.restore_draft(window, cx);
-                                        } else {
-                                            this.session.run_toast_action();
-                                        }
-                                        cx.notify();
-                                    }),
-                                ),
-                            )
-                        }),
-                ),
-        )
+                        .flex_none()
+                        .ml(px(5.))
+                        .font_family(MONO)
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(t.project(&subject.project_key))
+                        .child(subject.reference.clone()),
+                )
+            })
+            .when(toast.times > 1, |title| {
+                title.child(
+                    div()
+                        .flex_none()
+                        .ml(px(4.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(t.faint)
+                        .child(format!("×{}", toast.times)),
+                )
+            });
+        let detail = toast.detail.clone().map(|detail| {
+            div()
+                .min_w_0()
+                .text_size(px(12.5))
+                .text_color(t.muted)
+                .map(|el| {
+                    if error {
+                        el.line_clamp(2)
+                    } else {
+                        el.truncate()
+                    }
+                })
+                .child(detail)
+        });
+        // Undo leads when there is one; otherwise the action does.
+        let undo = toast.undo.then(|| {
+            toast_button("toast-undo", "Undo", Some("u"), true, &t).when(!leaving, |button| {
+                button.on_click(cx.listener(|this, _, _, cx| {
+                    this.session.run_toast_undo();
+                    cx.notify();
+                }))
+            })
+        });
+        let action = toast.action.as_ref().map(|action| {
+            toast_button("toast-action", action.label(), Some("⌘↩"), !toast.undo, &t).when(
+                !leaving,
+                |button| {
+                    button.on_click(cx.listener(|this, _, window, cx| {
+                        this.run_toast_action(&RunToastAction, window, cx);
+                    }))
+                },
+            )
+        });
+        let actions = (undo.is_some() || action.is_some()).then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .ml(px(8.))
+                .children(undo)
+                .children(action)
+        });
+        let dismiss = toast.dismissable().then(|| {
+            let (raised, ink) = (t.raised, t.ink);
+            div()
+                .id("toast-dismiss")
+                .role(Role::Button)
+                .aria_label("Dismiss")
+                .flex_none()
+                .size(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .text_color(t.faint)
+                .when(!error, |el| {
+                    el.opacity(0.)
+                        .group_hover("toast", |style| style.opacity(1.))
+                })
+                .hover(move |style| style.bg(raised).text_color(ink))
+                .child(
+                    svg()
+                        .path("icons/toast-dismiss.svg")
+                        .size(px(12.))
+                        .text_color(t.faint),
+                )
+                .when(!leaving, |button| {
+                    button.on_click(cx.listener(|this, _, _, cx| {
+                        this.session.dismiss_toast();
+                        cx.notify();
+                    }))
+                })
+        });
+        let padded = actions.is_some() || dismiss.is_some();
+        let (run, bump) = (toast.run, toast.bump);
+        let card = div()
+            .id(("toast", run))
+            .group("toast")
+            .role(if error { Role::Alert } else { Role::Status })
+            .aria_label(spoken)
+            .relative()
+            .min_w_0()
+            .max_w(px(TOAST_MAX_WIDTH))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .pl(px(6.))
+            .pr(px(if padded { 8. } else { 14. }))
+            .py(px(6.))
+            .rounded(px(12.))
+            .bg(t.pop)
+            .shadow(t.menu_shadow())
+            .text_color(t.ink)
+            .when(!leaving, |card| {
+                card.occlude()
+                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                        this.session.pause_toast(Pause::Hover, *hovered);
+                        cx.notify();
+                    }))
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(8.))
+                    .bg(tone.opacity(0.16))
+                    .child(glyph),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(title)
+                    .children(detail),
+            )
+            .children(actions)
+            .children(dismiss);
+        // A repeat nudges the card in place, keeping the entrance it had.
+        let card = if bump == 0 {
+            card.into_any_element()
+        } else {
+            card.with_animation(
+                ("toast-bump", bump),
+                Animation::new(TOAST_BUMP),
+                |card, delta| card.top(px(-3. * (delta * PI).sin())),
+            )
+            .into_any_element()
+        };
+        let layer = div()
+            .absolute()
+            .bottom(px(22.))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .max_w(relative(0.78))
+                    .flex()
+                    .justify_center()
+                    .child(card),
+            );
+        Some(if leaving {
+            layer
+                .with_animation(
+                    ("toast-leave", run),
+                    Animation::new(LEAVE),
+                    |layer, delta| {
+                        let eased = delta * delta;
+                        layer.bottom(px(22. - 4. * eased)).opacity(1. - eased)
+                    },
+                )
+                .into_any_element()
+        } else {
+            layer
+                .with_animation(
+                    ("toast-enter", run),
+                    Animation::new(TOAST_ENTER),
+                    |layer, delta| {
+                        let eased = 1. - (1. - delta).powi(3);
+                        layer.bottom(px(22. - 8. * (1. - eased))).opacity(eased)
+                    },
+                )
+                .into_any_element()
+        })
     }
+}
+
+/// A toast's button, naming its key beside the label as the key is real.
+fn toast_button(
+    id: &'static str,
+    label: &'static str,
+    key: Option<&'static str>,
+    main: bool,
+    t: &Theme,
+) -> Stateful<Div> {
+    let (bg, color, hover_bg, hover_color) = if main {
+        (t.tint, t.accent, t.accent.opacity(0.22), t.accent)
+    } else {
+        (t.raised, t.muted, t.line2, t.ink)
+    };
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .flex_none()
+        .h(px(26.))
+        .px(px(9.))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .rounded(px(7.))
+        .bg(bg)
+        .text_color(color)
+        .font_weight(FontWeight::SEMIBOLD)
+        .hover(move |style| style.bg(hover_bg).text_color(hover_color))
+        .child(label)
+        .when_some(key, |button, key| {
+            button.child(
+                div()
+                    .font_family(MONO)
+                    .font_weight(FontWeight::NORMAL)
+                    .text_size(px(12.))
+                    .text_color(color.opacity(0.6))
+                    .child(key),
+            )
+        })
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use aven_core::ids::TaskId;
 use aven_core::operations::TaskDraft;
 use aven_core::sync::client::keys::FileProtectedStorage;
 use aven_desktop::adapter::{self, Command, NewTask, Reply, ReplyBody, Request, Snapshot};
-use aven_desktop::session::{Session, ToastAction};
+use aven_desktop::session::{Session, Toast, ToastAction, Tone};
 use aven_host::config::AppConfig;
 use aven_host::store::{TaskQuery, TuiStore};
 use chrono::Local;
@@ -172,7 +172,7 @@ async fn a_failed_save_offers_retry_and_a_failed_refresh_never_repeats_the_write
         1,
         ReplyBody::SaveFailed(command.clone(), "database is locked".to_string()),
     ));
-    let toast = h.session.toast.clone().unwrap();
+    let toast = h.session.toast().cloned().unwrap();
     assert_eq!(toast.action, Some(ToastAction::Retry(command.clone())));
     h.take_requests();
     h.session.run_toast_action();
@@ -186,7 +186,7 @@ async fn a_failed_save_offers_retry_and_a_failed_refresh_never_repeats_the_write
     h.session
         .apply(reply(2, ReplyBody::SavedRefreshFailed("gone".to_string())));
     assert_eq!(
-        h.session.toast.clone().unwrap().action,
+        h.session.toast().cloned().unwrap().action,
         Some(ToastAction::Refresh)
     );
     h.session.run_toast_action();
@@ -212,7 +212,7 @@ async fn a_failed_note_returns_to_its_draft() {
     assert!(applied.draft);
     assert_eq!(h.session.note_drafts[&only], "keep me");
     assert_eq!(
-        h.session.toast.clone().unwrap().action,
+        h.session.toast().cloned().unwrap().action,
         None,
         "Enter saves the draft again"
     );
@@ -247,7 +247,7 @@ async fn a_failed_create_returns_its_title_to_the_composer() {
     ));
     assert_eq!(applied.composer_draft.unwrap().title, "New idea");
     assert_eq!(
-        h.session.toast.clone().unwrap().action,
+        h.session.toast().cloned().unwrap().action,
         None,
         "the composer saves it again, so no retry can duplicate it"
     );
@@ -662,7 +662,7 @@ async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
     while let Ok(reply) = replies.try_recv() {
         session.apply(reply);
     }
-    assert!(session.toast.unwrap().message.ends_with("moved to Todo"));
+    assert_eq!(session.toast().unwrap().title, "Moved to Todo");
     assert_eq!(
         session.snapshot.row(&second).unwrap().status,
         TaskStatus::Todo
@@ -743,19 +743,71 @@ async fn a_saved_write_offers_undo_and_its_way_there() {
     };
     h.session.apply(reply(
         0,
-        ReplyBody::Saved {
-            message: "Deferred".to_string(),
-            go: Some(go.clone()),
-            undo: true,
-        },
+        ReplyBody::Saved(
+            Toast::done("Deferred")
+                .action(Some(ToastAction::Go(go.clone())))
+                .undo(true),
+        ),
     ));
-    let toast = h.session.toast.clone().unwrap();
+    let toast = h.session.toast().cloned().unwrap();
     assert!(toast.undo);
     assert_eq!(toast.action, Some(ToastAction::Go(go)));
     h.take_requests();
     h.session.run_toast_undo();
     let commands: Vec<_> = h.take_requests().into_iter().map(|r| r.command).collect();
     assert_eq!(commands, [Command::Undo]);
+    assert!(h.session.toast().is_none(), "its change is taken back");
+}
+
+#[tokio::test]
+async fn an_undo_toast_goes_when_a_later_change_would_be_undone_instead() {
+    let mut h = harness(&["First"]).await;
+    let first = row(&h.session.snapshot, "First");
+    h.session.set_status(&first, TaskStatus::Done);
+    let request = h.take_requests().pop().unwrap().id;
+    let saved = || ReplyBody::Saved(Toast::done("Marked done").undo(true));
+    h.session.apply(reply(request, saved()));
+    assert!(h.session.toast().unwrap().undo);
+
+    // A quiet write takes the undo entry without a toast of its own.
+    h.session.set_title(&first, "Renamed".to_string());
+    assert!(h.session.toast().is_none());
+
+    // A write's toast that arrives after a later write was sent offers no undo.
+    h.session.set_priority(&first, TaskPriority::High);
+    h.session.apply(reply(request, saved()));
+    let toast = h.session.toast().unwrap();
+    assert_eq!(toast.title, "Marked done");
+    assert!(!toast.undo);
+
+    // Looking around is not a change.
+    h.session.apply(reply(u64::MAX, saved()));
+    h.session.refresh_view();
+    assert!(h.session.toast().unwrap().undo);
+}
+
+#[tokio::test]
+async fn a_toast_for_work_under_way_resolves_in_place() {
+    let mut h = harness(&["First"]).await;
+    let first = row(&h.session.snapshot, "First");
+    h.session.publish_gist(first.clone());
+    let toast = h.session.toast().cloned().unwrap();
+    assert_eq!(toast.tone, Tone::Progress);
+    assert_eq!(
+        toast.lifetime(),
+        None,
+        "it stays however long publishing takes"
+    );
+    assert!(toast.subject.is_some());
+
+    let url = "https://gist.github.com/x".to_string();
+    let applied = h.session.apply(reply(0, ReplyBody::Gist(Ok(url.clone()))));
+    assert_eq!(applied.copy.as_deref(), Some(url.as_str()));
+    let settled = h.session.toast().unwrap();
+    assert_eq!(settled.title, "Gist link copied");
+    assert_eq!(settled.run, toast.run, "no second entrance");
+    assert_eq!(settled.subject, toast.subject);
+    assert_eq!(settled.action, Some(ToastAction::Open(url)));
 }
 
 #[tokio::test]
@@ -875,8 +927,9 @@ async fn review_moves_on_after_a_decision_and_undo_returns_to_the_card() {
     h.session.exit_review();
     assert!(h.session.review.is_none());
     assert!(h.session.marks.contains(&two), "marks come back");
-    let toast = h.session.toast.as_ref().unwrap();
-    assert_eq!(toast.message, "Left triage · 0 decided · 2 undecided");
+    let toast = h.session.toast().unwrap();
+    assert_eq!(toast.title, "Left triage");
+    assert_eq!(toast.detail.as_deref(), Some("0 decided, 2 undecided"));
 }
 
 async fn settle(session: &mut Session, replies: &mut adapter::Replies) {

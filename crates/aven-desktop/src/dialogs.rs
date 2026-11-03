@@ -21,6 +21,7 @@ use crate::kit::*;
 use crate::session::SyncPage;
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
+use crate::toast::Toast;
 
 const DIALOG_WIDTH: f32 = 560.;
 const IMAGE_DIALOG_WIDTH: f32 = 860.;
@@ -76,6 +77,7 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Add to epic", "t c"),
             ("Note", "n"),
             ("Undo", "u"),
+            ("Toast action", "⌘↩"),
             ("Title", "e t"),
             ("Description", "e d"),
             ("Project", "e j"),
@@ -1218,8 +1220,7 @@ impl Root {
                         .on_click(cx.listener(|this, _, _, cx| {
                             let version = format!("Aven {}", env!("CARGO_PKG_VERSION"));
                             cx.write_to_clipboard(ClipboardItem::new_string(version));
-                            this.session.show_toast("Version copied".to_string(), None);
-                            this.arm_toast(cx);
+                            this.session.show_toast(Toast::done("Version copied"));
                             cx.notify();
                         }))
                         .child(version),

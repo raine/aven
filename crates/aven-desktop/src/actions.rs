@@ -102,6 +102,7 @@ actions!(
         ReviewUndo,
         ReviewExit,
         ReviewNext,
+        RunToastAction,
     ]
 );
 
@@ -434,6 +435,11 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-enter", FullResults, search),
         KeyBinding::new("cmd-enter", SaveDescription, Some("BodyEditor > TextInput")),
         KeyBinding::new("escape", Dismiss, dialog),
+        KeyBinding::new(
+            "cmd-enter",
+            RunToastAction,
+            Some("Aven && !TextInput && !Overlay"),
+        ),
         KeyBinding::new("enter", Accept, Some("Dialog && !TextInput")),
         KeyBinding::new("tab", NextField, dialog),
         KeyBinding::new("shift-tab", PreviousField, dialog),

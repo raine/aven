@@ -49,6 +49,12 @@ impl AssetSource for Assets {
             "icons/st-done.svg" => include_bytes!("../assets/icons/st-done.svg"),
             "icons/st-inbox.svg" => include_bytes!("../assets/icons/st-inbox.svg"),
             "icons/st-ring.svg" => include_bytes!("../assets/icons/st-ring.svg"),
+            "icons/toast-done.svg" => include_bytes!("../assets/icons/toast-done.svg"),
+            "icons/toast-info.svg" => include_bytes!("../assets/icons/toast-info.svg"),
+            "icons/toast-warn.svg" => include_bytes!("../assets/icons/toast-warn.svg"),
+            "icons/toast-error.svg" => include_bytes!("../assets/icons/toast-error.svg"),
+            "icons/toast-progress.svg" => include_bytes!("../assets/icons/toast-progress.svg"),
+            "icons/toast-dismiss.svg" => include_bytes!("../assets/icons/toast-dismiss.svg"),
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))

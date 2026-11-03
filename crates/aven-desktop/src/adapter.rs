@@ -63,6 +63,7 @@ use tokio::time::{
 
 use crate::session::Session;
 use crate::sync_ops::{self, SyncEvent, SyncOp, SyncRequest, SyncWork};
+use crate::toast::{Subject, Toast, ToastAction};
 
 const SYNC_BUSY: &str = "Sync is busy. Try again when it finishes";
 const JOIN_PAUSE: &str = "Joining sync: local changes wait until synced tasks are downloaded";
@@ -754,6 +755,35 @@ pub enum Command {
 
 /// The task fields that can be copied.
 impl Command {
+    /// Whether this changes stored data, which may change what undo takes back.
+    pub fn is_write(&self) -> bool {
+        self.is_mutation() && !self.is_navigation() && *self != Self::RefreshView
+    }
+
+    /// Whether this only changes what the list shows.
+    pub fn is_navigation(&self) -> bool {
+        matches!(
+            self,
+            Self::ShowView(_)
+                | Self::ShowProject(_)
+                | Self::SwitchWorkspace(_)
+                | Self::FilterLabel(_)
+                | Self::FilterPriority(_)
+                | Self::FilterDeleted(_)
+                | Self::FilterMetadata(_)
+                | Self::ClearFilters
+                | Self::SetOrder(_)
+                | Self::ReverseOrder
+                | Self::SetGroup(_)
+                | Self::SetColumns(_)
+                | Self::Search(_)
+                | Self::Goto(_)
+                | Self::SetClosed(_)
+                | Self::ShowRecurring(_)
+                | Self::OpenSeries(_)
+        )
+    }
+
     /// Whether lists from before this command must be dropped.
     pub fn is_mutation(&self) -> bool {
         !matches!(
@@ -816,16 +846,13 @@ pub enum ReplyBody {
     /// Natural language input that produced no draft.
     IntakeFailed(String),
     Created(TaskId),
-    /// A write landed, with what the toast says about it.
-    Saved {
-        message: String,
-        go: Option<Go>,
-        undo: bool,
-    },
+    /// A write landed, with the toast that says so. Its `undo` is set when the
+    /// store's undo would take this write back.
+    Saved(Toast),
     /// A task the view should select.
     Select(TaskId),
     /// A notice that is not about a write.
-    Notice(String),
+    Notice(Toast),
     /// Queued work is done and sync has stopped, so the app can exit.
     Stopped,
     /// The write did not happen, so the command can run again.
@@ -1457,6 +1484,20 @@ fn dependency(link: &aven_core::query::TaskDependencyLink) -> Link {
     }
 }
 
+/// An error toast: what failed, with the reason as its detail.
+pub(crate) fn failed(title: &str, error: &impl std::fmt::Display) -> Toast {
+    Toast::error(title).detail(capitalised(&error.to_string()))
+}
+
+/// A message from the shared store, which writes it for the terminal.
+fn said(message: &str) -> Toast {
+    Toast::done(capitalised(message))
+}
+
+fn join_paused() -> Toast {
+    Toast::info("Joining sync").detail("Local changes wait until synced tasks are downloaded")
+}
+
 pub(crate) fn capitalised(text: &str) -> String {
     let mut letters = text.chars();
     letters.next().map_or_else(String::new, |first| {
@@ -1830,7 +1871,7 @@ struct Actor {
     /// Views last shown as columns.
     column_views: Vec<TaskQuery>,
     /// What each write in the undo history said, newest last.
-    undoable: Vec<String>,
+    undoable: Vec<Toast>,
     /// Review marks a keep replaced, for taking the keep back.
     kept: HashMap<TaskId, Option<i64>>,
 }
@@ -1839,7 +1880,7 @@ struct Actor {
 #[derive(Default)]
 struct Outcome {
     created: Option<TaskId>,
-    message: Option<String>,
+    message: Option<Toast>,
     go: Option<Go>,
     undo: bool,
     /// A replaced series to ask about stopping.
@@ -1847,7 +1888,7 @@ struct Outcome {
 }
 
 impl Outcome {
-    fn saved(message: String) -> Self {
+    fn saved(message: Toast) -> Self {
         Self {
             message: Some(message),
             undo: true,
@@ -1976,7 +2017,7 @@ impl Actor {
 
     fn run_sync_op(&mut self, work: SyncWork, op: SyncOp) {
         if self.sync_busy.swap(true, Ordering::SeqCst) {
-            self.send(ReplyBody::Notice(SYNC_BUSY.to_string()));
+            self.send(ReplyBody::Notice(Toast::info(SYNC_BUSY)));
             return;
         }
         let busy = self.sync_busy.clone();
@@ -2036,7 +2077,7 @@ impl Actor {
     async fn send_settings(&self) {
         match self.settings_data().await {
             Ok(data) => self.send(ReplyBody::Settings(Box::new(data))),
-            Err(error) => self.send(ReplyBody::Notice(error.to_string())),
+            Err(error) => self.send(ReplyBody::Notice(failed("Could not load settings", &error))),
         }
     }
 
@@ -2163,29 +2204,29 @@ impl Actor {
 
     async fn restore(&mut self, archive: PathBuf) {
         if self.sync_busy.load(Ordering::SeqCst) {
-            self.send(ReplyBody::Notice(SYNC_BUSY.to_string()));
+            self.send(ReplyBody::Notice(Toast::info(SYNC_BUSY)));
             return;
         }
         match sync_ops::restore_to_new(&self.database, &self.launch_config, &archive).await {
             Ok(path) => {
                 if self.open_database(path).await {
-                    self.send(ReplyBody::Notice("Backup restored".to_string()));
+                    self.send(ReplyBody::Notice(Toast::done("Backup restored")));
                 }
             }
-            Err(error) => self.send(ReplyBody::Notice(format!("Could not restore: {error}"))),
+            Err(error) => self.send(ReplyBody::Notice(failed("Could not restore", &error))),
         }
     }
 
-    async fn backup(&self) -> Result<String> {
+    async fn backup(&self) -> Result<PathBuf> {
         let path =
             sync_ops::write_backup(&self.store.database(), &self.database, &self.blob_dir()?)
                 .await?;
-        Ok(format!("Backup archive written to {}", path.display()))
+        Ok(path)
     }
 
-    async fn export(&self) -> Result<String> {
+    async fn export(&self) -> Result<PathBuf> {
         let path = sync_ops::write_export(&self.store.database(), &self.database).await?;
-        Ok(format!("JSON export written to {}", path.display()))
+        Ok(path)
     }
 
     /// Edits made before joined tasks are installed would make the engine
@@ -2304,12 +2345,12 @@ impl Actor {
             .ok_or_else(|| anyhow!("That task is no longer in this view"))
     }
 
-    fn reference(&self, id: &TaskId) -> String {
-        self.store
-            .tasks
-            .iter()
-            .find(|item| item.task.id == *id)
-            .map_or_else(String::new, |item| item.display_ref.clone())
+    fn subject(&self, id: &TaskId) -> Option<Subject> {
+        let item = self.store.tasks.iter().find(|item| item.task.id == *id)?;
+        Some(Subject {
+            reference: item.display_ref.clone(),
+            project_key: item.task.project_key.clone(),
+        })
     }
 
     fn blob_dir(&self) -> Result<PathBuf> {
@@ -2513,14 +2554,14 @@ impl Actor {
                     .mutate_deleted_selection(&selection, *deleted, false);
                 let message = done.await?.message;
                 if *deleted {
-                    return Ok(Outcome::saved(message)
+                    return Ok(Outcome::saved(said(&message))
                         .with_go("Show deleted", Command::FilterDeleted(DeletedFilter::Show)));
                 }
                 message
             }
             Bulk::Epic(epic) => return self.add_to_epic(ids, epic).await,
         };
-        Ok(Outcome::saved(message))
+        Ok(Outcome::saved(said(&message)))
     }
 
     async fn epic_context(&self, epic: &TaskId) -> Result<EpicContext> {
@@ -2547,13 +2588,17 @@ impl Actor {
                 .await?;
             last = added.message.message;
             if added.changed && at + 1 < ids.len() {
-                self.undoable.push(last.clone());
+                self.undoable.push(said(&last));
             }
         }
         Ok(Outcome::saved(if ids.len() == 1 {
-            last
+            said(&last)
         } else {
-            format!("Added {} tasks to {}", ids.len(), context.display_ref)
+            Toast::done(format!(
+                "Added {} tasks to {}",
+                ids.len(),
+                context.display_ref
+            ))
         }))
     }
 
@@ -2591,12 +2636,6 @@ impl Actor {
                 (!triage_review_current(reason, reviewed, now)).then_some((item, reason))
             })
             .collect();
-        if candidates.is_empty() && exclude.is_empty() {
-            return Err(anyhow!(match project {
-                Some(key) => format!("nothing to triage in {key}"),
-                None => "nothing to triage".to_string(),
-            }));
-        }
         let total = candidates.len();
         let cards: Vec<ReviewCard> = review_page(candidates)
             .into_iter()
@@ -2634,11 +2673,15 @@ impl Actor {
             TaskStatus::Todo => Some(STALE_TODO_DAYS),
             _ => None,
         };
-        let status = item.task.status;
-        let reference = item.display_ref;
+        let subject = Some(Subject {
+            reference: item.display_ref,
+            project_key: item.task.project_key,
+        });
+        let kept =
+            Toast::done(format!("Stays {}", status_label(item.task.status))).subject(subject);
         Ok(Outcome::saved(match window {
-            Some(days) => format!("{reference} stays {status} · back in triage in {days}d"),
-            None => format!("{reference} stays {status}"),
+            Some(days) => kept.detail(format!("Back in triage in {days} days")),
+            None => kept,
         })
         .final_write())
     }
@@ -2652,7 +2695,7 @@ impl Actor {
             .database()
             .set_triage_review(id.as_str(), previous, now)
             .await?;
-        Ok(Outcome::saved("undid keep".to_string()).final_write())
+        Ok(Outcome::saved(Toast::done("Keep undone")).final_write())
     }
 
     /// The report goes through `gh` off the actor, as publishing can take a while.
@@ -2864,9 +2907,9 @@ impl Actor {
         })
         .await?;
         if self.listed(id) {
-            self.send(ReplyBody::Notice(
-                "Filters cleared to show this task".to_string(),
-            ));
+            self.send(ReplyBody::Notice(Toast::info(
+                "Filters cleared to show this task",
+            )));
             return Ok(());
         }
         self.store.show_task_by_id(id.clone()).await?;
@@ -3091,10 +3134,13 @@ impl Actor {
         };
         let item = selected.and_then(|index| self.store.tasks.get(index));
         let created = item.map(|item| item.task.id.clone());
-        let name = item.map_or_else(|| "Task".to_string(), |item| item.display_ref.clone());
+        let subject = item.map(|item| Subject {
+            reference: item.display_ref.clone(),
+            project_key: item.task.project_key.clone(),
+        });
         let outcome = Outcome {
             created: created.clone(),
-            ..Outcome::saved(format!("{name} created"))
+            ..Outcome::saved(Toast::done("Created").subject(subject))
         };
         Ok(match created {
             Some(id) if !deferred => outcome.with_go("View task", Command::Goto(id)),
@@ -3122,7 +3168,7 @@ impl Actor {
         let (message, _) = self.store.create_recurrence_series(draft, None).await?;
         Ok(Outcome {
             stop: task.replaces.clone(),
-            ..Outcome::saved(message)
+            ..Outcome::saved(said(&message))
         }
         .with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming)))
     }
@@ -3154,12 +3200,12 @@ impl Actor {
                     .store
                     .create_task_for_epic(draft, None, &context)
                     .await?;
-                Outcome::saved(message)
+                Outcome::saved(said(&message))
             }
             Command::AddChild(epic, child) => {
                 let context = self.epic_context(epic).await?;
                 let added = self.store.add_epic_child(context, child.clone()).await?;
-                Outcome::saved(added.message.message)
+                Outcome::saved(said(&added.message.message))
             }
             Command::RemoveChild(child) => {
                 let item = self
@@ -3172,17 +3218,17 @@ impl Actor {
                     .resolve_epic_child_target_for_item(&item)
                     .ok_or_else(|| anyhow!("That task is not in an epic"))?;
                 let removed = self.store.remove_epic_child(target).await?;
-                Outcome::saved(removed.message.message)
+                Outcome::saved(said(&removed.message.message))
             }
             Command::PauseSeries(id) => {
                 let selected = self.selected.clone();
                 let paused = self.store.pause_recurrence(id, selected.as_ref()).await?;
-                Outcome::saved(paused.message).final_write()
+                Outcome::saved(said(&paused.message)).final_write()
             }
             Command::ResumeSeries(id) => {
                 let selected = self.selected.clone();
                 let resumed = self.store.resume_recurrence(id, selected.as_ref()).await?;
-                Outcome::saved(resumed.message).final_write()
+                Outcome::saved(said(&resumed.message)).final_write()
             }
             Command::SkipSeries(id) => {
                 let detail = self.store.recurrence_detail_for_series(id).await?;
@@ -3192,12 +3238,12 @@ impl Actor {
                     return Err(anyhow!("series has no current occurrence to skip"));
                 };
                 let skipped = self.store.skip_recurrence(id, task, current.slot_on);
-                Outcome::saved(skipped.await?.message).final_write()
+                Outcome::saved(said(&skipped.await?.message)).final_write()
             }
             Command::StopSeries(id, skip) => {
                 let selected = self.selected.clone();
                 let stopped = self.store.stop_recurrence(id, selected.as_ref(), *skip);
-                Outcome::saved(stopped.await?.message).final_write()
+                Outcome::saved(said(&stopped.await?.message)).final_write()
             }
             Command::SetTemplate(id, description) => {
                 let selected = self.selected.clone();
@@ -3208,13 +3254,13 @@ impl Actor {
                 let saved = self
                     .store
                     .update_recurrence_template(id, update, selected.as_ref());
-                Outcome::saved(saved.await?.message).final_write()
+                Outcome::saved(said(&saved.await?.message)).final_write()
             }
             Command::ResolveConflict(target, value) => {
                 let resolved = self
                     .store
                     .resolve_conflict_value((**target).clone(), value.clone());
-                Outcome::saved(resolved.await?.message).final_write()
+                Outcome::saved(said(&resolved.await?.message)).final_write()
             }
             Command::Keep(id) => self.keep(id).await?,
             Command::Unkeep(id) => self.unkeep(id).await?,
@@ -3228,17 +3274,17 @@ impl Actor {
                     .filter(|_| status.is_terminal())
                     .map(|item| (item.task.title.clone(), epic_progress(item)));
                 let change = match status {
-                    TaskStatus::Done => "done".to_string(),
-                    TaskStatus::Canceled => "canceled".to_string(),
-                    status => format!("moved to {}", status_label(*status)),
+                    TaskStatus::Done => "Marked done".to_string(),
+                    TaskStatus::Canceled => "Canceled".to_string(),
+                    status => format!("Moved to {}", status_label(*status)),
                 };
-                match open.filter(|(_, progress)| progress.open > 0) {
-                    Some((title, progress)) => Outcome::saved(format!(
-                        "{title} closed. {} tasks are still open.",
-                        progress.open
-                    )),
-                    None => Outcome::saved(format!("{} {change}", self.reference(id))),
-                }
+                let saved = Toast::done(change).subject(self.subject(id));
+                Outcome::saved(match open.filter(|(_, progress)| progress.open > 0) {
+                    Some((title, progress)) => {
+                        saved.detail(format!("{title} still has {} open tasks", progress.open))
+                    }
+                    None => saved,
+                })
             }
             Command::SetPriority(id, priority) => {
                 let selection = self.selection(id).await?;
@@ -3246,7 +3292,9 @@ impl Actor {
                     .mutate_priority_selection(&selection, PriorityMutation::Set(*priority))
                     .await?;
                 let name = priority_label(*priority);
-                Outcome::saved(format!("{} set to {name}", self.reference(id)))
+                Outcome::saved(
+                    Toast::done(format!("Priority set to {name}")).subject(self.subject(id)),
+                )
             }
             Command::SetTitle(id, title) => {
                 let selection = self.selection(id).await?;
@@ -3278,7 +3326,7 @@ impl Actor {
                     .iter()
                     .find(|entry| entry.key == *project)
                     .map_or(project.as_str(), |entry| entry.name.as_str());
-                Outcome::saved(format!("{} moved to {name}", self.reference(id)))
+                Outcome::saved(Toast::done(format!("Moved to {name}")).subject(self.subject(id)))
             }
             Command::SetLabels(id, labels) => {
                 let selection = self.selection(id).await?;
@@ -3289,15 +3337,15 @@ impl Actor {
             }
             Command::SetDeleted(id, deleted) => {
                 let selection = self.selection(id).await?;
-                let reference = self.reference(id);
+                let subject = self.subject(id);
                 self.store
                     .mutate_deleted_selection(&selection, *deleted, false)
                     .await?;
                 if *deleted {
-                    Outcome::saved(format!("{reference} deleted"))
+                    Outcome::saved(Toast::done("Deleted").subject(subject))
                         .with_go("Show deleted", Command::FilterDeleted(DeletedFilter::Show))
                 } else {
-                    Outcome::saved(format!("{reference} restored"))
+                    Outcome::saved(Toast::done("Restored").subject(subject))
                 }
             }
             Command::AddBlocker(id, other) => {
@@ -3312,7 +3360,7 @@ impl Actor {
                 self.store
                     .remove_dependency_from_selection(&selection, other)
                     .await?;
-                Outcome::saved(format!("{} blocker removed", self.reference(id)))
+                Outcome::saved(Toast::done("Blocker removed").subject(self.subject(id)))
             }
             Command::AddRelated(id, other) => {
                 let selection = self.selection(id).await?;
@@ -3326,7 +3374,7 @@ impl Actor {
                 self.store
                     .remove_related_from_selection(&selection, other)
                     .await?;
-                Outcome::saved(format!("{} link removed", self.reference(id)))
+                Outcome::saved(Toast::done("Link removed").subject(self.subject(id)))
             }
             Command::SetMetadata(id, key, value) => {
                 let selection = self.selection(id).await?;
@@ -3338,8 +3386,8 @@ impl Actor {
                 self.store
                     .mutate_metadata(&selection, field, value.clone())
                     .await?;
-                let change = if value.is_some() { "saved" } else { "removed" };
-                Outcome::saved(format!("{} {key} {change}", self.reference(id)))
+                let change = if value.is_some() { "Saved" } else { "Removed" };
+                Outcome::saved(Toast::done(format!("{change} {key}")).subject(self.subject(id)))
             }
             Command::AddNote(id, body) => {
                 self.store.add_note_to_task(id, body.clone()).await?;
@@ -3347,29 +3395,27 @@ impl Actor {
             }
             Command::DeleteNote(id, note) => {
                 self.store.delete_note(id, note).await?;
-                Outcome::saved("Note deleted".to_string())
+                Outcome::saved(Toast::done("Note deleted"))
             }
             Command::AddImage(id, image) => {
                 self.add_image(id, image, String::new()).await?;
-                Outcome::saved(format!("Image added to {}", self.reference(id))).final_write()
+                Outcome::saved(Toast::done("Image added").subject(self.subject(id))).final_write()
             }
             Command::DeleteImage(id, image) => {
                 self.store.delete_attachment(image).await?;
-                Outcome::saved(format!("Image removed from {}", self.reference(id))).final_write()
+                Outcome::saved(Toast::done("Image removed").subject(self.subject(id))).final_write()
             }
             Command::SetImageAlt(id, image, alt) => {
                 self.set_image_alt(id, image, alt).await?;
                 Outcome::default()
             }
-            Command::Undo => match self.undo().await? {
-                Some(message) => Outcome {
-                    message: Some(message),
-                    ..Outcome::default()
-                },
-                None => Outcome {
-                    message: Some("Nothing to undo".to_string()),
-                    ..Outcome::default()
-                },
+            Command::Undo => Outcome {
+                message: Some(
+                    self.undo()
+                        .await?
+                        .unwrap_or_else(|| Toast::info("Nothing to undo")),
+                ),
+                ..Outcome::default()
             },
             Command::Create(task) => self.create(task).await?,
             _ => Outcome::default(),
@@ -3405,7 +3451,8 @@ impl Actor {
                 |due| format!("due {}", due_text(due, today).to_lowercase()),
             ));
         }
-        let outcome = Outcome::saved(format!("{} {}", self.reference(id), changes.join(", ")));
+        let outcome =
+            Outcome::saved(Toast::done(capitalised(&changes.join(", "))).subject(self.subject(id)));
         Ok(match available_at {
             Some(Some(_)) => {
                 outcome.with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming))
@@ -3414,7 +3461,7 @@ impl Actor {
         })
     }
 
-    async fn undo(&mut self) -> Result<Option<String>> {
+    async fn undo(&mut self) -> Result<Option<Toast>> {
         let at = self
             .selected
             .as_ref()
@@ -3422,11 +3469,14 @@ impl Actor {
         let Some(undone) = self.store.undo_last(at).await? else {
             return Ok(None);
         };
-        Ok(Some(
-            self.undoable
-                .pop()
-                .map_or(undone.message, |message| format!("Undone: {message}")),
-        ))
+        Ok(Some(self.undoable.pop().map_or_else(
+            || said(&undone.message),
+            |change| {
+                Toast::done("Undone")
+                    .subject(change.subject)
+                    .detail(change.title)
+            },
+        )))
     }
 
     fn preview(&self, input: SearchInput) {
@@ -3548,29 +3598,6 @@ impl Actor {
         Ok(aven_host::task_render::task_markdown(&report))
     }
 
-    fn is_navigation(command: &Command) -> bool {
-        matches!(
-            command,
-            Command::ShowView(_)
-                | Command::ShowProject(_)
-                | Command::SwitchWorkspace(_)
-                | Command::FilterLabel(_)
-                | Command::FilterPriority(_)
-                | Command::FilterDeleted(_)
-                | Command::FilterMetadata(_)
-                | Command::ClearFilters
-                | Command::SetOrder(_)
-                | Command::ReverseOrder
-                | Command::SetGroup(_)
-                | Command::SetColumns(_)
-                | Command::Search(_)
-                | Command::Goto(_)
-                | Command::SetClosed(_)
-                | Command::ShowRecurring(_)
-                | Command::OpenSeries(_)
-        )
-    }
-
     async fn handle(&mut self, request: Request) {
         self.handled = request.id;
         match request.command {
@@ -3589,22 +3616,26 @@ impl Actor {
             Command::LoadSeries(id) => self.send_series(&id).await,
             Command::StartReview(exclude) => match self.review(&exclude).await {
                 Ok((cards, more)) => self.send(ReplyBody::Review(cards, more)),
-                Err(error) => self.send(ReplyBody::Notice(error.to_string())),
+                Err(error) => {
+                    self.send(ReplyBody::Notice(failed("Could not start triage", &error)))
+                }
             },
             Command::PublishGist(id) => self.publish_gist(&id).await,
             Command::Sync(request) => self.sync_request(request).await,
             Command::LoadSettings => self.send_settings().await,
             Command::Backup => {
                 let message = match self.backup().await {
-                    Ok(message) => message,
-                    Err(error) => format!("Could not back up: {error}"),
+                    Ok(path) => Toast::done("Backup written").detail(path.display().to_string()),
+                    Err(error) => failed("Could not back up", &error),
                 };
                 self.send(ReplyBody::Notice(message));
             }
             Command::Export => {
                 let message = match self.export().await {
-                    Ok(message) => message,
-                    Err(error) => format!("Could not export: {error}"),
+                    Ok(path) => {
+                        Toast::done("JSON export written").detail(path.display().to_string())
+                    }
+                    Err(error) => failed("Could not export", &error),
                 };
                 self.send(ReplyBody::Notice(message));
             }
@@ -3620,34 +3651,37 @@ impl Actor {
             } => self.reopen_view(query, project, columns, selected).await,
             Command::Quit => self.quit().await,
             Command::Settings(_) if self.paused_by_join().await => {
-                self.send(ReplyBody::Notice(JOIN_PAUSE.to_string()));
+                self.send(ReplyBody::Notice(join_paused()));
             }
             Command::Settings(edit) => {
                 match self.edit_settings(edit).await {
                     Ok(message) => {
                         self.outside_change().await;
                         self.send_settings().await;
-                        self.send(ReplyBody::Notice(message));
+                        self.send(ReplyBody::Notice(Toast::done(message)));
                     }
                     Err(error) => {
                         self.send_settings().await;
-                        self.send(ReplyBody::Notice(format!("Could not save: {error}")));
+                        self.send(ReplyBody::Notice(failed("Could not save", &error)));
                     }
                 }
                 self.sync_wake.notify_one();
             }
             Command::CopyReport(id) => match self.copy_report(&id).await {
                 Ok(text) => self.send(ReplyBody::Copied(text)),
-                Err(error) => self.send(ReplyBody::Notice(error.to_string())),
+                Err(error) => self.send(ReplyBody::Notice(failed(
+                    "Could not copy the report",
+                    &error,
+                ))),
             },
             Command::SaveImage(image, path) => {
                 let message = match self.save_image(&image, path).await {
-                    Ok(()) => "Saved a copy".to_string(),
-                    Err(error) => format!("Could not save the image: {error}"),
+                    Ok(()) => Toast::done("Saved a copy"),
+                    Err(error) => failed("Could not save the image", &error),
                 };
                 self.send(ReplyBody::Notice(message));
             }
-            command if Self::is_navigation(&command) => {
+            command if command.is_navigation() => {
                 if !matches!(command, Command::Goto(_)) {
                     self.selected = None;
                 }
@@ -3747,7 +3781,7 @@ impl Actor {
                 outcome
                     .message
                     .clone()
-                    .unwrap_or_else(|| "last change".to_string()),
+                    .unwrap_or_else(|| Toast::done("Last change")),
             );
         }
         if let Some(id) = outcome.created {
@@ -3757,11 +3791,8 @@ impl Actor {
             self.send(ReplyBody::AskStop(id));
         }
         if let Some(message) = outcome.message {
-            self.send(ReplyBody::Saved {
-                message,
-                go: outcome.go,
-                undo,
-            });
+            let action = outcome.go.map(ToastAction::Go);
+            self.send(ReplyBody::Saved(message.action(action).undo(undo)));
         }
     }
 
@@ -4005,7 +4036,7 @@ async fn recovery_target(
                     Err(error) => {
                         let _ = replies.send(Reply {
                             request: request.id,
-                            body: ReplyBody::Notice(format!("Could not restore: {error}")),
+                            body: ReplyBody::Notice(failed("Could not restore", &error)),
                         });
                     }
                 }
@@ -4616,7 +4647,7 @@ mod tests {
         assert!(
             found
                 .iter()
-                .any(|body| matches!(body, ReplyBody::Notice(text) if text == SYNC_BUSY))
+                .any(|body| matches!(body, ReplyBody::Notice(toast) if toast.title == SYNC_BUSY))
         );
         let names = std::fs::read_dir(directory.path()).unwrap();
         let names: Vec<_> = names.map(|entry| entry.unwrap().file_name()).collect();
@@ -4677,9 +4708,9 @@ mod tests {
         item.expect("a task with that title").task.status
     }
 
-    fn saved_message(bodies: &[ReplyBody]) -> Option<String> {
+    fn saved_message(bodies: &[ReplyBody]) -> Option<Toast> {
         bodies.iter().find_map(|body| match body {
-            ReplyBody::Saved { message, .. } => Some(message.clone()),
+            ReplyBody::Saved(toast) => Some(toast.clone()),
             _ => None,
         })
     }
@@ -4880,10 +4911,11 @@ mod tests {
         bodies(&mut replies);
 
         run(&mut actor, Command::SetStatus(epic, TaskStatus::Done)).await;
-        let message = saved_message(&bodies(&mut replies));
+        let toast = saved_message(&bodies(&mut replies)).unwrap();
+        assert_eq!(toast.title, "Marked done");
         assert_eq!(
-            message.as_deref(),
-            Some("Launch closed. 2 tasks are still open.")
+            toast.detail.as_deref(),
+            Some("Launch still has 2 open tasks")
         );
     }
 
@@ -5110,9 +5142,9 @@ mod tests {
         details.into_iter().next().expect("no detail")
     }
 
-    fn last_toast(bodies: &[ReplyBody]) -> Option<(String, bool)> {
+    fn last_toast(bodies: &[ReplyBody]) -> Option<(Toast, bool)> {
         bodies.iter().rev().find_map(|body| match body {
-            ReplyBody::Saved { message, undo, .. } => Some((message.clone(), *undo)),
+            ReplyBody::Saved(toast) => Some((toast.clone(), toast.undo)),
             _ => None,
         })
     }
@@ -5275,8 +5307,9 @@ mod tests {
         let id = task_id(&actor, "Stored");
         run(&mut actor, Command::SetDeleted(id.clone(), true)).await;
         let seen = bodies(&mut replies);
-        let (message, undo) = last_toast(&seen).unwrap();
-        assert!(message.ends_with("deleted"), "{message}");
+        let (toast, undo) = last_toast(&seen).unwrap();
+        assert_eq!(toast.title, "Deleted");
+        assert!(toast.subject.is_some());
         assert!(undo);
         assert!(actor.store.tasks.is_empty());
 
@@ -5287,8 +5320,10 @@ mod tests {
 
         run(&mut actor, Command::Undo).await;
         let seen = bodies(&mut replies);
-        let (message, undo) = last_toast(&seen).unwrap();
-        assert!(message.starts_with("Undone: "), "{message}");
+        let (toast, undo) = last_toast(&seen).unwrap();
+        assert_eq!(toast.title, "Undone");
+        assert_eq!(toast.detail.as_deref(), Some("Deleted"));
+        assert!(toast.subject.is_some());
         assert!(!undo);
         let list = lists(&seen).pop().unwrap();
         assert!(!list.tasks[0].deleted);
@@ -5300,8 +5335,8 @@ mod tests {
         run(&mut actor, Command::Undo).await;
         run(&mut actor, Command::Undo).await;
         let seen = bodies(&mut replies);
-        let (message, undo) = last_toast(&seen).unwrap();
-        assert_eq!(message, "Nothing to undo");
+        let (toast, undo) = last_toast(&seen).unwrap();
+        assert_eq!(toast.title, "Nothing to undo");
         assert!(!undo);
     }
 

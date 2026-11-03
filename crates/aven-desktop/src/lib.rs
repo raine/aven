@@ -26,6 +26,7 @@ mod shell;
 mod startup;
 mod sync_ops;
 mod theme;
+pub mod toast;
 mod workflows;
 
 /// Starts the app and returns when it quits. Takes over the main thread, and
