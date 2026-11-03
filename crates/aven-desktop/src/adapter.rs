@@ -5457,6 +5457,24 @@ mod tests {
         assert_eq!(detail.images[0].alt, "A chart");
     }
 
+    #[tokio::test]
+    async fn a_created_task_keeps_its_pasted_images() {
+        let (_directory, mut actor, mut replies) = actor("Other").await;
+        let mut task = NewTask::titled("Broken layout");
+        task.images = vec![PendingImage {
+            name: "pasted.png".to_string(),
+            bytes: Arc::new(png()),
+        }];
+        run(&mut actor, Command::Create(Box::new(task))).await;
+        bodies(&mut replies);
+        let id = task_id(&actor, "Broken layout");
+        run(&mut actor, Command::LoadDetail(id)).await;
+        let detail = detail_in(bodies(&mut replies));
+        assert_eq!(detail.images.len(), 1);
+        assert_eq!(detail.images[0].name, "pasted.png");
+        assert!(detail.images[0].preview.as_ref().unwrap().exists());
+    }
+
     #[test]
     fn due_text_names_the_days_around_today() {
         let today = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();

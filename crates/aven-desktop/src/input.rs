@@ -19,6 +19,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::commands::is_image;
 use crate::markdown::{Quote, Rendered, Span};
 use crate::theme::theme;
 
@@ -158,14 +159,18 @@ pub enum PastedImage {
     Path(std::path::PathBuf),
 }
 
-/// An image the clipboard holds, if any.
+/// An image the clipboard holds, if any. Other copied files read as nothing,
+/// so their names still paste as text.
 pub fn clipboard_image(cx: &App) -> Option<PastedImage> {
     let item = cx.read_from_clipboard()?;
     item.entries().iter().find_map(|entry| match entry {
         ClipboardEntry::Image(image) => Some(PastedImage::Bytes(image.clone())),
-        ClipboardEntry::ExternalPaths(paths) => {
-            paths.paths().first().cloned().map(PastedImage::Path)
-        }
+        ClipboardEntry::ExternalPaths(paths) => paths
+            .paths()
+            .iter()
+            .find(|path| is_image(path))
+            .cloned()
+            .map(PastedImage::Path),
         ClipboardEntry::String(_) => None,
     })
 }

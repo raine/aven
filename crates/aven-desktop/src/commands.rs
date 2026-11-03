@@ -86,7 +86,7 @@ pub fn view_name(query: TaskQuery) -> &'static str {
     }
 }
 
-fn is_image(path: &Path) -> bool {
+pub(crate) fn is_image(path: &Path) -> bool {
     let extension = path.extension().and_then(|extension| extension.to_str());
     extension.is_some_and(|extension| IMAGE_EXTENSIONS.contains(&extension.to_lowercase().as_str()))
 }

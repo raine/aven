@@ -88,7 +88,7 @@ impl Root {
         let draft = std::mem::take(&mut self.kept_draft);
         let title = cx.new(|cx| {
             let placeholder = "What needs doing? #label !high";
-            Editor::new(Mode::Single, placeholder, window, cx)
+            Editor::new(Mode::Single, placeholder, window, cx).takes_images()
         });
         let schedule = cx.new(|cx| {
             let placeholder = "tomorrow, due next friday, every friday at 09:00";
