@@ -222,8 +222,8 @@ impl Root {
             .child(self.title.clone())
     }
 
-    fn render_byline(&self, detail: &Detail, cx: &mut Context<Self>, t: &Theme) -> Div {
-        let byline = &detail.byline;
+    fn render_byline(&self, row: &TaskRow, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let byline = &row.byline;
         let when = if self.created_exact {
             &byline.created_on
         } else {
@@ -611,9 +611,9 @@ impl Root {
         )
     }
 
-    fn render_activity(&self, detail: &Detail, t: &Theme) -> Div {
+    fn render_activity(&self, row: &TaskRow, t: &Theme) -> Div {
         let mut section = div().mt(px(20.)).child(section_head("Activity", t));
-        for (text, at) in &detail.activity {
+        for (text, at) in &row.activity {
             section = section.child(
                 div()
                     .flex()
@@ -696,9 +696,9 @@ impl Root {
                 );
             }
             sections.push(self.render_notes(&row.id, window, cx, t).into_any_element());
-            if !detail.activity.is_empty() {
-                sections.push(self.render_activity(&detail, t).into_any_element());
-            }
+        }
+        if !row.activity.is_empty() {
+            sections.push(self.render_activity(row, t).into_any_element());
         }
         sections
     }
@@ -851,9 +851,7 @@ impl Root {
             )
             .when(row.deleted, |body| body.child(self.deleted_banner(cx, &t)))
             .child(self.render_title(19., window, cx, &t))
-            .when_some(detail.as_ref(), |body, detail| {
-                body.child(self.render_byline(detail, cx, &t))
-            })
+            .child(self.render_byline(&row, cx, &t))
             .child(self.render_props(&row, detail.as_ref(), cx, &t))
             .children(self.render_sections(&row, window, cx, &t));
         panel.child(top).child(body)
@@ -910,9 +908,7 @@ impl Root {
                                         )),
                                 )
                                 .child(self.render_title(26., window, cx, &t))
-                                .when_some(detail.as_ref(), |doc, detail| {
-                                    doc.child(self.render_byline(detail, cx, &t))
-                                })
+                                .child(self.render_byline(&row, cx, &t))
                                 .child(self.top_actions(&row, cx, &t).ml(px(-8.)))
                                 .children(self.render_sections(&row, window, cx, &t)),
                         )

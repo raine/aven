@@ -1872,6 +1872,13 @@ mod tests {
             epic: None,
             created: None,
             updated: None,
+            byline: crate::adapter::Byline {
+                created_ago: String::new(),
+                created_on: String::new(),
+                source: None,
+                updated_ago: None,
+            },
+            activity: Vec::new(),
         };
         let group = |name: &str, rows: Vec<usize>| Group {
             name: name.to_string(),

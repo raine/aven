@@ -138,6 +138,8 @@ pub struct TaskRow {
     pub epic: Option<EpicProgress>,
     pub created: Option<RowDate>,
     pub updated: Option<RowDate>,
+    pub byline: Byline,
+    pub activity: Vec<(String, String)>,
 }
 
 /// A moment a row shows as a date, with its full time for a closer look.
@@ -556,7 +558,6 @@ pub struct Byline {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Detail {
     pub task_id: TaskId,
-    pub byline: Byline,
     /// A task outside the list has no row there.
     pub row: TaskRow,
     pub description: String,
@@ -572,7 +573,6 @@ pub struct Detail {
     pub blocks: Vec<Link>,
     pub related: Vec<Link>,
     pub metadata: Vec<(String, String)>,
-    pub activity: Vec<(String, String)>,
     /// Children in core's order. Epics have them, other tasks do not.
     pub children: Vec<Child>,
     pub conflicts: Vec<ConflictTarget>,
@@ -996,7 +996,8 @@ fn is_deferred(item: &TaskListItem, now: DateTime<Local>) -> bool {
     at.is_some_and(|at| at > now)
 }
 
-fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
+fn task_row(item: &TaskListItem, now: DateTime<Local>) -> TaskRow {
+    let today = now.date_naive();
     let task = &item.task;
     let prefix = item.display_ref.split('-').next().unwrap_or_default();
     TaskRow {
@@ -1026,6 +1027,8 @@ fn task_row(item: &TaskListItem, today: NaiveDate) -> TaskRow {
         is_epic: task.is_epic,
         created: row_date(&task.created_at, today),
         updated: row_date(&task.updated_at, today),
+        byline: byline(item, now),
+        activity: activity(item, now),
     }
 }
 
@@ -1378,7 +1381,7 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
         .tasks
         .iter()
         .map(|item| {
-            let mut row = task_row(item, today);
+            let mut row = task_row(item, now);
             if upcoming {
                 let at = item.task.available_at.as_deref();
                 row.due = at.map(|at| available_text(at, today)).unwrap_or_default();
@@ -1574,8 +1577,7 @@ fn detail_with(
     let live_related = item.related.iter().filter(|link| !link.deleted);
     Detail {
         task_id: item.task.id.clone(),
-        byline: byline(item, now),
-        row: task_row(item, today),
+        row: task_row(item, now),
         description: item.task.description.clone(),
         available: available.map_or_else(
             || "Now".to_string(),
@@ -1626,7 +1628,6 @@ fn detail_with(
             .iter()
             .map(|field| (field.key.clone(), field.value.clone()))
             .collect(),
-        activity: activity(item, now),
         children: Vec::new(),
         conflicts: Vec::new(),
         series: (item.recurrence.as_ref())
@@ -4402,6 +4403,28 @@ mod tests {
 
         item.task.updated_at = "2026-11-02T07:00:00+00:00".to_string();
         assert_eq!(byline(&item, now).updated_ago.as_deref(), Some("3h ago"));
+    }
+
+    #[tokio::test]
+    async fn list_rows_include_creation_and_activity_before_details_load() {
+        let (_directory, mut actor, _replies) = actor("Keep").await;
+        let item = &mut actor.store.tasks[0];
+        item.task.created_at = "2026-10-23T10:00:00+00:00".to_string();
+        item.task.updated_at = "2026-11-02T07:00:00+00:00".to_string();
+        item.task.source = TaskSource::Cli;
+        let now = local_time("2026-11-02T10:00:00+00:00").unwrap();
+        let expected = detail(item, now).row;
+        let snapshot = arranged_snapshot(&actor.store, now, &Arrange::default());
+        let row = snapshot.row(&expected.id).unwrap();
+        assert_eq!(row.byline, expected.byline);
+        assert_eq!(row.byline.created_ago, "10d ago");
+        assert_eq!(row.byline.updated_ago.as_deref(), Some("3h ago"));
+        assert_eq!(row.byline.source.as_deref(), Some("CLI"));
+        assert_eq!(row.activity, expected.activity);
+        assert_eq!(
+            row.activity.last(),
+            Some(&("Created from CLI".to_string(), "10d ago".to_string()))
+        );
     }
 
     #[tokio::test]
