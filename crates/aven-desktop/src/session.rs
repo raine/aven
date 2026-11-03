@@ -14,9 +14,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::actions::VIEWS;
 use crate::adapter::{
-    Bulk, CatalogTask, Command, Detail, Go, KnownDatabase, NewTask, Reply, ReplyBody, Request,
-    ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot,
-    SyncHealth, SyncPhase, TaskRow, capitalised, done_group,
+    Bulk, CatalogTask, Command, Detail, Go, Group, KnownDatabase, NewTask, Reply, ReplyBody,
+    Request, ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData,
+    Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group,
 };
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
@@ -1595,6 +1595,17 @@ impl Session {
             });
         }
         list.groups.retain(|group| !group.rows.is_empty());
+        // A closed row still in its old place splits its group around it.
+        let mut groups: Vec<Group> = Vec::with_capacity(list.groups.len());
+        for group in list.groups.drain(..) {
+            match groups.last_mut() {
+                Some(last) if last.name == group.name && last.lane == group.lane => {
+                    last.rows.extend(group.rows);
+                }
+                _ => groups.push(group),
+            }
+        }
+        list.groups = groups;
         for id in &self.done {
             if list.row(id).is_none()
                 && let Some(row) = self.snapshot.row(id)
@@ -1804,6 +1815,62 @@ mod tests {
         assert!(!session.sync_now());
         session.snapshot.sync.phase = SyncPhase::SetUp;
         assert!(session.sync_now());
+    }
+
+    #[test]
+    fn a_task_closed_in_place_leaves_its_group_whole() {
+        let row = |title: &str, status: TaskStatus| TaskRow {
+            id: TaskId::new(),
+            reference: String::new(),
+            project: String::new(),
+            project_key: String::new(),
+            title: title.to_string(),
+            status,
+            priority: TaskPriority::None,
+            reason: None,
+            blocked: false,
+            recurring: false,
+            progress: None,
+            labels: Vec::new(),
+            due: String::new(),
+            date_tone: crate::adapter::DateTone::Plain,
+            deleted: false,
+            is_epic: false,
+            epic: None,
+        };
+        let group = |name: &str, rows: Vec<usize>| Group {
+            name: name.to_string(),
+            hint: String::new(),
+            rows,
+            lane: None,
+        };
+        let mut list = Snapshot {
+            tasks: vec![
+                row("One", TaskStatus::Active),
+                row("Two", TaskStatus::Done),
+                row("Three", TaskStatus::Active),
+                row("Four", TaskStatus::Inbox),
+            ],
+            groups: vec![
+                group("Focus", vec![0]),
+                group("Done", vec![1]),
+                group("Focus", vec![2]),
+                group("Triage", vec![3]),
+            ],
+            ..Default::default()
+        };
+        session().gather_done(&mut list);
+        let groups: Vec<_> = (list.groups.iter())
+            .map(|group| (group.name.as_str(), group.rows.clone()))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                ("Focus", vec![0, 2]),
+                ("Triage", vec![3]),
+                ("Done", vec![1])
+            ]
+        );
     }
 
     #[test]
