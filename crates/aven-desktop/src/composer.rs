@@ -16,6 +16,7 @@ use gpui::{
 };
 
 use crate::actions::*;
+use crate::adapter::NewTask;
 use crate::adapter::{NavEntry, PendingImage};
 use crate::draft::{
     CaretWord, Draft, DraftProblem, Suggestion, Token, automatic_status, caret_word, cut,
@@ -28,6 +29,143 @@ use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
 use crate::toast::{Toast, ToastAction};
+use gpui::{Bounds, Div, EventEmitter, Pixels, Render, Stateful, WeakEntity};
+
+pub(crate) struct Composer {
+    composer: Option<Fields>,
+    /// What the composer opens with.
+    kept_draft: Draft,
+    /// The draft Discard threw away, until the next discard.
+    discarded: Option<Draft>,
+    /// Whether creating leaves the composer open for the next task.
+    create_more: bool,
+    source: Source,
+    focus: FocusHandle,
+    anchors: Anchors,
+    runs: usize,
+    switched: crate::switch::Switch,
+    checked: Vec<String>,
+}
+
+/// Read-only context for task choices and project inference.
+#[derive(PartialEq, Eq)]
+pub(crate) struct Source {
+    pub projects: Vec<NavEntry>,
+    pub labels: Vec<String>,
+    pub fields: Vec<String>,
+    pub project: Option<(String, &'static str)>,
+    pub first_project: String,
+    pub reduced: bool,
+}
+
+pub(crate) enum ComposerEvent {
+    Create(NewTask),
+    Intake(String, Option<String>),
+    Toast(Toast),
+    Menu(RefCell<Option<ComposerMenu>>),
+    Prompt(String, String, crate::dialogs::SavePromptText),
+}
+
+pub(crate) struct ComposerMenu {
+    pub entries: Vec<Entry>,
+    pub title: &'static str,
+    pub anchor: Bounds<Pixels>,
+    pub options: MenuOptions,
+}
+
+impl EventEmitter<ComposerEvent> for Composer {}
+
+impl Render for Composer {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_composer(window, cx)
+            .unwrap_or_else(|| div().into_any_element())
+    }
+}
+
+impl Composer {
+    pub(crate) fn new(draft: Draft, source: Source, focus: FocusHandle) -> Self {
+        Self {
+            composer: None,
+            kept_draft: draft,
+            discarded: None,
+            create_more: false,
+            source,
+            focus,
+            anchors: Rc::default(),
+            runs: 0,
+            switched: Default::default(),
+            checked: Vec::new(),
+        }
+    }
+
+    pub(crate) fn set_source(&mut self, source: Source, cx: &mut Context<Self>) {
+        if self.source != source {
+            self.source = source;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn visible(&self) -> bool {
+        self.composer.is_some()
+    }
+
+    pub(crate) fn prepare(&mut self, change: impl FnOnce(&mut Draft)) {
+        change(&mut self.kept_draft);
+    }
+
+    pub(crate) fn saved_draft(&self, cx: &App) -> Draft {
+        self.composer_draft(cx)
+            .unwrap_or_else(|| self.kept_draft.clone())
+    }
+
+    pub(crate) fn set_title(&mut self, title: String) {
+        self.kept_draft.title = title;
+    }
+
+    fn next_run(&mut self) -> usize {
+        self.runs += 1;
+        self.runs
+    }
+
+    fn anchor(&self, key: &'static str) -> Bounds<Pixels> {
+        self.anchors.borrow().get(key).copied().unwrap_or_default()
+    }
+
+    fn open_menu(
+        &mut self,
+        entries: Vec<Entry>,
+        title: &'static str,
+        anchor: Bounds<Pixels>,
+        options: MenuOptions,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(ComposerEvent::Menu(RefCell::new(Some(ComposerMenu {
+            entries,
+            title,
+            anchor,
+            options,
+        }))));
+    }
+
+    fn menu_checked(&self) -> Vec<String> {
+        self.checked.clone()
+    }
+
+    fn entry(
+        view: WeakEntity<Self>,
+        label: impl Into<String>,
+        run: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> Entry {
+        Entry::new(label, move |root, window, cx| {
+            let checked = root.menu_checked();
+            let _ = view.update(cx, |this, cx| {
+                this.checked = checked;
+                run(this, window, cx);
+            });
+        })
+    }
+}
 
 const DIALOG_CLOSE: Duration = Duration::from_millis(120);
 const CHIP_FLASH: Duration = Duration::from_millis(600);
@@ -62,7 +200,7 @@ impl Chip {
     }
 }
 
-pub struct Composer {
+struct Fields {
     /// The fields that have no editor. Text lives in the editors.
     draft: Draft,
     title: Entity<Editor>,
@@ -103,7 +241,7 @@ const THUMB_HEIGHT: f32 = 54.;
 /// Pixels per point in a thumbnail, sharp on Retina displays.
 const THUMB_DENSITY: f32 = 2.;
 
-impl Composer {
+impl Fields {
     /// The whole draft as it stands.
     fn current(&self, cx: &App) -> Draft {
         Draft {
@@ -114,7 +252,7 @@ impl Composer {
         }
     }
 
-    fn show(&mut self, draft: Draft, projects: &[NavEntry], cx: &mut Context<Root>) {
+    fn show(&mut self, draft: Draft, projects: &[NavEntry], cx: &mut App) {
         self.title
             .update(cx, |editor, cx| editor.set_text(&draft.title, cx));
         self.schedule
@@ -167,16 +305,11 @@ impl Composer {
     }
 }
 
-impl Root {
+impl Composer {
     pub(crate) fn composer_open(&self) -> bool {
         self.composer
             .as_ref()
             .is_some_and(|composer| !composer.closing)
-    }
-
-    pub(crate) fn new_task(&mut self, _: &NewTask, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_menu(window, cx);
-        self.open_composer(window, cx);
     }
 
     pub(crate) fn open_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -204,7 +337,7 @@ impl Root {
             .into_iter()
             .collect();
         let focus = title.read(cx).focus.clone();
-        let mut composer = Composer {
+        let mut composer = Fields {
             draft: Draft::default(),
             title,
             schedule,
@@ -212,7 +345,7 @@ impl Root {
             status: cx.focus_handle(),
             epic: cx.focus_handle(),
             prior: window.focused(cx),
-            run: self.session.motion.next_run(),
+            run: self.next_run(),
             closing: false,
             reading: None,
             seen_title: String::new(),
@@ -223,7 +356,7 @@ impl Root {
             thumbs: RefCell::default(),
             _subscriptions: subscriptions,
         };
-        composer.show(draft, &self.session.snapshot.projects, cx);
+        composer.show(draft, &self.source.projects, cx);
         self.composer = Some(composer);
         window.focus(&focus, cx);
         cx.notify();
@@ -232,7 +365,7 @@ impl Root {
     /// Recolours the title's tokens, for a theme they were not drawn in.
     pub(crate) fn tint_composer_title(&self, cx: &mut App) {
         if let Some(composer) = self.composer.as_ref() {
-            composer.tint_title(&self.session.snapshot.projects, cx);
+            composer.tint_title(&self.source.projects, cx);
         }
     }
 
@@ -249,7 +382,7 @@ impl Root {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DIALOG_CLOSE).await;
             this.update(cx, |this, cx| {
-                let done = |composer: &Composer| composer.closing && composer.run == run;
+                let done = |composer: &Fields| composer.closing && composer.run == run;
                 if this.composer.as_ref().is_some_and(done) {
                     this.composer = None;
                     cx.notify();
@@ -263,9 +396,7 @@ impl Root {
 
     /// Closes the composer with its draft kept for next time.
     pub(crate) fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog_open() {
-            self.close_dialog(window, cx);
-        } else if let Some(draft) = self.composer_draft(cx) {
+        if let Some(draft) = self.composer_draft(cx) {
             self.close_composer(Some(draft), window, cx);
         }
     }
@@ -284,8 +415,9 @@ impl Root {
         };
         if draft.has_text() {
             self.discarded = Some(draft);
-            self.session
-                .show_toast(Toast::done("Draft discarded").action(Some(ToastAction::RestoreDraft)));
+            cx.emit(ComposerEvent::Toast(
+                Toast::done("Draft discarded").action(Some(ToastAction::RestoreDraft)),
+            ));
         }
         self.close_composer(None, window, cx);
     }
@@ -318,22 +450,18 @@ impl Root {
         let Some(draft) = self.composer_draft(cx) else {
             return;
         };
-        match draft.task(&self.session.snapshot.projects) {
+        match draft.task(&self.source.projects) {
             Ok(mut task) => {
                 // Left to inference, the task joins the project the chip shows.
                 task.project = task
                     .project
-                    .or_else(|| Some(self.session.new_task_project()?.0.to_string()));
-                if self.session.snapshot.welcome {
-                    self.session.create_first_task(task);
-                } else {
-                    self.session.create(task);
-                }
+                    .or_else(|| self.source.project.as_ref().map(|(key, _)| key.clone()));
+                cx.emit(ComposerEvent::Create(task));
                 if another {
                     if let Some(composer) = self.composer.as_mut() {
                         let next = draft.after_created();
                         let focus = composer.title.read(cx).focus.clone();
-                        composer.show(next, &self.session.snapshot.projects, cx);
+                        composer.show(next, &self.source.projects, cx);
                         window.focus(&focus, cx);
                     }
                     cx.notify();
@@ -373,7 +501,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.session.show_toast(problem.toast());
+        cx.emit(ComposerEvent::Toast(problem.toast()));
         if let Some(focus) = focus {
             window.focus(&focus, cx);
         }
@@ -414,10 +542,9 @@ impl Root {
         };
         let notes = draft.intake_text();
         if notes.is_empty() {
-            self.session
-                .show_toast(Toast::info("Add rough notes first"));
+            cx.emit(ComposerEvent::Toast(Toast::info("Add rough notes first")));
         } else {
-            self.session.intake(notes.clone(), draft.project.clone());
+            cx.emit(ComposerEvent::Intake(notes.clone(), draft.project.clone()));
             if let Some(composer) = self.composer.as_mut() {
                 composer.reading = Some(notes);
             }
@@ -440,13 +567,13 @@ impl Root {
         if let Some(task) = task {
             let mut draft = composer.current(cx);
             if draft.fill_from_notes(&notes, task) {
-                composer.show(draft, &self.session.snapshot.projects, cx);
+                composer.show(draft, &self.source.projects, cx);
             }
         }
         cx.notify();
     }
 
-    pub(crate) fn composer_fields(&self, cx: &Context<Self>) -> Vec<FocusHandle> {
+    pub(crate) fn composer_fields(&self, cx: &App) -> Vec<FocusHandle> {
         let Some(composer) = self.composer.as_ref() else {
             return Vec::new();
         };
@@ -497,7 +624,7 @@ impl Root {
 
     /// Moves a token just finished with a space out of the title.
     fn title_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let projects = &self.session.snapshot.projects;
+        let projects = &self.source.projects;
         let Some(composer) = self.composer.as_mut() else {
             return;
         };
@@ -538,10 +665,10 @@ impl Root {
 
     /// Marks the chip a token landed in for a moment.
     fn flash_chip(&mut self, chip: Chip, cx: &mut Context<Self>) {
-        if self.session.motion.reduced() {
+        if self.source.reduced {
             return;
         }
-        let run = self.session.motion.next_run();
+        let run = self.next_run();
         let Some(composer) = self.composer.as_mut() else {
             return;
         };
@@ -579,9 +706,9 @@ impl Root {
         if composer.dismissed.as_ref() == Some(&word) {
             return None;
         }
-        let projects = &self.session.snapshot.projects;
+        let projects = &self.source.projects;
         let held = composer.labels(projects, Some(word.start), cx);
-        let found = suggestions(&word, &held, &self.session.snapshot.labels, projects);
+        let found = suggestions(&word, &held, &self.source.labels, projects);
         (!found.is_empty()).then_some((word, found))
     }
 
@@ -660,7 +787,7 @@ impl Root {
     /// Moves the title's tokens into the fields, so a chip shows and edits
     /// what creating would use.
     fn settle_composer_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let projects = &self.session.snapshot.projects;
+        let projects = &self.source.projects;
         let Some(composer) = self.composer.as_mut() else {
             return;
         };
@@ -707,14 +834,15 @@ impl Root {
     }
 
     fn pick_composer_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
         self.settle_composer_title(window, cx);
-        let mut entries = vec![Entry::new("Infer", |root, _, cx| {
+        let mut entries = vec![Self::entry(view.clone(), "Infer", |root, _, cx| {
             root.update_draft(cx, |draft| draft.project = None);
         })];
-        for project in &self.session.snapshot.projects {
+        for project in &self.source.projects {
             let key = project.key.clone();
             entries.push(
-                Entry::new(project.name.clone(), move |root, _, cx| {
+                Self::entry(view.clone(), project.name.clone(), move |root, _, cx| {
                     let key = key.clone();
                     root.update_draft(cx, |draft| draft.project = Some(key));
                 })
@@ -743,16 +871,19 @@ impl Root {
     }
 
     fn pick_composer_status(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
         let is_epic = self.composer_draft(cx).is_some_and(|draft| draft.is_epic);
-        let mut entries = vec![Entry::new("Auto", |root, _, cx| {
+        let mut entries = vec![Self::entry(view.clone(), "Auto", |root, _, cx| {
             root.update_draft(cx, |draft| draft.status = None);
         })];
         entries.extend(crate::overlays::status_entries(
             None,
             false,
             is_epic,
-            |status, root, _, cx| {
-                root.update_draft(cx, |draft| draft.status = Some(status));
+            move |status, _, _, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.update_draft(cx, |draft| draft.status = Some(status))
+                });
             },
         ));
         let anchor = self.anchor("c-status");
@@ -767,9 +898,12 @@ impl Root {
     }
 
     fn pick_composer_priority(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
         self.settle_composer_title(window, cx);
-        let entries = crate::overlays::priority_entries(None, false, |priority, root, _, cx| {
-            root.update_draft(cx, |draft| draft.priority = priority);
+        let entries = crate::overlays::priority_entries(None, false, move |priority, _, _, cx| {
+            let _ = view.update(cx, |this, cx| {
+                this.update_draft(cx, |draft| draft.priority = priority)
+            });
         });
         let anchor = self.anchor("c-priority");
         self.open_menu(
@@ -783,20 +917,21 @@ impl Root {
     }
 
     fn pick_composer_labels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
         self.settle_composer_title(window, cx);
         let held = self
             .composer_draft(cx)
             .map(|draft| draft.labels)
             .unwrap_or_default();
-        type SaveComposerLabels = Rc<dyn Fn(&mut Root, &mut Context<Root>)>;
+        type SaveComposerLabels = Rc<dyn Fn(&mut Composer, &mut Context<Composer>)>;
         let save: SaveComposerLabels = Rc::new(|root, cx| {
             let labels = root.menu_checked();
             root.update_draft(cx, |draft| draft.labels = labels);
         });
         let entry = move |label: String, save: SaveComposerLabels| {
-            Entry::new(label, move |root, _, cx| save(root, cx))
+            Self::entry(view.clone(), label, move |root, _, cx| save(root, cx))
         };
-        let mut labels = self.session.snapshot.labels.clone();
+        let mut labels = self.source.labels.clone();
         labels.extend(held.iter().cloned());
         labels.sort();
         labels.dedup();
@@ -818,27 +953,27 @@ impl Root {
     }
 
     fn pick_composer_metadata(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
         let held = self
             .composer_draft(cx)
             .map(|draft| draft.metadata)
             .unwrap_or_default();
         let entries = self
-            .session
-            .snapshot
+            .source
             .fields
             .iter()
             .map(|field| {
                 let key = field.clone();
                 let on = held.iter().any(|(held, _)| held == field);
-                Entry::new(field.clone(), move |root, window, cx| {
+                Self::entry(view.clone(), field.clone(), move |root, window, cx| {
                     root.prompt_composer_metadata(key.clone(), window, cx);
                 })
                 .checked(on)
             })
             .collect();
-        let create = Rc::new(|label: String| {
+        let create = Rc::new(move |label: String| {
             let key = label.clone();
-            Entry::new(label, move |root, window, cx| {
+            Self::entry(view.clone(), label, move |root, window, cx| {
                 root.prompt_composer_metadata(key.clone(), window, cx);
             })
         });
@@ -853,7 +988,7 @@ impl Root {
     fn prompt_composer_metadata(
         &mut self,
         key: String,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let value = self
@@ -866,32 +1001,28 @@ impl Root {
             })
             .unwrap_or_default();
         let field = key.clone();
+        let view = cx.entity().downgrade();
         let save = Rc::new(
-            move |root: &mut Root, text: String, _: &mut Window, cx: &mut Context<Root>| {
+            move |_: &mut Root, text: String, _: &mut Window, cx: &mut Context<Root>| {
                 let field = field.clone();
-                root.update_draft(cx, |draft| {
-                    draft.metadata.retain(|(held, _)| *held != field);
-                    draft.metadata.push((field, text));
+                let _ = view.update(cx, |this, cx| {
+                    this.update_draft(cx, |draft| {
+                        draft.metadata.retain(|(held, _)| *held != field);
+                        draft.metadata.push((field, text));
+                    })
                 });
             },
         );
-        let hint = "An empty value is different from no value.";
-        self.open_prompt(
-            format!("Set {key}"),
-            "Value",
-            hint,
-            &value,
-            save,
-            window,
-            cx,
-        );
+        cx.emit(ComposerEvent::Prompt(format!("Set {key}"), value, save));
     }
 
     /// The ⋯ menu: what no chip shows until it is set.
     fn pick_composer_more(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
         let is_epic = self.composer_draft(cx).is_some_and(|draft| draft.is_epic);
         let entries = vec![
-            Entry::new(
+            Self::entry(
+                view.clone(),
                 if is_epic {
                     "Make it a task"
                 } else {
@@ -899,10 +1030,10 @@ impl Root {
                 },
                 |root, _, cx| root.toggle_composer_epic(cx),
             ),
-            Entry::new("Add metadata…", |root, window, cx| {
+            Self::entry(view.clone(), "Add metadata…", |root, window, cx| {
                 root.pick_composer_metadata(window, cx);
             }),
-            Entry::new("Attach image…", |root, _, cx| {
+            Self::entry(view.clone(), "Attach image…", |root, _, cx| {
                 root.prompt_for_images(cx, Self::drop_on_composer);
             }),
         ];
@@ -1138,14 +1269,14 @@ impl Root {
 
     fn render_composer_chips(
         &self,
-        composer: &Composer,
+        composer: &Fields,
         draft: &Draft,
         schedule: &crate::draft::SchedulePreview,
         window: &Window,
         cx: &mut Context<Self>,
         t: &Theme,
     ) -> impl IntoElement + use<> {
-        let projects = &self.session.snapshot.projects;
+        let projects = &self.source.projects;
         let parts = parse_title(&draft.title, projects);
         let priority = parts.priority.unwrap_or(draft.priority);
         let flash = composer.flash;
@@ -1155,12 +1286,16 @@ impl Root {
             .and_then(find)
             .map(|project| (project, None))
             .or_else(|| {
-                let (key, why) = self.session.new_task_project()?;
+                let (key, why) = self
+                    .source
+                    .project
+                    .as_ref()
+                    .map(|(key, why)| (key.as_str(), *why))?;
                 Some((find(key)?, Some(why)))
             });
         // A workspace with no projects gets one with the task.
         let first =
-            (project.is_none() && projects.is_empty()).then(|| self.session.first_project_name());
+            (project.is_none() && projects.is_empty()).then(|| self.source.first_project.clone());
         let labels = composer.labels(projects, None, cx);
         let anchors = &self.anchors;
         let status = draft
@@ -1419,7 +1554,7 @@ impl Root {
 
     fn render_composer_actions(
         &self,
-        composer: &Composer,
+        composer: &Fields,
         repeats: bool,
         cx: &mut Context<Self>,
         t: &Theme,
@@ -1509,7 +1644,7 @@ impl Root {
     /// The list of ways to finish the title's token word, under its start.
     fn render_suggestions(
         &self,
-        composer: &Composer,
+        composer: &Fields,
         word: &CaretWord,
         found: &[Suggestion],
         viewport: gpui::Size<gpui::Pixels>,
@@ -1590,7 +1725,7 @@ impl Root {
     /// the text means.
     fn render_schedule(
         &self,
-        composer: &Composer,
+        composer: &Fields,
         schedule: &crate::draft::SchedulePreview,
         viewport: gpui::Size<gpui::Pixels>,
         cx: &mut Context<Self>,
@@ -1681,5 +1816,89 @@ impl Root {
                     ),
             )
             .into_any_element()
+    }
+}
+
+impl Composer {
+    pub(crate) fn mark_switched(&mut self, name: &'static str) {
+        self.switched.mark_switched(name);
+    }
+
+    pub(crate) fn switch_track(
+        &self,
+        track: Stateful<Div>,
+        name: &'static str,
+        on: bool,
+        scale: f32,
+        cx: &App,
+        t: &Theme,
+    ) -> AnyElement {
+        self.switched.switch_track(track, name, on, scale, cx, t)
+    }
+    pub(crate) fn quick_row(
+        &self,
+        id: &'static str,
+        editor: &Entity<Editor>,
+        options: Vec<(&'static str, String)>,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
+        let mut quick = div().flex().flex_wrap().gap(px(5.)).mt(px(6.));
+        for (ix, (label, value)) in options.into_iter().enumerate() {
+            let editor = editor.clone();
+            quick = quick.child(
+                btn((id, ix), label, t)
+                    .h(px(24.))
+                    .px(px(8.))
+                    .text_size(px(12.))
+                    .shadow(vec![t.inset_ring(t.line2)])
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_field(&editor, &value, cx);
+                        cx.notify();
+                    }))
+                    .child(label),
+            );
+        }
+        quick
+    }
+
+    fn set_field(&self, editor: &Entity<Editor>, value: &str, cx: &mut Context<Self>) {
+        editor.update(cx, |editor, cx| editor.set_text(value, cx));
+    }
+    fn next_field(&mut self, _: &NextField, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_field(1, window, cx);
+    }
+    fn previous_field(&mut self, _: &PreviousField, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_field(-1, window, cx);
+    }
+    fn cycle_field(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let fields = self.composer_fields(cx);
+        if fields.is_empty() {
+            return;
+        }
+        let at = fields.iter().position(|field| field.is_focused(window));
+        let next = at.map_or(0, |at| {
+            (at as isize + delta).rem_euclid(fields.len() as isize)
+        });
+        window.focus(&fields[next as usize], cx);
+        cx.notify();
+    }
+    fn prompt_for_images(
+        &mut self,
+        cx: &mut Context<Self>,
+        then: fn(&mut Self, &[std::path::PathBuf], &mut Context<Self>),
+    ) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Add Image".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                this.update(cx, |this, cx| then(this, &paths, cx)).ok();
+            }
+        })
+        .detach();
     }
 }

@@ -394,7 +394,7 @@ pub struct Root {
     bounce: Rc<RefCell<Bounce>>,
     glide: Option<Glide>,
     /// The switch toggled last, with a run and when it was toggled.
-    pub(crate) switched: Option<(&'static str, usize, Instant)>,
+    pub(crate) switched: crate::switch::Switch,
     /// Whether the detail byline shows the exact creation time.
     pub(crate) created_exact: bool,
     list_motion: ListMotion,
@@ -426,13 +426,7 @@ pub struct Root {
     pub(crate) detail_scroll: ScrollHandle,
     pub(crate) menu: Option<Menu>,
     pub(crate) display: Option<DisplayPop>,
-    pub(crate) composer: Option<Composer>,
-    /// What the composer opens with.
-    pub(crate) kept_draft: Draft,
-    /// The draft Discard threw away, until the next discard.
-    pub(crate) discarded: Option<Draft>,
-    /// Whether creating a task leaves the composer open for the next one.
-    pub(crate) create_more: bool,
+    pub(crate) composer: Entity<Composer>,
     pub(crate) dialog: Option<Layer>,
     pub(crate) body: Entity<Editor>,
     pub(crate) body_edit: Option<BodyEdit>,
@@ -518,6 +512,16 @@ impl Root {
                 .filter_map(|(id, text)| Some((id.parse().ok()?, text))),
         );
         let new_label = cx.new(|cx| Editor::new(Mode::Single, "New label", window, cx));
+        let composer = cx.new(|_| {
+            Composer::new(
+                drafts.composer.map(Draft::from).unwrap_or_default(),
+                crate::composer::Source::from_session(&session),
+                focus.clone(),
+            )
+        });
+        let mut subscriptions = subscriptions;
+        subscriptions.push(cx.subscribe_in(&composer, window, Self::on_composer_request));
+        subscriptions.push(cx.observe(&composer, |_, _, cx| cx.notify()));
         let mut this = Self {
             focus,
             session,
@@ -525,7 +529,7 @@ impl Root {
             list: ListState::new(0, ListAlignment::Top, px(300.)).measure_all(),
             bounce: Rc::default(),
             glide: None,
-            switched: None,
+            switched: Default::default(),
             created_exact: false,
             list_motion: ListMotion::default(),
             details_open: prefs.details_open,
@@ -549,10 +553,7 @@ impl Root {
             detail_scroll: ScrollHandle::new(),
             menu: None,
             display: None,
-            composer: None,
-            kept_draft: drafts.composer.map(Draft::from).unwrap_or_default(),
-            discarded: None,
-            create_more: false,
+            composer,
             dialog: None,
             body,
             body_edit: None,
@@ -668,8 +669,7 @@ impl Root {
     }
 
     fn save_drafts(&self, cx: &App) {
-        let open = self.composer_draft(cx);
-        let draft = open.as_ref().unwrap_or(&self.kept_draft);
+        let draft = self.composer.read(cx).saved_draft(cx);
         let mut notes: HashMap<String, String> = self
             .session
             .note_drafts
@@ -690,7 +690,7 @@ impl Root {
             note.push_str(self.description.read(cx).text());
         }
         let drafts = SavedDrafts {
-            composer: (*draft != Draft::default()).then(|| draft.into()),
+            composer: (draft != Draft::default()).then(|| (&draft).into()),
             notes: notes.into_iter().collect(),
         };
         if let Err(error) = drafts.save(&Prefs::drafts_path(&self.prefs_path)) {
@@ -2867,7 +2867,7 @@ impl Root {
         let recurring = self.session.snapshot.view.query == TaskQuery::Recurring;
         // A menu item with no handler here greys out, as it would do nothing. Popup
         // menus do not count: palette entries dispatch from a frame that shows one.
-        let unblocked = !self.composer_open() && !self.dialog_open();
+        let unblocked = !self.composer_open(cx) && !self.dialog_open();
         let toast_action = self
             .session
             .toast()
@@ -3041,7 +3041,10 @@ impl Render for Root {
         if self.session.review.is_some() {
             key_context.add("Review");
         }
-        if self.menu.is_some() || self.display_open() || self.composer_open() || self.dialog_open()
+        if self.menu.is_some()
+            || self.display_open()
+            || self.composer_open(cx)
+            || self.dialog_open()
         {
             key_context.add("Overlay");
         }

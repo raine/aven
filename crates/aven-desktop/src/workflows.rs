@@ -357,18 +357,16 @@ impl Root {
     }
 
     pub(crate) fn new_epic(&mut self, _: &NewEpic, window: &mut Window, cx: &mut Context<Self>) {
-        self.kept_draft = Draft {
-            is_epic: true,
-            ..std::mem::take(&mut self.kept_draft)
-        };
+        self.composer.update(cx, |composer, _| {
+            composer.prepare(|draft| draft.is_epic = true)
+        });
         self.open_composer(window, cx);
     }
 
     pub(crate) fn new_recurring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.kept_draft = Draft {
-            schedule: "every friday at 09:00".to_string(),
-            ..std::mem::take(&mut self.kept_draft)
-        };
+        self.composer.update(cx, |composer, _| {
+            composer.prepare(|draft| draft.schedule = "every friday at 09:00".to_string())
+        });
         self.open_composer(window, cx);
     }
 
@@ -1215,14 +1213,18 @@ impl Root {
             .iter()
             .find(|row| row.id == detail.id);
         let project = row.map(|row| row.project.clone());
-        self.kept_draft = Draft {
-            title: detail.title,
-            body: detail.description,
-            project,
-            schedule: detail.schedule,
-            replaces: Some(detail.id),
-            ..Draft::default()
-        };
+        self.composer.update(cx, |composer, _| {
+            composer.prepare(|draft| {
+                *draft = Draft {
+                    title: detail.title,
+                    body: detail.description,
+                    project,
+                    schedule: detail.schedule,
+                    replaces: Some(detail.id),
+                    ..Draft::default()
+                }
+            })
+        });
         self.open_composer(window, cx);
     }
 

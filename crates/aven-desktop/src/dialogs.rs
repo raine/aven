@@ -42,7 +42,7 @@ const SEARCH_WIDTH: f32 = 660.;
 const SEARCH_LIST_HEIGHT: f32 = 312.;
 const SEARCH_ROW_HEIGHT: f32 = 50.;
 
-type SavePromptText = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
+pub(crate) type SavePromptText = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
 
 const HELP: [(&str, &[(&str, &str)]); 6] = [
     (
@@ -499,10 +499,6 @@ impl Root {
         self.session.search_accepted(&input.text);
         self.close_dialog(window, cx);
         self.switch_view(Command::Search(input), window, cx);
-    }
-
-    fn set_field(&self, editor: &Entity<Editor>, value: &str, cx: &mut Context<Self>) {
-        editor.update(cx, |editor, cx| editor.set_text(value, cx));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -986,33 +982,6 @@ impl Root {
             .shadow(vec![t.inset_ring(t.line)])
             .text_color(t.ink)
             .child(editor.clone())
-    }
-
-    pub(crate) fn quick_row(
-        &self,
-        id: &'static str,
-        editor: &Entity<Editor>,
-        options: Vec<(&'static str, String)>,
-        cx: &mut Context<Self>,
-        t: &Theme,
-    ) -> impl IntoElement + use<> {
-        let mut quick = div().flex().flex_wrap().gap(px(5.)).mt(px(6.));
-        for (ix, (label, value)) in options.into_iter().enumerate() {
-            let editor = editor.clone();
-            quick = quick.child(
-                btn((id, ix), label, t)
-                    .h(px(24.))
-                    .px(px(8.))
-                    .text_size(px(12.))
-                    .shadow(vec![t.inset_ring(t.line2)])
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_field(&editor, &value, cx);
-                        cx.notify();
-                    }))
-                    .child(label),
-            );
-        }
-        quick
     }
 
     pub(crate) fn heading(text: String, t: &Theme) -> impl IntoElement + use<> {

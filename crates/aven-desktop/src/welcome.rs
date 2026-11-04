@@ -67,7 +67,7 @@ impl Root {
         if !due {
             self.intro.skip();
             self.welcome = None;
-            if !self.composer_open() && !self.dialog_open() {
+            if !self.composer_open(cx) && !self.dialog_open() {
                 let focus = self.focus.clone();
                 cx.defer_in(window, move |_, window, cx| window.focus(&focus, cx));
             }
@@ -166,7 +166,8 @@ impl Root {
     ) {
         let title = self.welcome_text(cx);
         if !title.is_empty() {
-            self.kept_draft.title = title;
+            self.composer
+                .update(cx, |composer, _| composer.set_title(title));
         }
         self.open_composer(window, cx);
     }
@@ -244,7 +245,7 @@ impl Root {
         let t = theme(cx);
         let mut key_context = KeyContext::default();
         key_context.add("Welcome");
-        if self.menu.is_some() || self.composer_open() || self.dialog_open() {
+        if self.menu.is_some() || self.composer_open(cx) || self.dialog_open() {
             key_context.add("Overlay");
         }
         let intro = self.intro.frame(|started| intro::elapsed(started, cx));
@@ -266,7 +267,7 @@ impl Root {
             .session
             .toast()
             .is_some_and(|toast| toast.action.is_some());
-        let unblocked = !self.composer_open() && !self.dialog_open();
+        let unblocked = !self.composer_open(cx) && !self.dialog_open();
         div()
             .relative()
             .size_full()

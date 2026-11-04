@@ -1,7 +1,6 @@
 //! The settings surface, the Sync dialog and data recovery.
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use accesskit::Role;
 use aven_core::sync::client::engine::Stage;
@@ -9,9 +8,8 @@ use aven_core::sync::client::invitation::InvitationCheck;
 use aven_host::store::TaskQuery;
 use chrono::Local;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div, Entity,
-    FocusHandle, FontWeight, Hsla, SharedString, Stateful, Window, canvas, div, ease_in_out, fill,
-    point, prelude::*, size,
+    AnyElement, App, Bounds, ClipboardItem, Context, Div, Entity, FocusHandle, FontWeight, Hsla,
+    SharedString, Stateful, Window, canvas, div, fill, point, prelude::*, size,
 };
 use qrcode::{Color, EcLevel, QrCode};
 
@@ -23,7 +21,7 @@ use crate::kit::*;
 use crate::session::{SettingsTab, SyncPage, SyncTone, count_text};
 use crate::shell::Root;
 use crate::sync_ops::{Secret, SetupFacts, SyncKind, SyncOp, SyncRequest, steps};
-use crate::theme::{Theme, mix, theme};
+use crate::theme::{Theme, theme};
 use crate::toast::Toast;
 use crate::workflows::tab_stop;
 
@@ -41,7 +39,6 @@ const TABS: [(SettingsTab, &str); 9] = [
 
 const CLOUD_URL: &str = "https://cloud.aventasks.dev";
 const QR_SIZE: f32 = 184.;
-const SWITCH_DURATION: Duration = Duration::from_millis(160);
 
 fn row_title(title: impl Into<SharedString>, note: Option<String>, t: &Theme) -> Div {
     div()
@@ -698,14 +695,10 @@ impl Root {
         self.switch_track(track, name, on, 1., cx, t)
     }
 
-    /// Starts the slide of the switch named `name`.
     pub(crate) fn mark_switched(&mut self, name: &'static str) {
-        let run = self.switched.map_or(0, |(_, run, _)| run + 1);
-        self.switched = Some((name, run, Instant::now()));
+        self.switched.mark_switched(name);
     }
 
-    /// Draws a switch on `track`, sliding while `name` was just toggled. `scale`
-    /// shrinks it for tight rows.
     pub(crate) fn switch_track(
         &self,
         track: Stateful<Div>,
@@ -715,47 +708,8 @@ impl Root {
         cx: &App,
         t: &Theme,
     ) -> AnyElement {
-        let (off_color, on_color) = (t.line2, t.fill);
-        let travel = move |delta: f32| if on { delta } else { 1. - delta };
-        let thumb_left = move |delta: f32| (2. + 14. * travel(delta)) * scale;
-        let track_color = move |delta: f32| mix(off_color, on_color, travel(delta));
-        let moving = self
-            .switched
-            .filter(|(toggled, _, at)| {
-                *toggled == name && at.elapsed() < SWITCH_DURATION && !cx.reduce_motion()
-            })
-            .map(|(_, run, _)| run);
-        let thumb = div()
-            .absolute()
-            .top(px(2. * scale))
-            .size(px(16. * scale))
-            .rounded_full()
-            .bg(gpui::white());
-        let track = track
-            .flex_none()
-            .relative()
-            .w(px(34. * scale))
-            .h(px(20. * scale))
-            .rounded(px(99.));
-        let Some(run) = moving else {
-            return track
-                .bg(track_color(1.))
-                .child(thumb.left(px(thumb_left(1.))))
-                .into_any_element();
-        };
-        let animation = Animation::new(SWITCH_DURATION).with_easing(ease_in_out);
-        track
-            .child(thumb.with_animation(
-                ("switch-thumb", run),
-                animation.clone(),
-                move |thumb, delta| thumb.left(px(thumb_left(delta))),
-            ))
-            .with_animation(("switch-track", run), animation, move |track, delta| {
-                track.bg(track_color(delta))
-            })
-            .into_any_element()
+        self.switched.switch_track(track, name, on, scale, cx, t)
     }
-
     fn general_tab(&self, _: &Window, cx: &mut Context<Self>, t: &Theme) -> Div {
         let themes = [
             (ThemePref::Dark, "Dark"),
