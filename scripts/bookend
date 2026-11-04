@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Opens the bookend intro example as an app bundle. Started bare from a
+# terminal, its window cannot take keyboard focus, so its keys never arrive.
+#
+#   bookend    builds the example and opens it
+#
+# BOOKEND_T and BOOKEND_LIGHT pass through to the example.
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+(cd "$repo" && cargo build -p aven-desktop --example bookend)
+
+app="$repo/target/bookend/Bookend.app"
+mkdir -p "$app/Contents/MacOS"
+cp "$repo/target/debug/examples/bookend" "$app/Contents/MacOS/bookend"
+cat >|"$app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>bookend</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.aven.bookend-example</string>
+	<key>CFBundleName</key>
+	<string>Bookend</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+PLIST
+
+open_args=()
+for name in BOOKEND_T BOOKEND_LIGHT; do
+  if [[ -n ${!name:-} ]]; then
+    open_args+=(--env "$name=${!name}")
+  fi
+done
+open -n ${open_args[@]+"${open_args[@]}"} "$app"

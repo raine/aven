@@ -256,6 +256,10 @@ demo-app:
 demo-app-dev:
     scripts/demo-app --debug
 
+# Open the bookend intro example as an app, so its window takes keyboard focus
+bookend:
+    scripts/bookend
+
 # Run the docs development server
 docs:
     #!/usr/bin/env bash
