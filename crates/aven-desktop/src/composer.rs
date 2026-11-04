@@ -1583,6 +1583,7 @@ impl Composer {
                 let raised = t.raised;
                 let ink = t.ink;
                 row.hover(move |style| style.bg(raised).text_color(ink))
+                    .tooltip(tip("⌃G creates this task and keeps the dialog open"))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_create_more(cx)))
             })
             .child(self.switch_track(
@@ -1593,7 +1594,8 @@ impl Composer {
                 cx,
                 t,
             ))
-            .child("Create more");
+            .child("Create more")
+            .child(kbd("⌃G", t.faint));
 
         div()
             .flex()
