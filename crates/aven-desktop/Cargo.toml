@@ -14,7 +14,7 @@ aven-host = { path = "../aven-host" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "ba63a022c9a22ca66d68ef2a8f0bb9b5b0a9984d" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "ba63a022c9a22ca66d68ef2a8f0bb9b5b0a9984d", features = ["font-kit", "runtime_shaders"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "png", "tiff"] }
 linkify = "0.11.0"
 pulldown-cmark = "0.13"
 qrcode = { version = "0.14.1", default-features = false }
