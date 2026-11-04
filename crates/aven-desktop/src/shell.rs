@@ -1573,13 +1573,6 @@ impl Root {
         let data = self.session.snapshot.tasks[task].clone();
         let epic_cells = query_is_epics.then(|| self.epic_cells(&data, cx, &t));
         let id = data.id.clone();
-        let selected = self.session.selected.as_ref() == Some(&id);
-        let below_selected = matches!(
-            &self.items[ix - 1],
-            Item::Row { id, .. } if self.session.selected.as_ref() == Some(id)
-        );
-        let active = window.is_window_active();
-        let gliding = self.glide.is_some_and(Glide::live);
         let wide = self.list_wide;
         let date_color = match data.date_tone {
             DateTone::Soon => t.warn,
@@ -1593,9 +1586,9 @@ impl Root {
             .cloned()
             .collect::<Vec<_>>()
             .join(" ");
-        let (select_id, toggle_id, menu_id) = (id.clone(), id.clone(), id.clone());
         let deleted = data.deleted;
         let shown = self.prefs.row_fields;
+        let head = self.render_row_head(ix, row, &data, window, cx, &t);
         let dates = [
             ("created", "Created", data.created.filter(|_| shown.created)),
             ("updated", "Updated", data.updated.filter(|_| shown.updated)),
@@ -1603,7 +1596,91 @@ impl Root {
         .into_iter()
         .filter(|_| self.list_refs && !query_is_epics)
         .filter_map(|(key, name, date)| Some(date_cell((key, row), name, date?, &t)));
-        let body = div()
+        let body = head
+            .when(self.list_refs, |row| {
+                row.child(ref_label(&data.reference, &data.project_key, Some(74.), &t))
+            })
+            .child(self.task_title(&id, data.title, data.status, deleted, &t))
+            .when(deleted, |row| {
+                row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
+            })
+            .when(data.recurring, |row| {
+                row.child(small(12.).flex_none().text_color(t.faint).child("↻"))
+            })
+            .when_some(data.reason.filter(|_| wide), |row, (reason, bad)| {
+                row.child(
+                    small(12.)
+                        .flex_none()
+                        .text_color(if bad { t.bad } else { t.warn })
+                        .child(reason),
+                )
+            })
+            .when(data.blocked && self.list_refs, |row| {
+                row.child(small(12.).flex_none().text_color(t.warn).child("Blocked"))
+            })
+            .when(wide && shown.labels && !labels.is_empty(), |row| {
+                row.child(
+                    small(12.)
+                        .flex_none()
+                        .max_w(px(112.))
+                        .text_right()
+                        .truncate()
+                        .text_color(t.faint)
+                        .child(labels),
+                )
+            })
+            .children(epic_cells.into_iter().flatten())
+            .when_some(
+                data.progress.filter(|_| !query_is_epics),
+                |row, progress| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .w(px(52.))
+                            .font_family(MONO)
+                            .text_size(px(12.))
+                            .text_color(t.faint)
+                            .child(progress),
+                    )
+                },
+            )
+            .when(self.list_dues, |row| {
+                row.child(
+                    small(12.)
+                        .flex_none()
+                        .w(px(64.))
+                        .text_right()
+                        .text_color(date_color)
+                        .child(data.due),
+                )
+            })
+            .children(dates);
+        let place = div().px(px(8.)).child(body);
+        match self.list_motion.row(&id) {
+            Some(start) => glide_to_place(place, start),
+            None => place.into_any_element(),
+        }
+    }
+
+    fn render_row_head(
+        &self,
+        ix: usize,
+        row: usize,
+        data: &TaskRow,
+        window: &Window,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> Stateful<Div> {
+        let id = data.id.clone();
+        let selected = self.session.selected.as_ref() == Some(&id);
+        let below_selected = matches!(
+            &self.items[ix - 1],
+            Item::Row { id, .. } if self.session.selected.as_ref() == Some(id)
+        );
+        let active = window.is_window_active();
+        let gliding = self.glide.is_some_and(Glide::live);
+        let (select_id, toggle_id, menu_id) = (id.clone(), id.clone(), id.clone());
+        div()
             .relative()
             .id(("row", row))
             .role(Role::ListItem)
@@ -1674,69 +1751,6 @@ impl Root {
                     }))
                     .child(self.task_glyph(&id, data.status, &t)),
             )
-            .when(self.list_refs, |row| {
-                row.child(ref_label(&data.reference, &data.project_key, Some(74.), &t))
-            })
-            .child(self.task_title(&id, data.title, data.status, deleted, &t))
-            .when(deleted, |row| {
-                row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
-            })
-            .when(data.recurring, |row| {
-                row.child(small(12.).flex_none().text_color(t.faint).child("↻"))
-            })
-            .when_some(data.reason.filter(|_| wide), |row, (reason, bad)| {
-                row.child(
-                    small(12.)
-                        .flex_none()
-                        .text_color(if bad { t.bad } else { t.warn })
-                        .child(reason),
-                )
-            })
-            .when(data.blocked && self.list_refs, |row| {
-                row.child(small(12.).flex_none().text_color(t.warn).child("Blocked"))
-            })
-            .when(wide && shown.labels && !labels.is_empty(), |row| {
-                row.child(
-                    small(12.)
-                        .flex_none()
-                        .max_w(px(112.))
-                        .text_right()
-                        .truncate()
-                        .text_color(t.faint)
-                        .child(labels),
-                )
-            })
-            .children(epic_cells.into_iter().flatten())
-            .when_some(
-                data.progress.filter(|_| !query_is_epics),
-                |row, progress| {
-                    row.child(
-                        div()
-                            .flex_none()
-                            .w(px(52.))
-                            .font_family(MONO)
-                            .text_size(px(12.))
-                            .text_color(t.faint)
-                            .child(progress),
-                    )
-                },
-            )
-            .when(self.list_dues, |row| {
-                row.child(
-                    small(12.)
-                        .flex_none()
-                        .w(px(64.))
-                        .text_right()
-                        .text_color(date_color)
-                        .child(data.due),
-                )
-            })
-            .children(dates);
-        let place = div().px(px(8.)).child(body);
-        match self.list_motion.row(&id) {
-            Some(start) => glide_to_place(place, start),
-            None => place.into_any_element(),
-        }
     }
 
     fn render_nav(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -1992,28 +2006,8 @@ impl Root {
             .target_row()
             .filter(|_| peeking)
             .map(|row| row.reference.clone());
-        let fixed = matches!(query, TaskQuery::Queue | TaskQuery::Upcoming);
         let logged = query == TaskQuery::RecentActions;
         let settings = self.session.settings.is_some();
-        let filterable = !settings && !logged && query != TaskQuery::Conflicts;
-        let can_columns = !settings && supports_columns(query) && self.session.review.is_none();
-        let columns = view.columns;
-        let reviewing = self.session.review.is_some();
-        let orderable = !settings
-            && !matches!(query, TaskQuery::Upcoming | TaskQuery::Overdue)
-            && !logged
-            && !reviewing;
-        let groupable = !settings
-            && !fixed
-            && !logged
-            && !reviewing
-            && !columns
-            && !matches!(query, TaskQuery::Epics | TaskQuery::Conflicts);
-        let dated = !settings
-            && !logged
-            && !reviewing
-            && !columns
-            && !matches!(query, TaskQuery::Epics | TaskQuery::Recurring);
         let width = window.viewport_size().width;
         let hints = width > px(HEADER_HINTS_MIN_WINDOW_WIDTH);
         let crumbs = !settings && width > px(CRUMBS_MIN_WINDOW_WIDTH);
@@ -2109,123 +2103,7 @@ impl Root {
                     .text_color(t.faint)
                     .when(hints && !expanded && !settings, |hint| hint.child(subtitle)),
             )
-            .when(
-                matches!(query, TaskQuery::Inbox | TaskQuery::Queue)
-                    && !expanded
-                    && !reviewing
-                    && !settings,
-                |top| {
-                    top.child(
-                        line_btn("review-tasks", "Review tasks", &t)
-                            .shadow(Vec::new())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.review_tasks(&ReviewTasks, window, cx);
-                            })),
-                    )
-                },
-            )
-            .when(query == TaskQuery::Epics && !expanded && !settings, |top| {
-                let closed = if view.closed {
-                    "Hide closed"
-                } else {
-                    "Show closed"
-                };
-                top.child(
-                    btn("epics-closed", closed, &t)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_closed(window, cx);
-                        }))
-                        .child(closed),
-                )
-                .child(
-                    btn("new-epic", "New epic", &t)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.new_epic(&NewEpic, window, cx);
-                        }))
-                        .child("New epic"),
-                )
-            })
-            .when(query == TaskQuery::Recurring && !settings, |top| {
-                top.child(
-                    btn("new-recurring", "New recurring task", &t)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.new_recurring(window, cx);
-                        }))
-                        .child("New recurring task"),
-                )
-            })
-            .when(expanded, |top| {
-                top.child(
-                    line_btn("collapse", format!("← {name}"), &t)
-                        .on_click(cx.listener(|this, _, window, cx| this.collapse(window, cx))),
-                )
-            })
-            .when(!expanded && !reviewing && filterable, |top| {
-                top.child(
-                    btn("filter", "Filter", &t)
-                        .relative()
-                        .child(anchor_probe("filter", &self.anchors))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.pick_filter(&PickFilter, window, cx);
-                        }))
-                        .child("Filter"),
-                )
-            })
-            .when(!expanded && orderable, |top| {
-                top.child(
-                    btn("order", "Order", &t)
-                        .relative()
-                        .child(anchor_probe("order", &self.anchors))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.pick_order(&PickOrder, window, cx);
-                        }))
-                        .child(crate::commands::order_label(view)),
-                )
-            })
-            .when(!expanded && groupable, |top| {
-                top.child(
-                    btn("group", "Group", &t)
-                        .relative()
-                        .child(anchor_probe("group", &self.anchors))
-                        .on_click(cx.listener(|this, _, window, cx| this.pick_group(window, cx)))
-                        .child("Group"),
-                )
-            })
-            .when(!expanded && can_columns, |top| {
-                let label = if columns { "List" } else { "Columns" };
-                top.child(
-                    btn("layout", label, &t)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_layout(&ToggleLayout, window, cx);
-                        }))
-                        .child(label),
-                )
-            })
-            .when(
-                !expanded && !settings && query != TaskQuery::RecentActions,
-                |top| {
-                    top.child(
-                        btn("details", "Toggle details", &t)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_details(&ToggleDetails, window, cx)
-                            }))
-                            .child(icon("icons/ic-details.svg", t.body))
-                            .child("Details"),
-                    )
-                },
-            )
-            .when(!expanded && dated, |top| {
-                top.child(
-                    btn("display", "Display", &t)
-                        .relative()
-                        .aria_expanded(self.display_open())
-                        .child(anchor_probe("display", &self.anchors))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_display(window, cx);
-                        }))
-                        .child("Display"),
-                )
-            })
+            .map(|top| self.render_top_controls(top, cx, &t))
             .child(
                 btn("search", "Search", &t)
                     .shadow(vec![t.inset_ring(t.line2)])
@@ -2278,6 +2156,158 @@ impl Root {
                         )
                     }),
             )
+    }
+
+    fn render_top_controls(&self, top: Div, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let view = &self.session.snapshot.view;
+        let query = view.query;
+        let expanded = self.session.expanded;
+        let name = if self.session.settings.is_some() {
+            "Settings"
+        } else if self.session.review.is_some() {
+            "Triage"
+        } else {
+            view_name(query)
+        };
+        let fixed = matches!(query, TaskQuery::Queue | TaskQuery::Upcoming);
+        let logged = query == TaskQuery::RecentActions;
+        let settings = self.session.settings.is_some();
+        let filterable = !settings && !logged && query != TaskQuery::Conflicts;
+        let can_columns = !settings && supports_columns(query) && self.session.review.is_none();
+        let columns = view.columns;
+        let reviewing = self.session.review.is_some();
+        let orderable = !settings
+            && !matches!(query, TaskQuery::Upcoming | TaskQuery::Overdue)
+            && !logged
+            && !reviewing;
+        let groupable = !settings
+            && !fixed
+            && !logged
+            && !reviewing
+            && !columns
+            && !matches!(query, TaskQuery::Epics | TaskQuery::Conflicts);
+        let dated = !settings
+            && !logged
+            && !reviewing
+            && !columns
+            && !matches!(query, TaskQuery::Epics | TaskQuery::Recurring);
+        top.when(
+            matches!(query, TaskQuery::Inbox | TaskQuery::Queue)
+                && !expanded
+                && !reviewing
+                && !settings,
+            |top| {
+                top.child(
+                    line_btn("review-tasks", "Review tasks", &t)
+                        .shadow(Vec::new())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.review_tasks(&ReviewTasks, window, cx);
+                        })),
+                )
+            },
+        )
+        .when(query == TaskQuery::Epics && !expanded && !settings, |top| {
+            let closed = if view.closed {
+                "Hide closed"
+            } else {
+                "Show closed"
+            };
+            top.child(
+                btn("epics-closed", closed, &t)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_closed(window, cx);
+                    }))
+                    .child(closed),
+            )
+            .child(
+                btn("new-epic", "New epic", &t)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.new_epic(&NewEpic, window, cx);
+                    }))
+                    .child("New epic"),
+            )
+        })
+        .when(query == TaskQuery::Recurring && !settings, |top| {
+            top.child(
+                btn("new-recurring", "New recurring task", &t)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.new_recurring(window, cx);
+                    }))
+                    .child("New recurring task"),
+            )
+        })
+        .when(expanded, |top| {
+            top.child(
+                line_btn("collapse", format!("← {name}"), &t)
+                    .on_click(cx.listener(|this, _, window, cx| this.collapse(window, cx))),
+            )
+        })
+        .when(!expanded && !reviewing && filterable, |top| {
+            top.child(
+                btn("filter", "Filter", &t)
+                    .relative()
+                    .child(anchor_probe("filter", &self.anchors))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.pick_filter(&PickFilter, window, cx);
+                    }))
+                    .child("Filter"),
+            )
+        })
+        .when(!expanded && orderable, |top| {
+            top.child(
+                btn("order", "Order", &t)
+                    .relative()
+                    .child(anchor_probe("order", &self.anchors))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.pick_order(&PickOrder, window, cx);
+                    }))
+                    .child(crate::commands::order_label(view)),
+            )
+        })
+        .when(!expanded && groupable, |top| {
+            top.child(
+                btn("group", "Group", &t)
+                    .relative()
+                    .child(anchor_probe("group", &self.anchors))
+                    .on_click(cx.listener(|this, _, window, cx| this.pick_group(window, cx)))
+                    .child("Group"),
+            )
+        })
+        .when(!expanded && can_columns, |top| {
+            let label = if columns { "List" } else { "Columns" };
+            top.child(
+                btn("layout", label, &t)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_layout(&ToggleLayout, window, cx);
+                    }))
+                    .child(label),
+            )
+        })
+        .when(
+            !expanded && !settings && query != TaskQuery::RecentActions,
+            |top| {
+                top.child(
+                    btn("details", "Toggle details", &t)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_details(&ToggleDetails, window, cx)
+                        }))
+                        .child(icon("icons/ic-details.svg", t.body))
+                        .child("Details"),
+                )
+            },
+        )
+        .when(!expanded && dated, |top| {
+            top.child(
+                btn("display", "Display", &t)
+                    .relative()
+                    .aria_expanded(self.display_open())
+                    .child(anchor_probe("display", &self.anchors))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_display(window, cx);
+                    }))
+                    .child("Display"),
+            )
+        })
     }
 
     fn render_empty(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -2832,6 +2862,118 @@ impl Focusable for Root {
 }
 
 impl Root {
+    fn root_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {
+        let reviewing = self.session.review.is_some();
+        let recurring = self.session.snapshot.view.query == TaskQuery::Recurring;
+        // A menu item with no handler here greys out, as it would do nothing. Popup
+        // menus do not count: palette entries dispatch from a frame that shows one.
+        let unblocked = !self.composer_open() && !self.dialog_open();
+        let toast_action = self
+            .session
+            .toast()
+            .is_some_and(|toast| toast.action.is_some());
+        let settings_closed = self.session.settings.is_none();
+        let on_list = unblocked && settings_closed && !reviewing;
+        let has_task = self.session.target().is_some() || recurring;
+        root.when(unblocked, |el| {
+            el.on_action(cx.listener(Self::open_settings))
+                .on_action(cx.listener(Self::open_palette))
+                .on_action(cx.listener(Self::open_help))
+                .on_action(cx.listener(Self::new_task))
+                .on_action(cx.listener(Self::open_about))
+        })
+        .when(on_list, |el| {
+            el.on_action(cx.listener(Self::move_down))
+                .on_action(cx.listener(Self::move_up))
+                .on_action(cx.listener(Self::lane_back))
+                .on_action(cx.listener(Self::lane_on))
+                .on_action(cx.listener(Self::all_projects))
+                .on_action(cx.listener(Self::pick_project))
+                .on_action(cx.listener(Self::pick_workspace))
+                .on_action(cx.listener(Self::toggle_layout))
+                .on_action(cx.listener(Self::open_search))
+                .on_action(cx.listener(Self::pick_filter))
+                .on_action(cx.listener(Self::pick_priority_filter))
+                .on_action(cx.listener(Self::pick_label_filter))
+                .on_action(cx.listener(Self::pick_metadata_filter))
+                .on_action(cx.listener(Self::cycle_deleted))
+                .on_action(cx.listener(Self::clear_filters))
+                .on_action(cx.listener(Self::pick_order))
+                .on_action(cx.listener(Self::show_view))
+                .on_action(cx.listener(Self::toggle_mark))
+                .on_action(cx.listener(Self::extend_marks_down))
+                .on_action(cx.listener(Self::extend_marks_up))
+                .on_action(cx.listener(Self::mark_visible))
+                .on_action(cx.listener(Self::clear_marks))
+                .on_action(cx.listener(Self::focus_child))
+                .on_action(cx.listener(Self::new_epic))
+                .on_action(cx.listener(Self::cycle_lifecycle))
+                .on_action(cx.listener(Self::review_tasks))
+        })
+        .when(on_list && has_task, |el| {
+            el.on_action(cx.listener(Self::mark_done))
+                .on_action(cx.listener(Self::set_status))
+                .on_action(cx.listener(Self::cancel_task))
+                .on_action(cx.listener(Self::change_status))
+                .on_action(cx.listener(Self::edit_title))
+                .on_action(cx.listener(Self::rename_task))
+                .on_action(cx.listener(Self::edit_description))
+                .on_action(cx.listener(Self::edit_due))
+                .on_action(cx.listener(Self::change_project))
+                .on_action(cx.listener(Self::edit_labels))
+                .on_action(cx.listener(Self::edit_metadata))
+                .on_action(cx.listener(Self::focus_note))
+                .on_action(cx.listener(Self::delete_task))
+                .on_action(cx.listener(Self::restore_task))
+                .on_action(cx.listener(Self::add_blocker))
+                .on_action(cx.listener(Self::remove_blocker))
+                .on_action(cx.listener(Self::add_related))
+                .on_action(cx.listener(Self::jump_to_blocker))
+                .on_action(cx.listener(Self::jump_to_epic))
+                .on_action(cx.listener(Self::expand))
+                .on_action(cx.listener(Self::copy_ref))
+                .on_action(cx.listener(Self::copy_id))
+                .on_action(cx.listener(Self::copy_title))
+                .on_action(cx.listener(Self::copy_description))
+                .on_action(cx.listener(Self::copy_title_and_description))
+                .on_action(cx.listener(Self::copy_notes))
+                .on_action(cx.listener(Self::copy_report))
+                .on_action(cx.listener(Self::add_to_epic))
+                .on_action(cx.listener(Self::publish_gist))
+        })
+        .when(unblocked && settings_closed && has_task, |el| {
+            el.on_action(cx.listener(Self::change_priority))
+                .on_action(cx.listener(Self::edit_availability))
+        })
+        .on_action(cx.listener(Self::minimize))
+        .on_action(cx.listener(Self::zoom))
+        .on_action(cx.listener(Self::toggle_full_screen))
+        .on_action(cx.listener(Self::toggle_theme))
+        .on_action(cx.listener(Self::close_settings))
+        .on_action(cx.listener(Self::open_sync))
+        .on_action(cx.listener(Self::sync_now))
+        .on_action(cx.listener(Self::toggle_details))
+        .on_action(cx.listener(Self::toggle_sidebar))
+        .on_action(cx.listener(Self::save_description))
+        .on_action(cx.listener(Self::back))
+        .on_action(cx.listener(Self::undo))
+        .when(toast_action, |el| {
+            el.on_action(cx.listener(Self::run_toast_action))
+        })
+        .on_action(cx.listener(Self::paste_image))
+        .on_action(cx.listener(Self::dismiss))
+        .on_action(cx.listener(Self::next_field))
+        .on_action(cx.listener(Self::previous_field))
+        .on_action(cx.listener(Self::close_window))
+        .on_action(cx.listener(Self::review_decide))
+        .on_action(cx.listener(Self::review_keep))
+        .on_action(cx.listener(Self::review_skip))
+        .on_action(cx.listener(Self::review_back))
+        .on_action(cx.listener(Self::review_undo))
+        .on_action(cx.listener(Self::review_exit))
+        .on_action(cx.listener(Self::review_next))
+    }
+
     fn render_sync_state(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let t = theme(cx);
         let (tone, label) = self.session.sync_line();
@@ -2987,16 +3129,6 @@ impl Render for Root {
                 .children(dialog)
                 .children(toast);
         }
-        // A menu item with no handler here greys out, as it would do nothing. Popup
-        // menus do not count: palette entries dispatch from a frame that shows one.
-        let unblocked = !self.composer_open() && !self.dialog_open();
-        let toast_action = self
-            .session
-            .toast()
-            .is_some_and(|toast| toast.action.is_some());
-        let settings_closed = self.session.settings.is_none();
-        let on_list = unblocked && settings_closed && !reviewing;
-        let has_task = self.session.target().is_some() || recurring;
         div()
             .relative()
             .size_full()
@@ -3008,103 +3140,7 @@ impl Render for Root {
             .line_height(px(UI_LINE_HEIGHT))
             .key_context(key_context)
             .track_focus(&self.focus)
-            .when(unblocked, |el| {
-                el.on_action(cx.listener(Self::open_settings))
-                    .on_action(cx.listener(Self::open_palette))
-                    .on_action(cx.listener(Self::open_help))
-                    .on_action(cx.listener(Self::new_task))
-                    .on_action(cx.listener(Self::open_about))
-            })
-            .when(on_list, |el| {
-                el.on_action(cx.listener(Self::move_down))
-                    .on_action(cx.listener(Self::move_up))
-                    .on_action(cx.listener(Self::lane_back))
-                    .on_action(cx.listener(Self::lane_on))
-                    .on_action(cx.listener(Self::all_projects))
-                    .on_action(cx.listener(Self::pick_project))
-                    .on_action(cx.listener(Self::pick_workspace))
-                    .on_action(cx.listener(Self::toggle_layout))
-                    .on_action(cx.listener(Self::open_search))
-                    .on_action(cx.listener(Self::pick_filter))
-                    .on_action(cx.listener(Self::pick_priority_filter))
-                    .on_action(cx.listener(Self::pick_label_filter))
-                    .on_action(cx.listener(Self::pick_metadata_filter))
-                    .on_action(cx.listener(Self::cycle_deleted))
-                    .on_action(cx.listener(Self::clear_filters))
-                    .on_action(cx.listener(Self::pick_order))
-                    .on_action(cx.listener(Self::show_view))
-                    .on_action(cx.listener(Self::toggle_mark))
-                    .on_action(cx.listener(Self::extend_marks_down))
-                    .on_action(cx.listener(Self::extend_marks_up))
-                    .on_action(cx.listener(Self::mark_visible))
-                    .on_action(cx.listener(Self::clear_marks))
-                    .on_action(cx.listener(Self::focus_child))
-                    .on_action(cx.listener(Self::new_epic))
-                    .on_action(cx.listener(Self::cycle_lifecycle))
-                    .on_action(cx.listener(Self::review_tasks))
-            })
-            .when(on_list && has_task, |el| {
-                el.on_action(cx.listener(Self::mark_done))
-                    .on_action(cx.listener(Self::set_status))
-                    .on_action(cx.listener(Self::cancel_task))
-                    .on_action(cx.listener(Self::change_status))
-                    .on_action(cx.listener(Self::edit_title))
-                    .on_action(cx.listener(Self::rename_task))
-                    .on_action(cx.listener(Self::edit_description))
-                    .on_action(cx.listener(Self::edit_due))
-                    .on_action(cx.listener(Self::change_project))
-                    .on_action(cx.listener(Self::edit_labels))
-                    .on_action(cx.listener(Self::edit_metadata))
-                    .on_action(cx.listener(Self::focus_note))
-                    .on_action(cx.listener(Self::delete_task))
-                    .on_action(cx.listener(Self::restore_task))
-                    .on_action(cx.listener(Self::add_blocker))
-                    .on_action(cx.listener(Self::remove_blocker))
-                    .on_action(cx.listener(Self::add_related))
-                    .on_action(cx.listener(Self::jump_to_blocker))
-                    .on_action(cx.listener(Self::jump_to_epic))
-                    .on_action(cx.listener(Self::expand))
-                    .on_action(cx.listener(Self::copy_ref))
-                    .on_action(cx.listener(Self::copy_id))
-                    .on_action(cx.listener(Self::copy_title))
-                    .on_action(cx.listener(Self::copy_description))
-                    .on_action(cx.listener(Self::copy_title_and_description))
-                    .on_action(cx.listener(Self::copy_notes))
-                    .on_action(cx.listener(Self::copy_report))
-                    .on_action(cx.listener(Self::add_to_epic))
-                    .on_action(cx.listener(Self::publish_gist))
-            })
-            .when(unblocked && settings_closed && has_task, |el| {
-                el.on_action(cx.listener(Self::change_priority))
-                    .on_action(cx.listener(Self::edit_availability))
-            })
-            .on_action(cx.listener(Self::minimize))
-            .on_action(cx.listener(Self::zoom))
-            .on_action(cx.listener(Self::toggle_full_screen))
-            .on_action(cx.listener(Self::toggle_theme))
-            .on_action(cx.listener(Self::close_settings))
-            .on_action(cx.listener(Self::open_sync))
-            .on_action(cx.listener(Self::sync_now))
-            .on_action(cx.listener(Self::toggle_details))
-            .on_action(cx.listener(Self::toggle_sidebar))
-            .on_action(cx.listener(Self::save_description))
-            .on_action(cx.listener(Self::back))
-            .on_action(cx.listener(Self::undo))
-            .when(toast_action, |el| {
-                el.on_action(cx.listener(Self::run_toast_action))
-            })
-            .on_action(cx.listener(Self::paste_image))
-            .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::next_field))
-            .on_action(cx.listener(Self::previous_field))
-            .on_action(cx.listener(Self::close_window))
-            .on_action(cx.listener(Self::review_decide))
-            .on_action(cx.listener(Self::review_keep))
-            .on_action(cx.listener(Self::review_skip))
-            .on_action(cx.listener(Self::review_back))
-            .on_action(cx.listener(Self::review_undo))
-            .on_action(cx.listener(Self::review_exit))
-            .on_action(cx.listener(Self::review_next))
+            .map(|root| self.root_actions(root, cx))
             .when_some(split, |root, split| {
                 root.cursor_col_resize()
                     .on_mouse_move(

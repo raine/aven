@@ -1038,6 +1038,124 @@ impl Root {
         let t = theme(cx);
         let viewport = window.viewport_size();
         let draft = composer.current(cx);
+        let schedule = schedule_preview(&draft.schedule);
+        let chips = self.render_composer_chips(composer, &draft, &schedule, window, cx, &t);
+
+        let images = self.render_composer_images(&draft, cx, &t);
+
+        let actions = self.render_composer_actions(composer, schedule.repeats, cx, &t);
+
+        let suggesting = self.composer_suggestions(window, cx);
+        let title = div()
+            .relative()
+            .flex_none()
+            .h(px(30.))
+            .mx(px(18.))
+            .mt(px(12.))
+            .flex()
+            .items_center()
+            .text_size(px(16.))
+            .text_color(t.ink)
+            .when(suggesting.is_some(), |row| row.key_context("Suggesting"))
+            .child(anchor_probe("c-title", &self.anchors))
+            .child(composer.title.clone());
+        let body = div()
+            .flex_none()
+            .min_h(px(44.))
+            .px(px(18.))
+            .pt(px(6.))
+            .pb(px(10.))
+            .text_color(t.body)
+            .child(composer.body.clone());
+
+        let width = COMPOSER_WIDTH.min(f32::from(viewport.width) - 48.);
+        let panel = div()
+            .id("composer")
+            .role(Role::Dialog)
+            .aria_label("New task")
+            .absolute()
+            .left((viewport.width - px(width)) / 2.)
+            .top(viewport.height * 0.11)
+            .w(px(width))
+            .max_h(viewport.height * 0.78)
+            .flex()
+            .flex_col()
+            .rounded(px(12.))
+            .bg(t.pop)
+            .shadow(t.dlg_shadow())
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                this.drop_on_composer(paths.paths(), cx);
+            }))
+            .when(!closing, |panel| {
+                panel.occlude().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.close_schedule(false, window, cx);
+                    }),
+                )
+            })
+            .child(title)
+            .child(body)
+            .when(!draft.images.is_empty(), |panel| panel.child(images))
+            .child(chips)
+            .child(actions);
+
+        let suggest = suggesting.map(|(word, found)| {
+            self.render_suggestions(composer, &word, &found, viewport, cx, &t)
+        });
+        let schedule_pop = composer
+            .schedule_open
+            .then(|| self.render_schedule(composer, &schedule, viewport, cx, &t));
+        let layer = div()
+            .id("composer-backdrop")
+            .key_context("Dialog Composer")
+            .on_action(cx.listener(Self::create_task))
+            .on_action(cx.listener(Self::create_another))
+            .on_action(cx.listener(Self::read_notes))
+            .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::next_field))
+            .on_action(cx.listener(Self::previous_field))
+            .on_action(cx.listener(Self::suggest_next))
+            .on_action(cx.listener(Self::suggest_previous))
+            .on_action(cx.listener(Self::accept_suggestion))
+            .on_action(cx.listener(Self::close_suggestions))
+            .absolute()
+            .inset_0()
+            .bg(t.shade)
+            .when(!closing, |layer| {
+                layer.occlude().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                        this.dismiss(&Dismiss, window, cx);
+                    }),
+                )
+            })
+            .child(panel)
+            .children(suggest)
+            .children(schedule_pop);
+        Some(if closing {
+            layer
+                .with_animation(
+                    ("composer-close", composer.run),
+                    Animation::new(DIALOG_CLOSE),
+                    |layer, delta| layer.opacity(1. - delta),
+                )
+                .into_any_element()
+        } else {
+            layer.into_any_element()
+        })
+    }
+
+    fn render_composer_chips(
+        &self,
+        composer: &Composer,
+        draft: &Draft,
+        schedule: &crate::draft::SchedulePreview,
+        window: &Window,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
         let projects = &self.session.snapshot.projects;
         let parts = parse_title(&draft.title, projects);
         let priority = parts.priority.unwrap_or(draft.priority);
@@ -1056,7 +1174,6 @@ impl Root {
             (project.is_none() && projects.is_empty()).then(|| self.session.first_project_name());
         let labels = composer.labels(projects, None, cx);
         let anchors = &self.anchors;
-        let schedule = schedule_preview(&draft.schedule);
         let status = draft
             .status
             .unwrap_or_else(|| automatic_status(priority, schedule.repeats, draft.is_epic));
@@ -1239,6 +1356,15 @@ impl Root {
                 .on_click(cx.listener(|this, _, window, cx| this.pick_composer_more(window, cx))),
         );
 
+        chips
+    }
+
+    fn render_composer_images(
+        &self,
+        draft: &Draft,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
         let thumbs = self.composer_thumbs(&draft.images, cx);
         let mut images = div().flex().flex_wrap().gap(px(8.)).px(px(18.)).pb(px(10.));
         for (ix, (image, picture)) in draft.images.iter().zip(thumbs).enumerate() {
@@ -1299,7 +1425,16 @@ impl Root {
             );
         }
 
-        let repeats = schedule.repeats;
+        images
+    }
+
+    fn render_composer_actions(
+        &self,
+        composer: &Composer,
+        repeats: bool,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> impl IntoElement + use<> {
         let create_more = self.create_more && !repeats;
         let switch = div()
             .id("c-create-more-row")
@@ -1379,106 +1514,7 @@ impl Root {
                     .child(kbd("⌘↵", t.on_fill)),
             );
 
-        let suggesting = self.composer_suggestions(window, cx);
-        let title = div()
-            .relative()
-            .flex_none()
-            .h(px(30.))
-            .mx(px(18.))
-            .mt(px(12.))
-            .flex()
-            .items_center()
-            .text_size(px(16.))
-            .text_color(t.ink)
-            .when(suggesting.is_some(), |row| row.key_context("Suggesting"))
-            .child(anchor_probe("c-title", anchors))
-            .child(composer.title.clone());
-        let body = div()
-            .flex_none()
-            .min_h(px(44.))
-            .px(px(18.))
-            .pt(px(6.))
-            .pb(px(10.))
-            .text_color(t.body)
-            .child(composer.body.clone());
-
-        let width = COMPOSER_WIDTH.min(f32::from(viewport.width) - 48.);
-        let panel = div()
-            .id("composer")
-            .role(Role::Dialog)
-            .aria_label("New task")
-            .absolute()
-            .left((viewport.width - px(width)) / 2.)
-            .top(viewport.height * 0.11)
-            .w(px(width))
-            .max_h(viewport.height * 0.78)
-            .flex()
-            .flex_col()
-            .rounded(px(12.))
-            .bg(t.pop)
-            .shadow(t.dlg_shadow())
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.drop_on_composer(paths.paths(), cx);
-            }))
-            .when(!closing, |panel| {
-                panel.occlude().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.close_schedule(false, window, cx);
-                    }),
-                )
-            })
-            .child(title)
-            .child(body)
-            .when(!draft.images.is_empty(), |panel| panel.child(images))
-            .child(chips)
-            .child(actions);
-
-        let suggest = suggesting.map(|(word, found)| {
-            self.render_suggestions(composer, &word, &found, viewport, cx, &t)
-        });
-        let schedule_pop = composer
-            .schedule_open
-            .then(|| self.render_schedule(composer, &schedule, viewport, cx, &t));
-        let layer = div()
-            .id("composer-backdrop")
-            .key_context("Dialog Composer")
-            .on_action(cx.listener(Self::create_task))
-            .on_action(cx.listener(Self::create_another))
-            .on_action(cx.listener(Self::read_notes))
-            .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::next_field))
-            .on_action(cx.listener(Self::previous_field))
-            .on_action(cx.listener(Self::suggest_next))
-            .on_action(cx.listener(Self::suggest_previous))
-            .on_action(cx.listener(Self::accept_suggestion))
-            .on_action(cx.listener(Self::close_suggestions))
-            .absolute()
-            .inset_0()
-            .bg(t.shade)
-            .when(!closing, |layer| {
-                layer.occlude().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                        this.dismiss(&Dismiss, window, cx);
-                    }),
-                )
-            })
-            .child(panel)
-            .children(suggest)
-            .children(schedule_pop);
-        Some(if closing {
-            layer
-                .with_animation(
-                    ("composer-close", composer.run),
-                    Animation::new(DIALOG_CLOSE),
-                    |layer, delta| layer.opacity(1. - delta),
-                )
-                .into_any_element()
-        } else {
-            layer.into_any_element()
-        })
+        actions
     }
 
     /// The list of ways to finish the title's token word, under its start.

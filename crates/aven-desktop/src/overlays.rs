@@ -658,7 +658,7 @@ impl Root {
     ) -> Option<impl IntoElement + use<>> {
         let menu = self.menu.as_ref()?;
         let t = theme(cx);
-        let (wide, plain, multi) = (menu.options.wide, menu.options.plain, menu.options.multi);
+        let (wide, plain) = (menu.options.wide, menu.options.plain);
         let query = menu.query(cx);
         let typing = !query.trim().is_empty();
         let shown = menu.shown(cx);
@@ -728,6 +728,149 @@ impl Root {
                 left,
                 top.min(viewport.height - px(height + 12.)).max(px(12.)),
             )
+        };
+        let rows = Self::render_menu_rows(menu, &query, &shown, &picks, typed.as_ref(), cx, &t);
+        Some(
+            div()
+                .id("menu-layer")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .when(wide, |layer| layer.bg(t.shade))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, window, cx| this.close_menu(window, cx)),
+                )
+                .child(
+                    div()
+                        .id("menu")
+                        .role(Role::Menu)
+                        .absolute()
+                        .left(left)
+                        .top(top)
+                        .w(px(width))
+                        .when(max_height < f32::MAX, |box_| box_.max_h(px(max_height)))
+                        .when(choice.is_some(), |box_| {
+                            box_.track_focus(&menu.choice_focus)
+                                .on_key_down(cx.listener(Self::on_choice_key))
+                        })
+                        .when(header.is_some(), |box_| {
+                            box_.on_key_down(cx.listener(Self::on_menu_key))
+                        })
+                        .flex()
+                        .flex_col()
+                        .rounded(px(10.))
+                        .bg(t.pop)
+                        .shadow(t.menu_shadow())
+                        .overflow_hidden()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .when_some(header, |box_, header| {
+                            let raised = t.raised;
+                            let swap = header.swap.clone();
+                            let other = format!("⇥ {}", header.other);
+                            box_.child(
+                                small(12.)
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .h(px(MENU_HEADER_HEIGHT))
+                                    .pl(px(12.))
+                                    .pr(px(6.))
+                                    .text_color(t.faint)
+                                    .child(
+                                        div()
+                                            .text_color(t.muted)
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(header.title),
+                                    )
+                                    .child("·")
+                                    .child(div().min_w_0().truncate().child(header.subject.clone()))
+                                    .child(
+                                        div()
+                                            .id("menu-swap")
+                                            .role(Role::Button)
+                                            .aria_label(other.clone())
+                                            .ml_auto()
+                                            .flex_none()
+                                            .px(px(6.))
+                                            .rounded(px(5.))
+                                            .hover(move |style| style.bg(raised))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                swap(this, window, cx);
+                                            }))
+                                            .child(other),
+                                    ),
+                            )
+                        })
+                        .child(
+                            div()
+                                .flex_none()
+                                .h(px(input_height))
+                                .when(input_height > 0., |input| {
+                                    input.border_b_1().border_color(t.line)
+                                })
+                                .overflow_hidden()
+                                .px(px(if wide { 16. } else { 12. }))
+                                .flex()
+                                .items_center()
+                                .text_color(t.ink)
+                                .when(wide, |input| input.text_size(px(15.)))
+                                .map(|input| match &choice {
+                                    Some(title) => input
+                                        .text_size(px(12.))
+                                        .text_color(t.faint)
+                                        .child(title.clone()),
+                                    None => input.child(menu.input.clone()),
+                                }),
+                        )
+                        .map(|box_| match calendar {
+                            Some(calendar) => box_.child(Self::render_calendar(calendar, cx, &t)),
+                            None => box_.child(rows),
+                        })
+                        .when_some(note, |box_, note| {
+                            box_.child(
+                                small(12.)
+                                    .flex_none()
+                                    .px(px(12.))
+                                    .py(px(8.))
+                                    .border_t_1()
+                                    .border_color(t.line)
+                                    .text_color(t.muted)
+                                    .child(note),
+                            )
+                        })
+                        .with_animation(
+                            ("menu-enter", menu.run),
+                            Animation::new(MENU_ENTER),
+                            move |menu, delta| {
+                                let eased = 1. - (1. - delta).powi(3);
+                                menu.top(top - px(4. * (1. - eased))).opacity(eased)
+                            },
+                        ),
+                ),
+        )
+    }
+
+    fn render_menu_rows(
+        menu: &Menu,
+        query: &str,
+        shown: &[Shown],
+        picks: &[Shown],
+        typed: Option<&Entry>,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> Stateful<Div> {
+        let (plain, multi) = (menu.options.plain, menu.options.multi);
+        let typing = !query.trim().is_empty();
+        let row = if plain { 28. } else { 30. };
+        let choice = &menu.options.choice;
+        let header = menu.options.header.as_ref();
+        let entry_of = |line: &Shown| match line {
+            Shown::Item(item) => menu.entries.get(*item),
+            Shown::Create => None,
+            Shown::Read => typed,
         };
         let mut rows = div()
             .id("menu-rows")
@@ -853,217 +996,17 @@ impl Root {
                     )),
             );
         }
-        Some(
-            div()
-                .id("menu-layer")
-                .absolute()
-                .inset_0()
-                .occlude()
-                .when(wide, |layer| layer.bg(t.shade))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, window, cx| this.close_menu(window, cx)),
-                )
-                .child(
-                    div()
-                        .id("menu")
-                        .role(Role::Menu)
-                        .absolute()
-                        .left(left)
-                        .top(top)
-                        .w(px(width))
-                        .when(max_height < f32::MAX, |box_| box_.max_h(px(max_height)))
-                        .when(choice.is_some(), |box_| {
-                            box_.track_focus(&menu.choice_focus)
-                                .on_key_down(cx.listener(Self::on_choice_key))
-                        })
-                        .when(header.is_some(), |box_| {
-                            box_.on_key_down(cx.listener(Self::on_menu_key))
-                        })
-                        .flex()
-                        .flex_col()
-                        .rounded(px(10.))
-                        .bg(t.pop)
-                        .shadow(t.menu_shadow())
-                        .overflow_hidden()
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .when_some(header, |box_, header| {
-                            let raised = t.raised;
-                            let swap = header.swap.clone();
-                            let other = format!("⇥ {}", header.other);
-                            box_.child(
-                                small(12.)
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .h(px(MENU_HEADER_HEIGHT))
-                                    .pl(px(12.))
-                                    .pr(px(6.))
-                                    .text_color(t.faint)
-                                    .child(
-                                        div()
-                                            .text_color(t.muted)
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(header.title),
-                                    )
-                                    .child("·")
-                                    .child(div().min_w_0().truncate().child(header.subject.clone()))
-                                    .child(
-                                        div()
-                                            .id("menu-swap")
-                                            .role(Role::Button)
-                                            .aria_label(other.clone())
-                                            .ml_auto()
-                                            .flex_none()
-                                            .px(px(6.))
-                                            .rounded(px(5.))
-                                            .hover(move |style| style.bg(raised))
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                swap(this, window, cx);
-                                            }))
-                                            .child(other),
-                                    ),
-                            )
-                        })
-                        .child(
-                            div()
-                                .flex_none()
-                                .h(px(input_height))
-                                .when(input_height > 0., |input| {
-                                    input.border_b_1().border_color(t.line)
-                                })
-                                .overflow_hidden()
-                                .px(px(if wide { 16. } else { 12. }))
-                                .flex()
-                                .items_center()
-                                .text_color(t.ink)
-                                .when(wide, |input| input.text_size(px(15.)))
-                                .map(|input| match &choice {
-                                    Some(title) => input
-                                        .text_size(px(12.))
-                                        .text_color(t.faint)
-                                        .child(title.clone()),
-                                    None => input.child(menu.input.clone()),
-                                }),
-                        )
-                        .map(|box_| match calendar {
-                            Some(calendar) => box_.child(Self::render_calendar(calendar, cx, &t)),
-                            None => box_.child(rows),
-                        })
-                        .when_some(note, |box_, note| {
-                            box_.child(
-                                small(12.)
-                                    .flex_none()
-                                    .px(px(12.))
-                                    .py(px(8.))
-                                    .border_t_1()
-                                    .border_color(t.line)
-                                    .text_color(t.muted)
-                                    .child(note),
-                            )
-                        })
-                        .with_animation(
-                            ("menu-enter", menu.run),
-                            Animation::new(MENU_ENTER),
-                            move |menu, delta| {
-                                let eased = 1. - (1. - delta).powi(3);
-                                menu.top(top - px(4. * (1. - eased))).opacity(eased)
-                            },
-                        ),
-                ),
-        )
+        rows
     }
 
-    pub(crate) fn render_toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        // An ended toast stays only to fade out, so it takes no input.
-        let (toast, leaving) = match self.session.toast() {
-            Some(toast) => (toast, false),
-            None => (self.session.toasts.leaving()?, true),
-        };
-        let t = theme(cx);
-        let tone = match toast.tone {
-            Tone::Done => t.good,
-            Tone::Info => t.muted,
-            Tone::Warn => t.warn,
-            Tone::Error => t.bad,
-            Tone::Progress => t.accent,
-        };
-        let icon = match toast.tone {
-            Tone::Done => "icons/toast-done.svg",
-            Tone::Info => "icons/toast-info.svg",
-            Tone::Warn => "icons/toast-warn.svg",
-            Tone::Error => "icons/toast-error.svg",
-            Tone::Progress => "icons/toast-progress.svg",
-        };
-        let glyph = svg().path(icon).size(px(16.)).text_color(tone);
-        let glyph = if toast.tone == Tone::Progress {
-            glyph
-                .with_animation(
-                    ("toast-spin", toast.run),
-                    Animation::new(TOAST_SPIN).repeat(),
-                    |glyph, delta| {
-                        glyph.with_transformation(Transformation::rotate(radians(delta * TAU)))
-                    },
-                )
-                .into_any_element()
-        } else {
-            glyph.into_any_element()
-        };
+    fn render_toast_actions(
+        &self,
+        toast: &crate::toast::Toast,
+        leaving: bool,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> (Option<Div>, Option<Stateful<Div>>) {
         let error = toast.tone == Tone::Error;
-        let mut spoken = toast.title.clone();
-        if let Some(subject) = &toast.subject {
-            spoken = format!("{spoken} {}", subject.reference);
-        }
-        if toast.times > 1 {
-            spoken = format!("{spoken}, {} times", toast.times);
-        }
-        if let Some(detail) = &toast.detail {
-            spoken = format!("{spoken}. {detail}");
-        }
-        let title = div()
-            .flex()
-            .items_baseline()
-            .min_w_0()
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(div().min_w_0().truncate().child(toast.title.clone()))
-            .when_some(toast.subject.as_ref(), |title, subject| {
-                title.child(
-                    div()
-                        .flex_none()
-                        .ml(px(5.))
-                        .font_family(MONO)
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(t.project(&subject.project_key))
-                        .child(subject.reference.clone()),
-                )
-            })
-            .when(toast.times > 1, |title| {
-                title.child(
-                    div()
-                        .flex_none()
-                        .ml(px(4.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(t.faint)
-                        .child(format!("×{}", toast.times)),
-                )
-            });
-        let detail = toast.detail.clone().map(|detail| {
-            div()
-                .min_w_0()
-                .text_size(px(12.5))
-                .text_color(t.muted)
-                .map(|el| {
-                    if error {
-                        el.line_clamp(2)
-                    } else {
-                        el.truncate()
-                    }
-                })
-                .child(detail)
-        });
         // Undo leads when there is one; otherwise the action does.
         let undo = toast.undo.then(|| {
             toast_button("toast-undo", "Undo", Some("u"), true, &t).when(!leaving, |button| {
@@ -1124,6 +1067,30 @@ impl Root {
                     }))
                 })
         });
+        (actions, dismiss)
+    }
+
+    pub(crate) fn render_toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        // An ended toast stays only to fade out, so it takes no input.
+        let (toast, leaving) = match self.session.toast() {
+            Some(toast) => (toast, false),
+            None => (self.session.toasts.leaving()?, true),
+        };
+        let t = theme(cx);
+        let (tone, glyph) = toast_glyph(toast, &t);
+        let error = toast.tone == Tone::Error;
+        let mut spoken = toast.title.clone();
+        if let Some(subject) = &toast.subject {
+            spoken = format!("{spoken} {}", subject.reference);
+        }
+        if toast.times > 1 {
+            spoken = format!("{spoken}, {} times", toast.times);
+        }
+        if let Some(detail) = &toast.detail {
+            spoken = format!("{spoken}. {detail}");
+        }
+        let (title, detail) = toast_content(toast, &t);
+        let (actions, dismiss) = self.render_toast_actions(toast, leaving, cx, &t);
         let padded = actions.is_some() || dismiss.is_some();
         let (run, bump) = (toast.run, toast.bump);
         let card = div()
@@ -1222,6 +1189,85 @@ impl Root {
                 .into_any_element()
         })
     }
+}
+
+fn toast_glyph(toast: &crate::toast::Toast, t: &Theme) -> (gpui::Hsla, gpui::AnyElement) {
+    let tone = match toast.tone {
+        Tone::Done => t.good,
+        Tone::Info => t.muted,
+        Tone::Warn => t.warn,
+        Tone::Error => t.bad,
+        Tone::Progress => t.accent,
+    };
+    let icon = match toast.tone {
+        Tone::Done => "icons/toast-done.svg",
+        Tone::Info => "icons/toast-info.svg",
+        Tone::Warn => "icons/toast-warn.svg",
+        Tone::Error => "icons/toast-error.svg",
+        Tone::Progress => "icons/toast-progress.svg",
+    };
+    let glyph = svg().path(icon).size(px(16.)).text_color(tone);
+    let glyph = if toast.tone == Tone::Progress {
+        glyph
+            .with_animation(
+                ("toast-spin", toast.run),
+                Animation::new(TOAST_SPIN).repeat(),
+                |glyph, delta| {
+                    glyph.with_transformation(Transformation::rotate(radians(delta * TAU)))
+                },
+            )
+            .into_any_element()
+    } else {
+        glyph.into_any_element()
+    };
+    (tone, glyph)
+}
+
+fn toast_content(toast: &crate::toast::Toast, t: &Theme) -> (Div, Option<Div>) {
+    let error = toast.tone == Tone::Error;
+    let title = div()
+        .flex()
+        .items_baseline()
+        .min_w_0()
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(div().min_w_0().truncate().child(toast.title.clone()))
+        .when_some(toast.subject.as_ref(), |title, subject| {
+            title.child(
+                div()
+                    .flex_none()
+                    .ml(px(5.))
+                    .font_family(MONO)
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.project(&subject.project_key))
+                    .child(subject.reference.clone()),
+            )
+        })
+        .when(toast.times > 1, |title| {
+            title.child(
+                div()
+                    .flex_none()
+                    .ml(px(4.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.faint)
+                    .child(format!("×{}", toast.times)),
+            )
+        });
+    let detail = toast.detail.clone().map(|detail| {
+        div()
+            .min_w_0()
+            .text_size(px(12.5))
+            .text_color(t.muted)
+            .map(|el| {
+                if error {
+                    el.line_clamp(2)
+                } else {
+                    el.truncate()
+                }
+            })
+            .child(detail)
+    });
+    (title, detail)
 }
 
 /// A toast's button, naming its key beside the label as the key is real.
