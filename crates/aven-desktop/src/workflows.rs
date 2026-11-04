@@ -799,14 +799,17 @@ impl Root {
         if !finished.is_empty() {
             let open = self.session.show_finished;
             let name = format!(
-                "{} Finished {}",
+                "Finished {} {}",
+                finished.len(),
                 if open { "▾" } else { "▸" },
-                finished.len()
             );
             section = section.child(
                 bare_btn("toggle-finished", "Finished", t)
                     .mt(px(10.))
+                    .px_0()
+                    .h_auto()
                     .text_size(px(11.))
+                    .line_height(px(11. * 1.4))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(t.faint)
                     .on_click(cx.listener(|this, _, _, cx| {
