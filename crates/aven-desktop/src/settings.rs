@@ -400,6 +400,25 @@ impl Root {
         ]
     }
 
+    pub(crate) fn confirm_delete_project(
+        &mut self,
+        key: String,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_confirm(
+            format!("Delete project {name}?"),
+            "The project will be removed from the sidebar. Existing tasks will be kept, but recurring schedules in this project will stop."
+                .to_string(),
+            Some("This change syncs to your other devices."),
+            "Delete project",
+            ConfirmAction::DeleteProject(key),
+            window,
+            cx,
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn open_confirm(
         &mut self,
@@ -428,6 +447,10 @@ impl Root {
     fn confirmed(&mut self, action: ConfirmAction, window: &mut Window, cx: &mut Context<Self>) {
         self.close_dialog(window, cx);
         match action {
+            ConfirmAction::DeleteProject(key) => {
+                self.session
+                    .write(Command::Settings(SettingsEdit::DeleteProject(key)));
+            }
             ConfirmAction::RemoveDevice { id, label } => {
                 self.session.run_sync(SyncOp::RemoveDevice { id, label });
             }

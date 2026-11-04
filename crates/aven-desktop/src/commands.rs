@@ -834,7 +834,37 @@ impl Root {
         );
     }
 
-    /// The menu a row opens under the pointer.
+    /// The actions for a sidebar project, without changing the current scope.
+    pub(crate) fn project_menu(
+        &mut self,
+        key: String,
+        name: String,
+        at: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.prevent_default();
+        let entries = vec![
+            Entry::new("Delete project", move |root, window, cx| {
+                root.confirm_delete_project(key.clone(), &name, window, cx);
+            })
+            .mark(Mark::Icon("icons/ic-trash.svg"))
+            .danger(),
+        ];
+        self.open_menu(
+            entries,
+            "Project actions",
+            Bounds::new(at, size(px(0.), px(0.))),
+            MenuOptions {
+                plain: true,
+                ..MenuOptions::default()
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The menu a task row opens under the pointer.
     pub(crate) fn row_menu(
         &mut self,
         id: TaskId,

@@ -221,6 +221,7 @@ pub enum Dialog {
 /// What a yes in a confirmation dialog does.
 #[derive(Clone)]
 pub enum ConfirmAction {
+    DeleteProject(String),
     RemoveDevice { id: [u8; 32], label: String },
     Restore(PathBuf),
     Reset { unfinished_setup: bool },

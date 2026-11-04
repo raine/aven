@@ -503,6 +503,7 @@ pub enum SettingsEdit {
         name: String,
         prefix: String,
     },
+    DeleteProject(String),
     NewLabel(String),
     RenameLabel(String, String),
     RenameField(String, String),
@@ -2184,6 +2185,10 @@ impl Actor {
             SettingsEdit::EditProject { key, name, prefix } => {
                 self.store.rename_project(&key, &name, &prefix).await?;
                 format!("Saved project {name}")
+            }
+            SettingsEdit::DeleteProject(key) => {
+                let result = self.store.delete_project(&key).await?;
+                capitalised(&result.message)
             }
             SettingsEdit::NewLabel(name) => {
                 self.store.create_label(name).await?;
@@ -4812,6 +4817,89 @@ mod tests {
         assert_eq!(prefix_of(&actor, "Website").as_deref(), Some("WEB"));
         assert_eq!(prefix_of(&actor, "Other"), None);
         assert_eq!(prefix_of(&actor, "Bad"), None);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_project_refreshes_the_sidebar_settings_and_scope() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        for name in ["Website", "Empty"] {
+            run(
+                &mut actor,
+                Command::Settings(SettingsEdit::NewProject {
+                    name: name.to_string(),
+                    prefix: String::new(),
+                }),
+            )
+            .await;
+        }
+        let mut task = draft("Keep project history");
+        task.project = Some("website".to_string());
+        actor.store.create_task(task, None).await.unwrap();
+        run(
+            &mut actor,
+            Command::ShowProject(Some("website".to_string())),
+        )
+        .await;
+        bodies(&mut replies);
+
+        run(
+            &mut actor,
+            Command::Settings(SettingsEdit::DeleteProject("website".to_string())),
+        )
+        .await;
+        let seen = bodies(&mut replies);
+        let list = lists(&seen).pop().unwrap();
+        assert_eq!(list.view.project, None);
+        assert!(list.tasks.iter().any(|row| row.title == "Keep"));
+        let retained = list
+            .tasks
+            .iter()
+            .find(|row| row.title == "Keep project history")
+            .unwrap();
+        assert_eq!(retained.project_key, "website");
+        assert!(!retained.deleted);
+        assert!(!list.projects.iter().any(|project| project.key == "website"));
+        assert!(list.projects.iter().any(|project| project.key == "empty"));
+        let settings = seen
+            .iter()
+            .find_map(|body| match body {
+                ReplyBody::Settings(settings) => Some(settings),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            !settings
+                .projects
+                .iter()
+                .any(|project| project.key == "website")
+        );
+
+        run(
+            &mut actor,
+            Command::Settings(SettingsEdit::DeleteProject("empty".to_string())),
+        )
+        .await;
+        assert!(
+            !actor
+                .store
+                .projects
+                .iter()
+                .any(|project| project.key == "empty")
+        );
+        assert_eq!(actor.store.view_state.scope, TaskScope::Workspace);
+        assert!(
+            actor
+                .edit_settings(SettingsEdit::DeleteProject("missing".to_string()))
+                .await
+                .is_err()
+        );
+        assert!(
+            actor
+                .store
+                .tasks
+                .iter()
+                .any(|item| item.task.title == "Keep")
+        );
     }
 
     #[tokio::test]

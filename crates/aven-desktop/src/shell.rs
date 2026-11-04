@@ -1849,6 +1849,8 @@ impl Root {
         );
         for (ix, project) in snapshot.projects.iter().enumerate() {
             let key = project.key.clone();
+            let menu_key = project.key.clone();
+            let menu_name = project.name.clone();
             let on = scoped.as_ref() == Some(&project.key);
             body = body.child(
                 nav_item(("project", ix), &t)
@@ -1858,6 +1860,18 @@ impl Root {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.scope_to(Some(key.clone()), window, cx);
                     }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.project_menu(
+                                menu_key.clone(),
+                                menu_name.clone(),
+                                event.position,
+                                window,
+                                cx,
+                            );
+                        }),
+                    )
                     .child(project_dot(&project.key, &t).mx(px(4.)))
                     .child(project.name.clone())
                     .child(nav_count(project.count.to_string(), false, &t)),
