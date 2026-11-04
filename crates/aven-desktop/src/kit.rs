@@ -280,6 +280,15 @@ pub fn status_glyph(status: TaskStatus, t: &Theme) -> impl IntoElement + use<> {
     svg().path(path).size(px(14.)).flex_none().text_color(color)
 }
 
+/// The star after an epic's title or ref, faint once the epic is closed.
+pub fn epic_star(closed: bool, t: &Theme) -> Svg {
+    svg()
+        .path("icons/epic-star.svg")
+        .size(px(12.))
+        .flex_none()
+        .text_color(if closed { t.faint } else { t.epic })
+}
+
 /// The old mark fades while the done mark scales up past its size and settles.
 pub fn pop_glyph(previous: TaskStatus, run: usize, t: &Theme) -> impl IntoElement + use<> {
     let (old_path, old_color) = status_look(previous, t);

@@ -570,6 +570,7 @@ pub struct SearchHit {
     pub status: TaskStatus,
     pub snippet: Option<String>,
     pub deleted: bool,
+    pub is_epic: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

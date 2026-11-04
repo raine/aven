@@ -832,6 +832,9 @@ impl Root {
                     )
                     .child(ref_label(&row.reference, &row.project_key, None, &t)),
             )
+            .when(row.is_epic, |top| {
+                top.child(epic_star(row.status.is_terminal() || row.deleted, &t))
+            })
             .children(self.epic_ring(&row, &t))
             .child(div().flex_1())
             .child(self.top_actions(&row, cx, &t));

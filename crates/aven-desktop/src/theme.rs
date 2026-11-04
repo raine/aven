@@ -57,6 +57,8 @@ pub struct Theme {
     pub pr_low: Hsla,
     pub pr_high: Hsla,
     pub pr_urgent: Hsla,
+    /// The star marking an epic, as the TUI colours it.
+    pub epic: Hsla,
     /// The check in the logo, as the theme's logo SVG fills it.
     pub logo_check: Hsla,
     /// Light thrown by the logo as it resolves in the intro.
@@ -99,6 +101,7 @@ impl Theme {
             pr_low: c(0x7d8db0),
             pr_high: c(0xe8952a),
             pr_urgent: c(0xef5256),
+            epic: c(0xffcf57),
             logo_check: c(0xffffff),
             logo_glow: c(0xe8d5ff),
             dlg_shadow: (ca(0x00000080), 20., 50.),
@@ -137,6 +140,7 @@ impl Theme {
             pr_low: c(0x5f6f92),
             pr_high: c(0xcf7a12),
             pr_urgent: c(0xd93c40),
+            epic: c(0xa87c00),
             logo_check: c(0x2a1547),
             logo_glow: c(0x965ff5),
             dlg_shadow: (ca(0x30261c24), 18., 48.),

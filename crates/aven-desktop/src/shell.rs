@@ -1529,13 +1529,15 @@ impl Root {
             .into_any_element()
     }
 
-    /// The row's title, dimming while the task has just been completed.
+    /// The row's title, dimming while the task has just been completed, with
+    /// a star after it when the task is an epic.
     fn task_title(
         &self,
         id: &TaskId,
         title: String,
         status: TaskStatus,
         deleted: bool,
+        epic: bool,
         t: &Theme,
     ) -> AnyElement {
         let closed = status.is_terminal();
@@ -1563,7 +1565,10 @@ impl Root {
             .flex_1()
             .min_w(px(120.))
             .flex()
+            .items_center()
+            .gap(px(6.))
             .child(body)
+            .when(epic, |title| title.child(epic_star(closed || deleted, t)))
             .into_any_element()
     }
 
@@ -1607,7 +1612,7 @@ impl Root {
             .when(self.list_refs, |row| {
                 row.child(ref_label(&data.reference, &data.project_key, Some(74.), &t))
             })
-            .child(self.task_title(&id, data.title, data.status, deleted, &t))
+            .child(self.task_title(&id, data.title, data.status, deleted, data.is_epic, &t))
             .when(deleted, |row| {
                 row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
             })

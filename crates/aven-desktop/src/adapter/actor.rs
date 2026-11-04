@@ -2016,6 +2016,7 @@ impl Actor {
                     status: status_of(&hit.status),
                     snippet: hit.snippet.clone(),
                     deleted: hit.deleted,
+                    is_epic: hit.is_epic,
                 })
                 .collect();
             let body = ReplyBody::Search(SearchResults {

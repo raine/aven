@@ -415,6 +415,7 @@ impl Root {
                 status: task.status,
                 snippet: None,
                 deleted: false,
+                is_epic: task.is_epic,
             })
             .collect()
     }
@@ -931,10 +932,20 @@ impl Root {
                     .flex_col()
                     .child(
                         div()
-                            .truncate()
-                            .text_color(t.ink)
-                            .when(hit.deleted, |title| title.line_through())
-                            .child(marked(&hit.title)),
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(t.ink)
+                                    .when(hit.deleted, |title| title.line_through())
+                                    .child(marked(&hit.title)),
+                            )
+                            .when(hit.is_epic, |line| {
+                                line.child(epic_star(hit.status.is_terminal() || hit.deleted, t))
+                            }),
                     )
                     .child(
                         small(12.)

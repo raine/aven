@@ -27,6 +27,7 @@ impl AssetSource for Assets {
             "icons/ic-conflicts.svg" => include_bytes!("../assets/icons/ic-conflicts.svg"),
             "icons/ic-details.svg" => include_bytes!("../assets/icons/ic-details.svg"),
             "icons/ic-done.svg" => include_bytes!("../assets/icons/ic-done.svg"),
+            "icons/epic-star.svg" => include_bytes!("../assets/icons/epic-star.svg"),
             "icons/ic-epics.svg" => include_bytes!("../assets/icons/ic-epics.svg"),
             "icons/ic-inbox.svg" => include_bytes!("../assets/icons/ic-inbox.svg"),
             "icons/ic-overdue.svg" => include_bytes!("../assets/icons/ic-overdue.svg"),
