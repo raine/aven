@@ -937,7 +937,7 @@ impl Root {
                     (entry.map_or("", |entry| entry.label.as_str()), entry)
                 }
                 Shown::Create => {
-                    created = format!("+ create \"{}\"", normalize_label(&query));
+                    created = format!("+ create \"{}\"", normalize_label(query));
                     (created.as_str(), None)
                 }
             };
@@ -965,10 +965,10 @@ impl Root {
             let mark = match mark {
                 Mark::None if plain => Some(div().flex_none().size(px(16.)).into_any_element()),
                 Mark::None => None,
-                Mark::Status(status) => Some(status_glyph(status, &t).into_any_element()),
-                Mark::Priority(priority) => Some(priority_icon(priority, &t).into_any_element()),
+                Mark::Status(status) => Some(status_glyph(status, t).into_any_element()),
+                Mark::Priority(priority) => Some(priority_icon(priority, t).into_any_element()),
                 Mark::Icon(path) => Some(icon(path, color).into_any_element()),
-                Mark::Project(key) => Some(project_dot(&key, &t).into_any_element()),
+                Mark::Project(key) => Some(project_dot(&key, t).into_any_element()),
             };
             let hint = entry.map(|entry| entry.hint.clone()).unwrap_or_default();
             rows = rows.child(
@@ -1057,7 +1057,7 @@ impl Root {
         let error = toast.tone == Tone::Error;
         // Undo leads when there is one; otherwise the action does.
         let undo = toast.undo.then(|| {
-            toast_button("toast-undo", "Undo", Some("u"), true, &t).when(!leaving, |button| {
+            toast_button("toast-undo", "Undo", Some("u"), true, t).when(!leaving, |button| {
                 button.on_click(cx.listener(|this, _, _, cx| {
                     this.session.run_toast_undo();
                     cx.notify();
@@ -1065,7 +1065,7 @@ impl Root {
             })
         });
         let action = toast.action.as_ref().map(|action| {
-            toast_button("toast-action", action.label(), Some("⌘↩"), !toast.undo, &t).when(
+            toast_button("toast-action", action.label(), Some("⌘↩"), !toast.undo, t).when(
                 !leaving,
                 |button| {
                     button.on_click(cx.listener(|this, _, window, cx| {

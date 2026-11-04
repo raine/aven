@@ -1306,23 +1306,23 @@ impl Composer {
 
         let project_chip = match project {
             Some((project, inferred)) => {
-                Self::chip("c-project", project.name.clone(), true, anchors, &t)
+                Self::chip("c-project", project.name.clone(), true, anchors, t)
                     .when_some(inferred, |chip, why| chip.tooltip(tip(why)))
-                    .child(project_dot(&project.key, &t))
+                    .child(project_dot(&project.key, t))
                     .child(project.name.clone())
             }
             None => match first {
                 Some(name) => {
                     let label = format!("{name} (new)");
-                    Self::chip("c-project", label.clone(), true, anchors, &t)
+                    Self::chip("c-project", label.clone(), true, anchors, t)
                         .tooltip(tip("Created with this task"))
-                        .child(project_dot(&normalize_key(&name), &t))
+                        .child(project_dot(&normalize_key(&name), t))
                         .child(label)
                 }
-                None => Self::chip("c-project", "Project", false, anchors, &t).child("Project"),
+                None => Self::chip("c-project", "Project", false, anchors, t).child("Project"),
             },
         }
-        .children(Self::chip_flash(Chip::Project, flash, &t))
+        .children(Self::chip_flash(Chip::Project, flash, t))
         .on_click(cx.listener(|this, _, window, cx| this.pick_composer_project(window, cx)));
 
         let status_label = if draft.status.is_some() {
@@ -1330,8 +1330,8 @@ impl Composer {
         } else {
             format!("{} (automatic)", status_name(status))
         };
-        let status_chip = Self::chip("c-status", status_label, true, anchors, &t)
-            .child(status_glyph(status, &t))
+        let status_chip = Self::chip("c-status", status_label, true, anchors, t)
+            .child(status_glyph(status, t))
             .child(
                 div()
                     .when(draft.status.is_none(), |name| name.text_color(t.muted))
@@ -1355,10 +1355,10 @@ impl Composer {
         } else {
             "Priority"
         };
-        let priority_chip = Self::chip("c-priority", priority_label, priority_set, anchors, &t)
-            .child(priority_icon(priority, &t))
+        let priority_chip = Self::chip("c-priority", priority_label, priority_set, anchors, t)
+            .child(priority_icon(priority, t))
             .child(priority_label)
-            .children(Self::chip_flash(Chip::Priority, flash, &t))
+            .children(Self::chip_flash(Chip::Priority, flash, t))
             .on_click(cx.listener(|this, _, window, cx| this.pick_composer_priority(window, cx)));
 
         let labels_text = if labels.is_empty() {
@@ -1371,7 +1371,7 @@ impl Composer {
             labels_text.clone(),
             !labels.is_empty(),
             anchors,
-            &t,
+            t,
         )
         .child(
             icon(
@@ -1381,7 +1381,7 @@ impl Composer {
             .size(px(14.)),
         )
         .child(labels_text)
-        .children(Self::chip_flash(Chip::Labels, flash, &t))
+        .children(Self::chip_flash(Chip::Labels, flash, t))
         .on_click(cx.listener(|this, _, window, cx| this.pick_composer_labels(window, cx)));
 
         let schedule_label = schedule_text.clone().unwrap_or_else(|| {
@@ -1401,7 +1401,7 @@ impl Composer {
             schedule_label.clone(),
             has_schedule,
             anchors,
-            &t,
+            t,
         )
         .when(!schedule.valid, |chip| {
             chip.text_color(t.bad)
@@ -1432,7 +1432,7 @@ impl Composer {
             .child(schedule_chip)
             .when(draft.is_epic, |row| {
                 row.child(
-                    Self::chip("c-epic", "Epic, make it a task", true, anchors, &t)
+                    Self::chip("c-epic", "Epic, make it a task", true, anchors, t)
                         .text_color(t.accent)
                         .shadow(vec![t.inset_ring(t.tint_line)])
                         .child(icon("icons/ic-epics.svg", t.accent).size(px(14.)))
@@ -1460,7 +1460,7 @@ impl Composer {
             let text = format!("{key}: {shown}");
             let key = key.clone();
             chips = chips.child(
-                btn(("c-meta", ix), text.clone(), &t)
+                btn(("c-meta", ix), text.clone(), t)
                     .h(px(26.))
                     .px(px(8.))
                     .text_size(px(12.))
@@ -1471,16 +1471,15 @@ impl Composer {
                     .child(text),
             );
         }
-        let chips = chips.child(
-            Self::chip("c-more", "More options", false, anchors, &t)
+
+        chips.child(
+            Self::chip("c-more", "More options", false, anchors, t)
                 .w(px(26.))
                 .px(px(0.))
                 .justify_center()
                 .child("⋯")
                 .on_click(cx.listener(|this, _, window, cx| this.pick_composer_more(window, cx))),
-        );
-
-        chips
+        )
     }
 
     fn render_composer_images(
@@ -1526,7 +1525,7 @@ impl Composer {
             };
             images = images.child(
                 thumb.child(
-                    bare_btn(("c-image-remove", ix), format!("Remove {}", image.name), &t)
+                    bare_btn(("c-image-remove", ix), format!("Remove {}", image.name), t)
                         .absolute()
                         .top(px(-6.))
                         .right(px(-6.))
@@ -1592,10 +1591,11 @@ impl Composer {
                 create_more,
                 0.7,
                 cx,
-                &t,
+                t,
             ))
             .child("Create more");
-        let actions = div()
+
+        div()
             .flex()
             .items_center()
             .gap(px(6.))
@@ -1611,7 +1611,7 @@ impl Composer {
                     } else {
                         "Create with AI"
                     },
-                    &t,
+                    t,
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.read_notes(&ReadNotes, window, cx);
@@ -1625,20 +1625,18 @@ impl Composer {
             )
             .child(div().flex_1())
             .child(
-                btn("c-discard", "Discard", &t)
+                btn("c-discard", "Discard", t)
                     .on_click(cx.listener(|this, _, window, cx| this.discard_draft(window, cx)))
                     .child("Discard"),
             )
             .child(switch)
             .child(
-                fill_btn("c-create", "Create", &t)
+                fill_btn("c-create", "Create", t)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.create_task(&CreateTask, window, cx);
                     }))
                     .child(kbd("⌘↵", t.on_fill)),
-            );
-
-        actions
+            )
     }
 
     /// The list of ways to finish the title's token word, under its start.

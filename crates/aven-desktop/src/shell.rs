@@ -1733,8 +1733,8 @@ impl Root {
                     this.row_menu(menu_id.clone(), event.position, window, cx);
                 }),
             )
-            .child(mark_box(self.session.marks.contains(&id), &t))
-            .child(self.task_priority(&id, data.priority, ("pri-row-old", "pri-row-new"), &t))
+            .child(mark_box(self.session.marks.contains(&id), t))
+            .child(self.task_priority(&id, data.priority, ("pri-row-old", "pri-row-new"), t))
             .child(
                 div()
                     .id(("glyph", row))
@@ -1749,7 +1749,7 @@ impl Root {
                         this.session.toggle_status(&toggle_id, TaskStatus::Done);
                         this.after_status_motion(cx);
                     }))
-                    .child(self.task_glyph(&id, data.status, &t)),
+                    .child(self.task_glyph(&id, data.status, t)),
             )
     }
 
@@ -2198,7 +2198,7 @@ impl Root {
                 && !settings,
             |top| {
                 top.child(
-                    line_btn("review-tasks", "Review tasks", &t)
+                    line_btn("review-tasks", "Review tasks", t)
                         .shadow(Vec::new())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.review_tasks(&ReviewTasks, window, cx);
@@ -2213,14 +2213,14 @@ impl Root {
                 "Show closed"
             };
             top.child(
-                btn("epics-closed", closed, &t)
+                btn("epics-closed", closed, t)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_closed(window, cx);
                     }))
                     .child(closed),
             )
             .child(
-                btn("new-epic", "New epic", &t)
+                btn("new-epic", "New epic", t)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.new_epic(&NewEpic, window, cx);
                     }))
@@ -2229,7 +2229,7 @@ impl Root {
         })
         .when(query == TaskQuery::Recurring && !settings, |top| {
             top.child(
-                btn("new-recurring", "New recurring task", &t)
+                btn("new-recurring", "New recurring task", t)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.new_recurring(window, cx);
                     }))
@@ -2238,13 +2238,13 @@ impl Root {
         })
         .when(expanded, |top| {
             top.child(
-                line_btn("collapse", format!("← {name}"), &t)
+                line_btn("collapse", format!("← {name}"), t)
                     .on_click(cx.listener(|this, _, window, cx| this.collapse(window, cx))),
             )
         })
         .when(!expanded && !reviewing && filterable, |top| {
             top.child(
-                btn("filter", "Filter", &t)
+                btn("filter", "Filter", t)
                     .relative()
                     .child(anchor_probe("filter", &self.anchors))
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -2255,7 +2255,7 @@ impl Root {
         })
         .when(!expanded && orderable, |top| {
             top.child(
-                btn("order", "Order", &t)
+                btn("order", "Order", t)
                     .relative()
                     .child(anchor_probe("order", &self.anchors))
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -2266,7 +2266,7 @@ impl Root {
         })
         .when(!expanded && groupable, |top| {
             top.child(
-                btn("group", "Group", &t)
+                btn("group", "Group", t)
                     .relative()
                     .child(anchor_probe("group", &self.anchors))
                     .on_click(cx.listener(|this, _, window, cx| this.pick_group(window, cx)))
@@ -2276,7 +2276,7 @@ impl Root {
         .when(!expanded && can_columns, |top| {
             let label = if columns { "List" } else { "Columns" };
             top.child(
-                btn("layout", label, &t)
+                btn("layout", label, t)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_layout(&ToggleLayout, window, cx);
                     }))
@@ -2287,7 +2287,7 @@ impl Root {
             !expanded && !settings && query != TaskQuery::RecentActions,
             |top| {
                 top.child(
-                    btn("details", "Toggle details", &t)
+                    btn("details", "Toggle details", t)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_details(&ToggleDetails, window, cx)
                         }))
@@ -2298,7 +2298,7 @@ impl Root {
         )
         .when(!expanded && dated, |top| {
             top.child(
-                btn("display", "Display", &t)
+                btn("display", "Display", t)
                     .relative()
                     .aria_expanded(self.display_open())
                     .child(anchor_probe("display", &self.anchors))
