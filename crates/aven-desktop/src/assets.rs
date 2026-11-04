@@ -9,6 +9,8 @@ pub struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         let bytes: &'static [u8] = match path {
+            "wordmark-dark.svg" => include_bytes!("../assets/wordmark-dark.svg"),
+            "wordmark-light.svg" => include_bytes!("../assets/wordmark-light.svg"),
             "logo-dark.svg" => include_bytes!("../assets/logo-dark.svg"),
             "logo-light.svg" => include_bytes!("../assets/logo-light.svg"),
             "icons/cloud.svg" => include_bytes!("../assets/icons/cloud.svg"),

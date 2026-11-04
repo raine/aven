@@ -1628,12 +1628,64 @@ impl Root {
         let server = self.session.snapshot.sync.server.as_deref();
         let cloud = server.is_some_and(aven_core::sync::client::is_aven_cloud);
         let identity = if cloud {
-            btn("sync-server-cloud", "Aven Cloud", t)
-                .role(Role::Link)
-                .text_color(t.accent)
-                .on_click(|_, _, cx| cx.open_url(CLOUD_URL))
-                .child(icon("icons/cloud.svg", t.accent))
-                .child("Aven Cloud")
+            let (fill, line, ink) = if t.dark {
+                (0x241c2c, 0x624a7b, 0xdac4f3)
+            } else {
+                (0xf4edfd, 0xcfb6f1, 0x6b3fc4)
+            };
+            div()
+                .id("sync-server-cloud")
+                .role(Role::Image)
+                .aria_label("Aven Cloud")
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .size(px(36.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(10.))
+                        .bg(t.accent.opacity(0.16))
+                        .child(
+                            gpui::img(if t.dark {
+                                "logo-dark.svg"
+                            } else {
+                                "logo-light.svg"
+                            })
+                            .size(px(22.)),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            gpui::img(if t.dark {
+                                "wordmark-dark.svg"
+                            } else {
+                                "wordmark-light.svg"
+                            })
+                            .h(px(16.))
+                            .w(px(16. * 195.6 / 52.)),
+                        )
+                        .child(
+                            small(11.)
+                                .font_family(MONO)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(gpui::rgb(ink))
+                                .px(px(6.))
+                                .py(px(1.))
+                                .rounded(px(4.))
+                                .bg(gpui::rgb(fill))
+                                .border_1()
+                                .border_color(gpui::rgb(line))
+                                .child("CLOUD"),
+                        ),
+                )
                 .into_any_element()
         } else {
             small(12.)
@@ -1650,7 +1702,9 @@ impl Root {
             .py(px(8.))
             .border_t_1()
             .border_color(t.line)
-            .child(small(12.).flex_none().text_color(t.muted).child("Server"))
+            .when(!cloud, |row| {
+                row.child(small(12.).flex_none().text_color(t.muted).child("Server"))
+            })
             .child(identity)
     }
 
