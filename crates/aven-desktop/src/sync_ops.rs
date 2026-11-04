@@ -765,7 +765,7 @@ mod tests {
         let (operations, _) = operations.split_once("#[cfg(test)]").unwrap();
         assert_eq!(operations.matches("HostMode::").count(), 2);
         assert_eq!(operations.matches("HostMode::UserStarted").count(), 2);
-        let adapter = include_str!("adapter.rs");
+        let adapter = include_str!("adapter/actor.rs");
         assert!(adapter.contains("DaemonSync::with_storage"));
         for source in [operations, adapter] {
             assert!(!source.contains("record_daemon_sync_round"));
