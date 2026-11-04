@@ -10,6 +10,7 @@ description: Release notes for aven.
 - UX: Clicking an Aven notification on macOS opens the desktop app.
 - UX: Set due and available dates in the desktop app from a menu that saves on selection, reads typed dates such as `3 days`, `friday`, or `Dec 24`, and opens a calendar for anything else. Tab switches between the two dates.
 - UX: Type `#label`, `!high`, or `@project` in the desktop new task title to set them as you go, with suggestions as you type. Each token turns into a chip below the title, schedule opens from its own chip, and a Create more switch keeps the dialog open after creating.
+- UX: Images attached in the desktop new task dialog show as thumbnails, each with a button to remove it.
 - Fix: Typed dates such as `tomorrow` save correctly in the desktop app instead of failing with an invalid date error.
 - Perf: Search and task lists stay fast in workspaces with thousands of tasks, where they could take seconds.
 - Fix: Choosing an order now starts from that order's natural direction, so Title after Recently updated no longer sorts Z to A.

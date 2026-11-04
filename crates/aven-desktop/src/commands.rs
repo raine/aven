@@ -143,6 +143,20 @@ fn as_png(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(png)
 }
 
+/// A picture of an image cropped to fill `width` by `height` pixels, or none
+/// when the bytes do not decode.
+pub(crate) fn thumbnail(bytes: &[u8], width: u32, height: u32) -> Option<gpui::RenderImage> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let mut pixels = picture
+        .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+        .into_rgba8();
+    // GPUI paints BGRA.
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    Some(gpui::RenderImage::new(vec![image::Frame::new(pixels)]))
+}
+
 impl Root {
     /// The epic's focused child takes task keys ahead of the epic itself.
     pub(crate) fn target_id(&self) -> Option<TaskId> {
@@ -1479,6 +1493,13 @@ fn delete_entry() -> Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thumbnail_fills_its_size_and_junk_has_none() {
+        let thumb = thumbnail(&encoded(image::ImageFormat::Png), 6, 4).unwrap();
+        assert_eq!(thumb.size(0), size(6.into(), 4.into()));
+        assert!(thumbnail(b"not an image", 6, 4).is_none());
+    }
 
     fn encoded(format: image::ImageFormat) -> Vec<u8> {
         let mut bytes = Vec::new();

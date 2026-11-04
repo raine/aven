@@ -1,7 +1,9 @@
 //! Writing a new task: a title whose tokens turn into chips, a description,
 //! and chips for every field. A draft survives closing until it is discarded.
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use accesskit::{Role, Toggled};
@@ -9,13 +11,13 @@ use aven_core::choices::TaskStatus;
 use aven_core::projects::normalize_key;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, ExternalPaths, FocusHandle,
-    KeyDownEvent, MouseButton, MouseDownEvent, Subscription, Window, div, ease_out_quint,
-    prelude::*,
+    KeyDownEvent, MouseButton, MouseDownEvent, ObjectFit, RenderImage, Subscription, Window, div,
+    ease_out_quint, img, prelude::*,
 };
 
 use crate::actions::*;
-use crate::adapter::NavEntry;
-use crate::commands::{pasted_image, read_image};
+use crate::adapter::{NavEntry, PendingImage};
+use crate::commands::{pasted_image, read_image, thumbnail};
 use crate::draft::{
     CaretWord, Draft, DraftProblem, Suggestion, Token, automatic_status, caret_word, cut,
     finished_token, parse_title, schedule_chip, schedule_preview, suggestions, title_tokens,
@@ -84,8 +86,22 @@ pub struct Composer {
     schedule_open: bool,
     /// The chip that just took a token, and that flash's number.
     flash: Option<(Chip, usize)>,
+    /// Pictures of the draft's images, made once each.
+    thumbs: RefCell<Vec<Thumb>>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// An attached image's picture. `picture` is none while it decodes and
+/// `Some(None)` for bytes that do not decode.
+struct Thumb {
+    bytes: Arc<Vec<u8>>,
+    picture: Option<Option<Arc<RenderImage>>>,
+}
+
+const THUMB_WIDTH: f32 = 72.;
+const THUMB_HEIGHT: f32 = 54.;
+/// Pixels per point in a thumbnail, sharp on Retina displays.
+const THUMB_DENSITY: f32 = 2.;
 
 impl Composer {
     /// The whole draft as it stands.
@@ -204,6 +220,7 @@ impl Root {
             dismissed: None,
             schedule_open: false,
             flash: None,
+            thumbs: RefCell::default(),
             _subscriptions: subscriptions,
         };
         composer.show(draft, &self.session.snapshot.projects, cx);
@@ -954,6 +971,62 @@ impl Root {
         )
     }
 
+    /// Each image's picture, decoding new images in the background and
+    /// forgetting removed ones.
+    fn composer_thumbs(
+        &self,
+        images: &[PendingImage],
+        cx: &mut Context<Self>,
+    ) -> Vec<Option<Option<Arc<RenderImage>>>> {
+        let Some(composer) = self.composer.as_ref() else {
+            return Vec::new();
+        };
+        let mut held = composer.thumbs.borrow_mut();
+        let mut kept = Vec::with_capacity(images.len());
+        for image in images {
+            let found = held
+                .iter()
+                .position(|thumb| Arc::ptr_eq(&thumb.bytes, &image.bytes));
+            kept.push(match found {
+                Some(ix) => held.swap_remove(ix),
+                None => {
+                    let bytes = image.bytes.clone();
+                    cx.spawn(async move |this, cx| {
+                        let decoding = bytes.clone();
+                        let picture = cx
+                            .background_spawn(async move {
+                                let (width, height) =
+                                    (THUMB_WIDTH * THUMB_DENSITY, THUMB_HEIGHT * THUMB_DENSITY);
+                                thumbnail(&decoding, width as u32, height as u32).map(Arc::new)
+                            })
+                            .await;
+                        this.update(cx, |this, cx| {
+                            let Some(composer) = this.composer.as_ref() else {
+                                return;
+                            };
+                            let mut held = composer.thumbs.borrow_mut();
+                            if let Some(thumb) = held
+                                .iter_mut()
+                                .find(|thumb| Arc::ptr_eq(&thumb.bytes, &bytes))
+                            {
+                                thumb.picture = Some(picture);
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                    Thumb {
+                        bytes: image.bytes.clone(),
+                        picture: None,
+                    }
+                }
+            });
+        }
+        *held = kept;
+        held.iter().map(|thumb| thumb.picture.clone()).collect()
+    }
+
     pub(crate) fn render_composer(
         &self,
         window: &Window,
@@ -1165,21 +1238,63 @@ impl Root {
                 .on_click(cx.listener(|this, _, window, cx| this.pick_composer_more(window, cx))),
         );
 
-        let mut images = div().flex().flex_wrap().gap(px(6.)).px(px(18.)).pb(px(10.));
-        for (ix, image) in draft.images.iter().enumerate() {
+        let thumbs = self.composer_thumbs(&draft.images, cx);
+        let mut images = div().flex().flex_wrap().gap(px(8.)).px(px(18.)).pb(px(10.));
+        for (ix, (image, picture)) in draft.images.iter().zip(thumbs).enumerate() {
+            let thumb = div()
+                .id(("c-image", ix))
+                .role(Role::Image)
+                .aria_label(image.name.clone())
+                .tooltip(tip(image.name.clone()))
+                .relative()
+                .flex_none()
+                .w(px(THUMB_WIDTH))
+                .h(px(THUMB_HEIGHT))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .bg(t.raised)
+                .shadow(vec![t.inset_ring(t.line)]);
+            let thumb = match picture {
+                Some(Some(picture)) => thumb.child(
+                    img(picture)
+                        .size_full()
+                        .rounded(px(6.))
+                        .object_fit(ObjectFit::Cover),
+                ),
+                Some(None) => thumb.px(px(6.)).child(
+                    small(11.)
+                        .w_full()
+                        .text_center()
+                        .text_color(t.faint)
+                        .truncate()
+                        .child(image.name.clone()),
+                ),
+                None => thumb,
+            };
             images = images.child(
-                btn(("c-image", ix), format!("Remove {}", image.name), &t)
-                    .h(px(28.))
-                    .px(px(8.))
-                    .text_size(px(12.))
-                    .shadow(vec![t.inset_ring(t.line2)])
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.update_draft(cx, |draft| {
-                            draft.images.remove(ix);
-                        });
-                    }))
-                    .child(image.name.clone())
-                    .child(div().text_color(t.faint).child("×")),
+                thumb.child(
+                    bare_btn(("c-image-remove", ix), format!("Remove {}", image.name), &t)
+                        .absolute()
+                        .top(px(-6.))
+                        .right(px(-6.))
+                        .size(px(18.))
+                        .px(px(0.))
+                        .justify_center()
+                        .rounded_full()
+                        .bg(t.pop)
+                        .shadow(vec![t.inset_ring(t.line2)])
+                        .text_size(px(12.))
+                        .text_color(t.faint)
+                        .hover(|style| style.text_color(t.ink))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_draft(cx, |draft| {
+                                draft.images.remove(ix);
+                            });
+                        }))
+                        .child("×"),
+                ),
             );
         }
 
