@@ -370,21 +370,17 @@ impl Root {
             .session
             .bulk_targets()
             .map_or(0, |targets| targets.len());
-        let entries = STATUSES
-            .iter()
-            .map(|(status, name)| {
-                let (id, status) = (id.clone(), *status);
-                Entry::new(*name, move |root, _, cx| {
-                    if !root.session.bulk(Bulk::Status(status)) {
-                        root.session.set_status(&id, status);
-                    }
-                    root.after_status_motion(cx);
-                })
-                .mark(Mark::Status(status))
-                .key(status_key(status))
-                .checked(marked == 0 && current == Some(status))
-            })
-            .collect();
+        let entries = crate::overlays::status_entries(
+            current.filter(|_| marked == 0),
+            true,
+            false,
+            move |status, root, _, cx| {
+                if !root.session.bulk(Bulk::Status(status)) {
+                    root.session.set_status(&id, status);
+                }
+                root.after_status_motion(cx);
+            },
+        );
         self.open_menu(
             entries,
             "Set status",
@@ -412,22 +408,17 @@ impl Root {
             .session
             .bulk_targets()
             .map_or(0, |targets| targets.len());
-        let entries = PRIORITIES
-            .iter()
-            .map(|(priority, name)| {
-                let (id, priority) = (id.clone(), *priority);
-                Entry::new(*name, move |root, _, cx| {
-                    if !root.session.bulk(Bulk::Priority(priority)) {
-                        root.session.set_priority(&id, priority);
-                        root.session.review_refined();
-                    }
-                    root.repaint_after(crate::session::PRIORITY_DURATION, cx);
-                })
-                .mark(Mark::Priority(priority))
-                .key(priority_key(priority))
-                .checked(marked == 0 && current == Some(priority))
-            })
-            .collect();
+        let entries = crate::overlays::priority_entries(
+            current.filter(|_| marked == 0),
+            true,
+            move |priority, root, _, cx| {
+                if !root.session.bulk(Bulk::Priority(priority)) {
+                    root.session.set_priority(&id, priority);
+                    root.session.review_refined();
+                }
+                root.repaint_after(crate::session::PRIORITY_DURATION, cx);
+            },
+        );
         self.open_menu(
             entries,
             "Set priority",

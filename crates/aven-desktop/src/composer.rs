@@ -747,18 +747,14 @@ impl Root {
         let mut entries = vec![Entry::new("Auto", |root, _, cx| {
             root.update_draft(cx, |draft| draft.status = None);
         })];
-        for (status, name) in STATUSES
-            .iter()
-            .filter(|(status, _)| !is_epic || *status != TaskStatus::Inbox)
-        {
-            let status = *status;
-            entries.push(
-                Entry::new(*name, move |root, _, cx| {
-                    root.update_draft(cx, |draft| draft.status = Some(status));
-                })
-                .mark(Mark::Status(status)),
-            );
-        }
+        entries.extend(crate::overlays::status_entries(
+            None,
+            false,
+            is_epic,
+            |status, root, _, cx| {
+                root.update_draft(cx, |draft| draft.status = Some(status));
+            },
+        ));
         let anchor = self.anchor("c-status");
         self.open_menu(
             entries,
@@ -772,16 +768,9 @@ impl Root {
 
     fn pick_composer_priority(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settle_composer_title(window, cx);
-        let entries = PRIORITIES
-            .iter()
-            .map(|(priority, name)| {
-                let priority = *priority;
-                Entry::new(*name, move |root, _, cx| {
-                    root.update_draft(cx, |draft| draft.priority = priority);
-                })
-                .mark(Mark::Priority(priority))
-            })
-            .collect();
+        let entries = crate::overlays::priority_entries(None, false, |priority, root, _, cx| {
+            root.update_draft(cx, |draft| draft.priority = priority);
+        });
         let anchor = self.anchor("c-priority");
         self.open_menu(
             entries,
