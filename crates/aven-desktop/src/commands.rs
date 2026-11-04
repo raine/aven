@@ -1303,6 +1303,18 @@ impl Root {
             );
         }
         entries.push(Entry::action("All projects", "g a", AllProjects));
+        for workspace in &snapshot.workspaces {
+            let key = workspace.key.clone();
+            entries.push(
+                Entry::new(
+                    format!("Switch to workspace {}", workspace.name),
+                    move |root, window, cx| {
+                        root.switch_view(Command::SwitchWorkspace(key.clone()), window, cx);
+                    },
+                )
+                .hint("g w"),
+            );
+        }
         entries.extend([
             Entry::head("App"),
             Entry::action("Keyboard shortcuts", "?", OpenHelp),
