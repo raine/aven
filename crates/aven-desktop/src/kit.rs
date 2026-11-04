@@ -276,8 +276,21 @@ fn status_look(status: TaskStatus, t: &Theme) -> (&'static str, Hsla) {
 }
 
 pub fn status_glyph(status: TaskStatus, t: &Theme) -> impl IntoElement + use<> {
+    status_glyph_sized(status, 14., t)
+}
+
+pub fn status_glyph_sized(status: TaskStatus, size: f32, t: &Theme) -> impl IntoElement + use<> {
     let (path, color) = status_look(status, t);
-    svg().path(path).size(px(14.)).flex_none().text_color(color)
+    svg()
+        .path(path)
+        .size(px(size))
+        .flex_none()
+        .text_color(color)
+}
+
+/// The colour a status's mark and name read in.
+pub fn status_color(status: TaskStatus, t: &Theme) -> Hsla {
+    status_look(status, t).1
 }
 
 /// The star after an epic's title or ref, faint once the epic is closed.

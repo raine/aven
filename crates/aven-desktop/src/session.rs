@@ -14,9 +14,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::actions::VIEWS;
 use crate::adapter::{
-    Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, NewTask, Reply, ReplyBody, Request,
-    ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot,
-    SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed, first_project_name,
+    Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, LedgerLine, LedgerRun, NewTask,
+    Reply, ReplyBody, Request, ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail,
+    SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed,
+    first_project_name,
 };
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
@@ -263,6 +264,8 @@ pub struct Session {
     pub marks: BTreeSet<TaskId>,
     /// The series selected in the Recurring view.
     pub series: Option<RecurrenceSeriesId>,
+    /// The ledger row selected in Recent actions, by its newest change.
+    pub log: Option<String>,
     pub series_detail: Option<SeriesDetail>,
     pub review: Option<Review>,
     /// A child picked in the epic's section, which writes go to.
@@ -425,6 +428,7 @@ impl Session {
             motion: Motion::default(),
             marks: BTreeSet::new(),
             series: None,
+            log: None,
             series_detail: None,
             review: None,
             child: None,
@@ -537,7 +541,8 @@ impl Session {
 
     /// Moves the view to a task and selects it.
     pub fn goto(&mut self, id: TaskId) {
-        if self.any_row(&id) {
+        let logged = self.snapshot.view.query == TaskQuery::RecentActions;
+        if !logged && self.any_row(&id) {
             self.select(id);
         } else {
             self.switch_view(Command::Goto(id));
@@ -1725,6 +1730,49 @@ impl Session {
         }
     }
 
+    /// Keeps the ledger row selected while Recent actions still lists it.
+    fn keep_log(&mut self) {
+        let listed = |key: &String| self.log_runs().any(|run| run.key == *key);
+        if self.snapshot.view.query != TaskQuery::RecentActions
+            || !self.log.as_ref().is_some_and(listed)
+        {
+            self.log = None;
+        }
+    }
+
+    pub fn log_runs(&self) -> impl Iterator<Item = &LedgerRun> {
+        self.snapshot
+            .recent
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                LedgerLine::Run(run) => Some(run),
+                _ => None,
+            })
+    }
+
+    /// The ledger row `delta` rows from the selected one, or the first or last
+    /// when none is selected.
+    pub fn neighbour_log(&self, delta: isize) -> Option<String> {
+        let runs: Vec<&LedgerRun> = self.log_runs().collect();
+        let last = runs.len().checked_sub(1)? as isize;
+        let at = self
+            .log
+            .as_ref()
+            .and_then(|key| runs.iter().position(|run| run.key == *key));
+        let next = match at {
+            Some(at) => (at as isize + delta).clamp(0, last),
+            None if delta > 0 => 0,
+            None => last,
+        };
+        Some(runs[next as usize].key.clone())
+    }
+
+    pub fn selected_log(&self) -> Option<&LedgerRun> {
+        let key = self.log.as_ref()?;
+        self.log_runs().find(|run| run.key == *key)
+    }
+
     /// Keeps a series selected while the Recurring view lists any, reloading it
     /// since the write that produced this list may have changed it.
     fn keep_series(&mut self) {
@@ -1771,6 +1819,7 @@ impl Session {
         }
         self.prune_marks();
         self.keep_series();
+        self.keep_log();
         if let Some(next) = completed.and_then(|id| self.after_completion(&id, &order(&replaced))) {
             self.select(next);
             applied.selection = true;

@@ -388,6 +388,8 @@ pub struct RecentActionItem {
     pub detail: Option<String>,
     pub accent: String,
     pub grouped_change_count: usize,
+    /// The status a created task started in.
+    pub initial_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

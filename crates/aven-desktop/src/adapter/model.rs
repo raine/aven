@@ -293,11 +293,65 @@ pub struct CatalogTask {
     pub is_epic: bool,
 }
 
+/// One line of the Recent actions ledger, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecentAction {
-    pub at: String,
-    pub text: String,
+pub enum LedgerLine {
+    Day {
+        label: String,
+        count: usize,
+    },
+    /// Actions with less than a pause between them.
+    Burst {
+        label: String,
+        range: String,
+    },
+    Run(LedgerRun),
+}
+
+/// Consecutive actions on one entity, read as a single row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerRun {
+    /// The newest action's change, which keeps the row selected across reloads.
+    pub key: String,
+    pub clock: String,
     pub task: Option<TaskId>,
+    pub reference: String,
+    pub project_key: String,
+    pub title: String,
+    pub closed: bool,
+    pub deleted: bool,
+    /// Newest first.
+    pub steps: Vec<LedgerStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerStep {
+    pub mark: StepMark,
+    /// How the action reads on its own, before its value.
+    pub lead: String,
+    /// The value the action set, which reads emphasised.
+    pub value: Option<String>,
+    /// What the action names, such as a label.
+    pub chip: Option<String>,
+    /// How the action reads as one step of a run.
+    pub short: String,
+    /// The status the action left the task in, which colours its value.
+    pub tone: Option<TaskStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepMark {
+    Status(TaskStatus),
+    Priority(TaskPriority),
+    Created,
+    Icon(&'static str),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ledger {
+    pub lines: Vec<LedgerLine>,
+    /// Actions and distinct tasks recorded today.
+    pub today: (usize, usize),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -312,7 +366,7 @@ pub struct Snapshot {
     pub view: ViewInfo,
     pub labels: Vec<String>,
     pub fields: Vec<String>,
-    pub recent: Vec<RecentAction>,
+    pub recent: Ledger,
     pub sync: SyncView,
     /// The database has no tasks and has never been through the welcome.
     pub welcome: bool,

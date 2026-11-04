@@ -20,6 +20,7 @@ mod input;
 pub mod intro;
 mod kit;
 mod lazy_row;
+mod ledger;
 mod markdown;
 mod overlays;
 mod platform;

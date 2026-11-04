@@ -562,6 +562,7 @@ mod tests {
             detail: None,
             accent: "green".to_string(),
             grouped_change_count: 1,
+            initial_status: None,
         }
     }
 

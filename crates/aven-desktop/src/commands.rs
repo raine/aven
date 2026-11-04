@@ -267,6 +267,10 @@ impl Root {
     pub(crate) fn expand(&mut self, _: &Expand, window: &mut Window, cx: &mut Context<Self>) {
         if self.session.snapshot.view.query == TaskQuery::Recurring {
             self.open_series_current(window, cx);
+        } else if self.session.snapshot.view.query == TaskQuery::RecentActions {
+            if let Some(task) = self.session.selected_log().map(|run| run.task.clone()) {
+                self.open_log_task(task, window, cx);
+            }
         } else if let Some(child) = self.session.child.clone() {
             self.follow(child, window, cx);
         } else if self.session.target().is_some() {
@@ -299,7 +303,7 @@ impl Root {
             self.trail_back(window, cx);
         } else if self.session.expanded {
             self.collapse(window, cx);
-        } else if self.session.child.take().is_some() {
+        } else if self.session.child.take().is_some() || self.session.log.take().is_some() {
             cx.notify();
         } else if self.is_narrow() && self.details_open {
             self.details_open = false;

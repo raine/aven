@@ -26,6 +26,7 @@ fn task_activity_is_collapsed_by_default_and_expands_with_idle_context() {
             detail: Some("Confirmed race".to_string()),
             accent: "blue".to_string(),
             grouped_change_count: 1,
+            initial_status: None,
         },
         crate::query::RecentActionItem {
             change_id: "label-change-id".to_string(),
@@ -41,6 +42,7 @@ fn task_activity_is_collapsed_by_default_and_expands_with_idle_context() {
             detail: Some("backend".to_string()),
             accent: "green".to_string(),
             grouped_change_count: 1,
+            initial_status: None,
         },
         crate::query::RecentActionItem {
             change_id: "description-change-id".to_string(),
@@ -56,6 +58,7 @@ fn task_activity_is_collapsed_by_default_and_expands_with_idle_context() {
             detail: Some("## Goal Turn planning notes into tasks".to_string()),
             accent: "blue".to_string(),
             grouped_change_count: 1,
+            initial_status: None,
         },
     ];
 

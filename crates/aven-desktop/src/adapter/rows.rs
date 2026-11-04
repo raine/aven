@@ -501,22 +501,6 @@ fn sync_view(store: &TuiStore) -> SyncView {
     }
 }
 
-fn recent_actions(store: &TuiStore, now: DateTime<Local>) -> Vec<RecentAction> {
-    store
-        .recent_actions
-        .iter()
-        .map(|action| RecentAction {
-            at: relative_time(&action.created_at, now),
-            text: action.summary.clone(),
-            task: action
-                .entity_id
-                .parse()
-                .ok()
-                .filter(|_| action.entity_type == "task"),
-        })
-        .collect()
-}
-
 pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arrange) -> Snapshot {
     let today = now.date_naive();
     let upcoming = store.view_state.query == TaskQuery::Upcoming;
@@ -589,7 +573,7 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
         view: view_info(store, arrange),
         labels: store.labels.clone(),
         fields: Vec::new(),
-        recent: recent_actions(store, now),
+        recent: super::ledger::ledger(&store.recent_actions, now),
         sync: sync_view(store),
         welcome: false,
     }
@@ -905,6 +889,7 @@ mod tests {
             detail: detail.map(str::to_string),
             accent: String::new(),
             grouped_change_count: 1,
+            initial_status: None,
         };
 
         let status = change("status", "changed status to todo: Task", None);

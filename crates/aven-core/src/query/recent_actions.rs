@@ -426,6 +426,10 @@ fn action_from_row(
         1
     };
 
+    let initial_status = (op_type == op_type::CREATE_TASK)
+        .then(|| payload_string(&payload, "status"))
+        .flatten();
+
     Ok(RecentActionItem {
         change_id,
         entity_type,
@@ -446,6 +450,7 @@ fn action_from_row(
         detail,
         accent,
         grouped_change_count,
+        initial_status,
     })
 }
 
@@ -1211,6 +1216,7 @@ mod tests {
             detail,
             accent,
             grouped_change_count: 1,
+            initial_status: None,
         };
         assert_eq!(
             action.summary,

@@ -20,8 +20,8 @@ use gpui::{
 
 use crate::actions::*;
 use crate::adapter::{
-    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, Note, Prefs, Replies, Reply, RowDate,
-    SavedDrafts, SavedWindow, TaskRow, ThemePref, WindowMode, supports_columns,
+    Bulk, Command, DateTone, DeletedFilter, KnownDatabase, LedgerLine, Note, Prefs, Replies, Reply,
+    RowDate, SavedDrafts, SavedWindow, TaskRow, ThemePref, WindowMode, supports_columns,
 };
 use crate::bounce::{Bounce, ListBounce};
 use crate::commands::view_name;
@@ -33,6 +33,7 @@ use crate::input::{Editor, EditorEvent, Mode};
 use crate::intro::Playback;
 use crate::kit::*;
 use crate::lazy_row::LazyRow;
+use crate::ledger::{LEDGER_BURST_HEIGHT, LEDGER_DAY_HEIGHT, LEDGER_ROW_HEIGHT};
 use crate::markdown;
 use crate::overlays::Menu;
 use crate::platform;
@@ -88,8 +89,6 @@ const LEAVE_DURATION: Duration = Duration::from_millis(640);
 
 /// How many of the views the sidebar shows before More views.
 const PRIMARY_VIEWS: usize = 9;
-const LOG_HEIGHT: f32 = 31.;
-const LOG_TIME_WIDTH: f32 = 70.;
 
 /// The name a view's count goes by in the snapshot.
 fn count_key(query: TaskQuery) -> &'static str {
@@ -128,7 +127,11 @@ enum Item {
         row: usize,
         id: TaskId,
     },
-    Log(usize),
+    /// A line of the Recent actions ledger.
+    Log {
+        line: usize,
+        height: f32,
+    },
     Empty,
     AllClear,
     Lifecycle,
@@ -139,9 +142,8 @@ enum Item {
 impl Item {
     fn height(&self) -> f32 {
         match self {
-            Self::Pad(height) | Self::Section { height, .. } => *height,
+            Self::Pad(height) | Self::Section { height, .. } | Self::Log { height, .. } => *height,
             Self::Row { .. } => row_height(),
-            Self::Log(_) => LOG_HEIGHT,
             Self::Empty => 0.,
             Self::AllClear => ALL_CLEAR_HEIGHT,
             Self::Lifecycle => LIFECYCLE_HEIGHT,
@@ -402,7 +404,7 @@ pub struct Root {
     nav_open: bool,
     narrow: Option<bool>,
     /// Whether the list has room for its optional columns.
-    list_wide: bool,
+    pub(crate) list_wide: bool,
     /// Whether rows have room for refs and tags.
     list_refs: bool,
     /// Whether any task in the list has a date for the date column.
@@ -757,7 +759,21 @@ impl Root {
         let snapshot = &self.session.snapshot;
         let mut items = vec![Item::Pad(4.)];
         if snapshot.view.query == TaskQuery::RecentActions {
-            items.extend((0..snapshot.recent.len()).map(Item::Log));
+            items.extend(
+                snapshot
+                    .recent
+                    .lines
+                    .iter()
+                    .enumerate()
+                    .map(|(line, entry)| {
+                        let height = match entry {
+                            LedgerLine::Day { .. } => LEDGER_DAY_HEIGHT,
+                            LedgerLine::Burst { .. } => LEDGER_BURST_HEIGHT,
+                            LedgerLine::Run(_) => LEDGER_ROW_HEIGHT,
+                        };
+                        Item::Log { line, height }
+                    }),
+            );
             if items.len() == 1 {
                 items.push(Item::Empty);
             }
@@ -1135,6 +1151,25 @@ impl Root {
         cx.notify();
     }
 
+    fn reveal_log(&self) {
+        let key = self.session.log.as_ref();
+        let line = self
+            .session
+            .snapshot
+            .recent
+            .lines
+            .iter()
+            .position(|line| matches!(line, LedgerLine::Run(run) if Some(&run.key) == key));
+        let item = line.and_then(|line| {
+            self.items
+                .iter()
+                .position(|item| matches!(item, Item::Log { line: at, .. } if *at == line))
+        });
+        if let Some(item) = item {
+            self.list.scroll_to_reveal_item(item);
+        }
+    }
+
     pub(crate) fn reveal_selection(&self) {
         if let Some(position) = self
             .session
@@ -1204,6 +1239,12 @@ impl Root {
         if self.session.snapshot.view.query == TaskQuery::Recurring {
             if let Some(id) = self.session.neighbour_series(delta) {
                 self.session.select_series(id);
+                cx.notify();
+            }
+        } else if self.session.snapshot.view.query == TaskQuery::RecentActions {
+            if let Some(key) = self.session.neighbour_log(delta) {
+                self.session.log = Some(key);
+                self.reveal_log();
                 cx.notify();
             }
         } else if let Some(id) = self.session.neighbour(delta) {
@@ -1423,7 +1464,7 @@ impl Root {
         match self.items[ix].clone() {
             Item::Pad(height) => div().h(px(height)).into_any_element(),
             Item::Empty => self.render_empty(cx).into_any_element(),
-            Item::Log(entry) => self.render_log(entry, cx),
+            Item::Log { line, .. } => self.render_ledger_line(line, cx),
             Item::AllClear => self.render_all_clear(cx),
             Item::Lifecycle => self.render_lifecycle(cx),
             Item::SeriesHead => self.render_series_head(cx),
@@ -2099,13 +2140,18 @@ impl Root {
                             .child(div().text_color(t.muted).child(reference))
                     }),
             )
-            .when(hints && !expanded && !logged && !settings, |top| {
-                top.child(
-                    div()
-                        .flex_none()
-                        .text_color(t.faint)
-                        .child(format!("{count} tasks")),
-                )
+            .when(hints && !expanded && !settings, |top| {
+                let (actions, tasks) = snapshot.recent.today;
+                let text = if logged {
+                    format!(
+                        "{actions} {} on {tasks} {} today",
+                        if actions == 1 { "action" } else { "actions" },
+                        if tasks == 1 { "task" } else { "tasks" },
+                    )
+                } else {
+                    format!("{count} tasks")
+                };
+                top.child(div().flex_none().text_color(t.faint).child(text))
             })
             .child(
                 small(12.)
@@ -2397,46 +2443,6 @@ impl Root {
                 })
                 .child(actions),
         )
-    }
-
-    fn render_log(&self, entry: usize, cx: &mut Context<Self>) -> AnyElement {
-        let t = theme(cx);
-        let action = &self.session.snapshot.recent[entry];
-        let task = action.task.clone();
-        div()
-            .px(px(8.))
-            .child(
-                div()
-                    .id(("log", entry))
-                    .role(Role::ListItem)
-                    .h(px(LOG_HEIGHT))
-                    .px(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(9.))
-                    .rounded(px(6.))
-                    .hover(|style| style.bg(t.panel))
-                    .when_some(task, |row, task| {
-                        row.on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_task(task.clone(), window, cx);
-                        }))
-                    })
-                    .child(
-                        small(12.)
-                            .flex_none()
-                            .w(px(LOG_TIME_WIDTH))
-                            .text_color(t.faint)
-                            .child(action.at.clone()),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(t.body)
-                            .child(action.text.clone()),
-                    ),
-            )
-            .into_any_element()
     }
 
     /// The lines between the header and the list: what scopes the view.
@@ -2913,6 +2919,7 @@ impl Root {
         let settings_closed = self.session.settings.is_none();
         let on_list = unblocked && settings_closed && !reviewing;
         let has_task = self.session.target().is_some() || recurring;
+        let logged = self.session.snapshot.view.query == TaskQuery::RecentActions;
         root.when(unblocked, |el| {
             el.on_action(cx.listener(Self::open_settings))
                 .on_action(cx.listener(Self::open_palette))
@@ -2947,6 +2954,9 @@ impl Root {
                 .on_action(cx.listener(Self::new_epic))
                 .on_action(cx.listener(Self::cycle_lifecycle))
                 .on_action(cx.listener(Self::review_tasks))
+        })
+        .when(on_list && !has_task && logged, |el| {
+            el.on_action(cx.listener(Self::expand))
         })
         .when(on_list && has_task, |el| {
             el.on_action(cx.listener(Self::mark_done))

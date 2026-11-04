@@ -5,6 +5,7 @@
 //! changes when another connection commits. A background task runs sync rounds.
 
 mod actor;
+mod ledger;
 mod model;
 mod prefs;
 mod rows;

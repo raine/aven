@@ -1338,8 +1338,10 @@ impl Actor {
         Ok(())
     }
 
+    /// Recent actions lists changes, not the tasks still loaded behind them.
     fn listed(&self, id: &TaskId) -> bool {
-        self.store.tasks.iter().any(|item| item.task.id == *id)
+        self.store.view_state.query != TaskQuery::RecentActions
+            && self.store.tasks.iter().any(|item| item.task.id == *id)
     }
 
     /// Widens the view one step at a time until the task is in it, then falls
@@ -3738,6 +3740,18 @@ mod tests {
         assert_eq!(actor.store.view_state.query, TaskQuery::Done);
         let seen = bodies(&mut replies);
         assert!(seen.iter().any(|body| matches!(body, ReplyBody::Select(_))));
+    }
+
+    #[tokio::test]
+    async fn goto_from_recent_actions_leaves_for_a_task_view() {
+        let (_directory, mut actor, mut replies) = actor("Stored").await;
+        let id = task_id(&actor, "Stored");
+        run(&mut actor, Command::ShowView(TaskQuery::RecentActions)).await;
+        bodies(&mut replies);
+
+        run(&mut actor, Command::Goto(id.clone())).await;
+        assert_ne!(actor.store.view_state.query, TaskQuery::RecentActions);
+        assert!(actor.listed(&id));
     }
 
     #[tokio::test]
