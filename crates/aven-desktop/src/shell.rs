@@ -219,6 +219,7 @@ struct LeftSection {
 struct LeftRow {
     title: String,
     reference: String,
+    project_key: String,
     /// From the top of the list viewport.
     top: f32,
 }
@@ -273,6 +274,7 @@ impl ListMotion {
                 let row = LeftRow {
                     title: row.title.clone(),
                     reference: row.reference.clone(),
+                    project_key: row.project_key.clone(),
                     top: top - scrolled,
                 };
                 self.left_rows.push((row, next_run()));
@@ -1677,7 +1679,7 @@ impl Root {
                     .child(self.task_glyph(&id, data.status, &t)),
             )
             .when(self.list_refs, |row| {
-                row.child(ref_label(&data.reference, &data.project, Some(74.), &t))
+                row.child(ref_label(&data.reference, &data.project_key, Some(74.), &t))
             })
             .child(self.task_title(&id, data.title, data.status, deleted, &t))
             .when(deleted, |row| {
@@ -2638,7 +2640,7 @@ impl Root {
                     .px(px(8.))
                     .bg(t.page)
                     .text_color(t.body)
-                    .child(ref_label(&row.reference, "", None, &t))
+                    .child(ref_label(&row.reference, &row.project_key, None, &t))
                     .child(div().min_w_0().truncate().child(row.title))
                     .with_animation(
                         ("row-leave", run),
