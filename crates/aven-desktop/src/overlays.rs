@@ -1017,7 +1017,17 @@ impl Root {
                                 .child(if checked { "✓" } else { "" }),
                         )
                     })
-                    .children(mark)
+                    .when_some(mark, |row, mark| {
+                        row.child(
+                            div()
+                                .flex_none()
+                                .w(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(mark),
+                        )
+                    })
                     .child(div().min_w_0().truncate().child(label.to_string()))
                     .when(!hint.is_empty(), |row| {
                         row.child(
