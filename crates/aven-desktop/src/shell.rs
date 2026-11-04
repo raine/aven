@@ -1511,7 +1511,7 @@ impl Root {
             .flex()
             .items_baseline()
             .gap(px(8.))
-            .text_size(px(12.))
+            .text(Text::Secondary)
             .line_height(px(16.8))
             .font_weight(FontWeight::MEDIUM)
             .text_color(t.muted)
@@ -1527,7 +1527,7 @@ impl Root {
                     div()
                         .font_weight(FontWeight::NORMAL)
                         .text_color(t.faint)
-                        .text_size(px(11.))
+                        .text(Text::Caption)
                         .child(hint),
                 )
             })
@@ -1655,25 +1655,40 @@ impl Root {
             })
             .child(self.task_title(&id, data.title, data.status, deleted, data.is_epic, &t))
             .when(deleted, |row| {
-                row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
+                row.child(
+                    small(Text::Secondary)
+                        .flex_none()
+                        .text_color(t.bad)
+                        .child("Deleted"),
+                )
             })
             .when(data.recurring, |row| {
-                row.child(small(12.).flex_none().text_color(t.faint).child("↻"))
+                row.child(
+                    small(Text::Secondary)
+                        .flex_none()
+                        .text_color(t.faint)
+                        .child("↻"),
+                )
             })
             .when_some(data.reason.filter(|_| wide), |row, (reason, bad)| {
                 row.child(
-                    small(12.)
+                    small(Text::Secondary)
                         .flex_none()
                         .text_color(if bad { t.bad } else { t.warn })
                         .child(reason),
                 )
             })
             .when(data.blocked && self.list_refs, |row| {
-                row.child(small(12.).flex_none().text_color(t.warn).child("Blocked"))
+                row.child(
+                    small(Text::Secondary)
+                        .flex_none()
+                        .text_color(t.warn)
+                        .child("Blocked"),
+                )
             })
             .when(wide && shown.labels && !labels.is_empty(), |row| {
                 row.child(
-                    small(12.)
+                    small(Text::Secondary)
                         .flex_none()
                         .max_w(px(112.))
                         .text_right()
@@ -1691,7 +1706,7 @@ impl Root {
                             .flex_none()
                             .w(px(52.))
                             .font_family(MONO)
-                            .text_size(px(12.))
+                            .text(Text::Secondary)
                             .text_color(t.faint)
                             .child(progress),
                     )
@@ -1699,7 +1714,7 @@ impl Root {
             )
             .when(self.list_dues, |row| {
                 row.child(
-                    small(12.)
+                    small(Text::Secondary)
                         .flex_none()
                         .w(px(64.))
                         .text_right()
@@ -1744,7 +1759,7 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(9.))
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .when(selected && !gliding, |row| {
                 let (bg, ring) = t.selection(active);
                 row.bg(bg).shadow(vec![t.ring(ring)])
@@ -1761,7 +1776,7 @@ impl Root {
                         .bottom_0()
                         .left_0()
                         .right_0()
-                        .rounded(px(6.))
+                        .rounded(px(RADIUS_CONTROL))
                         .group_hover("below-selected", |style| style.bg(t.panel)),
                 )
             })
@@ -1815,7 +1830,7 @@ impl Root {
                 .px(px(8.))
                 .pt(px(14.))
                 .pb(px(4.))
-                .text_size(px(11.))
+                .text(Text::Caption)
                 .line_height(px(15.4))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(t.faint)
@@ -1960,7 +1975,7 @@ impl Root {
                     .flex_wrap()
                     .items_center()
                     .gap(px(2.))
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .line_height(px(16.8))
                     .when(sync_problem, |footer| {
                         footer.child(self.render_sync_state(cx).w_full())
@@ -2007,7 +2022,7 @@ impl Root {
                     .role(Role::Button)
                     .aria_label("Toggle sidebar")
                     .size(px(26.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2154,7 +2169,7 @@ impl Root {
                 top.child(div().flex_none().text_color(t.faint).child(text))
             })
             .child(
-                small(12.)
+                small(Text::Secondary)
                     .flex_1()
                     .min_w_0()
                     .truncate()
@@ -2172,7 +2187,7 @@ impl Root {
                     )
                     .child("Search")
                     .when(hints, |search| {
-                        search.child(small(12.).text_color(t.faint).child("/"))
+                        search.child(small(Text::Secondary).text_color(t.faint).child("/"))
                     }),
             )
             .child(
@@ -2207,7 +2222,7 @@ impl Root {
                     .child("New task")
                     .when(hints, |button| {
                         button.child(
-                            small(12.)
+                            small(Text::Secondary)
                                 .opacity(0.7)
                                 .font_weight(FontWeight::NORMAL)
                                 .child("a"),
@@ -2433,7 +2448,7 @@ impl Root {
                 .text_color(t.muted)
                 .child(
                     div()
-                        .text_size(px(15.))
+                        .text(Text::Title)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(t.ink)
                         .child(heading),
@@ -2465,7 +2480,7 @@ impl Root {
                 .gap(px(6.))
                 .border_b_1()
                 .border_color(t.line)
-                .text_size(px(12.))
+                .text(Text::Secondary)
                 .text_color(t.muted)
         };
         if let Some(text) = &view.search {
@@ -2553,7 +2568,7 @@ impl Root {
                         .h(px(22.))
                         .px(px(8.))
                         .rounded_full()
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .shadow(vec![t.inset_ring(t.line2)])
                         .hover(|style| style.bg(t.raised))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -2568,7 +2583,7 @@ impl Root {
                 line.child(
                     btn("filters-clear", "Clear filters", &t)
                         .h(px(22.))
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.clear_filters(&ClearFilters, window, cx);
                         }))
@@ -2594,10 +2609,10 @@ impl Root {
             .gap(px(12.))
             .px(px(12.))
             .py(px(8.))
-            .rounded(px(8.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.pop)
             .shadow(t.menu_shadow())
-            .text_size(px(12.))
+            .text(Text::Secondary)
             .text_color(t.body)
             .child(div().font_family(MONO).text_color(t.ink).child(key.clone()));
         for (next, name) in keys.iter() {
@@ -2643,7 +2658,7 @@ impl Root {
                     .left(px(8.))
                     .right(px(8.))
                     .h(px(row_height()))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .bg(glide_bg)
                     .shadow(vec![t.ring(glide_ring)])
                     .with_animation(
@@ -2815,7 +2830,7 @@ impl Root {
 /// A row's date in figures that line up, naming the full time on hover.
 fn date_cell(id: (&'static str, usize), name: &str, date: RowDate, t: &Theme) -> Stateful<Div> {
     let full = format!("{name} {}", date.full);
-    small(12.)
+    small(Text::Secondary)
         .id(id)
         .flex_none()
         .min_w(px(44.))
@@ -2836,12 +2851,12 @@ fn mark_box(marked: bool, t: &Theme) -> Div {
         .flex_none()
         .size(px(14.))
         .ml(px(-2.))
-        .rounded(px(4.))
+        .rounded(px(RADIUS_CHIP))
         .bg(t.accent)
         .flex()
         .items_center()
         .justify_center()
-        .text_size(px(10.))
+        .text(Text::Caption)
         .text_color(t.on_fill)
         .child("✓")
 }
@@ -3038,7 +3053,7 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(6.))
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .text_color(color)
             .hover(move |style| style.bg(raised))
             .on_click(cx.listener(|this, _, window, cx| {
@@ -3165,7 +3180,7 @@ impl Render for Root {
                 .bg(t.page)
                 .text_color(t.ink)
                 .font_family(".SystemUIFont")
-                .text_size(px(13.))
+                .text(Text::Body)
                 .line_height(px(UI_LINE_HEIGHT))
                 .track_focus(&self.focus)
                 .on_action(cx.listener(Self::next_field))
@@ -3187,7 +3202,7 @@ impl Render for Root {
             .bg(t.chrome)
             .text_color(t.ink)
             .font_family(".SystemUIFont")
-            .text_size(px(13.))
+            .text(Text::Body)
             .line_height(px(UI_LINE_HEIGHT))
             .key_context(key_context)
             .track_focus(&self.focus)
@@ -3246,7 +3261,7 @@ impl Render for Root {
                     } else {
                         SHEET_MARGIN
                     }))
-                    .rounded(px(10.))
+                    .rounded(px(RADIUS_SURFACE))
                     .bg(t.page)
                     .shadow(t.sheet_shadow())
                     .overflow_hidden()

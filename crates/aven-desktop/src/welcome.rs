@@ -274,7 +274,7 @@ impl Root {
             .bg(t.page)
             .text_color(t.ink)
             .font_family(".SystemUIFont")
-            .text_size(px(13.))
+            .text(Text::Body)
             .line_height(px(UI_LINE_HEIGHT))
             .key_context(key_context)
             .track_focus(&self.focus)
@@ -410,7 +410,7 @@ impl Root {
                 .child(rise(
                     block().child(
                         div()
-                            .text_size(px(26.))
+                            .text(Text::Display)
                             .line_height(px(31.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Welcome to Aven"),
@@ -423,7 +423,7 @@ impl Root {
                         div()
                             .max_w(px(380.))
                             .mt(px(8.))
-                            .text_size(px(14.))
+                            .text(Text::Body)
                             .line_height(px(20.))
                             .text_center()
                             .text_color(t.muted)
@@ -444,7 +444,7 @@ impl Root {
                 ))
                 .child(rise(
                     block().mt(px(8.)).child(
-                        small(12.)
+                        small(Text::Secondary)
                             .w_full()
                             .px(px(2.))
                             .flex()
@@ -476,7 +476,7 @@ impl Root {
                 // The divider and the cards under it come in as one.
                 .child(rise(
                     block().mt(px(34.)).mb(px(12.)).child(
-                        small(12.)
+                        small(Text::Secondary)
                             .w_full()
                             .flex()
                             .items_center()
@@ -525,7 +525,7 @@ impl Root {
                 ))
                 .child(rise(
                     block().mt(px(22.)).child(
-                        small(12.)
+                        small(Text::Secondary)
                             .flex()
                             .gap(px(18.))
                             .child(
@@ -564,7 +564,7 @@ impl Root {
             .bottom(px(14.))
             // The database bar comes in with the links above it.
             .child(rise(
-                small(12.)
+                small(Text::Secondary)
                     .flex()
                     .items_center()
                     .gap(px(14.))
@@ -575,7 +575,7 @@ impl Root {
                             .min_w_0()
                             .truncate()
                             .font_family(MONO)
-                            .text_size(px(11.5))
+                            .text(Text::Caption)
                             .child(database),
                     )
                     .child(
@@ -636,10 +636,10 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(8.))
-            .rounded(px(10.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.panel)
             .shadow(ring)
-            .text_size(px(15.))
+            .text(Text::Title)
             .child(
                 div()
                     .flex_1()
@@ -666,7 +666,7 @@ impl Root {
             .h(px(22.))
             .ml(px(6.))
             .pr(px(7.))
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CHIP))
             .shadow(vec![t.inset_ring(t.line)])
             .text_color(t.body)
             .hover(move |style| style.bg(panel).text_color(ink))
@@ -681,7 +681,7 @@ impl Root {
                 div()
                     .ml(px(4.))
                     .font_family(MONO)
-                    .text_size(px(11.))
+                    .text(Text::Caption)
                     .text_color(t.faint)
                     .child(destination.prefix),
             )
@@ -720,7 +720,7 @@ fn option_card(
         .gap(px(3.))
         .px(px(14.))
         .py(px(12.))
-        .rounded(px(10.))
+        .rounded(px(RADIUS_SURFACE))
         .shadow(vec![t.inset_ring(t.line)])
         .hover(move |style| style.bg(panel))
         .child(
@@ -732,5 +732,10 @@ fn option_card(
                 .child(icon(icon_path, t.muted))
                 .child(div().min_w_0().child(title)),
         )
-        .child(small(12.).w_full().text_color(t.muted).child(detail))
+        .child(
+            small(Text::Secondary)
+                .w_full()
+                .text_color(t.muted)
+                .child(detail),
+        )
 }

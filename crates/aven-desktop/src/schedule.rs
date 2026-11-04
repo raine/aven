@@ -498,7 +498,7 @@ impl Root {
                 .items_center()
                 .justify_center()
                 .size(px(26.))
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .text_color(t.muted)
                 .hover(move |style| style.bg(raised))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -523,7 +523,7 @@ impl Root {
             )
             .child(step("calendar-next", "Next month", "›", 1));
         let week_days = div().flex().h(px(22.)).children(WEEK_DAYS.map(|name| {
-            small(11.)
+            small(Text::Caption)
                 .flex_1()
                 .flex()
                 .items_center()
@@ -556,7 +556,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .text_color(color)
                     .when(today, |day| day.font_weight(FontWeight::SEMIBOLD))
                     .when(date == calendar.day, |day| day.bg(pick))

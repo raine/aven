@@ -53,7 +53,7 @@ fn sub_head(heading: impl Into<SharedString>, t: &Theme) -> Div {
         .flex()
         .items_center()
         .gap(px(8.))
-        .text_size(px(12.))
+        .text(Text::Secondary)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(t.muted)
         .child(heading.into())
@@ -82,7 +82,10 @@ fn fact(label: &'static str, value: impl Into<SharedString>, t: &Theme) -> Div {
 }
 
 fn hint(text: impl Into<SharedString>, t: &Theme) -> Div {
-    small(12.).mt(px(6.)).text_color(t.faint).child(text.into())
+    small(Text::Secondary)
+        .mt(px(6.))
+        .text_color(t.faint)
+        .child(text.into())
 }
 
 /// Puts a dialog button on the Tab order, where Enter does what a click does.
@@ -130,7 +133,7 @@ pub(crate) fn epic_bar(progress: &EpicProgress, wide: bool, t: &Theme) -> Div {
                 .flex_basis(px(0.))
                 .flex_grow(count as f32)
                 .min_w(px(3.))
-                .rounded(px(2.))
+                .rounded(px(RADIUS_MARK))
                 .bg(color)
                 .h_full()
         })
@@ -146,7 +149,7 @@ pub(crate) fn epic_bar(progress: &EpicProgress, wide: bool, t: &Theme) -> Div {
         .children(part(progress.canceled, t.faint))
         .children(part(progress.open, t.line2))
         .when(progress.total() == 0, |bar| {
-            bar.child(div().flex_1().rounded(px(2.)).bg(t.line2))
+            bar.child(div().flex_1().rounded(px(RADIUS_MARK)).bg(t.line2))
         })
 }
 
@@ -204,7 +207,7 @@ impl Root {
         let label = |shown: usize, t: &Theme| {
             div()
                 .font_family(MONO)
-                .text_size(px(12.))
+                .text(Text::Secondary)
                 .text_color(t.faint)
                 .child(format!("{shown}/{total}"))
         };
@@ -268,7 +271,7 @@ impl Root {
                 .pt(px(30.))
                 .top(px(top))
                 .opacity(opacity)
-                .text_size(px(12.))
+                .text(Text::Secondary)
                 .text_color(t.faint)
                 .child(gpui::img(logo).size(px(32.)))
                 .child("All clear")
@@ -483,7 +486,7 @@ impl Root {
                     .min_w_0()
                     .max_w(px(190.))
                     .truncate()
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .text_color(t.muted)
                     .child(current.clone())
                     .into_any_element(),
@@ -504,7 +507,7 @@ impl Root {
                 .flex_none()
                 .h(px(22.))
                 .px(px(7.))
-                .text_size(px(12.))
+                .text(Text::Secondary)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     if closable {
@@ -524,7 +527,7 @@ impl Root {
                 .min_w(px(132.))
                 .text_right()
                 .whitespace_nowrap()
-                .text_size(px(12.))
+                .text(Text::Secondary)
                 .text_color(t.faint)
                 .child(progress.counts())
                 .into_any_element(),
@@ -666,7 +669,7 @@ impl Root {
             .min_h(px(27.))
             .px(px(4.))
             .ml(px(-4.))
-            .rounded(px(5.))
+            .rounded(px(RADIUS_CHIP))
             .hover(move |style| style.bg(raised))
             .when(focused, |row| row.bg(t.raised))
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -689,7 +692,7 @@ impl Root {
             )
             .when(!child.note.is_empty(), |row| {
                 row.child(
-                    small(11.)
+                    small(Text::Caption)
                         .flex_none()
                         .max_w(px(160.))
                         .truncate()
@@ -699,7 +702,7 @@ impl Root {
             })
             .when(!child.due.is_empty(), |row| {
                 row.child(
-                    small(12.)
+                    small(Text::Secondary)
                         .flex_none()
                         .text_color(t.faint)
                         .child(child.due.clone()),
@@ -781,7 +784,7 @@ impl Root {
                 continue;
             }
             section = section.child(
-                small(11.)
+                small(Text::Caption)
                     .mt(px(10.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(t.faint)
@@ -808,7 +811,7 @@ impl Root {
                     .mt(px(10.))
                     .px_0()
                     .h_auto()
-                    .text_size(px(11.))
+                    .text(Text::Caption)
                     .line_height(px(11. * 1.4))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(t.faint)
@@ -1084,8 +1087,8 @@ impl Root {
                 let on = lifecycle == current;
                 bare_btn(("life", lifecycle as usize), *name, &t)
                     .px(px(9.))
-                    .rounded(px(12.))
-                    .text_size(px(12.))
+                    .rounded_full()
+                    .text(Text::Secondary)
                     .text_color(if on { t.ink } else { t.muted })
                     .when(on, |pill| pill.bg(t.tint))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1118,7 +1121,7 @@ impl Root {
     pub(crate) fn render_series_head(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx);
         let head = Self::series_cells(
-            small(11.)
+            small(Text::Caption)
                 .h(px(SERIES_HEAD_HEIGHT))
                 .mx(px(8.))
                 .font_weight(FontWeight::SEMIBOLD)
@@ -1147,18 +1150,18 @@ impl Root {
             div()
                 .h(px(SERIES_ROW_HEIGHT))
                 .mx(px(8.))
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .when(selected, |row| {
                     row.bg(t.tint).shadow(vec![t.inset_ring(t.tint_line)])
                 }),
             ref_label(&row.reference, &row.project, None, &t),
             row.title.clone(),
-            small(12.)
+            small(Text::Secondary)
                 .text_color(t.faint)
                 .truncate()
                 .child(row.rule.clone()),
-            small(12.).text_color(t.faint).child(next),
-            small(11.)
+            small(Text::Secondary).text_color(t.faint).child(next),
+            small(Text::Caption)
                 .text_color(state_color(row.state, &t))
                 .child(row.state.as_str()),
         );
@@ -1375,7 +1378,7 @@ impl Root {
                     .child(
                         div()
                             .font_family(MONO)
-                            .text_size(px(12.))
+                            .text(Text::Secondary)
                             .text_color(t.muted)
                             .child(series.reference.clone()),
                     ),
@@ -1392,7 +1395,7 @@ impl Root {
                     .child(
                         div()
                             .mb(px(10.))
-                            .text_size(px(19.))
+                            .text(Text::Heading)
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(series.title.clone()),
                     )
@@ -1577,10 +1580,10 @@ impl Root {
                 .flex_1()
                 .min_w_0()
                 .p(px(8.))
-                .rounded(px(7.))
+                .rounded(px(RADIUS_SURFACE))
                 .shadow(vec![t.inset_ring(if on { t.accent } else { t.line })])
                 .when(on, |button| button.bg(t.raised))
-                .child(small(11.).text_color(t.faint).child(name))
+                .child(small(Text::Caption).text_color(t.faint).child(name))
                 .child(div().mt(px(4.)).text_color(t.body).child(value.to_string()));
             tab_stop(button, &sides[index], t, cx, move |this, _, cx| {
                 this.pick_side(index, cx);
@@ -1607,7 +1610,7 @@ impl Root {
                 )
                 .when(written, |body| {
                     body.child(
-                        small(12.)
+                        small(Text::Secondary)
                             .mt(px(10.))
                             .mb(px(4.))
                             .text_color(t.muted)
@@ -1618,7 +1621,7 @@ impl Root {
                             .id("r-v")
                             .min_h(px(90.))
                             .p(px(8.))
-                            .rounded(px(7.))
+                            .rounded(px(RADIUS_CONTROL))
                             .shadow(vec![t.inset_ring(t.line)])
                             .child(input.clone()),
                     )
@@ -1631,7 +1634,7 @@ impl Root {
                 .items_center()
                 .gap(px(6.))
                 .when(targets.len() > 1, |foot| {
-                    foot.child(small(12.).text_color(t.faint).child(format!(
+                    foot.child(small(Text::Secondary).text_color(t.faint).child(format!(
                         "Field {} of {}",
                         at + 1,
                         targets.len()
@@ -1967,14 +1970,14 @@ impl Root {
                 .flex()
                 .items_center()
                 .gap(px(12.))
-                .text_size(px(12.))
+                .text(Text::Secondary)
                 .text_color(t.faint)
                 .child(format!("Card {} of {total}", at + 1))
                 .child(
-                    div().flex_1().h(px(3.)).rounded(px(3.)).bg(t.line).child(
+                    div().flex_1().h(px(3.)).rounded_full().bg(t.line).child(
                         div()
                             .h_full()
-                            .rounded(px(3.))
+                            .rounded_full()
                             .bg(t.accent)
                             .w(gpui::relative(at as f32 / total as f32)),
                     ),
@@ -2114,14 +2117,14 @@ impl Root {
                     div()
                         .mt(px(16.))
                         .mb(px(8.))
-                        .text_size(px(24.))
-                        .line_height(px(29.))
+                        .text(Text::Display)
+                        .line_height(px(31.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(t.ink)
                         .child(row.title.clone()),
                 )
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .mb(px(12.))
                         .text_color(t.warn)
                         .child(card.why.clone()),
@@ -2133,7 +2136,7 @@ impl Root {
                         .gap(px(14.))
                         .items_center()
                         .mb(px(12.))
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .text_color(t.muted)
                         .child(
                             div()
@@ -2189,7 +2192,7 @@ impl Root {
                 .mb(px(10.))
                 .px(px(10.))
                 .py(px(7.))
-                .rounded(px(7.))
+                .rounded(px(RADIUS_CONTROL))
                 .bg(t.warn.opacity(0.12))
                 .text_color(t.warn)
                 .child(text)

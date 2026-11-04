@@ -133,7 +133,7 @@ impl Root {
                 .gap(px(12.))
                 .px(px(8.))
                 .py(px(6.))
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .text_color(t.ink)
                 .when(ix == pop.index, |row| row.bg(t.pick()))
                 .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
@@ -146,11 +146,12 @@ impl Root {
                     this.flip_field(ix, cx);
                 }))
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(*label)
-                        .child(small(11.).mt(px(1.)).text_color(t.faint).child(*hint)),
+                    div().flex_1().min_w_0().child(*label).child(
+                        small(Text::Caption)
+                            .mt(px(1.))
+                            .text_color(t.faint)
+                            .child(*hint),
+                    ),
                 );
             let knob = div().id(("display-switch", ix));
             row.child(self.switch_track(knob, label, on, 0.85, cx, &t))
@@ -167,7 +168,7 @@ impl Root {
             .top(top)
             .w(px(POP_WIDTH))
             .p(px(5.))
-            .rounded(px(10.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.pop)
             .shadow(t.menu_shadow())
             .occlude()
@@ -177,7 +178,7 @@ impl Root {
                     .px(px(8.))
                     .pt(px(6.))
                     .pb(px(4.))
-                    .text_size(px(11.))
+                    .text(Text::Caption)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(t.faint)
                     .child("Show in rows"),

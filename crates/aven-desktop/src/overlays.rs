@@ -807,7 +807,7 @@ impl Root {
                         })
                         .flex()
                         .flex_col()
-                        .rounded(px(10.))
+                        .rounded(px(RADIUS_SURFACE))
                         .bg(t.pop)
                         .shadow(t.menu_shadow())
                         .overflow_hidden()
@@ -818,7 +818,7 @@ impl Root {
                             let swap = header.swap.clone();
                             let other = format!("⇥ {}", header.other);
                             box_.child(
-                                small(12.)
+                                small(Text::Secondary)
                                     .flex_none()
                                     .flex()
                                     .items_center()
@@ -843,7 +843,7 @@ impl Root {
                                             .ml_auto()
                                             .flex_none()
                                             .px(px(6.))
-                                            .rounded(px(5.))
+                                            .rounded(px(RADIUS_CHIP))
                                             .hover(move |style| style.bg(raised))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 swap(this, window, cx);
@@ -864,10 +864,10 @@ impl Root {
                                 .flex()
                                 .items_center()
                                 .text_color(t.ink)
-                                .when(wide, |input| input.text_size(px(15.)))
+                                .when(wide, |input| input.text(Text::Title))
                                 .map(|input| match &choice {
                                     Some(title) => input
-                                        .text_size(px(12.))
+                                        .text(Text::Secondary)
                                         .text_color(t.faint)
                                         .child(title.clone()),
                                     None => input.child(menu.input.clone()),
@@ -879,7 +879,7 @@ impl Root {
                         })
                         .when_some(note, |box_, note| {
                             box_.child(
-                                small(12.)
+                                small(Text::Secondary)
                                     .flex_none()
                                     .px(px(12.))
                                     .py(px(8.))
@@ -948,7 +948,7 @@ impl Root {
                         .items_center()
                         .min_h(px(26.))
                         .px(px(8.))
-                        .text_size(px(11.))
+                        .text(Text::Caption)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(t.faint)
                         .child(label.to_string()),
@@ -981,7 +981,7 @@ impl Root {
                     .gap(px(9.))
                     .min_h(px(row))
                     .px(px(8.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .text_color(if danger {
                         t.bad
                     } else if off {
@@ -1031,7 +1031,7 @@ impl Root {
                     .child(div().min_w_0().truncate().child(label.to_string()))
                     .when(!hint.is_empty(), |row| {
                         row.child(
-                            small(12.)
+                            small(Text::Secondary)
                                 .ml_auto()
                                 .flex_none()
                                 .text_color(t.faint)
@@ -1105,7 +1105,7 @@ impl Root {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .text_color(t.faint)
                 .when(!error, |el| {
                     el.opacity(0.)
@@ -1165,7 +1165,7 @@ impl Root {
             .pl(px(6.))
             .pr(px(if padded { 8. } else { 14. }))
             .py(px(6.))
-            .rounded(px(12.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.pop)
             .shadow(t.menu_shadow())
             .text_color(t.ink)
@@ -1183,7 +1183,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(8.))
+                    .rounded(px(RADIUS_CONTROL))
                     .bg(tone.opacity(0.16))
                     .child(glyph),
             )
@@ -1295,7 +1295,7 @@ fn toast_content(toast: &crate::toast::Toast, t: &Theme) -> (Div, Option<Div>) {
                     .flex_none()
                     .ml(px(5.))
                     .font_family(MONO)
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(t.project(&subject.project_key))
                     .child(subject.reference.clone()),
@@ -1314,7 +1314,7 @@ fn toast_content(toast: &crate::toast::Toast, t: &Theme) -> (Div, Option<Div>) {
     let detail = toast.detail.clone().map(|detail| {
         div()
             .min_w_0()
-            .text_size(px(12.5))
+            .text(Text::Secondary)
             .text_color(t.muted)
             .map(|el| {
                 if error {
@@ -1351,7 +1351,7 @@ fn toast_button(
         .flex()
         .items_center()
         .gap(px(6.))
-        .rounded(px(7.))
+        .rounded(px(RADIUS_CONTROL))
         .bg(bg)
         .text_color(color)
         .font_weight(FontWeight::SEMIBOLD)
@@ -1362,7 +1362,7 @@ fn toast_button(
                 div()
                     .font_family(MONO)
                     .font_weight(FontWeight::NORMAL)
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .text_color(color.opacity(0.6))
                     .child(key),
             )

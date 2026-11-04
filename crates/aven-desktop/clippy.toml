@@ -1,0 +1,11 @@
+# Text sizes come from the type scale in `kit::Text`, applied with `.text()`.
+disallowed-methods = [
+    { path = "gpui::Styled::text_size", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_xs", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_sm", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_base", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_lg", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_xl", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_2xl", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+    { path = "gpui::Styled::text_3xl", reason = "use `.text(Text::…)` from the type scale in kit.rs" },
+]

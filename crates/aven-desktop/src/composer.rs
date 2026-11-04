@@ -1065,7 +1065,7 @@ impl Composer {
             .relative()
             .h(px(26.))
             .px(px(8.))
-            .text_size(px(12.))
+            .text(Text::Secondary)
             .when(set, |chip| chip.shadow(vec![t.inset_ring(t.line2)]))
             .when(!set, |chip| {
                 chip.text_color(t.faint).shadow(vec![t.inset_ring(t.line)])
@@ -1080,7 +1080,7 @@ impl Composer {
             div()
                 .absolute()
                 .inset_0()
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .bg(t.accent.opacity(0.22))
                 .shadow(vec![t.inset_ring(t.tint_line)])
                 .with_animation(
@@ -1174,7 +1174,7 @@ impl Composer {
             .mt(px(12.))
             .flex()
             .items_center()
-            .text_size(px(16.))
+            .text(Text::Title)
             .text_color(t.ink)
             .when(suggesting.is_some(), |row| row.key_context("Suggesting"))
             .child(anchor_probe("c-title", &self.anchors))
@@ -1200,7 +1200,7 @@ impl Composer {
             .max_h(viewport.height * 0.78)
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.pop)
             .shadow(t.dlg_shadow())
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
@@ -1463,7 +1463,7 @@ impl Composer {
                 btn(("c-meta", ix), text.clone(), t)
                     .h(px(26.))
                     .px(px(8.))
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .shadow(vec![t.inset_ring(t.line2)])
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.prompt_composer_metadata(key.clone(), window, cx);
@@ -1503,18 +1503,18 @@ impl Composer {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .bg(t.raised)
                 .shadow(vec![t.inset_ring(t.line)]);
             let thumb = match picture {
                 Some(Some(picture)) => thumb.child(
                     img(picture)
                         .size_full()
-                        .rounded(px(6.))
+                        .rounded(px(RADIUS_CONTROL))
                         .object_fit(ObjectFit::Cover),
                 ),
                 Some(None) => thumb.px(px(6.)).child(
-                    small(11.)
+                    small(Text::Caption)
                         .w_full()
                         .text_center()
                         .text_color(t.faint)
@@ -1535,7 +1535,7 @@ impl Composer {
                         .rounded_full()
                         .bg(t.pop)
                         .shadow(vec![t.inset_ring(t.line2)])
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .text_color(t.faint)
                         .hover(|style| style.text_color(t.ink))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1573,7 +1573,7 @@ impl Composer {
             .gap(px(8.))
             .h(px(28.))
             .px(px(8.))
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .text_color(t.muted)
             .when(repeats, |row| {
                 row.opacity(0.45)
@@ -1681,7 +1681,7 @@ impl Composer {
                     .gap(px(9.))
                     .min_h(px(28.))
                     .px(px(8.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .text_color(if ix == picked { t.ink } else { t.body })
                     .when(ix == picked, |row| row.bg(t.pick()))
                     .on_mouse_down(
@@ -1695,7 +1695,7 @@ impl Composer {
                     .child(div().min_w_0().truncate().child(suggestion.label.clone()))
                     .when(!suggestion.hint.is_empty(), |row| {
                         row.child(
-                            small(12.)
+                            small(Text::Secondary)
                                 .ml_auto()
                                 .flex_none()
                                 .text_color(t.faint)
@@ -1711,10 +1711,10 @@ impl Composer {
             .left(left)
             .top(row.bottom() + px(2.))
             .w(px(SUGGEST_WIDTH))
-            .rounded(px(10.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.pop)
             .shadow(t.menu_shadow())
-            .text_size(px(13.))
+            .text(Text::Body)
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(rows)
@@ -1751,19 +1751,24 @@ impl Composer {
             .top(top)
             .w(px(SCHEDULE_WIDTH))
             .p(px(12.))
-            .rounded(px(10.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.pop)
             .shadow(t.menu_shadow())
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(small(12.).mb(px(8.)).text_color(t.faint).child("Schedule"))
+            .child(
+                small(Text::Secondary)
+                    .mb(px(8.))
+                    .text_color(t.faint)
+                    .child("Schedule"),
+            )
             .child(
                 div()
                     .h(px(30.))
                     .px(px(9.))
                     .flex()
                     .items_center()
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .shadow(vec![t.inset_ring(t.line)])
                     .text_color(t.ink)
                     .child(composer.schedule.clone()),
@@ -1784,9 +1789,9 @@ impl Composer {
                     .mt(px(8.))
                     .px(px(10.))
                     .py(px(8.))
-                    .rounded(px(7.))
+                    .rounded(px(RADIUS_CONTROL))
                     .bg(t.raised)
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .text_color(if schedule.valid { t.body } else { t.bad })
                     .child(schedule.text.clone()),
             )
@@ -1850,7 +1855,7 @@ impl Composer {
                 btn((id, ix), label, t)
                     .h(px(24.))
                     .px(px(8.))
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .shadow(vec![t.inset_ring(t.line2)])
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.set_field(&editor, &value, cx);

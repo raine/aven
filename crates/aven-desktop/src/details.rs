@@ -35,7 +35,7 @@ fn section_head(heading: &'static str, t: &Theme) -> Div {
         .items_center()
         .justify_between()
         .mb(px(6.))
-        .text_size(px(12.))
+        .text(Text::Secondary)
         .line_height(px(16.8))
         .font_weight(FontWeight::MEDIUM)
         .text_color(t.muted)
@@ -53,7 +53,7 @@ fn side_action(id: impl Into<gpui::ElementId>, label: &'static str, t: &Theme) -
     bare_btn(id, label, t)
         .h(px(20.))
         .px(px(4.))
-        .text_size(px(12.))
+        .text(Text::Secondary)
         .text_color(t.faint)
         .hover({
             let muted = t.muted;
@@ -78,7 +78,7 @@ impl Root {
             .min_h(px(27.))
             .px(px(4.))
             .ml(px(-4.))
-            .rounded(px(5.))
+            .rounded(px(RADIUS_CHIP))
             .text_color(t.body)
             .hover(move |style| style.bg(raised))
             .child(
@@ -202,7 +202,7 @@ impl Root {
             })
     }
 
-    fn render_title(&self, size: f32, window: &Window, cx: &Context<Self>, t: &Theme) -> Div {
+    fn render_title(&self, step: Text, window: &Window, cx: &Context<Self>, t: &Theme) -> Div {
         let focused = self.title.read(cx).focus.is_focused(window);
         let raised = t.raised;
         div()
@@ -211,9 +211,9 @@ impl Root {
             .ml(px(-4.))
             .px(px(4.))
             .py(px(2.))
-            .rounded(px(5.))
-            .text_size(px(size))
-            .line_height(px(size * 1.3))
+            .rounded(px(RADIUS_CHIP))
+            .text(step)
+            .line_height(px(step.value() * 1.3))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(t.ink)
             .when(focused, |field| {
@@ -240,7 +240,7 @@ impl Root {
             .gap_x(px(6.))
             .mt(px(-8.))
             .mb(px(12.))
-            .text_size(px(12.))
+            .text(Text::Secondary)
             .line_height(px(18.))
             .text_color(t.muted)
             .child(
@@ -308,10 +308,10 @@ impl Root {
                         .py(px(6.))
                         .flex()
                         .items_center()
-                        .rounded(px(6.))
+                        .rounded(px(RADIUS_CONTROL))
                         .bg(t.raised)
                         .text_color(t.warn)
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .child(div().flex_1().child("Changed elsewhere while you edit"))
                         .child(side_action("incoming-review", "Review", t).on_click(
                             cx.listener(|this, _, window, cx| this.review_incoming(window, cx)),
@@ -324,7 +324,7 @@ impl Root {
                     .px(px(9.))
                     .py(px(7.))
                     .min_h(px(120.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .bg(t.page)
                     .shadow(vec![t.inset_ring(t.tint_line)])
                     .text_color(t.ink)
@@ -332,7 +332,7 @@ impl Root {
                     .child(self.body.clone()),
             )
             .child(
-                small(12.)
+                small(Text::Secondary)
                     .mt(px(6.))
                     .text_color(t.faint)
                     .child("⌘↵ or clicking away saves. Esc discards."),
@@ -357,7 +357,7 @@ impl Root {
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .bg(t.raised)
                 .shadow(vec![t.inset_ring(t.line)])
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -367,11 +367,11 @@ impl Root {
                 Some(path) => thumb.child(
                     img(path.clone())
                         .size_full()
-                        .rounded(px(6.))
+                        .rounded(px(RADIUS_CONTROL))
                         .object_fit(ObjectFit::Cover),
                 ),
                 None => thumb.child(
-                    small(11.)
+                    small(Text::Caption)
                         .text_center()
                         .text_color(t.faint)
                         .child("Not on this device"),
@@ -409,7 +409,7 @@ impl Root {
             .min_h(px(27.))
             .px(px(4.))
             .ml(px(-4.))
-            .rounded(px(5.))
+            .rounded(px(RADIUS_CHIP))
             .hover({
                 let raised = t.raised;
                 move |style| style.bg(raised)
@@ -516,7 +516,7 @@ impl Root {
                         .min_h(px(27.))
                         .px(px(4.))
                         .ml(px(-4.))
-                        .rounded(px(5.))
+                        .rounded(px(RADIUS_CHIP))
                         .hover({
                             let raised = t.raised;
                             move |style| style.bg(raised)
@@ -574,7 +574,7 @@ impl Root {
                             .items_center()
                             .justify_between()
                             .child(
-                                small(11.)
+                                small(Text::Caption)
                                     .line_height(px(15.4))
                                     .text_color(t.faint)
                                     .child(note.at.clone()),
@@ -598,7 +598,7 @@ impl Root {
                 .min_h(px(32.))
                 .px(px(9.))
                 .py(px(7.))
-                .rounded(px(6.))
+                .rounded(px(RADIUS_CONTROL))
                 .bg(t.page)
                 .shadow(vec![t.inset_ring(if note_focused {
                     t.tint_line
@@ -620,7 +620,7 @@ impl Root {
                     .items_start()
                     .gap(px(8.))
                     .py(px(3.))
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .line_height(px(ACTIVITY_LINE_HEIGHT))
                     .child(
                         div()
@@ -656,7 +656,7 @@ impl Root {
             .py(px(6.))
             .flex()
             .items_center()
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .bg(t.raised)
             .text_color(t.warn)
             .child(div().flex_1().child("This task is deleted"))
@@ -853,7 +853,7 @@ impl Root {
                     .and_then(|detail| self.conflict_banner(detail, cx, &t)),
             )
             .when(row.deleted, |body| body.child(self.deleted_banner(cx, &t)))
-            .child(self.render_title(19., window, cx, &t))
+            .child(self.render_title(Text::Heading, window, cx, &t))
             .child(self.render_byline(&row, cx, &t))
             .child(self.render_props(&row, detail.as_ref(), cx, &t))
             .children(self.render_sections(&row, window, cx, &t));
@@ -910,7 +910,7 @@ impl Root {
                                             &t,
                                         )),
                                 )
-                                .child(self.render_title(26., window, cx, &t))
+                                .child(self.render_title(Text::Display, window, cx, &t))
                                 .child(self.render_byline(&row, cx, &t))
                                 .child(self.top_actions(&row, cx, &t).ml(px(-8.)))
                                 .children(self.render_sections(&row, window, cx, &t)),

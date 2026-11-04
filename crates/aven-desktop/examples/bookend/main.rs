@@ -7,6 +7,9 @@
 //! the end, S cycles the speed, T switches the theme, Q quits.
 //! BOOKEND_T=1100 opens paused on that frame; BOOKEND_LIGHT=1 opens in the
 //! light theme.
+// A developer harness outside the app, so the app's type scale doesn't apply.
+#![allow(clippy::disallowed_methods)]
+
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;

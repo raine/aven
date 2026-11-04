@@ -37,6 +37,16 @@ pub fn px(value: f32) -> Pixels {
 pub const MONO: &str = "JetBrains Mono";
 pub const UI_LINE_HEIGHT: f32 = 18.2;
 
+/// Corner radii by element role. Pills and dots use `rounded_full`.
+/// Small marks: project dots, bar segments.
+pub const RADIUS_MARK: f32 = 2.;
+/// Chips, inline hover rows and inner segments.
+pub const RADIUS_CHIP: f32 = 4.;
+/// Buttons, list rows, menu items, inputs and thumbnails.
+pub const RADIUS_CONTROL: f32 = 6.;
+/// Sheets, panels, cards, popovers, dialogs and toasts.
+pub const RADIUS_SURFACE: f32 = 10.;
+
 pub const STATUSES: [(TaskStatus, &str); 6] = [
     (TaskStatus::Active, "Active"),
     (TaskStatus::Todo, "Todo"),
@@ -116,8 +126,48 @@ pub fn spread(color: Hsla, radius: f32) -> BoxShadow {
     }
 }
 
-pub fn small(size: f32) -> Div {
-    div().text_size(px(size)).line_height(px(size * 1.4))
+/// The app's type scale. Every text size comes from one of these steps;
+/// `clippy.toml` forbids setting sizes any other way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Text {
+    /// Section headers, chips, badges and paths.
+    Caption,
+    /// Metadata, hints, buttons and supporting lines.
+    Secondary,
+    /// Rows, notes, menus and fields.
+    Body,
+    /// Dialog and card titles, and large inputs.
+    Title,
+    /// Detail pane and settings page titles.
+    Heading,
+    /// Full-page titles.
+    Display,
+}
+
+impl Text {
+    pub const fn value(self) -> f32 {
+        match self {
+            Text::Caption => 11.,
+            Text::Secondary => 12.,
+            Text::Body => 13.,
+            Text::Title => 15.,
+            Text::Heading => 20.,
+            Text::Display => 26.,
+        }
+    }
+}
+
+pub trait TextScale: Styled + Sized {
+    #[allow(clippy::disallowed_methods)]
+    fn text(self, step: Text) -> Self {
+        self.text_size(px(step.value()))
+    }
+}
+
+impl<E: Styled> TextScale for E {}
+
+pub fn small(step: Text) -> Div {
+    div().text(step).line_height(px(step.value() * 1.4))
 }
 
 pub fn icon(path: &'static str, color: Hsla) -> Svg {
@@ -129,7 +179,7 @@ pub fn project_dot(key: &str, t: &Theme) -> Div {
         .flex_none()
         .mx(px(4.))
         .size(px(8.))
-        .rounded(px(3.))
+        .rounded(px(RADIUS_MARK))
         .bg(t.project_dot(key))
 }
 
@@ -144,13 +194,13 @@ pub fn nav_item(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
         .h(px(if compact() { 24. } else { 27. }))
         .mb(px(2.))
         .px(px(8.))
-        .rounded(px(6.))
+        .rounded(px(RADIUS_CONTROL))
         .text_color(t.body)
         .hover(move |style| style.bg(raised))
 }
 
 pub fn nav_count(text: impl Into<SharedString>, hot: bool, t: &Theme) -> impl IntoElement {
-    small(12.)
+    small(Text::Secondary)
         .ml_auto()
         .font_weight(if hot {
             gpui::FontWeight::SEMIBOLD
@@ -200,7 +250,7 @@ pub fn fill_btn(
 
 /// A key shown inside a button.
 pub fn kbd(text: &'static str, color: Hsla) -> impl IntoElement + use<> {
-    small(12.)
+    small(Text::Secondary)
         .text_color(color)
         .font_weight(gpui::FontWeight::NORMAL)
         .child(text)
@@ -222,7 +272,7 @@ pub fn bare_btn(
         .gap(px(6.))
         .h(px(28.))
         .px(px(10.))
-        .rounded(px(6.))
+        .rounded(px(RADIUS_CONTROL))
         .text_color(t.body)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
@@ -233,11 +283,11 @@ pub struct Tip(SharedString);
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
-        small(12.)
+        small(Text::Secondary)
             .font_family(".SystemUIFont")
             .px(px(8.))
             .py(px(4.))
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .bg(t.pop)
             .shadow(t.menu_shadow())
             .text_color(t.body)
@@ -385,7 +435,7 @@ pub fn ref_label(
         .when_some(width, |el, width| el.w(px(width)))
         .overflow_hidden()
         .font_family(MONO)
-        .text_size(px(12.))
+        .text(Text::Secondary)
         .text_color(t.faint)
         .child(
             div()

@@ -46,13 +46,18 @@ fn row_title(title: impl Into<SharedString>, note: Option<String>, t: &Theme) ->
         .min_w_0()
         .child(title.into())
         .when_some(note, |row, note| {
-            row.child(small(12.).mt(px(1.)).text_color(t.muted).child(note))
+            row.child(
+                small(Text::Secondary)
+                    .mt(px(1.))
+                    .text_color(t.muted)
+                    .child(note),
+            )
         })
 }
 
 fn path_title(title: &'static str, path: String, t: &Theme) -> Div {
     div().flex_1().min_w_0().child(title).child(
-        small(11.5)
+        small(Text::Caption)
             .mt(px(1.))
             .font_family(MONO)
             .text_color(t.muted)
@@ -77,7 +82,7 @@ fn group(rows: Vec<Div>, t: &Theme) -> Div {
     let line = t.line;
     div()
         .relative()
-        .rounded(px(10.))
+        .rounded(px(RADIUS_SURFACE))
         .bg(t.panel)
         .overflow_hidden()
         .children(rows.into_iter().enumerate().map(|(index, row)| {
@@ -99,14 +104,14 @@ fn group(rows: Vec<Div>, t: &Theme) -> Div {
                 .size_full()
                 .top_0()
                 .left_0()
-                .rounded(px(10.))
+                .rounded(px(RADIUS_SURFACE))
                 .border_1()
                 .border_color(t.line),
         )
 }
 
 fn section(text: &'static str, t: &Theme) -> Div {
-    small(12.)
+    small(Text::Secondary)
         .pt(px(20.))
         .pb(px(7.))
         .px(px(2.))
@@ -120,7 +125,7 @@ fn page(title: &'static str, lead: Option<&'static str>, t: &Theme) -> Div {
         .child(
             div()
                 .mb(px(4.))
-                .text_size(px(20.))
+                .text(Text::Heading)
                 .line_height(px(26.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(t.ink)
@@ -390,7 +395,12 @@ impl Root {
                 .child(Self::field_label("Prefix", t))
                 .child(Self::field_box(prefix, t))
                 .when_some(*error, |body, error| {
-                    body.child(small(12.).mt(px(8.)).text_color(t.bad).child(error))
+                    body.child(
+                        small(Text::Secondary)
+                            .mt(px(8.))
+                            .text_color(t.bad)
+                            .child(error),
+                    )
                 })
                 .into_any_element(),
             self.cancel_and_accept("Save", cx, t).into_any_element(),
@@ -484,7 +494,12 @@ impl Root {
                 .text_color(t.body)
                 .child(body.clone())
                 .when_some(*note, |body, note| {
-                    body.child(small(12.).mt(px(8.)).text_color(t.faint).child(note))
+                    body.child(
+                        small(Text::Secondary)
+                            .mt(px(8.))
+                            .text_color(t.faint)
+                            .child(note),
+                    )
                 })
                 .into_any_element(),
             Self::footer(t)
@@ -651,7 +666,7 @@ impl Root {
             .flex()
             .flex_none()
             .p(px(2.))
-            .rounded(px(7.))
+            .rounded(px(RADIUS_CONTROL))
             .bg(t.raised)
             .children(options.iter().map(|(value, label)| {
                 let value = *value;
@@ -665,7 +680,7 @@ impl Root {
                     .px(px(10.))
                     .flex()
                     .items_center()
-                    .rounded(px(5.))
+                    .rounded(px(RADIUS_CHIP))
                     .text_color(if on { ink } else { muted })
                     .when(on, |item| item.bg(page).shadow(vec![ring]))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -844,10 +859,16 @@ impl Root {
             tab.child(section("Devices", t))
                 .child(group(self.device_rows(cx, t), t))
                 .when(unfinished, |tab| {
-                    tab.child(small(12.).pt(px(7.)).px(px(2.)).text_color(t.warn).child(
-                        "Securing future changes is unfinished. Finish removal continues \
+                    tab.child(
+                        small(Text::Secondary)
+                            .pt(px(7.))
+                            .px(px(2.))
+                            .text_color(t.warn)
+                            .child(
+                                "Securing future changes is unfinished. Finish removal continues \
                                  it, and any remaining device finishes it when it syncs.",
-                    ))
+                            ),
+                    )
                 })
                 .child(
                     tool_row(line_btn("settings-add-device", "Add device", t).on_click(
@@ -1039,7 +1060,7 @@ impl Root {
                         .px(px(9.))
                         .flex()
                         .items_center()
-                        .rounded(px(6.))
+                        .rounded(px(RADIUS_CONTROL))
                         .bg(t.page)
                         .shadow(vec![t.inset_ring(t.line)])
                         .child(self.new_label.clone()),
@@ -1153,7 +1174,7 @@ impl Root {
             row(t)
                 .child(
                     path_title("Other database", known.path.display().to_string(), t).child(
-                        small(12.)
+                        small(Text::Secondary)
                             .text_color(t.muted)
                             .child(count_text(known.tasks, "task")),
                     ),
@@ -1173,7 +1194,7 @@ impl Root {
             .child(section("Database", t))
             .child(group(databases, t))
             .child(
-                small(12.)
+                small(Text::Secondary)
                     .pt(px(7.))
                     .px(px(2.))
                     .text_color(t.faint)
@@ -1290,7 +1311,7 @@ impl Root {
                     .child(
                         div()
                             .mb(px(6.))
-                            .text_size(px(26.))
+                            .text(Text::Display)
                             .line_height(px(31.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(t.ink)
@@ -1506,7 +1527,7 @@ impl Root {
                     ))
                     .child(
                         div()
-                            .rounded(px(10.))
+                            .rounded(px(RADIUS_SURFACE))
                             .bg(t.panel)
                             .overflow_hidden()
                             .shadow(vec![t.inset_ring(t.line)])
@@ -1527,7 +1548,7 @@ impl Root {
                                     cx,
                                     t,
                                 )
-                                .rounded_t(px(10.)),
+                                .rounded_t(px(RADIUS_SURFACE)),
                             )
                             .child(div().h(px(1.)).bg(t.line))
                             .child(
@@ -1544,7 +1565,7 @@ impl Root {
                                     cx,
                                     t,
                                 )
-                                .rounded_b(px(10.)),
+                                .rounded_b(px(RADIUS_SURFACE)),
                             ),
                     )
                     .into_any_element(),
@@ -1655,12 +1676,12 @@ impl Root {
                     .w(px(12. * 195.6 / 52.)),
                 )
                 .child(
-                    small(10.)
+                    small(Text::Caption)
                         .font_family(MONO)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(gpui::rgb(ink))
                         .px(px(5.))
-                        .rounded(px(4.))
+                        .rounded(px(RADIUS_CHIP))
                         .bg(gpui::rgb(fill))
                         .border_1()
                         .border_color(gpui::rgb(line))
@@ -1675,7 +1696,7 @@ impl Root {
                 .gap(px(7.))
                 .child(icon("icons/server.svg", t.faint))
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .min_w_0()
                         .font_family(MONO)
                         .text_color(t.body)
@@ -1689,7 +1710,12 @@ impl Root {
             .gap(px(14.))
             .min_h(px(26.))
             .pb(px(6.))
-            .child(small(12.5).flex_none().text_color(t.faint).child("Server"))
+            .child(
+                small(Text::Secondary)
+                    .flex_none()
+                    .text_color(t.faint)
+                    .child("Server"),
+            )
             .child(identity)
     }
 
@@ -1718,21 +1744,25 @@ impl Root {
                         .child(icon("icons/device.svg", t.faint))
                         .child(device.label.clone())
                         .when(device.current, |line| {
-                            line.child(small(11.5).text_color(t.faint).child("This device"))
+                            line.child(
+                                small(Text::Caption)
+                                    .text_color(t.faint)
+                                    .child("This device"),
+                            )
                         })
                         .into_any_element()
                 })
                 .collect(),
             Some(Err(message)) => {
                 vec![
-                    small(12.)
+                    small(Text::Secondary)
                         .text_color(t.faint)
                         .child(message.clone())
                         .into_any_element(),
                 ]
             }
             None => vec![
-                small(12.)
+                small(Text::Secondary)
                     .text_color(t.faint)
                     .child("Checking devices…")
                     .into_any_element(),
@@ -1759,7 +1789,7 @@ impl Root {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(px(10.))
+                                .rounded(px(RADIUS_SURFACE))
                                 .bg(t.raised)
                                 .child(icon("icons/cloud.svg", sync_icon(t, tone)).size(px(22.))),
                         )
@@ -1769,12 +1799,17 @@ impl Root {
                                 .flex_1()
                                 .child(
                                     div()
-                                        .text_size(px(15.))
+                                        .text(Text::Title)
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(t.ink)
                                         .child(head),
                                 )
-                                .child(small(12.5).mt(px(2.)).text_color(t.muted).child(sub)),
+                                .child(
+                                    small(Text::Secondary)
+                                        .mt(px(2.))
+                                        .text_color(t.muted)
+                                        .child(sub),
+                                ),
                         ),
                 )
                 .child(self.sync_server(t))
@@ -1782,7 +1817,7 @@ impl Root {
                     body.child(
                         div()
                             .mb(px(6.))
-                            .rounded(px(8.))
+                            .rounded(px(RADIUS_SURFACE))
                             .bg(t.panel)
                             .shadow(vec![t.inset_ring(t.line)])
                             .flex()
@@ -1821,7 +1856,7 @@ impl Root {
                         .pt(px(12.))
                         .pb(px(4.))
                         .text_color(t.faint)
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("Devices")
                         .child(
@@ -1965,7 +2000,7 @@ impl Root {
                         .px(px(11.))
                         .flex()
                         .items_center()
-                        .rounded(px(8.))
+                        .rounded(px(RADIUS_CONTROL))
                         .bg(t.page)
                         .shadow(vec![t.inset_ring(t.line2)])
                         .font_family(MONO)
@@ -1973,7 +2008,7 @@ impl Root {
                         .child(input.clone()),
                 )
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .mt(px(7.))
                         .min_h(px(18.))
                         .text_color(if good { t.good } else { t.bad })
@@ -2043,7 +2078,7 @@ impl Root {
                 .pb(px(16.))
                 .child(
                     div()
-                        .rounded(px(8.))
+                        .rounded(px(RADIUS_SURFACE))
                         .overflow_hidden()
                         .bg(t.panel)
                         .shadow(vec![t.inset_ring(t.line)])
@@ -2122,7 +2157,7 @@ impl Root {
                 .child(
                     "Aven can't merge existing tasks into a sync, so joining needs a new database.",
                 )
-                .child(small(12.).mt(px(8.)).text_color(t.faint).child(format!(
+                .child(small(Text::Secondary).mt(px(8.)).text_color(t.faint).child(format!(
                     "These {tasks} tasks stay in the current database. They won't sync, and they \
                      won't appear in the joined tasks. You can reopen them from Data and recovery."
                 )))
@@ -2206,7 +2241,7 @@ impl Root {
                     .child(if done { *past } else { *now })
                     .into_any_element();
                 let detail = amount.filter(|_| live).map(|amount| {
-                    small(12.)
+                    small(Text::Secondary)
                         .pl(px(26.))
                         .text_color(t.muted)
                         .child(amount.to_string())
@@ -2300,7 +2335,7 @@ impl Root {
                 .gap(px(10.))
                 .px(px(18.))
                 .pt(px(14.))
-                .text_size(px(15.))
+                .text(Text::Title)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(
                     div()
@@ -2312,7 +2347,7 @@ impl Root {
                         .rounded_full()
                         .bg(t.good)
                         .text_color(t.page)
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .child("✓"),
                 )
                 .child(if setup {
@@ -2417,12 +2452,12 @@ impl Root {
                         .child("Scan with Aven on the new device"),
                 )
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .text_color(t.muted)
                         .child(format!("Expires in {minutes} minutes")),
                 )
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .mt(px(14.))
                         .text_color(t.faint)
                         .child("or on a computer, paste this invitation"),
@@ -2442,7 +2477,7 @@ impl Root {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .font_family(MONO)
-                                .text_size(px(12.))
+                                .text(Text::Secondary)
                                 .child(text.clone()),
                         )
                         .child(tab_stop(
@@ -2465,7 +2500,7 @@ impl Root {
                 .into_any_element(),
             Self::footer(t)
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .flex_1()
                         .text_color(t.muted)
                         .child("Waiting for the new device"),
@@ -2497,7 +2532,7 @@ fn qr_code(text: &str) -> AnyElement {
         .size(px(QR_SIZE))
         .role(Role::Image)
         .aria_label("Pairing code")
-        .rounded(px(8.))
+        .rounded(px(RADIUS_SURFACE))
         .bg(gpui::white())
         .p(px(10.))
         .child(

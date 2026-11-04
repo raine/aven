@@ -50,7 +50,7 @@ impl Switch {
             .relative()
             .w(px(34. * scale))
             .h(px(20. * scale))
-            .rounded(px(99.));
+            .rounded_full();
         let Some(run) = moving else {
             return track
                 .bg(track_color(1.))

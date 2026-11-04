@@ -723,7 +723,7 @@ impl Root {
                 div()
                     .px(px(8.))
                     .py(px(6.))
-                    .text_size(px(11.))
+                    .text(Text::Caption)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(t.faint)
                     .child("Recent"),
@@ -759,7 +759,7 @@ impl Root {
                     })
                     .when(other == 0 && !*deleted, |none| {
                         none.child(
-                            small(12.)
+                            small(Text::Secondary)
                                 .text_color(t.faint)
                                 .child("Deleted tasks are hidden."),
                         )
@@ -791,7 +791,7 @@ impl Root {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(15.))
+                        .text(Text::Title)
                         .text_color(t.ink)
                         .child(input.clone()),
                 )
@@ -820,7 +820,7 @@ impl Root {
                 .border_t_1()
                 .border_color(t.line)
                 .child(
-                    small(12.)
+                    small(Text::Secondary)
                         .flex_1()
                         .truncate()
                         .text_color(t.faint)
@@ -906,7 +906,7 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(10.))
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .when(on, |row| row.bg(t.tint))
             .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
                 let hovered = match this.dialog.as_ref() {
@@ -948,14 +948,19 @@ impl Root {
                             }),
                     )
                     .child(
-                        small(12.)
+                        small(Text::Secondary)
                             .truncate()
                             .text_color(t.muted)
                             .child(marked(&detail)),
                     ),
             )
             .when(hit.deleted, |row| {
-                row.child(small(12.).flex_none().text_color(t.bad).child("Deleted"))
+                row.child(
+                    small(Text::Secondary)
+                        .flex_none()
+                        .text_color(t.bad)
+                        .child("Deleted"),
+                )
             })
             .child(ref_label(&hit.reference, &hit.project_key, None, t))
     }
@@ -975,7 +980,7 @@ impl Root {
     }
 
     pub(crate) fn field_label(text: &'static str, t: &Theme) -> impl IntoElement + use<> {
-        small(12.)
+        small(Text::Secondary)
             .mt(px(10.))
             .mb(px(4.))
             .text_color(t.faint)
@@ -988,7 +993,7 @@ impl Root {
             .px(px(9.))
             .flex()
             .items_center()
-            .rounded(px(6.))
+            .rounded(px(RADIUS_CONTROL))
             .bg(t.page)
             .shadow(vec![t.inset_ring(t.line)])
             .text_color(t.ink)
@@ -999,7 +1004,7 @@ impl Root {
         div()
             .px(px(18.))
             .pt(px(14.))
-            .text_size(px(15.))
+            .text(Text::Title)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(t.ink)
             .child(text)
@@ -1057,7 +1062,12 @@ impl Root {
                 .child(Self::field_label(label, t))
                 .child(Self::field_box(input, t))
                 .when(!hint.is_empty(), |body| {
-                    body.child(small(12.).mt(px(8.)).text_color(t.faint).child(*hint))
+                    body.child(
+                        small(Text::Secondary)
+                            .mt(px(8.))
+                            .text_color(t.faint)
+                            .child(*hint),
+                    )
                 })
                 .into_any_element(),
             self.cancel_and_accept("Save", cx, t).into_any_element(),
@@ -1079,7 +1089,7 @@ impl Root {
         };
         let viewer = div()
             .h((viewport.height * 0.78 - px(IMAGE_DIALOG_CHROME)).max(px(300.)))
-            .rounded(px(7.))
+            .rounded(px(RADIUS_SURFACE))
             .bg(t.raised)
             .flex()
             .items_center()
@@ -1090,7 +1100,7 @@ impl Root {
             Some(path) => viewer.child(
                 img(path.clone())
                     .size_full()
-                    .rounded(px(7.))
+                    .rounded(px(RADIUS_SURFACE))
                     .object_fit(ObjectFit::ScaleDown),
             ),
             None => viewer.child("Not on this device"),
@@ -1178,7 +1188,7 @@ impl Root {
                 )
                 .child(
                     div()
-                        .text_size(px(17.))
+                        .text(Text::Title)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(t.ink)
                         .child("Aven"),
@@ -1191,8 +1201,8 @@ impl Root {
                         .mt(px(7.))
                         .px(px(6.))
                         .py(px(1.))
-                        .rounded(px(5.))
-                        .text_size(px(12.))
+                        .rounded(px(RADIUS_CHIP))
+                        .text(Text::Secondary)
                         .text_color(t.muted)
                         .hover({
                             let (raised, ink) = (t.raised, t.ink);
@@ -1216,7 +1226,7 @@ impl Root {
                 .child(
                     div()
                         .mt(px(12.))
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .text_color(t.faint)
                         .child("© 2026 Raine Virta. MIT License."),
                 )
@@ -1230,7 +1240,7 @@ impl Root {
             let mut column = div().w(relative_third()).px(px(8.)).mt(px(12.)).child(
                 div()
                     .mb(px(4.))
-                    .text_size(px(12.))
+                    .text(Text::Secondary)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(t.muted)
                     .child(family),
@@ -1242,7 +1252,7 @@ impl Root {
                         .items_center()
                         .justify_between()
                         .h(px(22.))
-                        .text_size(px(12.))
+                        .text(Text::Secondary)
                         .child(div().truncate().text_color(t.body).child(*text))
                         .child(div().flex_none().text_color(t.accent).child(*key)),
                 );
@@ -1289,7 +1299,7 @@ impl Root {
                         .h(px(240.))
                         .overflow_y_scroll()
                         .p(px(10.))
-                        .rounded(px(7.))
+                        .rounded(px(RADIUS_CONTROL))
                         .bg(t.raised)
                         .text_color(t.body)
                         .child(text.to_string()),
@@ -1432,7 +1442,7 @@ impl Root {
                         .overflow_hidden()
                         .flex()
                         .flex_col()
-                        .rounded(px(12.))
+                        .rounded(px(RADIUS_SURFACE))
                         .bg(t.pop)
                         .shadow(t.dlg_shadow())
                         .occlude()

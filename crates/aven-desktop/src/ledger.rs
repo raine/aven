@@ -73,7 +73,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(9.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_CONTROL))
                     .when(selected, |row| {
                         row.bg(t.tint).shadow(vec![t.inset_ring(t.tint_line)])
                     })
@@ -87,7 +87,7 @@ impl Root {
                             .flex_none()
                             .w(px(CLOCK_WIDTH))
                             .font_family(MONO)
-                            .text_size(px(11.))
+                            .text(Text::Caption)
                             .text_color(t.faint)
                             .child(run.clock.clone()),
                     )
@@ -132,7 +132,7 @@ fn heading(height: f32, t: &Theme) -> Div {
         .flex()
         .items_end()
         .gap(px(8.))
-        .text_size(px(12.))
+        .text(Text::Secondary)
         .line_height(px(16.))
         .text_color(t.muted)
 }
@@ -171,7 +171,7 @@ fn what(t: &Theme) -> Div {
         .flex()
         .items_center()
         .gap(px(4.))
-        .text_size(px(12.))
+        .text(Text::Secondary)
         .text_color(t.muted)
         .whitespace_nowrap()
 }
@@ -200,7 +200,7 @@ fn chip_label(text: String, t: &Theme) -> Div {
         .max_w(px(220.))
         .h(px(18.))
         .px(px(6.))
-        .rounded(px(9.))
+        .rounded(px(RADIUS_CHIP))
         .bg(t.raised)
         .text_color(t.body)
         .line_height(px(18.))
