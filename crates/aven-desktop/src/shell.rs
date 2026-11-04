@@ -1142,7 +1142,14 @@ impl Root {
             .as_ref()
             .and_then(|id| self.item_of(id))
         {
-            self.list.scroll_to_reveal_item(position);
+            let viewport = f32::from(self.list.viewport_bounds().size.height);
+            if viewport > 0. {
+                let offset =
+                    selection_scroll_offset(&self.items, position, self.list_offset(), viewport);
+                self.list.scroll_to(list_offset_at(&self.items, offset));
+            } else {
+                self.list.scroll_to_reveal_item(position);
+            }
         }
     }
 
@@ -2840,6 +2847,32 @@ fn glide_to_place(entry: Div, (from, run): (f32, usize)) -> AnyElement {
         .into_any_element()
 }
 
+/// Reveals the selected row with breathing room and its immediately preceding
+/// section heading. In a short viewport, the row takes priority over the heading.
+fn selection_scroll_offset(items: &[Item], selected: usize, current: f32, viewport: f32) -> f32 {
+    const MARGIN: f32 = 4.;
+    let row_top: f32 = items[..selected].iter().map(Item::height).sum();
+    let row_bottom = row_top + items[selected].height();
+    let mut top = row_top;
+    if selected > 0 && matches!(items[selected - 1], Item::Section { .. }) {
+        top -= items[selected - 1].height();
+    }
+    top = (top - MARGIN).max(0.);
+    let bottom = row_bottom + MARGIN;
+    if bottom - top > viewport {
+        top = (row_top - MARGIN).max(0.);
+    }
+    let target = if top < current {
+        top
+    } else if bottom > current + viewport {
+        (bottom - viewport).min(top)
+    } else {
+        current
+    };
+    let total: f32 = items.iter().map(Item::height).sum();
+    target.clamp(0., (total - viewport).max(0.))
+}
+
 /// The list position `scrolled` pixels down `items`.
 fn list_offset_at(items: &[Item], scrolled: f32) -> ListOffset {
     let mut top = 0.;
@@ -3348,6 +3381,53 @@ mod tests {
         let new = [row(&second), row(&first)];
         let motion = ListMotion::default().between(&old, &new, 0., ROW_HEIGHT - 1., || 0);
         assert_eq!(motion.row(&first), None);
+    }
+
+    #[test]
+    fn keyboard_reveal_keeps_headers_and_row_edges_visible() {
+        let id = TaskId::new();
+        let items = [
+            Item::Pad(4.),
+            section("Active"),
+            row(&id),
+            row(&id),
+            section("Todo"),
+            row(&id),
+            row(&id),
+            Item::Pad(40.),
+        ];
+        let height = row_height();
+        assert_eq!(selection_scroll_offset(&items, 2, 36., 100.), 0.);
+        // The first row of a middle section brings its heading back too.
+        let heading_top = 36. + 2. * height;
+        assert_eq!(
+            selection_scroll_offset(&items, 5, heading_top + 32., 100.),
+            heading_top - 4.,
+        );
+        // Moving down leaves room below the last row, not just its border.
+        let last_bottom = heading_top + 32. + 2. * height;
+        assert_eq!(
+            selection_scroll_offset(&items, 6, 0., 100.),
+            last_bottom + 4. - 100.,
+        );
+        // An already visible row doesn't move the viewport.
+        assert_eq!(selection_scroll_offset(&items, 3, 20., 100.), 20.);
+        // A viewport too short for a heading still shows the complete row.
+        let top = selection_scroll_offset(&items, 5, 0., height + 8.);
+        assert_eq!(top, heading_top + 32. - 4.);
+        assert_eq!(selection_scroll_offset(&items, 2, 36., 1000.), 0.);
+    }
+
+    #[test]
+    fn keyboard_reveal_preserves_top_padding_without_sections() {
+        let id = TaskId::new();
+        let items = [Item::Pad(4.), row(&id), row(&id), Item::Pad(40.)];
+        assert_eq!(selection_scroll_offset(&items, 1, 4., 50.), 0.);
+        let bottom = 4. + 2. * row_height();
+        assert_eq!(
+            selection_scroll_offset(&items, 2, 0., 50.),
+            bottom + 4. - 50.
+        );
     }
 
     #[test]
