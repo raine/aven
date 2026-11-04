@@ -20,6 +20,7 @@ use crate::shell::Root;
 use crate::sync_ops::SyncRequest;
 use crate::theme::{Theme, theme};
 use crate::toast::Toast;
+use crate::tooltip::{Hint, Hinted};
 
 /// The width of the welcome's column.
 const COLUMN: f32 = 460.;
@@ -303,6 +304,7 @@ impl Root {
             .children(menu)
             .children(toast)
             .children(overlay)
+            .map(|root| crate::tooltip::host(root, window, cx, &t))
     }
 
     /// The intro over the whole window. A click skips it and reaches nothing
@@ -534,7 +536,7 @@ impl Root {
                                     .id("welcome-demo")
                                     .text_color(t.faint)
                                     .opacity(0.6)
-                                    .tooltip(tip("Not available in the app yet"))
+                                    .hint(Hint::new("Not available in the app yet"))
                                     .child("Try the demo"),
                             )
                             .child(
@@ -670,7 +672,7 @@ impl Root {
             .shadow(vec![t.inset_ring(t.line)])
             .text_color(t.body)
             .hover(move |style| style.bg(panel).text_color(ink))
-            .tooltip(tip(if destination.exists {
+            .hint(Hint::new(if destination.exists {
                 "Your first project. Edit it here or any time in Settings."
             } else {
                 "Your first project. Rename it now, or any time in Settings."

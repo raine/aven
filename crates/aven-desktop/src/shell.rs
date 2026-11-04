@@ -43,6 +43,7 @@ use crate::session::{
 use crate::settings::sync_icon;
 use crate::theme::{Theme, mix, theme};
 use crate::toast::{Pause, Subject, Toast, ToastAction};
+use crate::tooltip::{Hint, Hinted, epic_hint, priority_hint, status_hint};
 use crate::welcome::Welcome;
 use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
@@ -1588,7 +1589,13 @@ impl Root {
             .overflow_hidden()
             .text_color(if closed { faint } else { ink })
             .when(deleted, |label| label.line_through().text_color(faint))
-            .child(div().truncate().child(title));
+            .child(
+                div()
+                    .id(gpui::SharedString::from(format!("title-{id}")))
+                    .truncate()
+                    .hint(Hint::new(title.clone()).when_clipped(Text::Body))
+                    .child(title),
+            );
         let run = self.session.motion.completion(id).map(|(_, run)| run);
         let body = match (status, run) {
             (TaskStatus::Done, Some(run)) => label
@@ -1609,7 +1616,15 @@ impl Root {
             .items_center()
             .gap(px(6.))
             .child(body)
-            .when(epic, |title| title.child(epic_star(closed || deleted, t)))
+            .when(epic, |title| {
+                title.child(
+                    div()
+                        .id(gpui::SharedString::from(format!("star-{id}")))
+                        .flex_none()
+                        .hint(epic_hint(closed || deleted))
+                        .child(epic_star(closed || deleted, t)),
+                )
+            })
             .into_any_element()
     }
 
@@ -1642,6 +1657,7 @@ impl Root {
         let deleted = data.deleted;
         let shown = self.prefs.row_fields;
         let head = self.render_row_head(ix, row, &data, window, cx, &t);
+        let row_ix = row;
         let dates = [
             ("created", "Created", data.created.filter(|_| shown.created)),
             ("updated", "Updated", data.updated.filter(|_| shown.updated)),
@@ -1665,6 +1681,8 @@ impl Root {
             .when(data.recurring, |row| {
                 row.child(
                     small(Text::Secondary)
+                        .id(("recurring", row_ix))
+                        .hint(Hint::new("Recurring task"))
                         .flex_none()
                         .text_color(t.faint)
                         .child("↻"),
@@ -1802,12 +1820,24 @@ impl Root {
                 }),
             )
             .child(mark_box(self.session.marks.contains(&id), t))
-            .child(self.task_priority(&id, data.priority, ("pri-row-old", "pri-row-new"), t))
+            .child(
+                div()
+                    .id(("row-priority", row))
+                    .flex_none()
+                    .hint(priority_hint(data.priority, selected))
+                    .child(self.task_priority(
+                        &id,
+                        data.priority,
+                        ("pri-row-old", "pri-row-new"),
+                        t,
+                    )),
+            )
             .child(
                 div()
                     .id(("glyph", row))
                     .role(Role::CheckBox)
                     .aria_label("Toggle done")
+                    .hint(status_hint(data.status, selected))
                     .flex_none()
                     .size(px(14.))
                     .rounded_full()
@@ -1861,7 +1891,7 @@ impl Root {
         }
         body = body.child(header("Views"));
         let view_item = |ix: usize, cx: &mut Context<Self>| {
-            let (query, name, icon_path, _, _) = VIEWS[ix];
+            let (query, name, icon_path, keys, about) = VIEWS[ix];
             let on = query == snapshot.view.query;
             let key = count_key(query);
             let count = snapshot
@@ -1871,6 +1901,12 @@ impl Root {
                 .map_or(0, |(_, count)| *count);
             let hot = matches!(query, TaskQuery::Overdue | TaskQuery::Conflicts) && count > 0;
             nav_item(("view", ix), &t)
+                .hint(
+                    Hint::new(name)
+                        .keys(keys)
+                        .when(!about.is_empty(), |hint| hint.sub(about))
+                        .beside(),
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.show_view(&ShowView(query), window, cx);
                 }))
@@ -1916,6 +1952,7 @@ impl Root {
         let scoped = snapshot.view.project.clone();
         body = body.child(header("Projects")).child(
             nav_item("all-projects", &t)
+                .hint(Hint::new("All projects").keys("g a").beside())
                 .when(scoped.is_none(), |item| {
                     item.text_color(t.ink).font_weight(FontWeight::MEDIUM)
                 })
@@ -1984,6 +2021,7 @@ impl Root {
                         nav_item("settings", &t)
                             .role(Role::Button)
                             .aria_label("Settings")
+                            .hint(Hint::new("Settings").keys("⌘,"))
                             .w_auto()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_settings(&OpenSettings, window, cx);
@@ -2021,6 +2059,14 @@ impl Root {
                     .id("nav-toggle")
                     .role(Role::Button)
                     .aria_label("Toggle sidebar")
+                    .hint(
+                        Hint::new(if self.nav_open {
+                            "Hide sidebar"
+                        } else {
+                            "Show sidebar"
+                        })
+                        .keys("g b"),
+                    )
                     .size(px(26.))
                     .rounded(px(RADIUS_CONTROL))
                     .flex()
@@ -2112,6 +2158,7 @@ impl Root {
                                     .relative()
                                     .role(Role::Button)
                                     .aria_label("Switch workspace")
+                                    .hint(Hint::new("Switch workspace").keys("g w"))
                                     .text_color(t.muted)
                                     .hover(|style| style.text_color(t.ink))
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
@@ -2130,6 +2177,7 @@ impl Root {
                                     .relative()
                                     .role(Role::Button)
                                     .aria_label("Choose project scope")
+                                    .hint(Hint::new("Choose project scope").keys("g p"))
                                     .text_color(t.muted)
                                     .hover(|style| style.text_color(t.ink))
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
@@ -2186,8 +2234,12 @@ impl Root {
                         }),
                     )
                     .child("Search")
-                    .when(hints, |search| {
-                        search.child(small(Text::Secondary).text_color(t.faint).child("/"))
+                    .map(|search| {
+                        if hints {
+                            search.child(small(Text::Secondary).text_color(t.faint).child("/"))
+                        } else {
+                            search.hint(Hint::new("Search").keys("/"))
+                        }
                     }),
             )
             .child(
@@ -2196,6 +2248,7 @@ impl Root {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_palette(&OpenPalette, window, cx)
                     }))
+                    .hint(Hint::new("Command palette").keys(":"))
                     .child("⌘K"),
             )
             .child(
@@ -2220,6 +2273,9 @@ impl Root {
                     .font_weight(FontWeight::MEDIUM)
                     .on_click(cx.listener(|this, _, window, cx| this.open_composer(window, cx)))
                     .child("New task")
+                    .when(!hints, |button| {
+                        button.hint(Hint::new("New task").keys("a"))
+                    })
                     .when(hints, |button| {
                         button.child(
                             small(Text::Secondary)
@@ -2312,6 +2368,7 @@ impl Root {
         .when(expanded, |top| {
             top.child(
                 line_btn("collapse", format!("← {name}"), t)
+                    .hint(Hint::new("Back to the list").keys("esc"))
                     .on_click(cx.listener(|this, _, window, cx| this.collapse(window, cx))),
             )
         })
@@ -2329,6 +2386,7 @@ impl Root {
         .when(!expanded && orderable, |top| {
             top.child(
                 btn("order", "Order", t)
+                    .hint(Hint::new("Change order").keys("o"))
                     .relative()
                     .child(anchor_probe("order", &self.anchors))
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -2350,6 +2408,14 @@ impl Root {
             let label = if columns { "List" } else { "Columns" };
             top.child(
                 btn("layout", label, t)
+                    .hint(
+                        Hint::new(if columns {
+                            "Show as a list"
+                        } else {
+                            "Show as columns"
+                        })
+                        .keys("v l"),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_layout(&ToggleLayout, window, cx);
                     }))
@@ -2361,6 +2427,14 @@ impl Root {
             |top| {
                 top.child(
                     btn("details", "Toggle details", t)
+                        .hint(
+                            Hint::new(if self.details_open {
+                                "Hide details"
+                            } else {
+                                "Show details"
+                            })
+                            .keys("g d"),
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_details(&ToggleDetails, window, cx)
                         }))
@@ -2839,7 +2913,7 @@ fn date_cell(id: (&'static str, usize), name: &str, date: RowDate, t: &Theme) ->
         .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
         .text_color(t.faint)
         .aria_label(full.clone())
-        .tooltip(tip(full))
+        .hint(Hint::new(full))
         .child(date.day)
 }
 
@@ -3047,6 +3121,7 @@ impl Root {
             .id("sync-state")
             .role(Role::Button)
             .aria_label(label.clone())
+            .hint(Hint::new(label.clone()).sub("Sync now").sub_keys("⇧S"))
             .min_w_0()
             .h(px(28.))
             .px(px(6.))
@@ -3310,6 +3385,7 @@ impl Render for Root {
             .when_some(menu, |root, menu| root.child(menu))
             .when_some(display, |root, display| root.child(display))
             .when_some(toast, |root, toast| root.child(toast))
+            .map(|root| crate::tooltip::host(root, window, cx, &t))
     }
 }
 

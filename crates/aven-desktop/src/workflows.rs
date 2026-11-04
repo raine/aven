@@ -30,6 +30,7 @@ use crate::session::{ALL_CLEAR_DURATION, RING_DURATION, Review};
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
 use crate::toast::Toast;
+use crate::tooltip::{Hint, Hinted};
 
 pub(crate) const SERIES_ROW_HEIGHT: f32 = 34.;
 pub(crate) const SERIES_HEAD_HEIGHT: f32 = 26.;
@@ -212,7 +213,17 @@ impl Root {
                 .child(format!("{shown}/{total}"))
         };
         let (good, track) = (t.good, t.line2);
-        let base = div().flex_none().flex().items_center().gap(px(6.));
+        let base = div()
+            .id("epic-ring")
+            .hint(Hint::new(if total == 0 {
+                "No tasks yet".to_string()
+            } else {
+                format!("{finished} of {total} tasks finished")
+            }))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(6.));
         let Some((from, run)) = self.session.motion.ring(&row.id) else {
             return Some(
                 base.child(ring_canvas(resting, good, track))

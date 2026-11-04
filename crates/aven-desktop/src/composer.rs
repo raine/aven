@@ -29,6 +29,7 @@ use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
 use crate::toast::{Toast, ToastAction};
+use crate::tooltip::{Hint, Hinted};
 use gpui::{Bounds, Div, EventEmitter, Pixels, Render, Stateful, WeakEntity};
 
 pub(crate) struct Composer {
@@ -1307,7 +1308,7 @@ impl Composer {
         let project_chip = match project {
             Some((project, inferred)) => {
                 Self::chip("c-project", project.name.clone(), true, anchors, t)
-                    .when_some(inferred, |chip, why| chip.tooltip(tip(why)))
+                    .when_some(inferred, |chip, why| chip.hint(Hint::new(why)))
                     .child(project_dot(&project.key, t))
                     .child(project.name.clone())
             }
@@ -1315,7 +1316,7 @@ impl Composer {
                 Some(name) => {
                     let label = format!("{name} (new)");
                     Self::chip("c-project", label.clone(), true, anchors, t)
-                        .tooltip(tip("Created with this task"))
+                        .hint(Hint::new("Created with this task"))
                         .child(project_dot(&normalize_key(&name), t))
                         .child(label)
                 }
@@ -1331,6 +1332,9 @@ impl Composer {
             format!("{} (automatic)", status_name(status))
         };
         let status_chip = Self::chip("c-status", status_label, true, anchors, t)
+            .when(draft.status.is_none(), |chip| {
+                chip.hint(Hint::new("Set automatically").sub("Pick a status to choose it yourself"))
+            })
             .child(status_glyph(status, t))
             .child(
                 div()
@@ -1433,6 +1437,7 @@ impl Composer {
             .when(draft.is_epic, |row| {
                 row.child(
                     Self::chip("c-epic", "Epic, make it a task", true, anchors, t)
+                        .hint(Hint::new("Make it a task"))
                         .text_color(t.accent)
                         .shadow(vec![t.inset_ring(t.tint_line)])
                         .child(icon("icons/ic-epics.svg", t.accent).size(px(14.)))
@@ -1474,6 +1479,7 @@ impl Composer {
 
         chips.child(
             Self::chip("c-more", "More options", false, anchors, t)
+                .hint(Hint::new("More options"))
                 .w(px(26.))
                 .px(px(0.))
                 .justify_center()
@@ -1495,7 +1501,7 @@ impl Composer {
                 .id(("c-image", ix))
                 .role(Role::Image)
                 .aria_label(image.name.clone())
-                .tooltip(tip(image.name.clone()))
+                .hint(Hint::new(image.name.clone()))
                 .relative()
                 .flex_none()
                 .w(px(THUMB_WIDTH))
@@ -1577,13 +1583,13 @@ impl Composer {
             .text_color(t.muted)
             .when(repeats, |row| {
                 row.opacity(0.45)
-                    .tooltip(tip("Repeating tasks are created one at a time"))
+                    .hint(Hint::new("Repeating tasks are created one at a time"))
             })
             .when(!repeats, |row| {
                 let raised = t.raised;
                 let ink = t.ink;
                 row.hover(move |style| style.bg(raised).text_color(ink))
-                    .tooltip(tip("⌃G creates this task and keeps the dialog open"))
+                    .hint(Hint::new("⌃G creates this task and keeps the dialog open"))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_create_more(cx)))
             })
             .child(self.switch_track(
@@ -1615,6 +1621,7 @@ impl Composer {
                     },
                     t,
                 )
+                .hint(Hint::new("Turn rough notes into a draft"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.read_notes(&ReadNotes, window, cx);
                 }))

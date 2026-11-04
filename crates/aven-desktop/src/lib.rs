@@ -33,6 +33,7 @@ mod switch;
 mod sync_ops;
 pub mod theme;
 pub mod toast;
+mod tooltip;
 mod welcome;
 mod workflows;
 

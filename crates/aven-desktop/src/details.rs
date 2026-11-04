@@ -16,6 +16,7 @@ use crate::kit::*;
 use crate::schedule::DateField;
 use crate::shell::{BodyEdit, Root};
 use crate::theme::{Theme, theme};
+use crate::tooltip::{Hint, Hinted, epic_hint};
 
 const SPLIT_OVERLAP: f32 = 1.;
 const THUMB_WIDTH: f32 = 96.;
@@ -107,6 +108,7 @@ impl Root {
             .flex_wrap()
             .child(
                 self.prop("status", "Status", t)
+                    .hint(Hint::new("Change status").keys("s"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.change_status(&ChangeStatus, window, cx)
                     }))
@@ -119,6 +121,7 @@ impl Root {
             )
             .child(
                 self.prop("priority", "Priority", t)
+                    .hint(Hint::new("Change priority").keys("!"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.change_priority(&ChangePriority, window, cx)
                     }))
@@ -136,6 +139,7 @@ impl Root {
             )
             .child(
                 self.prop("available", "Available", t)
+                    .hint(Hint::new("Change availability").keys("e a"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_date_menu(DateField::Available, window, cx);
                     }))
@@ -144,6 +148,7 @@ impl Root {
             )
             .child(
                 self.prop("due", "Due", t)
+                    .hint(Hint::new("Change due date").keys("e u"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_date_menu(DateField::Due, window, cx);
                     }))
@@ -156,6 +161,7 @@ impl Root {
             )
             .child(
                 self.prop("project", "Project", t)
+                    .hint(Hint::new("Move to project").keys("e j"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.change_project(&ChangeProject, window, cx)
                     }))
@@ -168,6 +174,7 @@ impl Root {
             )
             .child(
                 self.prop("labels", "Labels", t)
+                    .hint(Hint::new("Edit labels").keys("e l"))
                     .on_click(
                         cx.listener(|this, _, window, cx| {
                             this.edit_labels(&EditLabels, window, cx)
@@ -722,6 +729,7 @@ impl Root {
             .when(start, |top| {
                 top.child(
                     btn("start", "Start", t)
+                        .hint(Hint::new("Start").keys("t a"))
                         .px(px(8.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.session.set_status(&id, TaskStatus::Active);
@@ -732,6 +740,7 @@ impl Root {
             })
             .child(
                 btn("mark-done", done_label, t)
+                    .when(!done, |button| button.hint(Hint::new(done_label).keys("d")))
                     .px(px(8.))
                     .on_click(
                         cx.listener(|this, _, window, cx| this.mark_done(&MarkDone, window, cx)),
@@ -741,6 +750,7 @@ impl Root {
             .when(!expanded, |top| {
                 top.child(
                     btn("expand", "Expand", t)
+                        .hint(Hint::new("Expand").keys("↵"))
                         .px(px(8.))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.expand(&Expand, window, cx);
@@ -750,6 +760,7 @@ impl Root {
             })
             .child(
                 btn("add", "Add", t)
+                    .hint(Hint::new("Add a blocker, related task, epic or field"))
                     .relative()
                     .px(px(8.))
                     .child(anchor_probe("add", &anchors))
@@ -758,6 +769,7 @@ impl Root {
             )
             .child(
                 btn("overflow", "More actions", t)
+                    .hint(Hint::new("More actions"))
                     .relative()
                     .px(px(8.))
                     .child(anchor_probe("overflow", &anchors))
@@ -775,7 +787,13 @@ impl Root {
                 .text_color(t.muted)
                 .on_click(cx.listener(|this, _, window, cx| this.trail_back(window, cx)))
                 .child("←")
-                .child(div().truncate().child(label)),
+                .child(
+                    div()
+                        .id("trail-label")
+                        .truncate()
+                        .hint(Hint::new(label.clone()).when_clipped(Text::Body))
+                        .child(label),
+                ),
         )
     }
 
@@ -826,6 +844,7 @@ impl Root {
                     .id("detail-ref")
                     .role(Role::Button)
                     .aria_label("Copy ref")
+                    .hint(Hint::new("Copy ref").keys("y r"))
                     .cursor_pointer()
                     .on_click(
                         cx.listener(|this, _, window, cx| this.copy_ref(&CopyRef, window, cx)),
@@ -833,7 +852,14 @@ impl Root {
                     .child(ref_label(&row.reference, &row.project_key, None, &t)),
             )
             .when(row.is_epic, |top| {
-                top.child(epic_star(row.status.is_terminal() || row.deleted, &t))
+                let closed = row.status.is_terminal() || row.deleted;
+                top.child(
+                    div()
+                        .id("detail-star")
+                        .flex_none()
+                        .hint(epic_hint(closed))
+                        .child(epic_star(closed, &t)),
+                )
             })
             .children(self.epic_ring(&row, &t))
             .child(div().flex_1())
