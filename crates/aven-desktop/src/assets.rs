@@ -15,6 +15,7 @@ impl AssetSource for Assets {
             "logo-light.svg" => include_bytes!("../assets/logo-light.svg"),
             "icons/cloud.svg" => include_bytes!("../assets/icons/cloud.svg"),
             "icons/device.svg" => include_bytes!("../assets/icons/device.svg"),
+            "icons/server.svg" => include_bytes!("../assets/icons/server.svg"),
             "icons/ic-open.svg" => include_bytes!("../assets/icons/ic-open.svg"),
             "icons/ic-backlog.svg" => include_bytes!("../assets/icons/ic-backlog.svg"),
             "icons/ic-todo.svg" => include_bytes!("../assets/icons/ic-todo.svg"),
