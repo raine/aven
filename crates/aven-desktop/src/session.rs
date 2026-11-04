@@ -16,7 +16,7 @@ use crate::actions::VIEWS;
 use crate::adapter::{
     Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, NewTask, Reply, ReplyBody, Request,
     ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail, SettingsData, Snapshot,
-    SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed,
+    SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed, first_project_name,
 };
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
@@ -285,6 +285,8 @@ pub struct Session {
     /// The selection when the newest create was sent.
     create_from: Option<TaskId>,
     last_search: u64,
+    /// The name given to the project the first task creates.
+    first_project: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -435,6 +437,7 @@ impl Session {
             last_detail: 0,
             create_from: None,
             last_search: 0,
+            first_project: None,
         };
         if let Some(id) = selected {
             this.select(id);
@@ -1020,7 +1023,10 @@ impl Session {
         self.send(Command::AddNote(id.clone(), body));
     }
 
-    pub fn create(&mut self, task: NewTask) {
+    pub fn create(&mut self, mut task: NewTask) {
+        if task.project.is_none() && self.snapshot.projects.is_empty() {
+            task.first_project = Some(self.first_project_name());
+        }
         self.create_from = self.selected.clone();
         self.send(Command::Create(Box::new(task)));
     }
@@ -1033,6 +1039,33 @@ impl Session {
         }
         let first = self.snapshot.projects.first()?;
         Some((&first.key, "The first project"))
+    }
+
+    /// What the project a task creates in a workspace with none is called.
+    pub fn first_project_name(&self) -> String {
+        self.first_project
+            .clone()
+            .unwrap_or_else(|| first_project_name(&self.snapshot.workspace))
+    }
+
+    pub fn name_first_project(&mut self, name: String) {
+        self.first_project = Some(name);
+    }
+
+    /// Adds the first task from the welcome, which then gives way to the Queue.
+    pub fn create_first_task(&mut self, task: NewTask) {
+        self.snapshot.welcome = false;
+        if self.snapshot.view.query != TaskQuery::Queue {
+            self.leave_done();
+            self.send(Command::ShowView(TaskQuery::Queue));
+        }
+        self.create(task);
+    }
+
+    /// Leaves the welcome for an empty Queue, for good.
+    pub fn skip_welcome(&mut self) {
+        self.snapshot.welcome = false;
+        self.send(Command::FinishWelcome);
     }
 
     pub fn intake(&mut self, input: String, project: Option<String>) {
@@ -1587,6 +1620,7 @@ impl Session {
                 tasks,
                 previous,
             } => {
+                self.first_project = None;
                 self.database_opened(path, tasks, previous, &mut applied);
             }
             ReplyBody::DatabaseFailed(path, message) => {

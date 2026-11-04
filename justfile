@@ -256,6 +256,10 @@ demo-app:
 demo-app-dev:
     scripts/demo-app --debug
 
+# Open a debug build of this checkout on an empty database, at the welcome
+welcome-app-dev:
+    scripts/demo-app --debug --empty
+
 # Open the bookend intro example as an app, so its window takes keyboard focus
 bookend:
     scripts/bookend

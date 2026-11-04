@@ -583,6 +583,7 @@ impl Draft {
             schedule: self.schedule.trim().to_string(),
             images: self.images.clone(),
             replaces: self.replaces.clone(),
+            first_project: None,
         })
     }
 

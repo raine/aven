@@ -17,10 +17,12 @@ use aven_core::attachments::{ImageOptimizationPolicy, object_path};
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::db::Database;
 use aven_core::ids::{TaskId, WorkspaceId, new_id};
+use aven_core::local_state::OnboardingStatus;
 use aven_core::metadata::TaskMetadataInput;
 use aven_core::operations::{
     AttachmentAddInput, RecurrenceTemplateUpdate, TaskAttachmentAddInput, TaskDraft,
 };
+use aven_core::projects::{normalize_key, prefix_base};
 use aven_core::query::{
     RecentActionItem, RecurrenceHistoryKind, RecurrenceSeriesLifecycleFilter,
     RecurrenceSeriesListItem, SortDirection, TaskAvailabilityFilter, TaskFilters, TaskListItem,
@@ -407,6 +409,8 @@ pub struct Snapshot {
     pub fields: Vec<String>,
     pub recent: Vec<RecentAction>,
     pub sync: SyncView,
+    /// The database has no tasks and has never been through the welcome.
+    pub welcome: bool,
 }
 
 /// What the store knows about sync, merged from this database's state and the
@@ -620,6 +624,8 @@ pub struct NewTask {
     pub images: Vec<PendingImage>,
     /// The series this one takes over from.
     pub replaces: Option<RecurrenceSeriesId>,
+    /// The name for the project to create when the workspace has none.
+    pub first_project: Option<String>,
 }
 
 impl NewTask {
@@ -758,6 +764,8 @@ pub enum Command {
         columns: bool,
         selected: Option<TaskId>,
     },
+    /// Records that the welcome is done without adding a task.
+    FinishWelcome,
     /// Finishes queued work and stops sync between rounds.
     Quit,
 }
@@ -1448,6 +1456,7 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
         fields: Vec::new(),
         recent: recent_actions(store, now),
         sync: sync_view(store),
+        welcome: false,
     }
 }
 
@@ -1667,6 +1676,43 @@ fn metadata_inputs(fields: &[(String, String)]) -> Vec<TaskMetadataInput> {
             value: value.clone(),
         })
         .collect()
+}
+
+/// The name the first project takes: the workspace's, unless it still has the
+/// name every database starts with.
+pub fn first_project_name(workspace: &str) -> String {
+    match normalize_key(workspace).as_str() {
+        "" | "default" => "Personal".to_string(),
+        _ => workspace.to_string(),
+    }
+}
+
+/// The prefix core gives a project with this name in a workspace with no
+/// other projects.
+pub fn first_project_prefix(name: &str) -> String {
+    prefix_base(&normalize_key(name))
+}
+
+/// Whether the welcome should show. The marker is shared with the terminal
+/// app, and a database that already has tasks gets it without a welcome.
+async fn welcome_due(database: &Database) -> bool {
+    let status = match database.onboarding_status().await {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the welcome state");
+            return false;
+        }
+    };
+    match status {
+        OnboardingStatus::Due => true,
+        OnboardingStatus::Complete => false,
+        OnboardingStatus::Established => {
+            if let Err(error) = database.complete_onboarding().await {
+                tracing::warn!(%error, "could not record the welcome as done");
+            }
+            false
+        }
+    }
 }
 
 /// Opens the store a launch resolves to: the queue's selected workspace on the
@@ -1902,6 +1948,8 @@ struct Actor {
     undoable: Vec<Toast>,
     /// Review marks a keep replaced, for taking the keep back.
     kept: HashMap<TaskId, Option<i64>>,
+    /// Whether the open database still waits for the welcome.
+    welcome: bool,
 }
 
 /// What a write reports once the list has caught up.
@@ -1976,6 +2024,7 @@ impl Actor {
             column_views: Vec::new(),
             undoable: Vec::new(),
             kept: HashMap::new(),
+            welcome: false,
         }
     }
 
@@ -2203,6 +2252,7 @@ impl Actor {
         self.arrange = Arrange::default();
         self.undoable.clear();
         self.kept.clear();
+        self.welcome = welcome_due(&self.store.database()).await;
         self.spawn_background_sync();
         self.send(ReplyBody::DatabaseOpened {
             path,
@@ -2313,6 +2363,11 @@ impl Actor {
             None => None,
         };
         let mut list = arranged_snapshot(&self.store, Local::now(), &self.arrange);
+        // Tasks from anywhere, such as a join or the CLI, end the welcome.
+        if self.welcome {
+            self.welcome = welcome_due(&self.store.database()).await;
+        }
+        list.welcome = self.welcome;
         if let Ok(fields) = self.store.metadata_fields().await {
             list.fields = fields.into_iter().map(|field| field.key).collect();
         }
@@ -2330,6 +2385,21 @@ impl Actor {
             .projects
             .first()
             .map(|project| project.key.clone())
+    }
+
+    /// A workspace with no projects gets one for its first task. Inference from
+    /// the working directory is skipped: a desktop launch has none worth using,
+    /// and the welcome has already shown the name.
+    async fn create_first_project(&mut self, name: Option<&str>) -> Result<String> {
+        let name = name.map_or_else(
+            || first_project_name(&self.store.active_workspace.name),
+            str::to_string,
+        );
+        let outcome = (self.store.database())
+            .create_project(&self.store.active_workspace, &name, None)
+            .await?;
+        self.store.refresh(None).await?;
+        Ok(outcome.project.key)
     }
 
     /// Refreshes the projection. Hiding the selected task is left for the next
@@ -3097,11 +3167,18 @@ impl Actor {
     }
 
     async fn create(&mut self, task: &NewTask) -> Result<Outcome> {
-        let project = task.project.clone().or_else(|| self.project_for_new_task());
         let parsed = parse_schedule_input(&task.schedule)?;
         if task.replaces.is_some() && !matches!(parsed, ParsedScheduleInput::Recurring { .. }) {
             anyhow::bail!("A replacement needs a repeating schedule");
         }
+        let project = match task.project.clone().or_else(|| self.project_for_new_task()) {
+            Some(project) => project,
+            None => {
+                self.create_first_project(task.first_project.as_deref())
+                    .await?
+            }
+        };
+        let project = Some(project);
         let (available_at, due_on) = match parsed {
             ParsedScheduleInput::None => (None, None),
             ParsedScheduleInput::Once {
@@ -3602,6 +3679,7 @@ impl Actor {
                         schedule,
                         images: Vec::new(),
                         replaces: None,
+                        first_project: None,
                     }))
                 }
                 Err(error) => ReplyBody::IntakeFailed(format!("{error:#}")),
@@ -3672,6 +3750,13 @@ impl Actor {
                 selected,
             } => self.reopen_view(query, project, columns, selected).await,
             Command::Quit => self.quit().await,
+            Command::FinishWelcome => {
+                if let Err(error) = self.store.database().complete_onboarding().await {
+                    tracing::warn!(%error, "could not record the welcome as done");
+                }
+                self.welcome = false;
+                self.send_list().await;
+            }
             Command::Settings(_) if self.paused_by_join().await => {
                 self.send(ReplyBody::Notice(join_paused()));
             }
@@ -3987,9 +4072,12 @@ pub(crate) fn prepare(
                     config = sync_ops::config_for(&next, &launch.database, &launch.config);
                     path = next;
                 };
+                let welcome = welcome_due(&store.database()).await;
                 match opened.take() {
                     Some(opened) => {
-                        let _ = opened.send(Ok(snapshot(&store, Local::now())));
+                        let mut first = snapshot(&store, Local::now());
+                        first.welcome = welcome;
+                        let _ = opened.send(Ok(first));
                     }
                     None => {
                         let _ = replies_tx.send(Reply {
@@ -4013,6 +4101,7 @@ pub(crate) fn prepare(
                 );
                 actor.database = path;
                 actor.config = config;
+                actor.welcome = welcome;
                 actor.spawn_background_sync();
                 actor.send_list().await;
                 actor.run(requests_rx).await;

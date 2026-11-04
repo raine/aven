@@ -30,6 +30,7 @@ use crate::dialogs::Layer;
 use crate::display::DisplayPop;
 use crate::draft::Draft;
 use crate::input::{Editor, EditorEvent, Mode};
+use crate::intro::Playback;
 use crate::kit::*;
 use crate::lazy_row::LazyRow;
 use crate::markdown;
@@ -41,6 +42,7 @@ use crate::session::{
 use crate::settings::sync_icon;
 use crate::theme::{Theme, mix, theme};
 use crate::toast::{Pause, Subject, Toast, ToastAction};
+use crate::welcome::Welcome;
 use crate::workflows::{ALL_CLEAR_HEIGHT, LIFECYCLE_HEIGHT, SERIES_HEAD_HEIGHT, SERIES_ROW_HEIGHT};
 
 /// How long a quit waits for the store before giving up on it. Writes queued
@@ -445,6 +447,9 @@ pub struct Root {
     thumb_drag: Option<(Pixels, Pixels)>,
     subscriptions: Vec<Subscription>,
     quitting: bool,
+    pub(crate) welcome: Option<Welcome>,
+    /// The welcome's intro, which plays the first time the welcome appears.
+    pub(crate) intro: Playback,
 }
 
 impl Root {
@@ -561,6 +566,8 @@ impl Root {
             thumb_drag: None,
             subscriptions,
             quitting: false,
+            welcome: None,
+            intro: Playback::default(),
         };
         this.rebuild(false, &[]);
         this.load_selection(window, cx);
@@ -1207,7 +1214,12 @@ impl Root {
         self.step(-1, window, cx);
     }
 
-    fn toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_theme(
+        &mut self,
+        _: &ToggleTheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.prefs.theme = if theme(cx).dark {
             ThemePref::Light
         } else {
@@ -1352,19 +1364,24 @@ impl Root {
         }
     }
 
-    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_window(
+        &mut self,
+        _: &CloseWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close(window, cx);
     }
 
-    fn minimize(&mut self, _: &Minimize, window: &mut Window, _: &mut Context<Self>) {
+    pub(crate) fn minimize(&mut self, _: &Minimize, window: &mut Window, _: &mut Context<Self>) {
         window.minimize_window();
     }
 
-    fn zoom(&mut self, _: &Zoom, window: &mut Window, _: &mut Context<Self>) {
+    pub(crate) fn zoom(&mut self, _: &Zoom, window: &mut Window, _: &mut Context<Self>) {
         window.zoom_window();
     }
 
-    fn toggle_full_screen(
+    pub(crate) fn toggle_full_screen(
         &mut self,
         _: &ToggleFullScreen,
         window: &mut Window,
@@ -2852,6 +2869,10 @@ impl Render for Root {
         }
         self.arm_toast(cx);
         self.focus_sync_page(window, cx);
+        self.sync_welcome(window, cx);
+        if self.welcome.is_some() {
+            return self.render_welcome(window, cx);
+        }
         let t = theme(cx);
         let narrow = window.viewport_size().width <= px(DETAIL_MIN_WINDOW_WIDTH);
         if self.narrow != Some(narrow) {

@@ -301,7 +301,7 @@ impl Root {
         );
     }
 
-    fn open_project(
+    pub(crate) fn open_project(
         &mut self,
         key: Option<String>,
         name: &str,
@@ -486,7 +486,7 @@ impl Root {
         ]
     }
 
-    fn pick_archive(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pick_archive(&mut self, cx: &mut Context<Self>) {
         let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -523,7 +523,7 @@ impl Root {
         );
     }
 
-    fn open_other_database(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_other_database(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_prompt(
             "Open another database".to_string(),
             "Database path",

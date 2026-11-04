@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use accesskit::{Role, Toggled};
 use aven_core::choices::TaskStatus;
+use aven_core::projects::normalize_key;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, ExternalPaths, FocusHandle,
     KeyDownEvent, MouseButton, MouseDownEvent, Subscription, Window, div, ease_out_quint,
@@ -306,7 +307,11 @@ impl Root {
                 task.project = task
                     .project
                     .or_else(|| Some(self.session.new_task_project()?.0.to_string()));
-                self.session.create(task);
+                if self.session.snapshot.welcome {
+                    self.session.create_first_task(task);
+                } else {
+                    self.session.create(task);
+                }
                 if another {
                     if let Some(composer) = self.composer.as_mut() {
                         let next = draft.after_created();
@@ -972,6 +977,9 @@ impl Root {
                 let (key, why) = self.session.new_task_project()?;
                 Some((find(key)?, Some(why)))
             });
+        // A workspace with no projects gets one with the task.
+        let first =
+            (project.is_none() && projects.is_empty()).then(|| self.session.first_project_name());
         let labels = composer.labels(projects, None, cx);
         let anchors = &self.anchors;
         let schedule = schedule_preview(&draft.schedule);
@@ -988,7 +996,16 @@ impl Root {
                     .child(project_dot(&project.key, &t))
                     .child(project.name.clone())
             }
-            None => Self::chip("c-project", "Project", false, anchors, &t).child("Project"),
+            None => match first {
+                Some(name) => {
+                    let label = format!("{name} (new)");
+                    Self::chip("c-project", label.clone(), true, anchors, &t)
+                        .tooltip(tip("Created with this task"))
+                        .child(project_dot(&normalize_key(&name), &t))
+                        .child(label)
+                }
+                None => Self::chip("c-project", "Project", false, anchors, &t).child("Project"),
+            },
         }
         .children(Self::chip_flash(Chip::Project, flash, &t))
         .on_click(cx.listener(|this, _, window, cx| this.pick_composer_project(window, cx)));

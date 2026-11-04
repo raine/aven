@@ -203,6 +203,98 @@ pub fn ellipse(center: Point, rx: f32, ry: f32, segments: usize) -> Vec<Point> {
         .collect()
 }
 
-pub fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<Point> {
-    vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<Point> {
+        vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    }
+
+    fn area(polygon: &[Point]) -> f32 {
+        signed_area(polygon).abs() / 2.
+    }
+
+    #[test]
+    fn clipping_keeps_the_overlap() {
+        let square = rect(0., 0., 10., 10.);
+        let overlap = clip_convex(&square, &rect(5., -5., 20., 5.));
+        assert!((area(&overlap) - 25.).abs() < 1e-4);
+        for &(x, y) in &overlap {
+            assert!((5. ..=10.).contains(&x) && (0. ..=5.).contains(&y));
+        }
+    }
+
+    #[test]
+    fn clipping_ignores_the_clip_winding() {
+        let square = rect(0., 0., 10., 10.);
+        let mut clip = rect(5., -5., 20., 5.);
+        clip.reverse();
+        assert!((area(&clip_convex(&square, &clip)) - 25.).abs() < 1e-4);
+    }
+
+    #[test]
+    fn clipping_to_a_containing_or_disjoint_region() {
+        let square = rect(0., 0., 10., 10.);
+        let inside = clip_convex(&square, &rect(-1., -1., 11., 11.));
+        assert!((area(&inside) - 100.).abs() < 1e-4);
+        assert!(clip_convex(&square, &rect(20., 20., 30., 30.)).is_empty());
+    }
+
+    #[test]
+    fn clipping_to_an_ellipse() {
+        let circle = ellipse((0., 0.), 5., 5., 256);
+        let clipped = clip_convex(&rect(-10., -10., 10., 10.), &circle);
+        assert!((area(&clipped) - std::f32::consts::PI * 25.).abs() < 0.1);
+        let half = clip_convex(&circle, &rect(0., -10., 10., 10.));
+        assert!((area(&half) - area(&circle) / 2.).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_a_sits_inside_the_logo_square() {
+        let [x0, y0, x1, y1] = square_fractions();
+        assert!(0. < x0 && x0 < x1 && x1 < 1.);
+        assert!(0. < y0 && y0 < y1 && y1 < 1.);
+        // centred across the square
+        assert!((x0 - (1. - x1)).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_vector_has_an_a_and_a_check() {
+        let vector = vector();
+        assert_eq!(vector.a.len(), 2);
+        assert!(vector.a.iter().all(|contour| contour.len() >= 3));
+        assert!(vector.check.len() >= 3);
+        let [x0, y0, x1, y1] = vector.bounds;
+        for &(x, y) in &vector.check {
+            assert!((x0..=x1).contains(&x) && (y0..=y1).contains(&y));
+        }
+    }
+
+    #[test]
+    fn the_raster_bounds_and_tip() {
+        let raster = raster();
+        // two pixels per terminal cell each way
+        assert!(raster.width.is_multiple_of(2) && raster.height.is_multiple_of(2));
+        assert_eq!(raster.pixels.len(), raster.width * raster.height);
+        let (start, end) = raster.occupied;
+        assert!(start < end && end < raster.width);
+        let (white_start, white_end) = raster.white;
+        assert!(start <= white_start && white_start < white_end && white_end <= end);
+        for (index, pixel) in raster.pixels.iter().enumerate() {
+            let x = index % raster.width;
+            if pixel.is_some() {
+                assert!((start..=end).contains(&x));
+            }
+            if *pixel == Some(Pixel::White) {
+                assert!((white_start..=white_end).contains(&x));
+            }
+        }
+        // the tip is the check's rightmost column, among its white rows
+        assert_eq!(raster.tip.0, white_end as f32);
+        let y = raster.tip.1.round() as usize;
+        assert!(y < raster.height);
+        assert!((0..raster.height).any(|y| raster.at(white_end, y) == Some(Pixel::White)));
+        assert!(raster.at(white_end, y) == Some(Pixel::White));
+    }
 }

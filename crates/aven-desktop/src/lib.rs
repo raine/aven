@@ -15,6 +15,7 @@ mod dialogs;
 mod display;
 mod draft;
 mod input;
+pub mod intro;
 mod kit;
 mod lazy_row;
 mod markdown;
@@ -26,8 +27,9 @@ mod settings;
 mod shell;
 mod startup;
 mod sync_ops;
-mod theme;
+pub mod theme;
 pub mod toast;
+mod welcome;
 mod workflows;
 
 /// Starts the app and returns when it quits. Takes over the main thread, and

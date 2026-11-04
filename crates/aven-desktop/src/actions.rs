@@ -107,6 +107,8 @@ actions!(
         ReviewExit,
         ReviewNext,
         RunToastAction,
+        FocusWelcome,
+        WelcomeDetails,
     ]
 );
 
@@ -326,6 +328,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     let composer_field = Some("Composer > TextInput");
     let suggesting = Some("Suggesting > TextInput");
     let search = Some("Search > TextInput");
+    let welcome = Some("Welcome && !TextInput && !Overlay");
     let mut bindings = vec![
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
@@ -453,6 +456,15 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", Accept, Some("Dialog && !TextInput")),
         KeyBinding::new("tab", NextField, dialog),
         KeyBinding::new("shift-tab", PreviousField, dialog),
+        KeyBinding::new("a", FocusWelcome, welcome),
+        KeyBinding::new("/", FocusWelcome, welcome),
+        KeyBinding::new("?", OpenHelp, welcome),
+        KeyBinding::new("shift-/", OpenHelp, welcome),
+        KeyBinding::new(
+            "cmd-enter",
+            WelcomeDetails,
+            Some("WelcomeInput > TextInput"),
+        ),
     ];
     for (query, _, _, key, _) in VIEWS {
         bindings.push(KeyBinding::new(key, ShowView(query), main));
