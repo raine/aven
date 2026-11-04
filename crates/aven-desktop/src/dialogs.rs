@@ -42,7 +42,7 @@ const SEARCH_WIDTH: f32 = 660.;
 const SEARCH_LIST_HEIGHT: f32 = 312.;
 const SEARCH_ROW_HEIGHT: f32 = 50.;
 
-type Save = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
+type SavePromptText = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
 
 const HELP: [(&str, &[(&str, &str)]); 6] = [
     (
@@ -180,7 +180,7 @@ pub enum Dialog {
         label: &'static str,
         hint: &'static str,
         input: Entity<Editor>,
-        save: Save,
+        save: SavePromptText,
     },
     Image {
         id: TaskId,
@@ -512,7 +512,7 @@ impl Root {
         label: &'static str,
         hint: &'static str,
         value: &str,
-        save: Save,
+        save: SavePromptText,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -528,7 +528,7 @@ impl Root {
         label: &'static str,
         hint: &'static str,
         value: &str,
-        save: Save,
+        save: SavePromptText,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -558,7 +558,7 @@ impl Root {
             return;
         };
         let id = row.id.clone();
-        let save: Save = Rc::new(move |root, text, _, _| {
+        let save: SavePromptText = Rc::new(move |root, text, _, _| {
             if !text.trim().is_empty() {
                 root.session.set_title(&id, text.trim().to_string());
             }
@@ -580,7 +580,7 @@ impl Root {
         let hint =
             "An empty value is different from no value. Use Remove in the task to clear the field.";
         let field = key.clone();
-        let save: Save = Rc::new(move |root, text, _, _| {
+        let save: SavePromptText = Rc::new(move |root, text, _, _| {
             let command = Command::SetMetadata(id.clone(), field.clone(), Some(text));
             root.session.write(command);
         });

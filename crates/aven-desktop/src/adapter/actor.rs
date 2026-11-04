@@ -873,7 +873,7 @@ impl Actor {
                 .task
                 .available_at
                 .as_deref()
-                .and_then(local_time)
+                .and_then(parse_local_timestamp)
                 .filter(|at| *at > Local::now());
             let note = match (&hidden, &blocker) {
                 (Some(at), _) => {
@@ -2633,7 +2633,7 @@ mod tests {
         let mut item = actor.store.tasks[0].clone();
         item.task.created_at = "2026-10-23T10:00:00+00:00".to_string();
         item.task.updated_at = "2026-10-23T10:02:00+00:00".to_string();
-        let now = local_time("2026-11-02T10:00:00+00:00").unwrap();
+        let now = parse_local_timestamp("2026-11-02T10:00:00+00:00").unwrap();
         let fresh = byline(&item, now);
         assert_eq!(fresh.created_ago, "10d ago");
         assert_eq!(fresh.source, None);
@@ -2651,7 +2651,7 @@ mod tests {
         item.task.created_at = "2026-10-23T10:00:00+00:00".to_string();
         item.task.updated_at = "2026-11-02T07:00:00+00:00".to_string();
         item.task.source = TaskSource::Cli;
-        let now = local_time("2026-11-02T10:00:00+00:00").unwrap();
+        let now = parse_local_timestamp("2026-11-02T10:00:00+00:00").unwrap();
         let expected = detail(item, now).row;
         let snapshot = arranged_snapshot(&actor.store, now, &Arrange::default());
         let row = snapshot.row(&expected.id).unwrap();

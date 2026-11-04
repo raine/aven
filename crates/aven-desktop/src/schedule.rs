@@ -118,7 +118,7 @@ impl DateField {
     fn describe(self, value: &str, today: NaiveDate) -> Option<(String, NaiveDate)> {
         match self {
             Self::Available => {
-                let at = local_time(value)?;
+                let at = parse_local_wall_time(value)?;
                 Some((moment_label(at, today), at.date()))
             }
             Self::Due => {
@@ -139,7 +139,8 @@ fn after_weekday(date: NaiveDate, weekday: Weekday) -> NaiveDate {
     after_days(date, u64::from(ahead) + 1)
 }
 
-fn local_time(at: &str) -> Option<NaiveDateTime> {
+/// Local calendar date and clock time for schedule editing, without a UTC offset.
+fn parse_local_wall_time(at: &str) -> Option<NaiveDateTime> {
     let at = at.parse::<DateTime<Utc>>().ok()?;
     Some(at.with_timezone(&Local).naive_local())
 }
@@ -258,7 +259,7 @@ fn read_available(text: &str, today: NaiveDate) -> Option<String> {
 /// Whether the task stays hidden until after it is due, so that it never reads
 /// as overdue. An availability already past hides nothing.
 fn hidden_past_deadline(available_at: &str, due_on: &str, today: NaiveDate) -> bool {
-    let available = local_time(available_at).map(|at| at.date());
+    let available = parse_local_wall_time(available_at).map(|at| at.date());
     let due = due_on.parse::<NaiveDate>().ok();
     available
         .zip(due)
@@ -646,15 +647,21 @@ mod tests {
         let two = tomorrow.and_hms_opt(14, 0, 0).unwrap();
         for typed in ["tomorrow at 2pm", "tomorrow 2pm", "tomorrow 14:00"] {
             let at = DateField::Available.read(typed, today).unwrap();
-            assert_eq!(local_time(&at), Some(two), "{typed}");
+            assert_eq!(parse_local_wall_time(&at), Some(two), "{typed}");
         }
         let at = DateField::Available.read("dec 24 9am", today).unwrap();
         assert_eq!(
-            local_time(&at).unwrap().format("%m-%d %H").to_string(),
+            parse_local_wall_time(&at)
+                .unwrap()
+                .format("%m-%d %H")
+                .to_string(),
             "12-24 09"
         );
         let at = DateField::Available.read("3 days noon", today).unwrap();
-        assert_eq!(local_time(&at).unwrap().date(), after_days(today, 3));
+        assert_eq!(
+            parse_local_wall_time(&at).unwrap().date(),
+            after_days(today, 3)
+        );
     }
 
     #[test]

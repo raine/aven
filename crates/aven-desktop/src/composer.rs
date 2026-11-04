@@ -799,13 +799,14 @@ impl Root {
             .composer_draft(cx)
             .map(|draft| draft.labels)
             .unwrap_or_default();
-        type Save = Rc<dyn Fn(&mut Root, &mut Context<Root>)>;
-        let save: Save = Rc::new(|root, cx| {
+        type SaveComposerLabels = Rc<dyn Fn(&mut Root, &mut Context<Root>)>;
+        let save: SaveComposerLabels = Rc::new(|root, cx| {
             let labels = root.menu_checked();
             root.update_draft(cx, |draft| draft.labels = labels);
         });
-        let entry =
-            move |label: String, save: Save| Entry::new(label, move |root, _, cx| save(root, cx));
+        let entry = move |label: String, save: SaveComposerLabels| {
+            Entry::new(label, move |root, _, cx| save(root, cx))
+        };
         let mut labels = self.session.snapshot.labels.clone();
         labels.extend(held.iter().cloned());
         labels.sort();

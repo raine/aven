@@ -66,7 +66,11 @@ fn reason_text(item: &TaskListItem, today: NaiveDate) -> Option<(String, bool)> 
         }
         QueueReason::Stale { days } => Some((format!("No activity for {days}d"), false)),
         QueueReason::AvailableAfterDeferral => {
-            let at = item.task.available_at.as_deref().and_then(local_time);
+            let at = item
+                .task
+                .available_at
+                .as_deref()
+                .and_then(parse_local_timestamp);
             Some((availability_reason(at, today), false))
         }
         QueueReason::Urgent
@@ -100,13 +104,14 @@ pub fn short_date(day: NaiveDate, today: NaiveDate) -> String {
 }
 
 fn row_date(stamp: &str, today: NaiveDate) -> Option<RowDate> {
-    local_time(stamp).map(|at| RowDate {
+    parse_local_timestamp(stamp).map(|at| RowDate {
         day: short_date(at.date_naive(), today),
         full: at.format("%b %-d, %Y, %H:%M").to_string(),
     })
 }
 
-pub(super) fn local_time(stamp: &str) -> Option<DateTime<Local>> {
+/// An RFC3339 instant in the local time zone, with an offset for elapsed-time math.
+pub(super) fn parse_local_timestamp(stamp: &str) -> Option<DateTime<Local>> {
     let parsed = DateTime::parse_from_rfc3339(stamp).ok()?;
     Some(parsed.with_timezone(&Local))
 }
@@ -124,14 +129,18 @@ fn date_tone(item: &TaskListItem, today: NaiveDate) -> DateTone {
 }
 
 pub fn available_text(stamp: &str, today: NaiveDate) -> String {
-    local_time(stamp).map_or_else(String::new, |time| {
+    parse_local_timestamp(stamp).map_or_else(String::new, |time| {
         let day = time.format("%Y-%m-%d").to_string();
         format!("{} {}", due_text(&day, today), time.format("%H:%M"))
     })
 }
 
 pub(super) fn is_deferred(item: &TaskListItem, now: DateTime<Local>) -> bool {
-    let at = item.task.available_at.as_deref().and_then(local_time);
+    let at = item
+        .task
+        .available_at
+        .as_deref()
+        .and_then(parse_local_timestamp);
     at.is_some_and(|at| at > now)
 }
 
@@ -303,7 +312,11 @@ pub(super) fn review_page(
 fn upcoming_groups(store: &TuiStore, now: DateTime<Local>) -> Vec<Group> {
     let names = ["Tomorrow or sooner", "Next 7 days", "Later"];
     let bucket = |item: &TaskListItem| {
-        let at = item.task.available_at.as_deref().and_then(local_time);
+        let at = item
+            .task
+            .available_at
+            .as_deref()
+            .and_then(parse_local_timestamp);
         let days = at.map_or(i64::MAX, |at| {
             (at.date_naive() - now.date_naive()).num_days()
         });
@@ -581,8 +594,11 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
     }
 }
 
+/// Coarse age of an RFC3339 task or activity timestamp for list and detail text.
+/// Under an hour reads as "just now"; hours and days round to the nearest unit.
+/// Sync status uses `crate::session::ago` for elapsed whole units, including minutes.
 pub fn relative_time(stamp: &str, now: DateTime<Local>) -> String {
-    let hours = local_time(stamp).map_or(0, |at| (now - at).num_minutes()) as f64 / 60.;
+    let hours = parse_local_timestamp(stamp).map_or(0, |at| (now - at).num_minutes()) as f64 / 60.;
     if hours < 1. {
         "just now".to_string()
     } else if hours < 24. {
@@ -606,8 +622,8 @@ fn source_name(source: TaskSource) -> Option<&'static str> {
 
 pub(super) fn byline(item: &TaskListItem, now: DateTime<Local>) -> Byline {
     let task = &item.task;
-    let created = local_time(&task.created_at);
-    let updated = local_time(&task.updated_at);
+    let created = parse_local_timestamp(&task.created_at);
+    let updated = parse_local_timestamp(&task.updated_at);
     let changed = created
         .zip(updated)
         .is_some_and(|(created, updated)| updated - created >= BYLINE_UPDATE_GAP);
@@ -820,6 +836,27 @@ pub(super) fn child_group(status: TaskStatus, waiting: bool) -> ChildGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_ages_use_rounded_hours_and_days_without_minutes() {
+        let now = parse_local_timestamp("2026-11-02T12:00:00+00:00").unwrap();
+        for (minutes, expected) in [
+            (-1, "just now"),
+            (0, "just now"),
+            (59, "just now"),
+            (60, "1h ago"),
+            (89, "1h ago"),
+            (90, "2h ago"),
+            (1439, "24h ago"),
+            (1440, "1d ago"),
+            (2159, "1d ago"),
+            (2160, "2d ago"),
+        ] {
+            let at = now - chrono::TimeDelta::minutes(minutes);
+            assert_eq!(relative_time(&at.to_rfc3339(), now), expected, "{minutes}");
+        }
+        assert_eq!(relative_time("invalid", now), "just now");
+    }
 
     #[test]
     fn availability_shows_a_clock_only_for_a_time_today() {

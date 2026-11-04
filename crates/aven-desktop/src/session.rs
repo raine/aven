@@ -361,7 +361,9 @@ pub struct DatabaseError {
     pub message: String,
 }
 
-/// How long ago a Unix time was, as sync status reads it.
+/// Age of a Unix timestamp for sync status, in elapsed whole minutes, hours or days.
+/// Sync freshness includes minutes; task and activity text uses the coarser,
+/// rounded `crate::adapter::relative_time` instead.
 pub fn ago(at: i64, now: i64) -> String {
     match (now - at).max(0) {
         0..60 => "just now".to_string(),
@@ -1832,6 +1834,26 @@ mod tests {
 
     use super::*;
     use crate::sync_ops::Secret;
+
+    #[test]
+    fn sync_ages_include_minutes_and_count_only_elapsed_whole_units() {
+        let now = 200_000;
+        for (seconds, expected) in [
+            (-1, "just now"),
+            (0, "just now"),
+            (59, "just now"),
+            (60, "1m ago"),
+            (3599, "59m ago"),
+            (3600, "1h ago"),
+            (5400, "1h ago"),
+            (86399, "23h ago"),
+            (86400, "1d ago"),
+            (129600, "1d ago"),
+            (172800, "2d ago"),
+        ] {
+            assert_eq!(ago(now - seconds, now), expected, "{seconds}");
+        }
+    }
 
     fn session() -> Session {
         let (requests, received) = mpsc::unbounded_channel();
