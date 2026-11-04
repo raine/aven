@@ -11,16 +11,16 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontWeight, GlobalElementId,
-    Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, PathBuilder, Pixels, Point, ScrollEvent, SharedString, Size, Style, TextRun,
-    TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point,
-    prelude::*, px, quad, relative, size, transparent_black,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontFeatures, FontWeight,
+    GlobalElementId, Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, PathBuilder, Pixels, Point, ScrollEvent, SharedString, Size, Style,
+    TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill,
+    point, prelude::*, px, quad, relative, size, transparent_black,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::images::{PastedImage, clipboard_image};
-use crate::markdown::{Quote, Rendered, Span};
+use crate::markdown::{Align, Block, BlockKind, ListLine, Quote, Rendered, Span};
 use crate::theme::theme;
 
 actions!(
@@ -171,6 +171,41 @@ const QUOTE_INDENT: Pixels = px(14.);
 const QUOTE_BAR_WIDTH: Pixels = px(2.);
 /// A task list checkbox's side, relative to the font size.
 const CHECK_SCALE: f32 = 0.93;
+/// How far a code block's panel reaches around its text.
+const CODE_PAD: Point<Pixels> = point(px(10.), px(6.));
+/// How far a table cell's text sits from its edges.
+const CELL_PAD: Point<Pixels> = point(px(10.), px(5.));
+/// The space above a minor heading, on top of the paragraph gap. Section
+/// headings get twice this.
+const HEADING_GAP: Pixels = px(6.);
+const CHIP_RADIUS: Pixels = px(4.);
+/// Code block text size relative to body text.
+const CODE_SCALE: f32 = 0.92;
+/// How much further in a wrapped code line's later rows start.
+const CODE_HANG: Pixels = px(16.);
+
+/// Text size relative to body text, for heading levels one to four.
+fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 1.6,
+        2 => 1.35,
+        3 => 1.15,
+        _ => 1.,
+    }
+}
+
+/// What's drawn under or between the text of a block.
+#[derive(Clone, Copy, PartialEq)]
+enum Backdrop {
+    /// The panel behind a code block.
+    Panel,
+    /// A rule, or the line under a table's header.
+    Line,
+    /// The faint line between table rows.
+    Seam,
+    /// The elbow in front of a wrapped code line's later rows.
+    Hook,
+}
 
 /// Colours laid over a stretch of an editor's text.
 #[derive(Clone, PartialEq)]
@@ -193,6 +228,9 @@ struct Row {
 }
 
 struct Para {
+    source_line: usize,
+    marker: bool,
+    line_height: Pixels,
     start: usize,
     end: usize,
     line: std::rc::Rc<WrappedLine>,
@@ -201,8 +239,50 @@ struct Para {
     top: Pixels,
 }
 
+/// Marker and body ranges occupy separate columns at the same vertical origin.
+fn text_columns(
+    range: Range<usize>,
+    quote_left: Pixels,
+    item: Option<&ListLine>,
+    widths: &[Pixels],
+) -> Vec<(Range<usize>, Pixels, bool)> {
+    let Some(item) = item else {
+        return vec![(range, quote_left, false)];
+    };
+    let left = quote_left + widths[..item.depth].iter().copied().sum::<Pixels>();
+    let mut parts = Vec::with_capacity(2);
+    if !item.marker.is_empty() {
+        parts.push((item.marker.clone(), left, true));
+    }
+    parts.push((item.marker.end..range.end, left + widths[item.depth], false));
+    parts
+}
+
+/// Narrows the widest columns until the table fits `room`, leaving the
+/// columns already narrow enough at their natural width.
+fn fit_columns(widths: &mut [Pixels], room: Pixels) {
+    let total: Pixels = widths.iter().copied().sum();
+    if total <= room || room <= px(0.) {
+        return;
+    }
+    let mut order: Vec<usize> = (0..widths.len()).collect();
+    order.sort_by(|a, b| f32::from(widths[*a]).total_cmp(&f32::from(widths[*b])));
+    let mut left = room;
+    for (done, &column) in order.iter().enumerate() {
+        let share = left / (order.len() - done) as f32;
+        if widths[column] > share {
+            for &rest in &order[done..] {
+                widths[rest] = share.floor();
+            }
+            return;
+        }
+        left -= widths[column];
+    }
+}
+
 struct TextLayout {
     paras: Vec<Para>,
+    backdrops: Vec<(Bounds<Pixels>, Backdrop)>,
     line_height: Pixels,
     height: Pixels,
     width: Pixels,
@@ -228,7 +308,7 @@ impl TextLayout {
         let para = self
             .paras
             .iter()
-            .find(|para| offset <= para.end)
+            .find(|para| offset < para.end || (!para.marker && offset == para.end))
             .or(self.paras.last())?;
         let row = para
             .rows
@@ -258,9 +338,26 @@ impl TextLayout {
     }
 
     fn offset_at(&self, position: Point<Pixels>, text: &str) -> usize {
-        let hit = self
+        // Rows side by side, like a marker and its text or a table's cells, share
+        // the band; the one starting furthest left of the pointer wins.
+        let band = self
             .rows()
-            .find(|(_, row)| position.y < row.top + self.line_height)
+            .find(|(para, row)| position.y < row.top + para.line_height)
+            .map(|(_, row)| row.top);
+        let hit = band
+            .and_then(|top| {
+                let beside = || {
+                    self.rows().filter(move |(para, row)| {
+                        row.top <= top && top < row.top + para.line_height
+                    })
+                };
+                beside()
+                    .filter(|(para, _)| para.left <= position.x)
+                    .max_by(|a, b| f32::from(a.0.left).total_cmp(&f32::from(b.0.left)))
+                    .or_else(|| {
+                        beside().min_by(|a, b| f32::from(a.0.left).total_cmp(&f32::from(b.0.left)))
+                    })
+            })
             .or_else(|| self.rows().last());
         match hit {
             Some((para, row)) => Self::offset_in_row(para, row, position.x, text),
@@ -304,6 +401,8 @@ pub struct Editor {
     spans: Vec<Span>,
     tight: Vec<usize>,
     quotes: Vec<Quote>,
+    lists: Vec<ListLine>,
+    blocks: Vec<Block>,
     /// Tints for `tinted`, the text they were worked out for.
     tints: Vec<Tint>,
     tinted: String,
@@ -373,6 +472,8 @@ impl Editor {
             spans: Vec::new(),
             tight: Vec::new(),
             quotes: Vec::new(),
+            lists: Vec::new(),
+            blocks: Vec::new(),
             tints: Vec::new(),
             tinted: String::new(),
             paragraph_gap: None,
@@ -434,6 +535,8 @@ impl Editor {
         self.spans.clear();
         self.tight.clear();
         self.quotes.clear();
+        self.lists.clear();
+        self.blocks.clear();
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
@@ -443,10 +546,16 @@ impl Editor {
 
     /// Shows Markdown already turned into styled text.
     pub fn set_rendered(&mut self, rendered: Rendered, cx: &mut Context<Self>) {
-        self.set_text(&rendered.text, cx);
+        self.set_text("", cx);
+        // Kept as rendered: table cells are split by tabs, and the styles
+        // point into this exact text.
+        self.content = rendered.text;
+        self.selected = self.content.len()..self.content.len();
         self.spans = rendered.spans;
         self.tight = rendered.tight;
         self.quotes = rendered.quotes;
+        self.lists = rendered.lists;
+        self.blocks = rendered.blocks;
     }
 
     /// Whether this is what the editor shows already, down to its styling.
@@ -455,6 +564,8 @@ impl Editor {
             && self.spans == rendered.spans
             && self.tight == rendered.tight
             && self.quotes == rendered.quotes
+            && self.lists == rendered.lists
+            && self.blocks == rendered.blocks
     }
 
     /// Colours stretches of the current text until it changes.
@@ -982,7 +1093,11 @@ impl Editor {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selected.is_empty() {
-            let text = self.content[self.selected.clone()].to_string();
+            let mut text = self.content[self.selected.clone()].to_string();
+            // Rendered text keeps thin spaces around code chips, for show.
+            if self.read_only {
+                text.retain(|c| c != '\u{2009}');
+            }
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
@@ -1188,9 +1303,10 @@ impl Editor {
                 }
                 if marks.code {
                     font.family = crate::kit::MONO.into();
+                    font.features = FontFeatures::disable_ligatures();
                 }
                 let link = marks.link.is_some();
-                let tint = if marks.check.is_some() {
+                let tint = if marks.check.is_some() || marks.bullet.is_some() {
                     transparent_black()
                 } else if link {
                     theme.accent
@@ -1206,10 +1322,7 @@ impl Editor {
                     len: end - start,
                     font,
                     color: tint,
-                    background_color: marks
-                        .code
-                        .then_some(theme.raised)
-                        .or(painted.map(|painted| painted.background)),
+                    background_color: painted.map(|painted| painted.background),
                     underline: underline.then_some(UnderlineStyle {
                         color: Some(tint),
                         thickness: px(1.),
@@ -1245,93 +1358,372 @@ impl Editor {
         } else {
             wrap_width
         };
-        let mut paras = Vec::new();
-        let mut top = px(0.);
-        let mut width = px(0.);
-        let mut start = 0;
-        let sources: Vec<&str> = text.split('\n').collect();
-        for (ix, source) in sources.iter().enumerate() {
-            let end = start + source.len();
-            let depth = self.quotes.iter().filter(|quote| quote.lines.contains(&ix));
-            let left = QUOTE_INDENT * depth.count() as f32;
-            let runs = if is_placeholder {
-                let mut runs = self.runs(0..0, style, color, cx);
-                runs.push(TextRun {
-                    len: source.len(),
-                    font: style.font(),
-                    color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                });
-                runs
-            } else {
-                self.runs(start..end, style, color, cx)
-            };
-            let line = window
+        let full = wrap_width.unwrap_or(px(0.));
+        let measure = |range: Range<usize>, size: Pixels, window: &mut Window| {
+            window
                 .text_system()
                 .shape_text(
-                    SharedString::from(source.to_string()),
-                    font_size,
-                    &runs,
-                    wrap_width.map(|width| (width - left).max(px(0.))),
+                    text[range.clone()].to_string().into(),
+                    size,
+                    &self.runs(range, style, color, cx),
+                    None,
                     None,
                 )
                 .ok()
-                .and_then(|mut lines| {
-                    if lines.is_empty() {
-                        None
-                    } else {
-                        Some(lines.swap_remove(0))
-                    }
-                });
-            let Some(line) = line else {
-                start = end + 1;
-                continue;
-            };
-            let layout = &**line;
-            let mut boundaries: Vec<usize> = layout
-                .wrap_boundaries
+                .and_then(|lines| lines.first().map(|line| line.unwrapped_layout.width))
+                .unwrap_or_default()
+        };
+        let mut paras = Vec::new();
+        let mut backdrops = Vec::new();
+        let mut top = px(0.);
+        let mut width = px(0.);
+        let mut start = 0;
+        // All markers at a nesting level share a column, including multi-digit
+        // numbers and numbered checkboxes. Measure without wrapping.
+        let mut columns: Vec<Pixels> = Vec::new();
+        for item in &self.lists {
+            columns.resize(columns.len().max(item.depth + 1), font_size * 1.5);
+            let marker = measure(item.marker.clone(), font_size, window);
+            columns[item.depth] = columns[item.depth].max(marker);
+        }
+        let sources: Vec<&str> = text.split('\n').collect();
+        let mut line_starts = Vec::with_capacity(sources.len());
+        let mut at = 0;
+        for source in &sources {
+            line_starts.push(at);
+            at += source.len() + 1;
+        }
+        let cells = |ix: usize| {
+            let mut at = line_starts[ix];
+            sources[ix]
+                .split('\t')
+                .map(move |cell| {
+                    let range = at..at + cell.len();
+                    at = range.end + 1;
+                    range
+                })
+                .collect::<Vec<_>>()
+        };
+        // The current table's column widths, inside their padding.
+        let mut table: Vec<Pixels> = Vec::new();
+        let mut code_top = px(0.);
+        // Where the current code block's panel goes, beneath its marks.
+        let mut code_backdrop = 0;
+        for (ix, source) in sources.iter().enumerate() {
+            let end = start + source.len();
+            let block = self
+                .blocks
                 .iter()
-                .map(|b| layout.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix].index)
+                .find(|block| block.lines.contains(&ix))
+                .filter(|_| !is_placeholder);
+            let kind = block.map(|block| &block.kind);
+            let first = block.is_some_and(|block| block.lines.start == ix);
+            let last = block.is_some_and(|block| block.lines.end == ix + 1);
+            let depth = self.quotes.iter().filter(|quote| quote.lines.contains(&ix));
+            let quote_left = QUOTE_INDENT * depth.count() as f32;
+            let item = self.lists.iter().find(|item| item.line == ix);
+            let mut parts = text_columns(start..end, quote_left, item, &columns);
+            let base = parts.last().map_or(quote_left, |part| part.1);
+            let (size, height, ink) = match kind {
+                Some(BlockKind::Heading(level)) => {
+                    let scale = heading_scale(*level);
+                    (
+                        (font_size * scale).round(),
+                        (line_height * scale).round(),
+                        theme.ink,
+                    )
+                }
+                Some(BlockKind::Rule) => (font_size, line_height, transparent_black()),
+                // Monospace sets large beside the body face.
+                Some(BlockKind::Code) => ((font_size * CODE_SCALE).round(), line_height, color),
+                _ => (font_size, line_height, color),
+            };
+            if first && ix > 0 {
+                top += match kind {
+                    Some(BlockKind::Heading(level)) if *level <= 2 => HEADING_GAP * 2.,
+                    // A frameless table needs room to read apart from rows
+                    // above it.
+                    Some(BlockKind::Heading(_) | BlockKind::Table(_)) => HEADING_GAP,
+                    _ => px(0.),
+                };
+            }
+            // Each part is a range, where it starts, whether it's a marker, and
+            // how wide it may wrap.
+            let mut laid: Vec<(Range<usize>, Pixels, bool, Option<Pixels>)> = Vec::new();
+            let mut first_cell = 0;
+            match kind {
+                Some(BlockKind::Code) => {
+                    if first {
+                        code_top = top;
+                        code_backdrop = backdrops.len();
+                        top += CODE_PAD.y;
+                    }
+                    let body = parts.pop().map_or(start..end, |part| part.0);
+                    laid.extend(
+                        parts
+                            .drain(..)
+                            .map(|(range, left, marker)| (range, left, marker, None)),
+                    );
+                    // Wrapped rows hang at the line's own indent.
+                    let line = &text[body.clone()];
+                    let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+                    let left = base + CODE_PAD.x;
+                    let wrap = wrap_width.map(|width| (width - left - CODE_PAD.x).max(px(0.)));
+                    if indent > 0 && indent < line.len() {
+                        let lead = body.start..body.start + indent;
+                        let lead_width = measure(lead.clone(), size, window);
+                        laid.push((lead, left, true, None));
+                        laid.push((
+                            body.start + indent..body.end,
+                            left + lead_width,
+                            false,
+                            wrap.map(|wrap| (wrap - lead_width).max(px(0.))),
+                        ));
+                    } else {
+                        laid.push((body, left, false, wrap));
+                    }
+                }
+                Some(BlockKind::Table(_)) => {
+                    let body = parts.pop().map_or(start..end, |part| part.0);
+                    laid.extend(
+                        parts
+                            .drain(..)
+                            .map(|(range, left, marker)| (range, left, marker, None)),
+                    );
+                    if first {
+                        table.clear();
+                        let lines = block.map_or(ix..ix + 1, |block| block.lines.clone());
+                        for line in lines {
+                            for (column, cell) in cells(line).into_iter().enumerate() {
+                                let natural = measure(cell, size, window);
+                                match table.get_mut(column) {
+                                    Some(width) => *width = (*width).max(natural),
+                                    None => table.push(natural),
+                                }
+                            }
+                        }
+                        let padding = CELL_PAD.x * 2. * table.len().saturating_sub(1) as f32;
+                        fit_columns(&mut table, full - base - padding);
+                    }
+                    first_cell = laid.len();
+                    // The outer columns sit flush with the text around the
+                    // table, which has no frame.
+                    let mut left = base;
+                    for (column, cell) in cells(ix).into_iter().enumerate() {
+                        let Some(&inner) = table.get(column) else {
+                            break;
+                        };
+                        let cell = if column == 0 {
+                            body.start.max(cell.start)..cell.end
+                        } else {
+                            cell
+                        };
+                        laid.push((cell, left, false, Some(inner)));
+                        left += inner + CELL_PAD.x * 2.;
+                    }
+                }
+                _ => {
+                    for (range, mut left, marker) in parts {
+                        let wrap = wrap_width
+                            .filter(|_| !marker)
+                            .map(|width| (width - left).max(px(0.)));
+                        // Numbers line up on their dots.
+                        if marker
+                            && let Some(item) = item
+                            && text[range.clone()].starts_with(|c: char| c.is_ascii_digit())
+                        {
+                            let room = columns[item.depth] - measure(range.clone(), size, window);
+                            left += room.max(px(0.));
+                        }
+                        laid.push((range, left, marker, wrap));
+                    }
+                }
+            }
+            let row_pad = if matches!(kind, Some(BlockKind::Table(_))) {
+                CELL_PAD.y
+            } else {
+                px(0.)
+            };
+            let source_top = top;
+            let mut bottom = top + row_pad * 2. + height;
+            let shape_part = |range: Range<usize>, wrap: Option<Pixels>, window: &mut Window| {
+                let runs = if is_placeholder {
+                    let mut runs = self.runs(0..0, style, color, cx);
+                    runs.push(TextRun {
+                        len: range.len(),
+                        font: style.font(),
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    });
+                    runs
+                } else {
+                    self.runs(range.clone(), style, ink, cx)
+                };
+                window
+                    .text_system()
+                    .shape_text(text[range].to_string().into(), size, &runs, wrap, None)
+                    .ok()
+                    .and_then(|mut lines| {
+                        if lines.is_empty() {
+                            None
+                        } else {
+                            Some(lines.swap_remove(0))
+                        }
+                    })
+            };
+            let mut work: Vec<_> = laid
+                .into_iter()
+                .enumerate()
+                .map(|(column, (range, left, marker, wrap))| {
+                    (column, range, left, marker, wrap, source_top + row_pad)
+                })
+                .rev()
                 .collect();
-            boundaries.push(source.len());
-            let mut rows = Vec::with_capacity(boundaries.len());
-            let mut row_start = 0;
-            let para_top = top;
-            for boundary in boundaries {
-                let x0 = layout.unwrapped_layout.x_for_index(row_start);
-                let right = layout.unwrapped_layout.x_for_index(boundary) - x0;
-                width = width.max(left + right);
-                rows.push(Row {
-                    start: start + row_start,
-                    end: start + boundary,
-                    x0,
-                    top,
+            while let Some((column, mut range, left, marker, wrap, para_top)) = work.pop() {
+                let mut line = shape_part(range.clone(), wrap, window);
+                // A wrapped code line hangs its later rows further in, behind a
+                // mark, so they don't pass for lines of their own.
+                if matches!(kind, Some(BlockKind::Code))
+                    && !marker
+                    && let Some(wrapped) = &line
+                    && let Some(boundary) = wrapped.wrap_boundaries.first()
+                {
+                    let glyphs = &wrapped.unwrapped_layout.runs[boundary.run_ix].glyphs;
+                    let cut = range.start + glyphs[boundary.glyph_ix].index;
+                    let next_top = para_top + height;
+                    work.push((
+                        column,
+                        cut..range.end,
+                        left + CODE_HANG,
+                        marker,
+                        wrap.map(|wrap| (wrap - CODE_HANG).max(px(0.))),
+                        next_top,
+                    ));
+                    backdrops.push((
+                        Bounds::from_corners(
+                            point(left + px(3.), next_top + (height * 0.2).round()),
+                            point(left + px(9.), next_top + (height * 0.55).round()),
+                        ),
+                        Backdrop::Hook,
+                    ));
+                    range = range.start..cut;
+                    line = shape_part(range.clone(), None, window);
+                }
+                let source = &text[range.clone()];
+                let start = range.start;
+                let end = range.end;
+                let Some(line) = line else {
+                    continue;
+                };
+                let layout = &**line;
+                let mut left = left;
+                if let Some(BlockKind::Table(aligns)) = kind
+                    && column >= first_cell
+                    && layout.wrap_boundaries.is_empty()
+                    && let Some(inner) = wrap
+                {
+                    let room = (inner - layout.unwrapped_layout.width).max(px(0.));
+                    left += match aligns
+                        .get(column.wrapping_sub(first_cell))
+                        .copied()
+                        .unwrap_or(Align::Left)
+                    {
+                        Align::Left => px(0.),
+                        Align::Center => (room / 2.).round(),
+                        Align::Right => room,
+                    };
+                }
+                let mut boundaries: Vec<usize> = layout
+                    .wrap_boundaries
+                    .iter()
+                    .map(|b| layout.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix].index)
+                    .collect();
+                boundaries.push(source.len());
+                let mut rows = Vec::with_capacity(boundaries.len());
+                let mut row_start = 0;
+                let mut row_top = para_top;
+                for boundary in boundaries {
+                    let x0 = layout.unwrapped_layout.x_for_index(row_start);
+                    let right = layout.unwrapped_layout.x_for_index(boundary) - x0;
+                    width = width.max(left + right);
+                    rows.push(Row {
+                        start: start + row_start,
+                        end: start + boundary,
+                        x0,
+                        top: row_top,
+                    });
+                    row_top += height;
+                    row_start = boundary;
+                }
+                bottom = bottom.max(row_top + row_pad);
+                paras.push(Para {
+                    source_line: ix,
+                    marker,
+                    line_height: height,
+                    start,
+                    end,
+                    line: line.into(),
+                    rows,
+                    left,
+                    top: para_top,
                 });
-                top += line_height;
-                row_start = boundary;
+            }
+            top = bottom;
+            match kind {
+                Some(BlockKind::Code) if last => {
+                    top += CODE_PAD.y;
+                    backdrops.insert(
+                        code_backdrop,
+                        (
+                            Bounds::from_corners(point(base, code_top), point(full, top)),
+                            Backdrop::Panel,
+                        ),
+                    );
+                }
+                Some(BlockKind::Table(_)) => {
+                    let right = base
+                        + table.iter().copied().sum::<Pixels>()
+                        + CELL_PAD.x * 2. * table.len().saturating_sub(1) as f32;
+                    backdrops.push((
+                        Bounds::from_corners(point(base, top), point(right, top + px(1.))),
+                        if first && !last {
+                            Backdrop::Line
+                        } else {
+                            Backdrop::Seam
+                        },
+                    ));
+                }
+                Some(BlockKind::Rule) => {
+                    let middle = (source_top + height / 2.).round();
+                    backdrops.push((
+                        Bounds::from_corners(point(base, middle), point(full, middle + px(1.))),
+                        Backdrop::Line,
+                    ));
+                }
+                _ => {}
             }
             if let Some(gap) = self.paragraph_gap
                 && ix + 1 < sources.len()
                 && !self.tight.contains(&ix)
             {
                 top += gap;
+                // Quotes in a row keep apart, so their bars don't join up.
+                let ends = self.quotes.iter().any(|quote| quote.lines.end == ix + 1);
+                let starts = self.quotes.iter().any(|quote| quote.lines.start == ix + 1);
+                if ends && starts {
+                    top += gap;
+                }
             }
-            paras.push(Para {
-                start,
-                end,
-                line: line.into(),
-                rows,
-                left,
-                top: para_top,
-            });
             start = end + 1;
         }
         TextLayout {
             paras,
+            backdrops,
             line_height,
-            height: top.max(line_height),
+            // Room for the rule under a table that ends the text.
+            height: (top + px(1.)).max(line_height),
             width,
             is_placeholder,
         }
@@ -1605,13 +1997,14 @@ struct EditorElement {
 }
 
 struct Prepaint {
+    /// Code panels and chips, table lines and rules, under the text.
+    backdrops: Vec<PaintQuad>,
     quote_bars: Vec<PaintQuad>,
     /// Task list checkboxes and whether each is done.
     checks: Vec<(Bounds<Pixels>, bool)>,
     selections: Vec<PaintQuad>,
     caret: Option<PaintQuad>,
-    paints: Vec<(std::rc::Rc<WrappedLine>, Point<Pixels>)>,
-    line_height: Pixels,
+    paints: Vec<(std::rc::Rc<WrappedLine>, Point<Pixels>, Pixels)>,
 }
 
 impl IntoElement for EditorElement {
@@ -1700,9 +2093,14 @@ impl Element for EditorElement {
             .quotes
             .iter()
             .filter_map(|quote| {
-                let paras = layout.paras.get(quote.lines.clone())?;
-                let top = paras.first()?.top;
-                let bottom = paras.last()?.rows.last()?.top + line_height;
+                let mut paras = layout
+                    .paras
+                    .iter()
+                    .filter(|para| quote.lines.contains(&para.source_line));
+                let first = paras.next()?;
+                let top = first.top;
+                let last = paras.next_back().unwrap_or(first);
+                let bottom = last.rows.last()?.top + last.line_height;
                 let left = QUOTE_INDENT * quote.depth as f32;
                 Some(fill(
                     Bounds::new(
@@ -1723,7 +2121,7 @@ impl Element for EditorElement {
                 let checked = span.style.check?;
                 let (para, row) = layout.locate(span.range.start)?;
                 let left = TextLayout::x_of(para, row, span.range.start);
-                let top = row.top + ((line_height - side) / 2.).round();
+                let top = row.top + ((para.line_height - side) / 2.).round();
                 Some((
                     Bounds::new(origin + point(left, top), size(side, side)),
                     checked,
@@ -1741,7 +2139,8 @@ impl Element for EditorElement {
             for (para, row) in layout.rows() {
                 let start = editor.selected.start.max(row.start);
                 let end = editor.selected.end.min(row.end);
-                let crosses_newline = editor.selected.end > para.end && row.end == para.end;
+                let crosses_newline =
+                    !para.marker && editor.selected.end > para.end && row.end == para.end;
                 if start > end || (start == end && !crosses_newline) {
                     continue;
                 }
@@ -1753,7 +2152,7 @@ impl Element for EditorElement {
                 selections.push(fill(
                     Bounds::from_corners(
                         origin + point(left, row.top),
-                        origin + point(right, row.top + line_height),
+                        origin + point(right, row.top + para.line_height),
                     ),
                     color,
                 ));
@@ -1776,16 +2175,155 @@ impl Element for EditorElement {
         let paints = layout
             .paras
             .iter()
-            .map(|para| (para.line.clone(), origin + point(para.left, para.top)))
+            .map(|para| {
+                let at = origin + point(para.left, para.top);
+                (para.line.clone(), at, para.line_height)
+            })
             .collect();
 
+        let mut backdrops: Vec<PaintQuad> = Vec::new();
+        for (bounds, backdrop) in &layout.backdrops {
+            let bounds = Bounds::new(origin + bounds.origin, bounds.size);
+            match backdrop {
+                Backdrop::Panel => backdrops.push(quad(
+                    bounds,
+                    px(6.),
+                    colors.panel,
+                    px(1.),
+                    colors.line,
+                    Default::default(),
+                )),
+                Backdrop::Line => backdrops.push(fill(bounds, colors.line2)),
+                Backdrop::Seam => backdrops.push(fill(bounds, colors.line)),
+                Backdrop::Hook => {
+                    let corner = bounds.bottom_left();
+                    backdrops.push(fill(
+                        Bounds::from_corners(bounds.origin, corner + point(px(1.), px(0.))),
+                        colors.faint,
+                    ));
+                    backdrops.push(fill(
+                        Bounds::from_corners(corner - point(px(0.), px(1.)), bounds.bottom_right()),
+                        colors.faint,
+                    ));
+                }
+            }
+        }
+        // Inline code sits on a chip, row by row where it wraps. Code blocks
+        // have their panel instead.
+        let code_lines: Vec<Range<usize>> = editor
+            .blocks
+            .iter()
+            .filter(|block| block.kind == BlockKind::Code)
+            .map(|block| block.lines.clone())
+            .collect();
+        // Neighbouring spans of one chip, like a styled run inside a key,
+        // share it.
+        let mut chips: Vec<(Range<usize>, bool)> = Vec::new();
+        for span in &editor.spans {
+            if !span.style.code && !span.style.key {
+                continue;
+            }
+            match chips.last_mut() {
+                Some((range, key)) if range.end == span.range.start && *key == span.style.key => {
+                    range.end = span.range.end;
+                }
+                _ => chips.push((span.range.clone(), span.style.key)),
+            }
+        }
+        for (range, key) in chips {
+            for (para, row) in layout.rows() {
+                if code_lines
+                    .iter()
+                    .any(|lines| lines.contains(&para.source_line))
+                {
+                    continue;
+                }
+                let start = range.start.max(row.start);
+                let end = range.end.min(row.end);
+                if start >= end {
+                    continue;
+                }
+                // Keys carry their padding inside the cap.
+                let pad = if key { px(0.) } else { px(3.) };
+                let left = TextLayout::x_of(para, row, start) - pad;
+                let right = TextLayout::x_of(para, row, end) + pad;
+                let inset = ((para.line_height - font_size * 1.35) / 2.)
+                    .max(px(0.))
+                    .round();
+                let (border, edge) = if key {
+                    (px(1.), colors.line2)
+                } else {
+                    (px(0.), transparent_black())
+                };
+                backdrops.push(quad(
+                    Bounds::from_corners(
+                        origin + point(left, row.top + inset),
+                        origin + point(right, row.top + para.line_height - inset),
+                    ),
+                    CHIP_RADIUS,
+                    colors.raised,
+                    border,
+                    edge,
+                    Default::default(),
+                ));
+            }
+        }
+
+        // Bullets are drawn in place of their glyphs: a dot, a ring, then a
+        // square, by depth.
+        let dot = (font_size * 0.36).round();
+        for span in &editor.spans {
+            let Some(depth) = span.style.bullet else {
+                continue;
+            };
+            let Some((para, row)) = layout.locate(span.range.start) else {
+                continue;
+            };
+            let glyph = editor.content[span.range.clone()]
+                .chars()
+                .next()
+                .map_or(0, char::len_utf8);
+            // Centered where a checkbox would be, so bullets and boxes in one
+            // list share an axis.
+            let left = TextLayout::x_of(para, row, span.range.start);
+            let width = TextLayout::x_of(para, row, span.range.start + glyph) - left;
+            let center = point(left + width.max(side) / 2., row.top + para.line_height / 2.);
+            let bounds = Bounds::new(origin + center - point(dot / 2., dot / 2.), size(dot, dot));
+            backdrops.push(match depth % 3 {
+                0 => quad(
+                    bounds,
+                    dot / 2.,
+                    colors.muted,
+                    px(0.),
+                    transparent_black(),
+                    Default::default(),
+                ),
+                1 => quad(
+                    bounds,
+                    dot / 2.,
+                    transparent_black(),
+                    px(1.),
+                    colors.muted,
+                    Default::default(),
+                ),
+                _ => quad(
+                    bounds,
+                    px(1.),
+                    colors.muted,
+                    px(0.),
+                    transparent_black(),
+                    Default::default(),
+                ),
+            });
+        }
+
         Prepaint {
+            backdrops,
             quote_bars,
             checks,
             selections,
             caret,
             paints,
-            line_height,
         }
     }
 
@@ -1814,7 +2352,7 @@ impl Element for EditorElement {
             bounds.origin - point(px(1.), px(0.)),
             bounds.bottom_right() + point(px(2.), px(0.)),
         );
-        let line_height = prepaint.line_height;
+        let backdrops = std::mem::take(&mut prepaint.backdrops);
         let quote_bars = std::mem::take(&mut prepaint.quote_bars);
         let checks = std::mem::take(&mut prepaint.checks);
         let selections = std::mem::take(&mut prepaint.selections);
@@ -1825,10 +2363,10 @@ impl Element for EditorElement {
                 bounds: mask_bounds,
             }),
             |window| {
-                for quad in quote_bars.into_iter().chain(selections) {
+                for quad in backdrops.into_iter().chain(quote_bars).chain(selections) {
                     window.paint_quad(quad);
                 }
-                for (line, origin) in paints {
+                for (line, origin, line_height) in paints {
                     line.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx)
                         .ok();
                 }
@@ -1892,5 +2430,63 @@ fn paint_check(bounds: Bounds<Pixels>, checked: bool, window: &mut Window, cx: &
     tick.line_to(at(0.74, 0.34));
     if let Ok(tick) = tick.build() {
         window.paint_path(tick, colors.on_fill);
+    }
+}
+
+#[cfg(test)]
+mod list_layout_tests {
+    use super::*;
+
+    #[test]
+    fn list_bodies_and_continuations_share_a_column_inside_quotes() {
+        for marker in ["-", "10.", "- [ ]", "- [x]", "10. [ ]"] {
+            let rendered =
+                crate::markdown::render(&format!("> {marker} first line\n>    continuation"));
+            let widths = [px(40.)];
+            let mut offset = 0;
+            for (ix, line) in rendered.text.lines().enumerate() {
+                let item = rendered.lists.iter().find(|item| item.line == ix);
+                let parts = text_columns(offset..offset + line.len(), px(14.), item, &widths);
+                let (range, left, is_marker) = parts.last().unwrap();
+                assert_eq!(*left, px(54.), "{marker}");
+                assert!(!is_marker);
+                assert_eq!(range.end, offset + line.len());
+                if ix == 0 {
+                    assert_eq!(parts.len(), 2);
+                    assert_eq!(parts[0].1, px(14.));
+                    assert!(parts[0].2);
+                    assert_eq!(&rendered.text[range.clone()], "first line");
+                } else {
+                    assert_eq!(parts.len(), 1);
+                    assert_eq!(&rendered.text[range.clone()], "continuation");
+                }
+                offset += line.len() + 1;
+            }
+        }
+    }
+
+    #[test]
+    fn nested_columns_start_after_the_parent_marker_column() {
+        let item = ListLine {
+            line: 0,
+            depth: 1,
+            marker: 3..8,
+        };
+        let parts = text_columns(0..20, px(14.), Some(&item), &[px(30.), px(22.)]);
+        assert_eq!(parts, vec![(3..8, px(44.), true), (8..20, px(66.), false)]);
+        assert_eq!(
+            text_columns(0..20, px(14.), None, &[]),
+            vec![(0..20, px(14.), false)]
+        );
+    }
+
+    #[test]
+    fn narrow_columns_keep_their_width_while_wide_ones_share_the_rest() {
+        let mut widths = [px(40.), px(300.), px(200.)];
+        super::fit_columns(&mut widths, px(340.));
+        assert_eq!(widths, [px(40.), px(150.), px(150.)]);
+        let mut roomy = [px(40.), px(60.)];
+        super::fit_columns(&mut roomy, px(340.));
+        assert_eq!(roomy, [px(40.), px(60.)]);
     }
 }
