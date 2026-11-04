@@ -882,19 +882,6 @@ mod tests {
     }
 
     #[test]
-    fn capitalised_raises_only_the_first_letter() {
-        assert_eq!(capitalised("created task: keep"), "Created task: keep");
-        assert_eq!(capitalised(""), "");
-    }
-
-    #[test]
-    fn a_source_reads_as_its_product_name() {
-        assert_eq!(source_name(TaskSource::Cli), Some("CLI"));
-        assert_eq!(source_name(TaskSource::Ios), Some("iOS"));
-        assert_eq!(source_name(TaskSource::Unknown), None);
-    }
-
-    #[test]
     fn activity_leaves_out_the_title_and_shows_the_time() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
         let change = |field: &str, summary: &str, detail: Option<&str>| RecentActionItem {

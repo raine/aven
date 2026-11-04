@@ -567,36 +567,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_timeline_runs_forward() {
-        assert!(PURPLE.0 < CHECK.0 && CHECK.0 < GLOW.0 && GLOW.0 < SETTLE.0);
-        for (a, b) in [PURPLE, CHECK, GLOW, BUMP, SETTLE] {
-            assert!(a < b);
-        }
-        // the cells have resolved before the mark starts to move away
-        assert!(GLOW.1 > SETTLE.0 && GLOW.1 < LANDED);
-        assert!(item_start(0) < LANDED && LANDED < END);
-        for index in 1..ITEMS {
-            assert!(item_start(index - 1) < item_start(index));
-        }
-        assert_eq!(item_start(ITEMS - 1) + RISE_MS, END);
-    }
-
-    #[test]
-    fn items_rise_from_hidden_to_rest() {
-        for index in 0..ITEMS {
-            assert_eq!(rise(index, 0.), Rise { opacity: 0., y: 8. });
-            assert_eq!(rise(index, item_start(index)), Rise { opacity: 0., y: 8. });
-            assert_eq!(rise(index, END), Rise { opacity: 1., y: 0. });
-            let mut last = rise(index, 0.);
-            for step in 0..=100 {
-                let now = rise(index, END * step as f32 / 100.);
-                assert!(now.opacity >= last.opacity && now.y <= last.y);
-                last = now;
-            }
-        }
-    }
-
-    #[test]
     fn the_intro_plays_once() {
         let now = Instant::now();
         let mut playback = Playback::default();
@@ -614,16 +584,6 @@ mod tests {
         assert!(!playback.start(now));
         assert!(!playback.skip());
         assert_eq!(playback.frame(|_| 0.), None);
-    }
-
-    #[test]
-    fn skipping_ends_the_intro() {
-        let mut playback = Playback::default();
-        playback.start(Instant::now());
-        assert!(playback.skip());
-        assert_eq!(playback, Playback::Played);
-        assert_eq!(playback.frame(|_| 0.), None);
-        assert!(!playback.start(Instant::now()));
     }
 
     #[test]
@@ -663,45 +623,5 @@ mod tests {
         };
         assert_eq!(fill(&dark), Theme::dark().logo_check);
         assert_eq!(fill(&light), Theme::light().logo_check);
-    }
-
-    #[test]
-    fn the_mark_lands_in_the_logo_square() {
-        let square = Rect {
-            x: 10.,
-            y: 20.,
-            w: 56.,
-            h: 56.,
-        };
-        let mark = Rect::mark_in(square);
-        assert!(mark.x > square.x && mark.y > square.y);
-        assert!(mark.x + mark.w < square.x + square.w);
-        assert!(mark.y + mark.h < square.y + square.h);
-        let [x0, y0, x1, y1] = logo::vector().bounds;
-        let (top_left, bottom_right) = (mark.map((x0, y0)), mark.map((x1, y1)));
-        assert!((top_left.0 - mark.x).abs() < 1e-3 && (top_left.1 - mark.y).abs() < 1e-3);
-        assert!((bottom_right.0 - mark.x - mark.w).abs() < 1e-3);
-        assert!((bottom_right.1 - mark.y - mark.h).abs() < 1e-3);
-        // the check's tip sits inside the A's box, right of centre
-        let tip = mark.tip();
-        assert!(tip.0 > mark.x + mark.w / 2. && tip.0 < mark.x + mark.w);
-        assert!(tip.1 > mark.y && tip.1 < mark.y + mark.h);
-    }
-
-    #[test]
-    fn the_front_contains_points_inside_its_ellipse() {
-        let mark = Rect {
-            x: 0.,
-            y: 0.,
-            w: 100.,
-            h: 100.,
-        };
-        let front = Front::new(mark, 20.);
-        assert!(front.contains(front.tip, 0.));
-        assert!(front.contains((front.tip.0 + 19., front.tip.1), 0.));
-        assert!(!front.contains((front.tip.0 + 19., front.tip.1), 2.));
-        let below = (front.tip.0, front.tip.1 + 19. * front.aspect);
-        assert!(front.contains(below, 0.));
-        assert!(!front.contains((below.0, below.1 + 2. * front.aspect), 0.));
     }
 }

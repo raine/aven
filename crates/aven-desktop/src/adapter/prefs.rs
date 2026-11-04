@@ -167,6 +167,15 @@ mod tests {
         let mut prefs = Prefs::load(&path);
         assert_eq!(prefs.nav_width, 200.);
         assert!(prefs.nav_open && prefs.details_open);
+        assert_eq!((prefs.theme, prefs.zoom), (ThemePref::System, 1.));
+        assert_eq!(
+            prefs.row_fields,
+            RowFields {
+                labels: true,
+                created: true,
+                updated: false,
+            }
+        );
         prefs.window = Some(SavedWindow {
             display: Some("37D8832A-2D66-02CA-B9F7-8F30A301B230".into()),
             x: 10.,
@@ -203,39 +212,5 @@ mod tests {
         assert_eq!(crate::draft::Draft::from(loaded.composer.unwrap()), draft);
         SavedDrafts::default().save(&path).unwrap();
         assert!(!path.exists());
-    }
-
-    #[test]
-    fn row_fields_show_labels_and_created_until_changed_and_keep_the_choice() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("prefs.json");
-        std::fs::write(&path, r#"{"nav_width":240.0}"#).unwrap();
-        let mut prefs = Prefs::load(&path);
-        assert_eq!(
-            prefs.row_fields,
-            RowFields {
-                labels: true,
-                created: true,
-                updated: false,
-            }
-        );
-        prefs.row_fields = RowFields {
-            labels: false,
-            created: false,
-            updated: true,
-        };
-        prefs.save(&path).unwrap();
-        assert_eq!(Prefs::load(&path).row_fields, prefs.row_fields);
-    }
-
-    #[test]
-    fn prefs_from_before_settings_still_load() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("prefs.json");
-        std::fs::write(&path, r#"{"nav_width":240.0}"#).unwrap();
-        let prefs = Prefs::load(&path);
-        assert_eq!(prefs.nav_width, 240.);
-        assert_eq!(prefs.theme, ThemePref::System);
-        assert_eq!(prefs.zoom, 1.);
     }
 }

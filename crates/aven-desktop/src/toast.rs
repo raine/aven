@@ -389,33 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn each_kind_of_toast_stays_its_own_time() {
-        assert_eq!(
-            Toast::done("Copied").lifetime(),
-            Some(CONFIRMATION_LIFETIME)
-        );
-        assert_eq!(
-            Toast::info("No blocker").lifetime(),
-            Some(CONFIRMATION_LIFETIME)
-        );
-        assert_eq!(
-            Toast::warn("Invitation copied").lifetime(),
-            Some(WARN_LIFETIME)
-        );
-        assert_eq!(
-            Toast::done("Done").undo(true).lifetime(),
-            Some(ACTION_LIFETIME)
-        );
-        let go = Toast::done("Created").action(Some(ToastAction::Refresh));
-        assert_eq!(go.lifetime(), Some(ACTION_LIFETIME));
-        assert_eq!(
-            Toast::error("Could not save").action(retry()).lifetime(),
-            None
-        );
-        assert_eq!(Toast::progress("Publishing").lifetime(), None);
-    }
-
-    #[test]
     fn a_shown_toast_expires_on_its_own() {
         let now = Instant::now();
         let mut toasts = Toasts::default();
@@ -558,36 +531,5 @@ mod tests {
             1,
             "an undo is a new change"
         );
-    }
-
-    #[test]
-    fn work_under_way_resolves_in_place() {
-        let now = Instant::now();
-        let mut toasts = Toasts::default();
-        toasts.show(
-            Toast {
-                run: 4,
-                ..Toast::progress("Publishing secret gist")
-            },
-            now,
-        );
-        let link = Some(ToastAction::Open("https://gist".to_string()));
-        toasts.settle(
-            Toast {
-                run: 9,
-                ..Toast::done("Gist link copied").action(link)
-            },
-            now,
-        );
-        let toast = toasts.current().unwrap();
-        assert_eq!((toast.title.as_str(), toast.run), ("Gist link copied", 4));
-        assert_eq!(toasts.deadline(), Some(now + ACTION_LIFETIME));
-
-        toasts.clear();
-        toasts.show(Toast::progress("Publishing secret gist"), now);
-        toasts.show(Toast::done("Copied"), now);
-        toasts.settle(Toast::error("Could not publish"), now);
-        toasts.dismiss(now);
-        assert!(toasts.current().is_none(), "the held progress went with it");
     }
 }

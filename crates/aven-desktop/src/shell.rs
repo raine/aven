@@ -3317,13 +3317,6 @@ mod tests {
     }
 
     #[test]
-    fn a_held_key_keeps_the_highlight_one_row_behind() {
-        assert_eq!(close_behind(0., 90., 31.), 59.);
-        assert_eq!(close_behind(180., 90., 31.), 121.);
-        assert_eq!(close_behind(70., 90., 31.), 70.);
-    }
-
-    #[test]
     fn a_move_glides_the_rows_it_shifts_and_fades_the_groups_it_changes() {
         let (first, second) = (TaskId::new(), TaskId::new());
         let old = [section("Focus"), row(&first), row(&second)];

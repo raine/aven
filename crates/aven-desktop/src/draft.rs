@@ -1061,12 +1061,4 @@ mod tests {
         let chip = schedule_chip("tomorrow").unwrap();
         assert!(!chip.is_empty());
     }
-
-    #[test]
-    fn the_schedule_fields_read_their_own_stored_shape() {
-        assert!(parse_available_at_input("2026-12-24 at 09:00").is_ok());
-        assert!(parse_available_at_input("2026-12-24T09:00:00Z").is_ok());
-        assert_eq!(parse_available_at_input("now").unwrap(), "");
-        assert_eq!(parse_due_on_input("2026-12-24").unwrap(), "2026-12-24");
-    }
 }

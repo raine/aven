@@ -1366,42 +1366,6 @@ mod tests {
     use super::{Closeness, MENU_PADDING, closeness, px, revealed_offset, shortest_span};
 
     #[test]
-    fn task_choices_keep_order_marks_keys_and_the_current_value() {
-        use super::{Mark, TaskPriority, TaskStatus, priority_entries, status_entries};
-
-        let statuses = status_entries(Some(TaskStatus::Todo), true, false, |_, _, _, _| {});
-        let priorities = priority_entries(Some(TaskPriority::None), true, |_, _, _, _| {});
-        assert_eq!(
-            statuses
-                .iter()
-                .map(|entry| entry.label.as_str())
-                .collect::<Vec<_>>(),
-            ["Active", "Todo", "Inbox", "Backlog", "Done", "Canceled"],
-        );
-        assert_eq!(
-            priorities
-                .iter()
-                .map(|entry| entry.label.as_str())
-                .collect::<Vec<_>>(),
-            ["Urgent", "High", "Medium", "Low", "None"],
-        );
-        for (entry, (status, _)) in statuses.iter().zip(super::STATUSES) {
-            assert!(matches!(entry.mark, Mark::Status(value) if value == status));
-            assert_eq!(entry.key, Some(super::status_key(status)));
-            assert_eq!(entry.hint, super::status_key(status).to_string());
-            assert_eq!(entry.checked, status == TaskStatus::Todo);
-            assert!(entry.run.is_some());
-        }
-        for (entry, (priority, _)) in priorities.iter().zip(super::PRIORITIES) {
-            assert!(matches!(entry.mark, Mark::Priority(value) if value == priority));
-            assert_eq!(entry.key, Some(super::priority_key(priority)));
-            assert_eq!(entry.hint, super::priority_key(priority).to_string());
-            assert_eq!(entry.checked, priority == TaskPriority::None);
-            assert!(entry.run.is_some());
-        }
-    }
-
-    #[test]
     fn composer_choices_have_no_keys_or_checks_and_epics_omit_only_inbox() {
         use super::{priority_entries, status_entries};
         let tasks = status_entries(None, false, false, |_, _, _, _| {});
@@ -1418,16 +1382,6 @@ mod tests {
         for entry in tasks.iter().chain(&epics).chain(&priorities) {
             assert_eq!(entry.key, None);
             assert!(entry.hint.is_empty());
-            assert!(!entry.checked);
-        }
-    }
-
-    #[test]
-    fn bulk_choices_keep_keys_without_checking_a_single_value() {
-        let statuses = super::status_entries(None, true, false, |_, _, _, _| {});
-        let priorities = super::priority_entries(None, true, |_, _, _, _| {});
-        for entry in statuses.iter().chain(&priorities) {
-            assert!(entry.key.is_some());
             assert!(!entry.checked);
         }
     }

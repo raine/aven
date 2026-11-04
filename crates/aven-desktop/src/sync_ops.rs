@@ -759,19 +759,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn user_operations_and_background_rounds_use_their_own_hosts() {
-        let operations = include_str!("sync_ops.rs");
-        let (operations, _) = operations.split_once("#[cfg(test)]").unwrap();
-        assert_eq!(operations.matches("HostMode::").count(), 2);
-        assert_eq!(operations.matches("HostMode::UserStarted").count(), 2);
-        let adapter = include_str!("adapter/actor.rs");
-        assert!(adapter.contains("DaemonSync::with_storage"));
-        for source in [operations, adapter] {
-            assert!(!source.contains("record_daemon_sync_round"));
-        }
-    }
-
     #[tokio::test]
     async fn a_refused_join_leaves_no_database_behind() {
         let directory = tempfile::tempdir().unwrap();

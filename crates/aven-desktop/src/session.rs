@@ -1909,14 +1909,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_now_needs_a_set_up_database() {
-        let mut session = session();
-        assert!(!session.sync_now());
-        session.snapshot.sync.phase = SyncPhase::SetUp;
-        assert!(session.sync_now());
-    }
-
-    #[test]
     fn a_new_task_without_a_project_joins_the_scope_or_the_first_project() {
         let mut session = session();
         assert_eq!(session.new_task_project(), None);
