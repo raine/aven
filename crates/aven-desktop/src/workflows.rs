@@ -189,10 +189,6 @@ fn span(delta: f32, from: f32, to: f32) -> f32 {
     ((delta - from) / (to - from)).clamp(0., 1.)
 }
 
-fn ease_out(delta: f32) -> f32 {
-    1. - (1. - delta).powi(3)
-}
-
 impl Root {
     /// The ring beside an epic's ref. A local change sweeps it to the new value
     /// and the last child pops it; otherwise it rests.

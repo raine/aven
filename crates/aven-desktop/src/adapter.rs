@@ -771,7 +771,6 @@ pub enum Command {
     Quit,
 }
 
-/// The task fields that can be copied.
 impl Command {
     /// Whether this changes stored data, which may change what undo takes back.
     pub fn is_write(&self) -> bool {

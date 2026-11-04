@@ -194,10 +194,6 @@ fn close_behind(from: f32, to: f32, reach: f32) -> f32 {
     from.clamp(to - reach, to + reach)
 }
 
-fn ease_out(delta: f32) -> f32 {
-    1. - (1. - delta).powi(3)
-}
-
 /// How far an entry that started `from` its place still is at `delta`.
 fn offset_at(from: f32, delta: f32) -> f32 {
     from * (1. - ease_out(delta.min(1.)))

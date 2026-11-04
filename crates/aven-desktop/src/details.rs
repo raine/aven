@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::actions::*;
 use crate::adapter::{Command, Detail, Link, TaskRow};
-use crate::commands::pasted_image;
+use crate::images::pasted_image;
 use crate::input::{Editor, EditorEvent};
 use crate::kit::*;
 use crate::schedule::DateField;

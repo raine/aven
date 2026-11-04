@@ -10,16 +10,16 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId,
-    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    FontWeight, GlobalElementId, Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, PathBuilder, Pixels, Point, ScrollEvent, SharedString,
-    Size, Style, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions,
-    div, fill, point, prelude::*, px, quad, relative, size, transparent_black,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontWeight, GlobalElementId,
+    Hsla, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, PathBuilder, Pixels, Point, ScrollEvent, SharedString, Size, Style, TextRun,
+    TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point,
+    prelude::*, px, quad, relative, size, transparent_black,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::commands::is_image;
+use crate::images::{PastedImage, clipboard_image};
 use crate::markdown::{Quote, Rendered, Span};
 use crate::theme::theme;
 
@@ -150,29 +150,6 @@ pub enum EditorEvent {
     Right,
     /// A paste the editor cannot hold, for a surface that takes images.
     PastedImage(PastedImage),
-}
-
-/// An image from the clipboard: its bytes, or the file it was copied from.
-#[derive(Clone)]
-pub enum PastedImage {
-    Bytes(gpui::Image),
-    Path(std::path::PathBuf),
-}
-
-/// An image the clipboard holds, if any. Other copied files read as nothing,
-/// so their names still paste as text.
-pub fn clipboard_image(cx: &App) -> Option<PastedImage> {
-    let item = cx.read_from_clipboard()?;
-    item.entries().iter().find_map(|entry| match entry {
-        ClipboardEntry::Image(image) => Some(PastedImage::Bytes(image.clone())),
-        ClipboardEntry::ExternalPaths(paths) => paths
-            .paths()
-            .iter()
-            .find(|path| is_image(path))
-            .cloned()
-            .map(PastedImage::Path),
-        ClipboardEntry::String(_) => None,
-    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

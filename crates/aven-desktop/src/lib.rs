@@ -14,6 +14,7 @@ mod details;
 mod dialogs;
 mod display;
 mod draft;
+mod images;
 mod input;
 pub mod intro;
 mod kit;

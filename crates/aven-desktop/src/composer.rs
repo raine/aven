@@ -17,11 +17,11 @@ use gpui::{
 
 use crate::actions::*;
 use crate::adapter::{NavEntry, PendingImage};
-use crate::commands::{pasted_image, read_image, thumbnail};
 use crate::draft::{
     CaretWord, Draft, DraftProblem, Suggestion, Token, automatic_status, caret_word, cut,
     finished_token, parse_title, schedule_chip, schedule_preview, suggestions, title_tokens,
 };
+use crate::images::{pasted_image, read_image, thumbnail};
 use crate::input::{Editor, EditorEvent, Mode, Tint};
 use crate::kit::*;
 use crate::overlays::{Entry, Mark, MenuOptions};

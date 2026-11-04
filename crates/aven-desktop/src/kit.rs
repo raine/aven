@@ -93,6 +93,11 @@ pub fn priority_name(priority: TaskPriority) -> &'static str {
 
 pub type Anchors = Rc<RefCell<HashMap<&'static str, Bounds<Pixels>>>>;
 
+/// A cubic ease-out over `delta` from 0 to 1.
+pub fn ease_out(delta: f32) -> f32 {
+    1. - (1. - delta).powi(3)
+}
+
 pub fn drag_window(event: &MouseDownEvent, window: &mut Window, _: &mut App) {
     if event.click_count == 2 {
         window.titlebar_double_click();
