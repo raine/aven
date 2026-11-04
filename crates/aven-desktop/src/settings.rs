@@ -69,7 +69,6 @@ fn row(t: &Theme) -> Div {
         .pl(px(14.))
         .pr(px(12.))
         .py(px(8.))
-        .bg(t.panel)
         .text_color(t.ink)
 }
 
@@ -79,6 +78,7 @@ fn group(rows: Vec<Div>, t: &Theme) -> Div {
     div()
         .relative()
         .rounded(px(10.))
+        .bg(t.panel)
         .overflow_hidden()
         .children(rows.into_iter().enumerate().map(|(index, row)| {
             div().relative().child(row).when(index > 0, |wrap| {
@@ -1507,38 +1507,45 @@ impl Root {
                     .child(
                         div()
                             .rounded(px(10.))
+                            .bg(t.panel)
                             .overflow_hidden()
                             .shadow(vec![t.inset_ring(t.line)])
-                            .child(self.option_row(
-                                "sync-start",
-                                "icons/cloud.svg",
-                                "Set up sync",
-                                "Start from this computer's tasks",
-                                &buttons[0],
-                                |this, _, cx| {
-                                    this.session.sync_page = SyncPage::Invitation {
-                                        kind: SyncKind::Setup,
-                                        new_database: false,
-                                    };
-                                    cx.notify();
-                                },
-                                cx,
-                                t,
-                            ))
+                            .child(
+                                self.option_row(
+                                    "sync-start",
+                                    "icons/cloud.svg",
+                                    "Set up sync",
+                                    "Start from this computer's tasks",
+                                    &buttons[0],
+                                    |this, _, cx| {
+                                        this.session.sync_page = SyncPage::Invitation {
+                                            kind: SyncKind::Setup,
+                                            new_database: false,
+                                        };
+                                        cx.notify();
+                                    },
+                                    cx,
+                                    t,
+                                )
+                                .rounded_t(px(10.)),
+                            )
                             .child(div().h(px(1.)).bg(t.line))
-                            .child(self.option_row(
-                                "sync-join",
-                                "icons/device.svg",
-                                "Join existing sync",
-                                "Use an invitation from a device that already syncs",
-                                &buttons[1],
-                                |this, _, cx| {
-                                    this.session.request_sync(SyncRequest::CheckJoin);
-                                    cx.notify();
-                                },
-                                cx,
-                                t,
-                            )),
+                            .child(
+                                self.option_row(
+                                    "sync-join",
+                                    "icons/device.svg",
+                                    "Join existing sync",
+                                    "Use an invitation from a device that already syncs",
+                                    &buttons[1],
+                                    |this, _, cx| {
+                                        this.session.request_sync(SyncRequest::CheckJoin);
+                                        cx.notify();
+                                    },
+                                    cx,
+                                    t,
+                                )
+                                .rounded_b(px(10.)),
+                            ),
                     )
                     .into_any_element(),
             ],
