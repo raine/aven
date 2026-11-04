@@ -323,6 +323,7 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncView {
     pub phase: SyncPhase,
+    pub server: Option<String>,
     pub pending: usize,
     pub conflicts: usize,
     /// Unix seconds of the daemon's last completed round.

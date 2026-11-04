@@ -1624,6 +1624,36 @@ impl Root {
         }
     }
 
+    fn sync_server(&self, t: &Theme) -> Div {
+        let server = self.session.snapshot.sync.server.as_deref();
+        let cloud = server.is_some_and(aven_core::sync::client::is_aven_cloud);
+        let identity = if cloud {
+            btn("sync-server-cloud", "Aven Cloud", t)
+                .role(Role::Link)
+                .text_color(t.accent)
+                .on_click(|_, _, cx| cx.open_url(CLOUD_URL))
+                .child(icon("icons/cloud.svg", t.accent))
+                .child("Aven Cloud")
+                .into_any_element()
+        } else {
+            small(12.)
+                .min_w_0()
+                .font_family(MONO)
+                .text_color(t.body)
+                .child(server.unwrap_or("Unavailable").to_string())
+                .into_any_element()
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .py(px(8.))
+            .border_t_1()
+            .border_color(t.line)
+            .child(small(12.).flex_none().text_color(t.muted).child("Server"))
+            .child(identity)
+    }
+
     fn sync_status(
         &self,
         buttons: &[FocusHandle; 2],
@@ -1708,6 +1738,7 @@ impl Root {
                                 .child(small(12.5).mt(px(2.)).text_color(t.muted).child(sub)),
                         ),
                 )
+                .child(self.sync_server(t))
                 .when(conflicts > 0, |body| {
                     body.child(
                         div()

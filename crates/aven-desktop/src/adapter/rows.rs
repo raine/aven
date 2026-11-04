@@ -492,6 +492,7 @@ fn sync_view(store: &TuiStore) -> SyncView {
     let status = &store.sync_status;
     SyncView {
         phase: status.phase.into(),
+        server: status.server.clone(),
         pending: status.pending_changes.try_into().unwrap_or(usize::MAX),
         conflicts: status.conflicts.try_into().unwrap_or(usize::MAX),
         daemon_synced_at: status.daemon_sync.last_success_at,

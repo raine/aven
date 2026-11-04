@@ -2628,6 +2628,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_snapshots_keep_the_server_identity() {
+        let (_directory, mut actor, _replies) = actor("Keep").await;
+        for server in [
+            Some("https://sync.aventasks.dev"),
+            Some("https://sync.example.com:8443"),
+            None,
+        ] {
+            actor.store.sync_status.server = server.map(str::to_string);
+            let snapshot = arranged_snapshot(&actor.store, Local::now(), &Arrange::default());
+            assert_eq!(snapshot.sync.server.as_deref(), server);
+        }
+    }
+
+    #[tokio::test]
     async fn the_byline_names_an_update_only_after_creation() {
         let (_directory, actor, _replies) = actor("Keep").await;
         let mut item = actor.store.tasks[0].clone();
