@@ -78,6 +78,10 @@ actions!(
         CreateTask,
         CreateAnother,
         ReadNotes,
+        SuggestNext,
+        SuggestPrevious,
+        AcceptSuggestion,
+        CloseSuggestions,
         NextField,
         PreviousField,
         ToggleSearchScope,
@@ -320,6 +324,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     let dialog = Some("Dialog");
     let composer = Some("Composer");
     let composer_field = Some("Composer > TextInput");
+    let suggesting = Some("Suggesting > TextInput");
     let search = Some("Search > TextInput");
     let mut bindings = vec![
         KeyBinding::new("cmd-q", Quit, None),
@@ -431,6 +436,11 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-s", CreateTask, composer),
         KeyBinding::new("ctrl-g", CreateAnother, composer),
         KeyBinding::new("ctrl-n", ReadNotes, composer_field),
+        KeyBinding::new("down", SuggestNext, suggesting),
+        KeyBinding::new("up", SuggestPrevious, suggesting),
+        KeyBinding::new("tab", AcceptSuggestion, suggesting),
+        KeyBinding::new("enter", AcceptSuggestion, suggesting),
+        KeyBinding::new("escape", CloseSuggestions, suggesting),
         KeyBinding::new("ctrl-s", ToggleSearchScope, Some("Search")),
         KeyBinding::new("shift-enter", FullResults, search),
         KeyBinding::new("cmd-enter", SaveDescription, Some("BodyEditor > TextInput")),

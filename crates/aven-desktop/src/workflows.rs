@@ -371,7 +371,6 @@ impl Root {
     pub(crate) fn new_recurring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.kept_draft = Draft {
             schedule: "every friday at 09:00".to_string(),
-            more: true,
             ..std::mem::take(&mut self.kept_draft)
         };
         self.open_composer(window, cx);
@@ -1226,7 +1225,6 @@ impl Root {
             project,
             schedule: detail.schedule,
             replaces: Some(detail.id),
-            more: true,
             ..Draft::default()
         };
         self.open_composer(window, cx);

@@ -431,6 +431,8 @@ pub struct Root {
     pub(crate) kept_draft: Draft,
     /// The draft Discard threw away, until the next discard.
     pub(crate) discarded: Option<Draft>,
+    /// Whether creating a task leaves the composer open for the next one.
+    pub(crate) create_more: bool,
     pub(crate) dialog: Option<Layer>,
     pub(crate) body: Entity<Editor>,
     pub(crate) body_edit: Option<BodyEdit>,
@@ -547,6 +549,7 @@ impl Root {
             composer: None,
             kept_draft: drafts.composer.map(Draft::from).unwrap_or_default(),
             discarded: None,
+            create_more: false,
             dialog: None,
             body,
             body_edit: None,
@@ -614,6 +617,7 @@ impl Root {
         };
         if !cx.has_global::<Theme>() || theme(cx).dark != dark {
             cx.set_global(if dark { Theme::dark() } else { Theme::light() });
+            self.tint_composer_title(cx);
         }
         cx.notify();
     }

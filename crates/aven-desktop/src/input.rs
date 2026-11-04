@@ -195,6 +195,14 @@ const QUOTE_BAR_WIDTH: Pixels = px(2.);
 /// A task list checkbox's side, relative to the font size.
 const CHECK_SCALE: f32 = 0.93;
 
+/// Colours laid over a stretch of an editor's text.
+#[derive(Clone, PartialEq)]
+pub struct Tint {
+    pub range: Range<usize>,
+    pub color: Hsla,
+    pub background: Hsla,
+}
+
 struct Snapshot {
     content: String,
     selected: Range<usize>,
@@ -319,6 +327,9 @@ pub struct Editor {
     spans: Vec<Span>,
     tight: Vec<usize>,
     quotes: Vec<Quote>,
+    /// Tints for `tinted`, the text they were worked out for.
+    tints: Vec<Tint>,
+    tinted: String,
     paragraph_gap: Option<Pixels>,
     layout: Option<TextLayout>,
     bounds: Option<Bounds<Pixels>>,
@@ -385,6 +396,8 @@ impl Editor {
             spans: Vec::new(),
             tight: Vec::new(),
             quotes: Vec::new(),
+            tints: Vec::new(),
+            tinted: String::new(),
             paragraph_gap: None,
             layout: None,
             bounds: None,
@@ -467,6 +480,56 @@ impl Editor {
             && self.quotes == rendered.quotes
     }
 
+    /// Colours stretches of the current text until it changes.
+    pub fn set_tints(&mut self, tints: Vec<Tint>, cx: &mut Context<Self>) {
+        self.tinted = self.content.clone();
+        self.tints = tints;
+        cx.notify();
+    }
+
+    fn tints(&self) -> &[Tint] {
+        if self.tinted == self.content {
+            &self.tints
+        } else {
+            &[]
+        }
+    }
+
+    /// Replaces `range` as one undoable edit, leaving the caret after `text`.
+    pub fn replace(
+        &mut self,
+        range: Range<usize>,
+        text: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only || self.marked.is_some() {
+            return;
+        }
+        self.record(EditKind::Other);
+        self.splice(range, text, window, cx);
+    }
+
+    /// Whether an input method is still composing text.
+    pub fn is_composing(&self) -> bool {
+        self.marked.is_some()
+    }
+
+    /// Whether the last edit was typed, rather than pasted, undone or set.
+    pub fn typed(&self) -> bool {
+        matches!(self.last_edit, Some((EditKind::Typing, _)))
+    }
+
+    pub fn has_selection(&self) -> bool {
+        !self.selected.is_empty()
+    }
+
+    /// Where the text at `offset` was last drawn, in window coordinates.
+    pub fn offset_origin(&self, offset: usize) -> Option<Point<Pixels>> {
+        let (position, _) = self.caret_bounds(offset)?;
+        Some(self.bounds?.origin + position - self.scroll)
+    }
+
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
         self.selected = 0..self.content.len();
         self.reversed = false;
@@ -511,7 +574,7 @@ impl Editor {
             .collect()
     }
 
-    fn cursor(&self) -> usize {
+    pub fn cursor(&self) -> usize {
         if self.reversed {
             self.selected.start
         } else {
@@ -1124,7 +1187,9 @@ impl Editor {
         let mut cuts = vec![range.start, range.end];
         let inside = |offset: usize| offset > range.start && offset < range.end;
         let spans = self.spans.iter().map(|span| &span.range);
-        for span in self.marked.iter().chain(spans) {
+        let tints = self.tints();
+        let tinted = tints.iter().map(|tint| &tint.range);
+        for span in self.marked.iter().chain(spans).chain(tinted) {
             cuts.extend([span.start, span.end].into_iter().filter(|o| inside(*o)));
         }
         cuts.sort_unstable();
@@ -1136,6 +1201,7 @@ impl Editor {
                 let contains = |span: &Range<usize>| span.start <= start && end <= span.end;
                 let span = self.spans.iter().find(|span| contains(&span.range));
                 let marks = span.map(|span| span.style.clone()).unwrap_or_default();
+                let painted = tints.iter().find(|tint| contains(&tint.range));
                 let mut font = style.font();
                 if marks.bold {
                     font.weight = FontWeight::SEMIBOLD;
@@ -1153,6 +1219,8 @@ impl Editor {
                     theme.accent
                 } else if marks.dim {
                     theme.muted
+                } else if let Some(painted) = painted {
+                    painted.color
                 } else {
                     color
                 };
@@ -1161,7 +1229,10 @@ impl Editor {
                     len: end - start,
                     font,
                     color: tint,
-                    background_color: marks.code.then_some(theme.raised),
+                    background_color: marks
+                        .code
+                        .then_some(theme.raised)
+                        .or(painted.map(|painted| painted.background)),
                     underline: underline.then_some(UnderlineStyle {
                         color: Some(tint),
                         thickness: px(1.),

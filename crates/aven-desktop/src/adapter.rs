@@ -2321,21 +2321,15 @@ impl Actor {
     }
 
     /// A desktop launch has no directory to infer a project from, so a new task
-    /// joins the scoped project, the selected task's project, or the first one.
+    /// joins the scoped project or the first one.
     fn project_for_new_task(&self) -> Option<String> {
         if let TaskScope::Project(project) = &self.store.view_state.scope {
             return Some(project.clone());
         }
-        let selected = self.selected.as_ref().and_then(|id| {
-            let item = self.store.tasks.iter().find(|item| item.task.id == *id)?;
-            Some(item.task.project_key.clone())
-        });
-        selected.or_else(|| {
-            self.store
-                .projects
-                .first()
-                .map(|project| project.key.clone())
-        })
+        self.store
+            .projects
+            .first()
+            .map(|project| project.key.clone())
     }
 
     /// Refreshes the projection. Hiding the selected task is left for the next
@@ -5126,7 +5120,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_new_task_joins_the_selected_tasks_project() {
+    async fn a_new_task_ignores_the_selected_tasks_project() {
         let (_directory, mut actor, mut replies) = actor("Stored").await;
         let elsewhere = TaskDraft {
             project: Some("other".to_string()),
@@ -5146,7 +5140,9 @@ mod tests {
                 .iter()
                 .any(|body| matches!(body, ReplyBody::Created(_)))
         );
-        assert_eq!(find(&actor.store, "Second").project_key, "other");
+        let first = actor.store.projects[0].key.clone();
+        assert_ne!(first, "other");
+        assert_eq!(find(&actor.store, "Second").project_key, first);
     }
 
     #[tokio::test]

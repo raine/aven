@@ -1025,6 +1025,16 @@ impl Session {
         self.send(Command::Create(Box::new(task)));
     }
 
+    /// The project a new task joins when none is chosen, with why: the project
+    /// in scope, or else the first project.
+    pub fn new_task_project(&self) -> Option<(&str, &'static str)> {
+        if let Some(scope) = &self.snapshot.view.project {
+            return Some((scope, "Inferred from this view"));
+        }
+        let first = self.snapshot.projects.first()?;
+        Some((&first.key, "The first project"))
+    }
+
     pub fn intake(&mut self, input: String, project: Option<String>) {
         let project = project.or_else(|| self.snapshot.view.project.clone());
         self.send(Command::Intake { input, project });
@@ -1848,6 +1858,26 @@ mod tests {
         assert!(!session.sync_now());
         session.snapshot.sync.phase = SyncPhase::SetUp;
         assert!(session.sync_now());
+    }
+
+    #[test]
+    fn a_new_task_without_a_project_joins_the_scope_or_the_first_project() {
+        let mut session = session();
+        assert_eq!(session.new_task_project(), None);
+        session.snapshot.projects = ["aven", "docs"]
+            .map(|key| crate::adapter::NavEntry {
+                name: key.to_string(),
+                key: key.to_string(),
+                prefix: key.to_uppercase(),
+                count: 0,
+            })
+            .to_vec();
+        assert_eq!(session.new_task_project().map(|(key, _)| key), Some("aven"));
+        session.snapshot.view.project = Some("docs".to_string());
+        assert_eq!(
+            session.new_task_project(),
+            Some(("docs", "Inferred from this view"))
+        );
     }
 
     #[test]

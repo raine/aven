@@ -311,13 +311,17 @@ pub fn pop_glyph(previous: TaskStatus, run: usize, t: &Theme) -> impl IntoElemen
         ))
 }
 
-pub fn priority_icon(priority: TaskPriority, t: &Theme) -> impl IntoElement + use<> {
-    let color = match priority {
+pub fn priority_color(priority: TaskPriority, t: &Theme) -> Hsla {
+    match priority {
         TaskPriority::None => t.faint,
         TaskPriority::High => t.pr_high,
         TaskPriority::Urgent => t.pr_urgent,
         TaskPriority::Low | TaskPriority::Medium => t.pr_low,
-    };
+    }
+}
+
+pub fn priority_icon(priority: TaskPriority, t: &Theme) -> impl IntoElement + use<> {
+    let color = priority_color(priority, t);
     let (on, off): (&'static str, Option<&'static str>) = match priority {
         TaskPriority::None => ("icons/pri-0.svg", None),
         TaskPriority::Low => ("icons/pri-1-on.svg", Some("icons/pri-1-off.svg")),
