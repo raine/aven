@@ -71,8 +71,11 @@
 .capture-links .text-link { font: 0.875rem/1.7 var(--mono); }
 .capture-fine { margin-top: 0.875rem; color: var(--faint); font-size: 0.75rem; line-height: 1.6; }
 
-/* The phone spans the sources and queue; its connector meets the newest queue row. */
-.capture-phone { position: relative; grid-column: 2; grid-row: 2 / span 3; align-self: end; }
+/* The phone sits beside the sources and queue; its connector meets the newest queue row. */
+/* Cards, rail and queue share one cell, so a taller phone stretches the cards instead of opening gaps in the rail. */
+.capture-flow { display: flex; flex-direction: column; }
+.capture-flow .capture-sources { flex: 1; }
+.capture-phone { position: relative; grid-column: 2; grid-row: 2; align-self: end; }
 .capture-phone-connector { position: absolute; bottom: 2.5rem; right: 100%; width: 3rem; height: 1px; background: #4b3a66; }
 .capture-phone-connector::before { content: ''; position: absolute; left: -0.25rem; top: -0.21875rem; border: 0.21875rem solid transparent; border-right-color: #b9a8f0; border-left: 0; }
 

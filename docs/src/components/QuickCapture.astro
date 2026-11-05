@@ -22,53 +22,55 @@ const waveform = [3, 6, 9, 5, 11, 7, 4, 10, 12, 6, 3, 8, 11, 9, 5, 7, 12, 10, 4,
     <p class="capture-lede">The composer inside aven or over any tmux pane, an agent session, or a voice note to a chat assistant. Away from your desk, just tell Aven. Every path lands in the same queue, in the right project.</p>
   </div>
 
-  <ol class="capture-sources">
-    <li class="capture-source capture-source-composer">
-      <p class="capture-source-label violet">Task composer</p>
-      <div class="capture-sample capture-composer">
-        <span class="capture-composer-title">Add task</span>
-        <span class="capture-composer-text">sync test flaky on ci again, prob clock skew in the retry backoff. high, due fri<i class="capture-cursor" aria-hidden="true"></i></span>
-        <span class="capture-composer-keys"><b>^N</b> create with AI</span>
-      </div>
-      <div class="capture-openers">
-        <p><kbd>a</kbd> inside aven</p>
-        <p><kbd>prefix</kbd> <kbd>t</kbd> tmux popup over any pane</p>
-      </div>
-    </li>
-    <li class="capture-source">
-      <p class="capture-source-label orange">Agent session</p>
-      <div class="capture-sample">
-        <span class="capture-agent-user">Add a follow-up to document token rotation.</span>
-        <span class="capture-agent-tool"><i aria-hidden="true"></i> Bash <code>aven add "Document token rotation"</code></span>
-      </div>
-      <p class="capture-source-note">Agents capture follow-ups as they work</p>
-    </li>
-    <li class="capture-source">
-      <p class="capture-source-label pink">Voice note</p>
-      <div class="capture-sample capture-chat">
-        <span class="capture-voice"><span class="capture-play" aria-hidden="true">▶</span><span class="capture-wave" aria-hidden="true">{waveform.map((height) => <i style={`--h: ${height / 16}rem`}></i>)}</span><span class="capture-voice-time">0:12</span></span>
-        <span class="capture-reply">Added to Aven: <b>AVN-01PD</b></span>
-      </div>
-      <p class="capture-source-note">Telegram via OpenClaw or similar</p>
-    </li>
-  </ol>
+  <div class="capture-flow">
+    <ol class="capture-sources">
+      <li class="capture-source capture-source-composer">
+        <p class="capture-source-label violet">Task composer</p>
+        <div class="capture-sample capture-composer">
+          <span class="capture-composer-title">Add task</span>
+          <span class="capture-composer-text">sync test flaky on ci again, prob clock skew in the retry backoff. high, due fri<i class="capture-cursor" aria-hidden="true"></i></span>
+          <span class="capture-composer-keys"><b>^N</b> create with AI</span>
+        </div>
+        <div class="capture-openers">
+          <p><kbd>a</kbd> inside aven</p>
+          <p><kbd>prefix</kbd> <kbd>t</kbd> tmux popup over any pane</p>
+        </div>
+      </li>
+      <li class="capture-source">
+        <p class="capture-source-label orange">Agent session</p>
+        <div class="capture-sample">
+          <span class="capture-agent-user">Add a follow-up to document token rotation.</span>
+          <span class="capture-agent-tool"><i aria-hidden="true"></i> Bash <code>aven add "Document token rotation"</code></span>
+        </div>
+        <p class="capture-source-note">Agents capture follow-ups as they work</p>
+      </li>
+      <li class="capture-source">
+        <p class="capture-source-label pink">Voice note</p>
+        <div class="capture-sample capture-chat">
+          <span class="capture-voice"><span class="capture-play" aria-hidden="true">▶</span><span class="capture-wave" aria-hidden="true">{waveform.map((height) => <i style={`--h: ${height / 16}rem`}></i>)}</span><span class="capture-voice-time">0:12</span></span>
+          <span class="capture-reply">Added to Aven: <b>AVN-01PD</b></span>
+        </div>
+        <p class="capture-source-note">Telegram via OpenClaw or similar</p>
+      </li>
+    </ol>
 
-  <div class="capture-rail" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="capture-rail" aria-hidden="true"><i></i><i></i><i></i></div>
 
-  <div class="capture-queue" role="img" aria-label="aven queue listing the five tasks captured from the composer, a tmux popup, an agent session, a voice note, and Tell Aven">
-    <div class="capture-queue-bar"><span>Queue</span><span class="capture-queue-count">{captured.length} captured today</span></div>
-    <ul>
-      {captured.map((task) => (
-        <li class:list={{ 'capture-fresh': task.fresh }} data-ref={task.ref}>
-          <span class:list={['capture-status', task.statusClass]}>{task.status}</span>
-          <span class="capture-ref">{task.ref}</span>
-          <span class="capture-title">{task.title}</span>
-          <span class:list={['capture-priority', task.priorityClass]} data-priority>{task.priority}</span>
-          <span class="capture-project">{task.project}</span>
-          <span class="capture-origin">{task.source}</span>
-        </li>
-      ))}
-    </ul>
+    <div class="capture-queue" role="img" aria-label="aven queue listing the five tasks captured from the composer, a tmux popup, an agent session, a voice note, and Tell Aven">
+      <div class="capture-queue-bar"><span>Queue</span><span class="capture-queue-count">{captured.length} captured today</span></div>
+      <ul>
+        {captured.map((task) => (
+          <li class:list={{ 'capture-fresh': task.fresh }} data-ref={task.ref}>
+            <span class:list={['capture-status', task.statusClass]}>{task.status}</span>
+            <span class="capture-ref">{task.ref}</span>
+            <span class="capture-title">{task.title}</span>
+            <span class:list={['capture-priority', task.priorityClass]} data-priority>{task.priority}</span>
+            <span class="capture-project">{task.project}</span>
+            <span class="capture-origin">{task.source}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   </div>
 
   <div class="capture-phone">
