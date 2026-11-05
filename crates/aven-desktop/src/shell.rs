@@ -2070,6 +2070,7 @@ impl Root {
                     .gap(px(2.))
                     .text(Text::Secondary)
                     .line_height(px(16.8))
+                    .when_some(self.render_update_row(cx), |footer, row| footer.child(row))
                     .when(sync_problem, |footer| {
                         footer.child(self.render_sync_state(cx).w_full())
                     })

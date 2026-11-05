@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::release::{FetchResult, fetch_latest};
+use super::eligibility::release_channel;
+use super::release::{FetchResult, ReleaseChannel, fetch_latest};
 use super::{CheckOutcome, Release, current_version};
 
 const CACHE_SCHEMA: u32 = 3;
@@ -102,7 +103,7 @@ pub(crate) async fn check_for_update(
     cache.last_attempt_at = Some(now);
     save_cache(&cache);
     let etag = cache.release.as_ref().and(cache.etag.as_deref());
-    match fetch_latest(client, etag).await {
+    match fetch_latest(client, etag, release_channel()).await {
         Ok(FetchResult::NotModified { etag }) => {
             cache.etag = etag;
             cache.last_success_at = Some(now);
@@ -161,12 +162,20 @@ fn check_due_at(cache: &UpdateCache, now: u64) -> bool {
     )
 }
 
+/// Each channel caches its own release, since each selects different archives.
 fn cache_path() -> Option<PathBuf> {
     cache_base(
         std::env::var_os("XDG_CACHE_HOME").as_deref(),
         dirs::home_dir().as_deref(),
     )
-    .map(|base| base.join("aven").join("update.json"))
+    .map(|base| base.join("aven").join(cache_file(release_channel())))
+}
+
+fn cache_file(channel: ReleaseChannel) -> &'static str {
+    match channel {
+        ReleaseChannel::Terminal => "update.json",
+        ReleaseChannel::Desktop => "update-desktop.json",
+    }
 }
 
 fn cache_base(xdg_cache_home: Option<&std::ffi::OsStr>, home: Option<&Path>) -> Option<PathBuf> {

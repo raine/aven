@@ -17,6 +17,8 @@ pub mod protected_local_keys;
 pub mod recurrence_input;
 pub mod render;
 pub mod routing;
+#[cfg(target_os = "macos")]
+pub mod running_processes;
 pub mod schedule_input;
 pub mod status;
 pub mod store;

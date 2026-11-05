@@ -44,11 +44,21 @@ pub struct Layout {
     pub state_file: PathBuf,
 }
 
+/// Where Desktop is installed. A debug build can be pointed at a scratch
+/// directory instead, to run the installed layout without the real app.
+fn applications() -> PathBuf {
+    #[cfg(debug_assertions)]
+    if let Some(dir) = std::env::var_os("AVEN_DEV_APPLICATIONS").filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    PathBuf::from("/Applications")
+}
+
 impl Layout {
     pub fn current() -> Result<Self> {
         let home = dirs::home_dir().context("could not find home directory")?;
         Ok(Self {
-            app: Path::new("/Applications").join(BUNDLE_NAME),
+            app: applications().join(BUNDLE_NAME),
             running: std::env::current_exe().context("resolve current executable")?,
             path: None,
             brew_prefixes: vec!["/opt/homebrew".into(), "/usr/local".into()],

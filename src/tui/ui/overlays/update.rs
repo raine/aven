@@ -377,6 +377,7 @@ fn update_lines(theme: &Theme, state: &UpdateOverlayState) -> Vec<Line<'static>>
             version,
             phase,
             cancelling,
+            blockers,
         } => {
             let mut lines = vec![
                 Line::from(vec![
@@ -400,6 +401,19 @@ fn update_lines(theme: &Theme, state: &UpdateOverlayState) -> Vec<Line<'static>>
                 ),
                 Line::from(""),
             ];
+            if !blockers.is_empty() {
+                for blocker in blockers {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {:>7}  ", blocker.pid), theme.dim()),
+                        Span::raw(blocker.command.clone()),
+                    ]));
+                }
+                lines.push(Line::from(Span::styled(
+                    "Quit these to continue. Aven does not stop them.",
+                    theme.dim(),
+                )));
+                lines.push(Line::from(""));
+            }
             lines.push(if phase.cancellable() {
                 dialog_hint_line(theme, &[("Esc", "cancel")])
             } else {

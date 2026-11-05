@@ -87,7 +87,15 @@ pub fn run_bundle_launch() -> Option<ExitCode> {
 
 #[cfg(all(target_os = "macos", feature = "desktop"))]
 fn run_app() -> ExitCode {
-    let started = logging::init(logging::LogMode::Tui).and_then(|()| aven_desktop::launch());
+    let started = logging::init(logging::LogMode::Tui).and_then(|()| {
+        let updates = update::DesktopUpdater::new()
+            .inspect_err(|error| {
+                tracing::warn!(error = %format_args!("{error:#}"), "the app cannot update itself")
+            })
+            .ok()
+            .map(|updater| std::sync::Arc::new(updater) as _);
+        aven_desktop::launch(updates)
+    });
     match started {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -340,6 +348,14 @@ async fn dispatch_standalone(
             }
             InternalSubcommand::ReloadDaemon => daemon::reload_service_definition(),
             InternalSubcommand::DesktopSetup => cmd_internal_desktop_setup(),
+            #[cfg(target_os = "macos")]
+            InternalSubcommand::FinishDesktopUpdate(args) => {
+                update::finish_desktop_update(&args.marker, args.pid).await
+            }
+            #[cfg(not(target_os = "macos"))]
+            InternalSubcommand::FinishDesktopUpdate(_) => {
+                anyhow::bail!("Aven Desktop updates exist only on macOS")
+            }
         },
         StandaloneCommand::Daemon(args) => {
             let config = config::AppConfig::load()?;

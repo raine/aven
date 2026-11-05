@@ -174,6 +174,7 @@ async fn update_review_supports_action_focus_and_later() {
                 method: crate::update::InstallMethod::Direct {
                     target: "/tmp/aven".into(),
                 },
+                channel: crate::update::ReleaseChannel::Terminal,
             },
             notes: crate::tui::overlay::UpdateNotesState::Ready(
                 "## v99.0.0\n\n- release note".to_string(),

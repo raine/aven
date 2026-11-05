@@ -8,6 +8,26 @@ use super::{REPOSITORY, Release, ReleaseArchive};
 
 const RELEASE_API: &str = "https://api.github.com/repos/raine/aven/releases/latest";
 
+/// Debug builds read releases from this URL instead, so a local server can
+/// stand in for GitHub. Its assets may then live on a loopback HTTP address.
+#[cfg(debug_assertions)]
+const RELEASE_API_OVERRIDE: &str = "AVEN_DEV_RELEASE_API";
+
+fn release_api() -> String {
+    #[cfg(debug_assertions)]
+    if let Some(api) = release_api_override() {
+        return api;
+    }
+    RELEASE_API.to_string()
+}
+
+#[cfg(debug_assertions)]
+fn release_api_override() -> Option<String> {
+    std::env::var(RELEASE_API_OVERRIDE)
+        .ok()
+        .filter(|api| !api.is_empty())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FetchResult {
     NotModified {
@@ -34,8 +54,9 @@ struct GithubAsset {
 pub(super) async fn fetch_latest(
     client: &reqwest::Client,
     etag: Option<&str>,
+    channel: ReleaseChannel,
 ) -> Result<FetchResult> {
-    let mut request = client.get(RELEASE_API);
+    let mut request = client.get(release_api());
     if let Some(etag) = etag {
         request = request.header(IF_NONE_MATCH, etag);
     }
@@ -69,12 +90,12 @@ pub(super) async fn fetch_latest(
     let release: GithubRelease =
         serde_json::from_slice(&body).context("parse latest GitHub release")?;
     Ok(FetchResult::Release {
-        release: parse_release(release)?,
+        release: parse_release(release, channel)?,
         etag: response_etag,
     })
 }
 
-fn parse_release(release: GithubRelease) -> Result<Release> {
+fn parse_release(release: GithubRelease, channel: ReleaseChannel) -> Result<Release> {
     let raw_version = release
         .tag_name
         .strip_prefix('v')
@@ -87,9 +108,20 @@ fn parse_release(release: GithubRelease) -> Result<Release> {
     let checksum_url = unique_asset_url(&release.assets, &checksum_name)?;
     validate_asset_url(&archive_url)?;
     validate_asset_url(&checksum_url)?;
-    let app = match platform_app_archive_name()? {
-        Some(name) => optional_archive(&release.assets, name)?,
-        None => None,
+    let app = match (channel, channel_app_archive_name(channel)?) {
+        (ReleaseChannel::Terminal, Some(name)) => optional_archive(&release.assets, name)?,
+        (ReleaseChannel::Terminal, None) => None,
+        // A Desktop install updates only from its own archive.
+        (ReleaseChannel::Desktop, Some(name)) => {
+            if !release.assets.iter().any(|asset| asset.name == name) {
+                bail!(
+                    "release {} has no Aven Desktop archive {name}",
+                    release.tag_name
+                );
+            }
+            optional_archive(&release.assets, name)?
+        }
+        (ReleaseChannel::Desktop, None) => bail!("Aven Desktop has no release archive here"),
     };
 
     Ok(Release {
@@ -131,6 +163,13 @@ fn unique_asset_url(assets: &[GithubAsset], name: &str) -> Result<String> {
 
 fn validate_asset_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).context("parse release asset URL")?;
+    #[cfg(debug_assertions)]
+    if release_api_override().is_some()
+        && parsed.scheme() == "http"
+        && parsed.host_str() == Some("127.0.0.1")
+    {
+        return Ok(());
+    }
     if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
         bail!("release asset URL is not an HTTPS GitHub URL");
     }
@@ -145,7 +184,7 @@ pub(super) fn platform_archive_name() -> Result<String> {
     Ok(format!("aven-{}.tar.gz", platform_suffix()?))
 }
 
-/// The archive holding only `Aven.app`, published for macOS.
+#[cfg(test)]
 fn platform_app_archive_name() -> Result<Option<String>> {
     channel_app_archive_name(ReleaseChannel::Terminal)
 }
@@ -157,13 +196,12 @@ pub(crate) enum ReleaseChannel {
     /// CLI, TUI and daemon without the desktop app.
     Terminal,
     /// The desktop app, which also provides the CLI, TUI and daemon.
-    #[cfg_attr(not(test), allow(dead_code))]
     Desktop,
 }
 
 /// The archive holding only `Aven.app` for `channel` on this platform, or
 /// `None` where the terminal channel ships only the bare binary archive.
-pub(super) fn channel_app_archive_name(channel: ReleaseChannel) -> Result<Option<String>> {
+fn channel_app_archive_name(channel: ReleaseChannel) -> Result<Option<String>> {
     let suffix = platform_suffix()?;
     let macos = suffix.starts_with("darwin-");
     match channel {
@@ -200,10 +238,13 @@ mod tests {
     fn parses_release_and_strips_v_for_semver() {
         let archive = platform_archive_name().unwrap();
         let checksum = archive.replace(".tar.gz", ".sha256");
-        let parsed = parse_release(GithubRelease {
-            tag_name: "v1.2.3".to_string(),
-            assets: vec![asset(&archive), asset(&checksum)],
-        })
+        let parsed = parse_release(
+            GithubRelease {
+                tag_name: "v1.2.3".to_string(),
+                assets: vec![asset(&archive), asset(&checksum)],
+            },
+            ReleaseChannel::Terminal,
+        )
         .unwrap();
 
         assert_eq!(parsed.version, Version::new(1, 2, 3));
@@ -218,15 +259,18 @@ mod tests {
         let checksum = archive.replace(".tar.gz", ".sha256");
         let app = archive.replace(".tar.gz", "-app.tar.gz");
         let app_checksum = archive.replace(".tar.gz", "-app.sha256");
-        let parsed = parse_release(GithubRelease {
-            tag_name: "v1.2.3".to_string(),
-            assets: vec![
-                asset(&archive),
-                asset(&checksum),
-                asset(&app),
-                asset(&app_checksum),
-            ],
-        })
+        let parsed = parse_release(
+            GithubRelease {
+                tag_name: "v1.2.3".to_string(),
+                assets: vec![
+                    asset(&archive),
+                    asset(&checksum),
+                    asset(&app),
+                    asset(&app_checksum),
+                ],
+            },
+            ReleaseChannel::Terminal,
+        )
         .unwrap();
 
         if cfg!(target_os = "macos") {
@@ -239,38 +283,47 @@ mod tests {
                     .ends_with(&format!("/v1.2.3/{app_checksum}"))
             );
             assert!(
-                parse_release(GithubRelease {
-                    tag_name: "v1.2.3".to_string(),
-                    assets: vec![asset(&archive), asset(&checksum), asset(&app)],
-                })
+                parse_release(
+                    GithubRelease {
+                        tag_name: "v1.2.3".to_string(),
+                        assets: vec![asset(&archive), asset(&checksum), asset(&app)],
+                    },
+                    ReleaseChannel::Terminal
+                )
                 .is_err(),
                 "an app archive without its checksum must be rejected"
             );
             assert!(
-                parse_release(GithubRelease {
-                    tag_name: "v1.2.3".to_string(),
-                    assets: vec![
-                        asset(&archive),
-                        asset(&checksum),
-                        asset(&app),
-                        asset(&app),
-                        asset(&app_checksum),
-                    ],
-                })
+                parse_release(
+                    GithubRelease {
+                        tag_name: "v1.2.3".to_string(),
+                        assets: vec![
+                            asset(&archive),
+                            asset(&checksum),
+                            asset(&app),
+                            asset(&app),
+                            asset(&app_checksum),
+                        ],
+                    },
+                    ReleaseChannel::Terminal
+                )
                 .is_err()
             );
             let mut foreign = asset(&app);
             foreign.browser_download_url = format!("https://example.com/{app}");
             assert!(
-                parse_release(GithubRelease {
-                    tag_name: "v1.2.3".to_string(),
-                    assets: vec![
-                        asset(&archive),
-                        asset(&checksum),
-                        foreign,
-                        asset(&app_checksum),
-                    ],
-                })
+                parse_release(
+                    GithubRelease {
+                        tag_name: "v1.2.3".to_string(),
+                        assets: vec![
+                            asset(&archive),
+                            asset(&checksum),
+                            foreign,
+                            asset(&app_checksum),
+                        ],
+                    },
+                    ReleaseChannel::Terminal
+                )
                 .is_err()
             );
         } else {
@@ -299,29 +352,84 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn each_channel_parses_only_its_own_app_archive() {
+        let suffix = platform_suffix().unwrap();
+        let named = |name: String| [asset(&name), asset(&name.replace(".tar.gz", ".sha256"))];
+        let terminal = named(format!("aven-{suffix}-app.tar.gz"));
+        let desktop = named(format!("aven-desktop-{suffix}-app.tar.gz"));
+        let bare = named(platform_archive_name().unwrap());
+        let release = |assets: &[&[GithubAsset; 2]]| GithubRelease {
+            tag_name: "v1.2.3".to_string(),
+            assets: assets
+                .iter()
+                .flat_map(|pair| pair.iter())
+                .map(|asset| GithubAsset {
+                    name: asset.name.clone(),
+                    browser_download_url: asset.browser_download_url.clone(),
+                })
+                .collect(),
+        };
+
+        let both = [&bare, &terminal, &desktop];
+        let desktop_app = parse_release(release(&both), ReleaseChannel::Desktop)
+            .unwrap()
+            .app
+            .unwrap();
+        assert_eq!(desktop_app.name, desktop[0].name);
+        assert!(desktop_app.checksum_url.ends_with(&desktop[1].name));
+        let terminal_app = parse_release(release(&both), ReleaseChannel::Terminal)
+            .unwrap()
+            .app
+            .unwrap();
+        assert_eq!(terminal_app.name, terminal[0].name);
+
+        let error = parse_release(release(&[&bare, &terminal]), ReleaseChannel::Desktop)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no Aven Desktop archive"), "{error}");
+        assert_eq!(
+            parse_release(release(&[&bare, &desktop]), ReleaseChannel::Terminal)
+                .unwrap()
+                .app,
+            None,
+            "the terminal channel must never pick up the Desktop archive"
+        );
+    }
+
     #[test]
     fn rejects_malformed_version_and_missing_or_duplicate_assets() {
         let archive = platform_archive_name().unwrap();
         let checksum = archive.replace(".tar.gz", ".sha256");
         assert!(
-            parse_release(GithubRelease {
-                tag_name: "latest".to_string(),
-                assets: vec![asset(&archive), asset(&checksum)],
-            })
+            parse_release(
+                GithubRelease {
+                    tag_name: "latest".to_string(),
+                    assets: vec![asset(&archive), asset(&checksum)],
+                },
+                ReleaseChannel::Terminal
+            )
             .is_err()
         );
         assert!(
-            parse_release(GithubRelease {
-                tag_name: "v1.2.3".to_string(),
-                assets: vec![asset(&archive)],
-            })
+            parse_release(
+                GithubRelease {
+                    tag_name: "v1.2.3".to_string(),
+                    assets: vec![asset(&archive)],
+                },
+                ReleaseChannel::Terminal
+            )
             .is_err()
         );
         assert!(
-            parse_release(GithubRelease {
-                tag_name: "v1.2.3".to_string(),
-                assets: vec![asset(&archive), asset(&archive), asset(&checksum)],
-            })
+            parse_release(
+                GithubRelease {
+                    tag_name: "v1.2.3".to_string(),
+                    assets: vec![asset(&archive), asset(&archive), asset(&checksum)],
+                },
+                ReleaseChannel::Terminal
+            )
             .is_err()
         );
     }

@@ -67,6 +67,7 @@ async fn install_release(
     let install = update::install_direct(client, plan, progress_tx, cancelled);
     tokio::pin!(install);
     let mut phase = progress_rx.borrow().phase;
+    let mut blockers = Vec::new();
     println!("{}...", phase.label());
 
     let success = loop {
@@ -76,10 +77,14 @@ async fn install_release(
                 if changed.is_err() {
                     continue;
                 }
-                let next = progress_rx.borrow().phase;
-                if next != phase {
-                    phase = next;
+                let next = progress_rx.borrow().clone();
+                if next.phase != phase {
+                    phase = next.phase;
                     println!("{}...", phase.label());
+                }
+                if next.blockers != blockers {
+                    blockers = next.blockers;
+                    print_blockers(&blockers);
                 }
             }
         }
@@ -88,6 +93,18 @@ async fn install_release(
     println!("Installed aven v{}.", success.version);
     println!("Restart any running aven processes to use the update.");
     Ok(())
+}
+
+/// Lists the processes an update of a Desktop install waits for. It never
+/// stops them, because they would keep writing with the old version.
+fn print_blockers(blockers: &[update::Blocker]) {
+    if blockers.is_empty() {
+        return;
+    }
+    println!("These still run this installation of aven; quit them to continue:");
+    for blocker in blockers {
+        println!("  {:>7}  {}", blocker.pid, blocker.command);
+    }
 }
 
 fn cached_suffix(cached: bool) -> &'static str {

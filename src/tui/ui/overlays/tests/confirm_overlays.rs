@@ -43,6 +43,7 @@ fn available_update_combines_release_notes_and_actions() {
                 method: crate::update::InstallMethod::Direct {
                     target: "/usr/local/bin/aven".into(),
                 },
+                channel: crate::update::ReleaseChannel::Terminal,
             },
             notes: crate::tui::overlay::UpdateNotesState::Ready(
                 "## v1.2.3\n\n- Faster updates\n\n## v1.1.0\n\n- Earlier changes".to_string(),

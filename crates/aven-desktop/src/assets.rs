@@ -42,6 +42,8 @@ impl AssetSource for Assets {
             "icons/ic-ready.svg" => include_bytes!("../assets/icons/ic-ready.svg"),
             "icons/ic-recurring.svg" => include_bytes!("../assets/icons/ic-recurring.svg"),
             "icons/ic-settings.svg" => include_bytes!("../assets/icons/ic-settings.svg"),
+            "icons/ic-update.svg" => include_bytes!("../assets/icons/ic-update.svg"),
+            "icons/ic-restart.svg" => include_bytes!("../assets/icons/ic-restart.svg"),
             "icons/ic-upcoming.svg" => include_bytes!("../assets/icons/ic-upcoming.svg"),
             "icons/nav-toggle.svg" => include_bytes!("../assets/icons/nav-toggle.svg"),
             "icons/ra-attach.svg" => include_bytes!("../assets/icons/ra-attach.svg"),
