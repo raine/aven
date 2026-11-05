@@ -155,6 +155,7 @@ async fn deferred_task_intake_retains_spawned_workspace() {
             ],
             timeout_seconds: Some(5),
             system_prompt: None,
+            image_args: Vec::new(),
         },
         "deferred task".to_string(),
         None,

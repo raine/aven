@@ -455,7 +455,7 @@ security guidance.
 
 ## Agent task intake
 
-Natural-language task intake can call an external agent command. Include `{prompt}` in an argument to pass the generated prompt there. When no argument contains `{prompt}`, aven writes the prompt to the command's standard input. Custom system prompts can use `{input}`, `{priorities}`, `{selected_project}`, `{inferred_project}`, `{projects}`, and `{labels}`. A non-empty selected project is authoritative, while the inferred project comes from current-directory routing.
+Natural-language task intake can call an external agent command. Include `{prompt}` in an argument to pass the generated prompt there. When no argument contains `{prompt}`, aven writes the prompt to the command's standard input. Custom system prompts can use `{input}`, `{priorities}`, `{selected_project}`, `{inferred_project}`, `{projects}`, `{labels}`, and `{images}`. A non-empty selected project is authoritative, while the inferred project comes from current-directory routing or the desktop launcher's project hint.
 
 ```yaml
 agent:
@@ -463,6 +463,15 @@ agent:
     command: "claude"
     args: ["-p", "--no-session-persistence", "--bare", "{prompt}"]
     timeout_seconds: 45
+```
+
+Images submitted from the desktop launcher are written to a private temporary directory for the duration of the command and removed afterwards. `{images}` lists their file paths, one per line, and the default prompt includes it. `image_args` are placed before `args` when a submission has images: once, with `{image_dir}` replaced by the directory, or once per image when an argument contains `{image}`. Aven refuses an image submission when neither `image_args` nor a prompt containing `{images}` can deliver it. Claude reads the listed files once their directory is allowed:
+
+```yaml
+agent:
+  task_intake:
+    command: "claude"
+    image_args: ["--add-dir", "{image_dir}"]
 ```
 
 [Pi](https://pi.dev) accepts the task-intake prompt through standard input in print mode. This configuration uses Pi's configured default provider and model:

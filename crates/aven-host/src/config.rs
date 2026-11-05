@@ -219,6 +219,10 @@ pub struct TaskIntakeConfig {
     pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Arguments placed before `args` when a submission has images: once, or
+    /// once per image when they contain `{image}`.
+    #[serde(default)]
+    pub image_args: Vec<String>,
 }
 
 fn default_task_intake_args() -> Vec<String> {
@@ -237,6 +241,7 @@ impl Default for TaskIntakeConfig {
             args: default_task_intake_args(),
             timeout_seconds: Some(45),
             system_prompt: None,
+            image_args: Vec::new(),
         }
     }
 }

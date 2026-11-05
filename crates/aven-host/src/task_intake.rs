@@ -1,4 +1,5 @@
 use crate::ids::WorkspaceId;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -64,6 +65,12 @@ impl TaskIntakeResult {
     }
 }
 
+/// An image submitted with intake text for the agent to interpret.
+pub struct TaskIntakeImage<'a> {
+    pub name: &'a str,
+    pub bytes: &'a [u8],
+}
+
 pub struct TaskIntakeContext {
     pub workspace_id: WorkspaceId,
     pub fixed_project: Option<String>,
@@ -85,6 +92,31 @@ impl TaskIntakeContext {
         };
         let routing = crate::routing::InvocationRouting::new(&config);
         Self::load_with_routing(database, workspace, project, &routing).await
+    }
+
+    /// Context whose `hint` is only a fallback the agent may override. Nothing
+    /// is inferred from the process, so no hint leaves the project to the agent.
+    pub async fn with_project_hint(
+        database: &Database,
+        workspace: &Workspace,
+        hint: Option<&str>,
+    ) -> Result<Self> {
+        let inferred_project = match hint {
+            Some(hint) => Some(
+                database
+                    .resolve_existing_project(&workspace.id, hint)
+                    .await?
+                    .key,
+            ),
+            None => None,
+        };
+        Ok(Self {
+            workspace_id: workspace.id.clone(),
+            fixed_project: None,
+            inferred_project,
+            projects: database.list_project_items(&workspace.id).await?,
+            labels: database.list_labels(&workspace.id, None).await?,
+        })
     }
 
     pub async fn load_with_routing(
@@ -126,6 +158,18 @@ pub async fn run_task_intake_command(
     context: &TaskIntakeContext,
     input: &str,
 ) -> Result<String> {
+    run_task_intake_command_with_images(config, context, input, &[]).await
+}
+
+/// Runs the agent with `images` staged as files in a private directory that
+/// lives only as long as the command. The prompt's `{images}` lists their
+/// paths, and `image_args` passes them as arguments.
+pub async fn run_task_intake_command_with_images(
+    config: &TaskIntakeConfig,
+    context: &TaskIntakeContext,
+    input: &str,
+    images: &[TaskIntakeImage<'_>],
+) -> Result<String> {
     let command = config
         .command
         .as_deref()
@@ -133,13 +177,39 @@ pub async fn run_task_intake_command(
         .context(
             "error task-intake-command-required hint=\"configure agent.task_intake.command\"",
         )?;
-    let prompt = task_intake_prompt(config, context, input);
+    let template = task_intake_template(config);
+    if !images.is_empty() && config.image_args.is_empty() && !template.contains("{images}") {
+        bail!(
+            "error task-intake-images-unsupported hint=\"set agent.task_intake.image_args or use {{images}} in agent.task_intake.system_prompt\""
+        );
+    }
+    let staged = stage_images(images)?;
+    let paths = staged
+        .as_ref()
+        .map_or(&[][..], |(_, paths)| paths.as_slice());
+    let prompt = expand_task_intake_prompt(template, context, input, paths);
     let prompt_arg = config.args.iter().any(|arg| arg.contains("{prompt}"));
-    let args = config
-        .args
-        .iter()
-        .map(|arg| arg.replace("{prompt}", &prompt).replace("{input}", input))
-        .collect::<Vec<_>>();
+    let mut args = Vec::new();
+    if let Some((dir, paths)) = &staged {
+        let dir = dir.path().display().to_string();
+        let each = config.image_args.iter().any(|arg| arg.contains("{image}"));
+        let rounds = if each { paths.len() } else { 1 };
+        for path in paths.iter().take(rounds) {
+            let path = path.display().to_string();
+            args.extend(
+                config
+                    .image_args
+                    .iter()
+                    .map(|arg| arg.replace("{image_dir}", &dir).replace("{image}", &path)),
+            );
+        }
+    }
+    args.extend(
+        config
+            .args
+            .iter()
+            .map(|arg| arg.replace("{prompt}", &prompt).replace("{input}", input)),
+    );
     let stdin = if prompt_arg {
         Stdio::null()
     } else {
@@ -179,18 +249,44 @@ pub async fn run_task_intake_command(
     String::from_utf8(output.stdout).context("task intake output was not utf-8")
 }
 
-fn task_intake_prompt(
-    config: &TaskIntakeConfig,
-    context: &TaskIntakeContext,
-    input: &str,
-) -> String {
-    let template = config
+fn task_intake_template(config: &TaskIntakeConfig) -> &str {
+    config
         .system_prompt
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(default_task_intake_system_prompt());
-    expand_task_intake_prompt(template, context, input)
+        .unwrap_or(default_task_intake_system_prompt())
+}
+
+/// Writes `images` into a fresh private directory, removed when the returned
+/// handle drops. File names come from the index, never from the given name.
+fn stage_images(
+    images: &[TaskIntakeImage<'_>],
+) -> Result<Option<(tempfile::TempDir, Vec<PathBuf>)>> {
+    if images.is_empty() {
+        return Ok(None);
+    }
+    let dir = tempfile::Builder::new()
+        .prefix("aven-intake-")
+        .tempdir()
+        .context("could not stage task intake images")?;
+    let mut paths = Vec::with_capacity(images.len());
+    for (index, image) in images.iter().enumerate() {
+        let extension = std::path::Path::new(image.name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| {
+                !extension.is_empty()
+                    && extension.len() <= 8
+                    && extension.chars().all(|c| c.is_ascii_alphanumeric())
+            })
+            .unwrap_or("png")
+            .to_ascii_lowercase();
+        let path = dir.path().join(format!("image-{}.{extension}", index + 1));
+        std::fs::write(&path, image.bytes).context("could not stage task intake images")?;
+        paths.push(path);
+    }
+    Ok(Some((dir, paths)))
 }
 
 fn default_task_intake_system_prompt() -> &'static str {
@@ -214,16 +310,32 @@ Rules:\n\
 - For recurrence, omit available_at and due_on. Set repeat_at only for a stated recurring availability time, repeat_due only for an explicit same-day or no-due policy, time_zone only for an explicit IANA zone, and repeat_start_on only for an explicit YYYY-MM-DD start date.\n\
 - Recurrence defaults are no availability time, same-day due, the local time zone, and today in that zone.\n\
 - Omit optional fields when they do not apply.\n\
-- Put durable context in description when helpful.\n\n\
+- Put durable context in description when helpful.\n\
+- When images are attached, look at them and let them inform the task.\n\n\
 Use only these priorities: {priorities}.\n\n\
 Selected project: {selected_project}\n\n\
 Inferred project: {inferred_project}\n\n\
 Available projects:\n{projects}\n\n\
 Available labels:\n{labels}\n\n\
+Attached images:\n{images}\n\n\
 Raw intake text:\n{input}\n"
 }
 
-fn expand_task_intake_prompt(template: &str, context: &TaskIntakeContext, input: &str) -> String {
+fn expand_task_intake_prompt(
+    template: &str,
+    context: &TaskIntakeContext,
+    input: &str,
+    images: &[PathBuf],
+) -> String {
+    let images = if images.is_empty() {
+        "(none)".to_string()
+    } else {
+        images
+            .iter()
+            .map(|path| format!("- {}", path.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     template
         .replace("{priorities}", &PRIORITIES.join(", "))
         .replace(
@@ -236,6 +348,7 @@ fn expand_task_intake_prompt(template: &str, context: &TaskIntakeContext, input:
         )
         .replace("{projects}", &task_intake_projects_prompt(context))
         .replace("{labels}", &task_intake_labels_prompt(context))
+        .replace("{images}", &images)
         .replace("{input}", input)
 }
 
@@ -409,6 +522,240 @@ mod tests {
         );
     }
 
+    fn shell(script: &str, timeout_seconds: u64) -> TaskIntakeConfig {
+        TaskIntakeConfig {
+            command: Some("sh".to_string()),
+            args: vec!["-c".to_string(), script.to_string()],
+            timeout_seconds: Some(timeout_seconds),
+            ..TaskIntakeConfig::default()
+        }
+    }
+
+    /// A command that records its arguments in `dir/args`, then runs `body`
+    /// with `$log` set to `dir`.
+    #[cfg(unix)]
+    fn script(dir: &std::path::Path, body: &str) -> TaskIntakeConfig {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = dir.join("agent.sh");
+        let log = dir.display();
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\nlog='{log}'\nprintf '%s\\n' \"$@\" > \"$log/args\"\n{body}\n"),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        TaskIntakeConfig {
+            command: Some(path.display().to_string()),
+            args: Vec::new(),
+            timeout_seconds: Some(5),
+            ..TaskIntakeConfig::default()
+        }
+    }
+
+    fn empty_context() -> TaskIntakeContext {
+        TaskIntakeContext {
+            workspace_id: Workspace::default().id,
+            fixed_project: None,
+            inferred_project: None,
+            projects: Vec::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    async fn failure(config: &TaskIntakeConfig, images: &[TaskIntakeImage<'_>]) -> String {
+        let error = run_task_intake_command_with_images(config, &empty_context(), "x", images)
+            .await
+            .unwrap_err();
+        format!("{error:#}")
+    }
+
+    #[tokio::test]
+    async fn task_intake_reports_command_failures() {
+        let failed = failure(&shell("echo boom >&2; exit 3", 5), &[]).await;
+        assert!(failed.contains("task-intake-command-failed"), "{failed}");
+        assert!(failed.contains("boom"), "{failed}");
+        let slow = failure(&shell("sleep 5", 1), &[]).await;
+        assert!(slow.contains("task-intake-timeout"), "{slow}");
+        let missing = TaskIntakeConfig {
+            command: Some("/nonexistent/aven-intake-agent".to_string()),
+            ..TaskIntakeConfig::default()
+        };
+        let missing = failure(&missing, &[]).await;
+        assert!(missing.contains("could not start"), "{missing}");
+    }
+
+    #[tokio::test]
+    async fn task_intake_refuses_images_it_cannot_deliver() {
+        let config = TaskIntakeConfig {
+            command: Some("/nonexistent/aven-intake-agent".to_string()),
+            system_prompt: Some("Text only: {input}".to_string()),
+            ..TaskIntakeConfig::default()
+        };
+        let image = TaskIntakeImage {
+            name: "shot.png",
+            bytes: b"png",
+        };
+        let refused = failure(&config, &[image]).await;
+        assert!(
+            refused.contains("task-intake-images-unsupported"),
+            "{refused}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn task_intake_stages_images_for_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = TaskIntakeConfig {
+            image_args: vec!["--image".to_string(), "{image}".to_string()],
+            ..script(
+                dir.path(),
+                "for arg in \"$@\"; do [ -f \"$arg\" ] && cat \"$arg\" >> \"$log/bytes\"; done\n\
+                 cat > \"$log/prompt\"\nprintf '{\"title\":\"Seen\"}'",
+            )
+        };
+        let images = [
+            TaskIntakeImage {
+                name: "first.JPG",
+                bytes: b"one",
+            },
+            TaskIntakeImage {
+                name: "../../escape",
+                bytes: b"two",
+            },
+        ];
+        let output = run_task_intake_command_with_images(&config, &empty_context(), "x", &images)
+            .await
+            .unwrap();
+        assert_eq!(output, "{\"title\":\"Seen\"}");
+        assert_eq!(std::fs::read(dir.path().join("bytes")).unwrap(), b"onetwo");
+        let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
+        let args = args.lines().collect::<Vec<_>>();
+        assert_eq!(args.len(), 4, "{args:?}");
+        assert_eq!([args[0], args[2]], ["--image", "--image"]);
+        let (first, second) = (PathBuf::from(args[1]), PathBuf::from(args[3]));
+        assert!(first.ends_with("image-1.jpg"), "{first:?}");
+        assert!(second.ends_with("image-2.png"), "{second:?}");
+        assert_eq!(first.parent(), second.parent());
+        let prompt = std::fs::read_to_string(dir.path().join("prompt")).unwrap();
+        assert!(
+            prompt.contains(&format!("- {}", first.display())),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains(&format!("- {}", second.display())),
+            "{prompt}"
+        );
+        assert!(!first.exists(), "staged images are removed afterwards");
+        assert!(!first.parent().unwrap().exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn task_intake_passes_the_image_directory_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = TaskIntakeConfig {
+            image_args: vec!["--add-dir".to_string(), "{image_dir}".to_string()],
+            args: vec!["{prompt}".to_string()],
+            ..script(dir.path(), "echo '{}'")
+        };
+        let images = [
+            TaskIntakeImage {
+                name: "a.png",
+                bytes: b"a",
+            },
+            TaskIntakeImage {
+                name: "b.png",
+                bytes: b"b",
+            },
+        ];
+        run_task_intake_command_with_images(&config, &empty_context(), "x", &images)
+            .await
+            .unwrap();
+        let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
+        let args = args.lines().collect::<Vec<_>>();
+        assert_eq!(args.iter().filter(|arg| **arg == "--add-dir").count(), 1);
+        assert_eq!(
+            args[0], "--add-dir",
+            "image arguments precede the configured ones"
+        );
+        assert!(args[1].contains("aven-intake-"), "{args:?}");
+        assert!(
+            args[2].starts_with("You turn raw task intake text"),
+            "{args:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_hint_is_a_fallback_the_agent_can_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = Database::open(&dir.path().join("db.sqlite")).await.unwrap();
+        let workspace = Workspace::default();
+        let home = database
+            .create_project(&workspace, "Home", None)
+            .await
+            .unwrap();
+        let work = database
+            .create_project(&workspace, "Work", None)
+            .await
+            .unwrap();
+        let (home, work) = (home.project.key, work.project.key);
+
+        let auto = TaskIntakeContext::with_project_hint(&database, &workspace, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                auto.fixed_project.as_deref(),
+                auto.inferred_project.as_deref()
+            ),
+            (None, None)
+        );
+        async fn parse(
+            database: &Database,
+            context: &TaskIntakeContext,
+            output: &str,
+        ) -> Result<TaskIntakeResult> {
+            parsed_output_to_result_with_database(database, context, output, TaskSource::Unknown)
+                .await
+        }
+        let unrouted = parse(&database, &auto, "{\"title\":\"Plain\"}")
+            .await
+            .unwrap();
+        assert_eq!(unrouted.task.project, None);
+
+        let hinted = TaskIntakeContext::with_project_hint(&database, &workspace, Some("work"))
+            .await
+            .unwrap();
+        assert_eq!(hinted.fixed_project, None);
+        let fallback = parse(&database, &hinted, "{\"title\":\"Fallback\"}")
+            .await
+            .unwrap();
+        assert_eq!(fallback.task.project.as_deref(), Some(work.as_str()));
+        let chosen = parse(
+            &database,
+            &hinted,
+            "{\"title\":\"Chosen\",\"project\":\"Home\"}",
+        )
+        .await
+        .unwrap();
+        assert_eq!(chosen.task.project.as_deref(), Some(home.as_str()));
+
+        let malformed = parse(&database, &hinted, "no json here")
+            .await
+            .err()
+            .unwrap();
+        assert!(format!("{malformed:#}").contains("task-intake-json-missing"));
+        let untitled = parse(&database, &hinted, "{\"title\":\" \"}")
+            .await
+            .err()
+            .unwrap();
+        assert!(format!("{untitled:#}").contains("task-intake-title-required"));
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn aborting_task_intake_terminates_command() {
@@ -427,6 +774,7 @@ mod tests {
             args: vec![pid_file.display().to_string()],
             timeout_seconds: Some(30),
             system_prompt: None,
+            image_args: Vec::new(),
         };
         let context = TaskIntakeContext {
             workspace_id: Workspace::default().id,
