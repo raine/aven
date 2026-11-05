@@ -15,6 +15,7 @@ mod details;
 mod dialogs;
 mod display;
 mod draft;
+mod empty;
 pub mod hotkey;
 mod images;
 mod input;

@@ -363,6 +363,7 @@ pub struct Snapshot {
     pub series: Vec<SeriesRow>,
     pub workspaces: Vec<NavEntry>,
     pub projects: Vec<NavEntry>,
+    /// Task counts by view, in scope. The sidebar shows only some of them.
     pub views: Vec<(&'static str, i64)>,
     pub view: ViewInfo,
     pub labels: Vec<String>,

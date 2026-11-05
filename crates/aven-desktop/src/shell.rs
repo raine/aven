@@ -1520,7 +1520,7 @@ impl Root {
         let t = theme(cx);
         match self.items[ix].clone() {
             Item::Pad(height) => div().h(px(height)).into_any_element(),
-            Item::Empty => self.render_empty(cx).into_any_element(),
+            Item::Empty => self.render_empty(cx),
             Item::Log { line, .. } => self.render_ledger_line(line, cx),
             Item::AllClear => self.render_all_clear(cx),
             Item::Lifecycle => self.render_lifecycle(cx),
@@ -2511,83 +2511,6 @@ impl Root {
                     .child("Display"),
             )
         })
-    }
-
-    fn render_empty(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let t = theme(cx);
-        let snapshot = &self.session.snapshot;
-        let view = &snapshot.view;
-        let count = |key: &str| {
-            let counts = snapshot.views.iter();
-            counts
-                .clone()
-                .find(|(view, _)| *view == key)
-                .map_or(0, |(_, n)| *n)
-        };
-        let ready = format!(
-            "{} blocked and {} deferred.",
-            count("blocked"),
-            count("upcoming")
-        );
-        let (heading, line, go): (&str, &str, &[TaskQuery]) = match view.query {
-            TaskQuery::Search => ("No search results", "", &[]),
-            _ if view.has_filters() => ("No tasks match these filters", "", &[]),
-            TaskQuery::Queue => ("Queue is clear", "Press a to add a task.", &[]),
-            TaskQuery::Ready => (
-                "Nothing is ready",
-                ready.as_str(),
-                &[TaskQuery::Blocked, TaskQuery::Upcoming],
-            ),
-            TaskQuery::Inbox => ("Inbox zero", "Everything captured has been triaged.", &[]),
-            TaskQuery::Overdue => (
-                "Nothing overdue",
-                "Deferred work with a passed deadline stays in Upcoming.",
-                &[TaskQuery::Upcoming],
-            ),
-            TaskQuery::Conflicts => ("No conflicts", "Devices agree on every field.", &[]),
-            TaskQuery::Blocked => ("Nothing is blocked", "", &[TaskQuery::Ready]),
-            TaskQuery::Upcoming => ("Nothing deferred", "Defer a task with e a.", &[]),
-            _ => ("Nothing here", "", &[]),
-        };
-        let search = view.query == TaskQuery::Search;
-        let filtered = !search && view.has_filters();
-        let mut actions = div().mt(px(12.)).flex().justify_center().gap(px(6.));
-        if search {
-            actions = actions.child(line_btn("empty-search", "Search", &t).on_click(
-                cx.listener(|this, _, window, cx| this.open_search(&OpenSearch, window, cx)),
-            ));
-        }
-        if filtered {
-            actions = actions.child(line_btn("empty-clear", "Clear filters", &t).on_click(
-                cx.listener(|this, _, window, cx| this.clear_filters(&ClearFilters, window, cx)),
-            ));
-        }
-        for (ix, query) in go.iter().copied().enumerate() {
-            actions = actions.child(line_btn(("empty-go", ix), view_name(query), &t).on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.show_view(&ShowView(query), window, cx);
-                }),
-            ));
-        }
-        div().w_full().pt(px(48.)).flex().justify_center().child(
-            div()
-                .max_w(px(340.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .text_color(t.muted)
-                .child(
-                    div()
-                        .text(Text::Title)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(t.ink)
-                        .child(heading),
-                )
-                .when(!line.is_empty(), |empty| {
-                    empty.child(div().mt(px(6.)).child(line.to_string()))
-                })
-                .child(actions),
-        )
     }
 
     /// The lines between the header and the list: what scopes the view.
