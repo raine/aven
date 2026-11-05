@@ -728,7 +728,7 @@ impl Composer {
                     }
                 }
                 Err(why) => cx.emit(ComposerEvent::Toast(
-                    Toast::error("Couldn\u{2019}t read that").detail(why),
+                    Toast::error("Couldn\u{2019}t draft that").detail(why),
                 )),
             }
             cx.notify();
@@ -1800,33 +1800,38 @@ impl Composer {
             .py(px(10.))
             .border_t_1()
             .border_color(t.line)
-            .child(
-                btn(
-                    "c-read",
-                    if composer.reading.is_some() {
-                        "Reading…"
-                    } else {
-                        "Create with AI"
-                    },
-                    t,
+            .when(composer.reading.is_none(), |row| {
+                row.child(
+                    btn("c-read", "Draft with AI", t)
+                        .hint(Hint::new("Turn rough notes into a draft"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.read_notes(&ReadNotes, window, cx);
+                        }))
+                        .child("Draft with AI")
+                        .child(kbd("⌃N", t.faint)),
                 )
-                .hint(Hint::new("Turn rough notes into a draft"))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.read_notes(&ReadNotes, window, cx);
-                }))
-                .child(if composer.reading.is_some() {
-                    "Reading…"
-                } else {
-                    "Create with AI"
-                })
-                .child(kbd("⌃N", t.faint)),
-            )
+            })
+            // While the agent reads there is nothing to press, only what
+            // ⌘↵ does meanwhile.
             .when(composer.reading.is_some(), |row| {
                 row.child(
                     div()
+                        .id("c-reading")
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .h(px(28.))
+                        .px(px(10.))
+                        .text_color(t.muted)
+                        .child("Drafting…"),
+                )
+                .child(
+                    div()
                         .id("c-reading-hint")
+                        .min_w_0()
+                        .truncate()
                         .text_color(t.faint)
-                        .child("⌘↵ to create without reviewing"),
+                        .child("⌘↵ skips review"),
                 )
             })
             .child(div().flex_1())
