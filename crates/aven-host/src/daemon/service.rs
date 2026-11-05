@@ -133,6 +133,46 @@ pub fn reload_service_definition() -> Result<()> {
     reload_definition_with_runner(&SystemRunner, &SystemSleeper)
 }
 
+/// Whether launchd has the agent loaded, and whether it is disabled from
+/// loading at login.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentState {
+    pub loaded: bool,
+    pub disabled: bool,
+}
+
+#[cfg(target_os = "macos")]
+pub fn agent_state() -> Result<AgentState> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    Ok(AgentState {
+        loaded: service_is_loaded(&SystemRunner, &spec)?,
+        disabled: service_is_disabled(&SystemRunner, &spec)?,
+    })
+}
+
+/// Unloads the agent and waits until its process is gone, leaving its plist
+/// and enablement as they are.
+#[cfg(target_os = "macos")]
+pub fn stop_agent() -> Result<()> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    stop_service(&SystemRunner, &SystemSleeper, &spec).map(drop)
+}
+
+/// Loads the agent from its plist as it stands.
+#[cfg(target_os = "macos")]
+pub fn start_agent() -> Result<()> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    bootstrap_service(&SystemRunner, &SystemSleeper, &spec, true)
+}
+
+/// Where launchd reads the agent's definition.
+#[cfg(target_os = "macos")]
+pub fn agent_plist_path(home: &Path) -> PathBuf {
+    home.join("Library/LaunchAgents")
+        .join(format!("{LABEL}.plist"))
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn reload_service_definition() -> Result<()> {
     anyhow::bail!(
@@ -497,7 +537,6 @@ impl ServiceSpec {
 
     fn from_install_args(db_path: PathBuf, program: Option<PathBuf>) -> Result<Self> {
         let home = dirs::home_dir().context("could not find home directory")?;
-        let launch_agents_dir = home.join("Library/LaunchAgents");
         let log_dir = home.join("Library/Logs/aven");
         let label = LABEL.to_string();
         let uid = current_uid();
@@ -525,7 +564,7 @@ impl ServiceSpec {
             stdout_path: log_dir.join("daemon.out.log"),
             stderr_path: log_dir.join("daemon.err.log"),
             log_dir,
-            plist_path: launch_agents_dir.join(format!("{label}.plist")),
+            plist_path: agent_plist_path(&home),
             domain,
             service_target,
         })
