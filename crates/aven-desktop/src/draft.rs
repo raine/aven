@@ -432,6 +432,13 @@ pub fn automatic_status(priority: TaskPriority, repeats: bool, is_epic: bool) ->
     }
 }
 
+/// What a reader was given, to tell its reply from one to older notes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notes {
+    pub text: String,
+    pub images: Vec<PendingImage>,
+}
+
 /// A task being written in the composer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Draft {
@@ -537,6 +544,11 @@ impl Draft {
         !self.title.trim().is_empty() || !self.body.trim().is_empty()
     }
 
+    /// Nothing written and no images: nothing to lose.
+    pub fn is_blank(&self) -> bool {
+        !self.has_text() && self.images.is_empty()
+    }
+
     pub fn repeats(&self) -> bool {
         schedule_preview(&self.schedule).repeats
     }
@@ -597,30 +609,53 @@ impl Draft {
         draft
     }
 
-    /// Takes the fields a reader produced. Attachments stay.
+    /// Takes the reader's title and description. What the draft already set
+    /// wins over the reader's other fields, labels join, and attachments stay.
     pub fn fill(&mut self, task: NewTask) {
         self.title = task.title;
         self.body = task.description;
-        self.schedule = task.schedule;
-        self.project = task.project.or(self.project.take());
-        self.status = task
-            .status
-            .as_deref()
-            .and_then(|status| TaskStatus::parse(status).ok());
-        self.priority = TaskPriority::parse(&task.priority).unwrap_or(TaskPriority::None);
-        self.labels = task.labels;
-        self.metadata = task.metadata;
-        self.is_epic = task.is_epic;
-        self.replaces = task.replaces;
+        if self.schedule.trim().is_empty() {
+            self.schedule = task.schedule;
+        }
+        if self.project.is_none() {
+            self.project = task.project;
+        }
+        if self.status.is_none() {
+            self.status = task
+                .status
+                .as_deref()
+                .and_then(|status| TaskStatus::parse(status).ok());
+        }
+        if self.priority == TaskPriority::None {
+            self.priority = TaskPriority::parse(&task.priority).unwrap_or(TaskPriority::None);
+        }
+        self.labels = crate::launch::merged(&self.labels, &task.labels);
+        for (key, value) in task.metadata {
+            if !self.metadata.iter().any(|(held, _)| *held == key) {
+                self.metadata.push((key, value));
+            }
+        }
+        self.is_epic |= task.is_epic;
+        if self.replaces.is_none() {
+            self.replaces = task.replaces;
+        }
     }
 
     /// Takes the reader's task, unless the draft has moved on from `notes`.
-    pub fn fill_from_notes(&mut self, notes: &str, task: NewTask) -> bool {
-        let current = self.intake_text() == notes;
+    pub fn fill_from_notes(&mut self, notes: &Notes, task: NewTask) -> bool {
+        let current = self.notes() == *notes;
         if current {
             self.fill(task);
         }
         current
+    }
+
+    /// What the reader is given: the rough notes and the images.
+    pub fn notes(&self) -> Notes {
+        Notes {
+            text: self.intake_text(),
+            images: self.images.clone(),
+        }
     }
 
     /// The rough notes handed to the natural language reader.
@@ -686,6 +721,98 @@ impl Draft {
     }
 }
 
+/// Add Task's agent jobs that create their task once the agent replies, and
+/// the drafts of those that could not.
+#[derive(Debug, Default)]
+pub struct Background {
+    waiting: Vec<Kept>,
+    failed: Vec<Kept>,
+}
+
+/// A draft kept for a job, with the key of the workspace it was written in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    pub job: u64,
+    pub workspace: String,
+    pub draft: Draft,
+    /// The project the task joins when neither the user nor the agent chose.
+    pub fallback: Option<String>,
+}
+
+/// What a waiting job's reply comes to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Arrival {
+    /// `task`, with the draft it came from in case it cannot be saved.
+    Create { kept: Box<Kept>, task: Box<NewTask> },
+    /// Nothing was created and the draft is kept; why, in a sentence.
+    Failed { why: String },
+}
+
+impl Background {
+    /// Creates `kept`'s task when its job replies.
+    pub fn wait(&mut self, kept: Kept) {
+        self.waiting.push(kept);
+    }
+
+    /// The task the agent's `reply` makes of a waiting draft, or why it
+    /// makes none. None for a job not waiting here.
+    pub fn arrive(
+        &mut self,
+        job: u64,
+        reply: Result<NewTask, String>,
+        projects: &[NavEntry],
+    ) -> Option<Arrival> {
+        let at = self.waiting.iter().position(|kept| kept.job == job)?;
+        let kept = self.waiting.remove(at);
+        let why = match reply {
+            Ok(task) => {
+                let mut filled = kept.draft.clone();
+                filled.fill(task);
+                match filled.task(projects) {
+                    Ok(mut task) => {
+                        task.project = task.project.or_else(|| kept.fallback.clone());
+                        return Some(Arrival::Create {
+                            kept: Box::new(kept),
+                            task: Box::new(task),
+                        });
+                    }
+                    Err(problem) => problem.why(&filled),
+                }
+            }
+            Err(why) => why,
+        };
+        self.failed.push(kept);
+        Some(Arrival::Failed { why })
+    }
+
+    /// Keeps the draft of a job whose task could not be saved.
+    pub fn keep(&mut self, kept: Kept) {
+        self.failed.push(kept);
+    }
+
+    pub fn failed(&self, job: u64) -> Option<&Kept> {
+        self.failed.iter().find(|kept| kept.job == job)
+    }
+
+    pub fn take_failed(&mut self, job: u64) -> Option<Kept> {
+        let at = self.failed.iter().position(|kept| kept.job == job)?;
+        Some(self.failed.remove(at))
+    }
+
+    pub fn oldest_failed(&self) -> Option<&Kept> {
+        self.failed.first()
+    }
+
+    /// The oldest failed draft written in the workspace with key `workspace`.
+    pub fn take_oldest(&mut self, workspace: &str) -> Option<Kept> {
+        let at = self
+            .failed
+            .iter()
+            .position(|kept| kept.workspace == workspace)?;
+        Some(self.failed.remove(at))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DraftProblem {
     Title,
@@ -696,6 +823,24 @@ pub enum DraftProblem {
 }
 
 impl DraftProblem {
+    /// Why a draft an agent filled in could not be created, in a sentence.
+    pub fn why(self, draft: &Draft) -> String {
+        match self {
+            Self::Title => "Your agent\u{2019}s reply had no title.".to_string(),
+            Self::Schedule => format!(
+                "\u{201c}{}\u{201d} isn\u{2019}t a schedule Aven reads.",
+                draft.schedule.trim()
+            ),
+            Self::RecurringEpic => "A recurring task can\u{2019}t be an epic.".to_string(),
+            Self::RecurringStatus => "A recurring task has to start open.".to_string(),
+            Self::RecurringAttachments => format!(
+                "\u{201c}{}\u{201d} repeats {}, and recurring tasks can\u{2019}t have images.",
+                draft.title.trim(),
+                draft.schedule.trim()
+            ),
+        }
+    }
+
     /// Why the draft was refused, as the terminal app refuses it.
     pub fn toast(self) -> Toast {
         match self {
@@ -889,14 +1034,210 @@ mod tests {
             title: "Call the bank".to_string(),
             ..Draft::default()
         };
-        let notes = draft.intake_text();
+        let notes = draft.notes();
         draft.title = "Call the bank about the card".to_string();
         assert!(!draft.fill_from_notes(&notes, NewTask::titled("From notes")));
         assert_eq!(draft.title, "Call the bank about the card");
 
-        let notes = draft.intake_text();
+        let notes = draft.notes();
+        draft.add_image(PendingImage {
+            name: "card.png".to_string(),
+            bytes: Arc::new(vec![1]),
+        });
+        assert!(
+            !draft.fill_from_notes(&notes, NewTask::titled("From notes")),
+            "an image the reader never saw makes its reply stale"
+        );
+
+        let notes = draft.notes();
         assert!(draft.fill_from_notes(&notes, NewTask::titled("From notes")));
         assert_eq!(draft.title, "From notes");
+    }
+
+    #[test]
+    fn what_the_user_set_beats_the_reader() {
+        let series = RecurrenceSeriesId::default();
+        let mut draft = Draft {
+            title: "rough notes".to_string(),
+            schedule: "tomorrow".to_string(),
+            project: Some("home".to_string()),
+            status: Some(TaskStatus::Backlog),
+            priority: TaskPriority::High,
+            labels: vec!["bug".to_string()],
+            metadata: vec![("owner".to_string(), "me".to_string())],
+            replaces: Some(series.clone()),
+            ..Draft::default()
+        };
+        draft.fill(NewTask {
+            description: "Details".to_string(),
+            schedule: "every day".to_string(),
+            project: Some("work".to_string()),
+            status: Some("todo".to_string()),
+            priority: "low".to_string(),
+            labels: vec!["ui".to_string(), "bug".to_string()],
+            metadata: vec![
+                ("owner".to_string(), "agent".to_string()),
+                ("size".to_string(), "s".to_string()),
+            ],
+            is_epic: true,
+            ..NewTask::titled("Fix the layout")
+        });
+        assert_eq!(
+            (draft.title.as_str(), draft.body.as_str()),
+            ("Fix the layout", "Details")
+        );
+        assert_eq!(draft.schedule, "tomorrow");
+        assert_eq!(draft.project.as_deref(), Some("home"));
+        assert_eq!(draft.status, Some(TaskStatus::Backlog));
+        assert_eq!(draft.priority, TaskPriority::High);
+        assert_eq!(draft.labels, ["bug", "ui"]);
+        assert_eq!(
+            draft.metadata,
+            [
+                ("owner".to_string(), "me".to_string()),
+                ("size".to_string(), "s".to_string())
+            ]
+        );
+        assert!(draft.is_epic);
+        assert_eq!(draft.replaces, Some(series));
+
+        let mut blank = Draft {
+            title: "rough notes".to_string(),
+            ..Draft::default()
+        };
+        blank.fill(NewTask {
+            schedule: "every day".to_string(),
+            project: Some("work".to_string()),
+            status: Some("todo".to_string()),
+            priority: "low".to_string(),
+            labels: vec!["ui".to_string()],
+            ..NewTask::titled("Water plants")
+        });
+        assert_eq!(blank.schedule, "every day");
+        assert_eq!(blank.project.as_deref(), Some("work"));
+        assert_eq!(blank.status, Some(TaskStatus::Todo));
+        assert_eq!(blank.priority, TaskPriority::Low);
+        assert_eq!(blank.labels, ["ui"]);
+    }
+
+    fn kept(job: u64, draft: Draft) -> Kept {
+        Kept {
+            job,
+            workspace: "default".to_string(),
+            draft,
+            fallback: Some("work".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_waiting_draft_becomes_its_task_when_the_agent_replies() {
+        let mut background = Background::default();
+        let snapshot = Draft {
+            title: "call bank re card".to_string(),
+            priority: TaskPriority::High,
+            labels: vec!["home".to_string()],
+            ..Draft::default()
+        };
+        background.wait(kept(1, snapshot.clone()));
+        assert_eq!(
+            background.arrive(2, Ok(NewTask::titled("x")), &projects()),
+            None,
+            "a job not waiting here is someone else's"
+        );
+        let reply = NewTask {
+            priority: "low".to_string(),
+            labels: vec!["errand".to_string()],
+            ..NewTask::titled("Call the bank about the card")
+        };
+        let Some(Arrival::Create { kept, task }) = background.arrive(1, Ok(reply), &projects())
+        else {
+            panic!("the reply should make a task");
+        };
+        assert_eq!((kept.job, kept.workspace.as_str()), (1, "default"));
+        assert_eq!(
+            kept.draft, snapshot,
+            "the draft goes along as it was written"
+        );
+        assert_eq!(task.title, "Call the bank about the card");
+        assert_eq!(task.priority, "high");
+        assert_eq!(task.labels, ["home", "errand"]);
+        assert_eq!(task.project.as_deref(), Some("work"));
+        assert_eq!(
+            background.arrive(1, Ok(NewTask::titled("again")), &projects()),
+            None,
+            "a job creates once"
+        );
+    }
+
+    #[test]
+    fn a_job_that_fails_keeps_its_draft() {
+        let mut background = Background::default();
+        let snapshot = Draft {
+            title: "water plants".to_string(),
+            images: vec![PendingImage {
+                name: "plant.png".to_string(),
+                bytes: Arc::new(vec![1]),
+            }],
+            ..Draft::default()
+        };
+        background.wait(kept(1, snapshot.clone()));
+        background.wait(kept(2, snapshot.clone()));
+        let failed = background.arrive(
+            1,
+            Err("Your agent didn\u{2019}t reply in time.".to_string()),
+            &projects(),
+        );
+        assert_eq!(
+            failed,
+            Some(Arrival::Failed {
+                why: "Your agent didn\u{2019}t reply in time.".to_string()
+            })
+        );
+        let repeats = NewTask {
+            schedule: "every day".to_string(),
+            ..NewTask::titled("Water plants")
+        };
+        let Some(Arrival::Failed { why }) = background.arrive(2, Ok(repeats), &projects()) else {
+            panic!("a repeating task with images cannot be created");
+        };
+        assert_eq!(
+            why,
+            "\u{201c}Water plants\u{201d} repeats every day, and recurring tasks can\u{2019}t have images."
+        );
+        assert_eq!(
+            background.failed(2).unwrap().draft,
+            snapshot,
+            "the snapshot, not the reply"
+        );
+        assert_eq!(background.take_oldest("elsewhere"), None);
+        assert_eq!(background.take_oldest("default").unwrap().job, 1);
+        assert_eq!(background.take_failed(2).unwrap().job, 2);
+        assert_eq!(background.take_failed(2), None);
+    }
+
+    #[test]
+    fn a_users_one_off_schedule_lets_images_stay() {
+        let mut background = Background::default();
+        let snapshot = Draft {
+            title: "water plants".to_string(),
+            schedule: "tomorrow".to_string(),
+            images: vec![PendingImage {
+                name: "plant.png".to_string(),
+                bytes: Arc::new(vec![1]),
+            }],
+            ..Draft::default()
+        };
+        background.wait(kept(1, snapshot));
+        let repeats = NewTask {
+            schedule: "every day".to_string(),
+            ..NewTask::titled("Water plants")
+        };
+        let Some(Arrival::Create { task, .. }) = background.arrive(1, Ok(repeats), &projects())
+        else {
+            panic!("the user's schedule wins, so the task can keep its image");
+        };
+        assert_eq!(task.schedule, "tomorrow");
+        assert_eq!(task.images.len(), 1);
     }
 
     #[test]

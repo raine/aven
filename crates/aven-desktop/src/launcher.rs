@@ -83,7 +83,6 @@ struct Host {
     catalog: Catalog,
     /// Whether Return has the agent write the task when there is one.
     ai: bool,
-    next_job: u64,
     hot_key: Option<HotKey>,
     /// Notifications posted, so each gets its own tag.
     posted: u64,
@@ -736,9 +735,7 @@ impl Launcher {
             .project
             .clone()
             .filter(|key| place.project(key).is_some());
-        let host = cx.global_mut::<Host>();
-        host.next_job += 1;
-        let id = host.next_job;
+        let id = crate::launch::next_job_id();
         let job = LaunchJob {
             id,
             mode,

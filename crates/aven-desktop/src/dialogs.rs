@@ -236,6 +236,8 @@ pub enum ConfirmAction {
         workspace: String,
         task: Box<crate::adapter::NewTask>,
     },
+    /// Puts the draft Add Task kept for this agent job in Add Task.
+    OpenKeptDraft(u64),
 }
 
 pub struct Layer {

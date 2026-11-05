@@ -19,6 +19,7 @@ use crate::adapter::{
     SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed,
     first_project_name,
 };
+use crate::draft::Kept;
 use crate::launch::{Catalog, LaunchEvent, LaunchJob};
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
@@ -156,12 +157,12 @@ pub struct Applied {
     pub draft: bool,
     /// A task that could not be created.
     pub composer_draft: Option<Box<NewTask>>,
-    /// A draft natural language input produced.
-    pub intake: Option<Box<NewTask>>,
-    pub intake_failed: bool,
+    /// An unreviewed task that could not be created: its job, workspace key,
+    /// task and why.
+    pub unreviewed_failed: Option<(Box<Kept>, String)>,
     /// What the launcher offers, freshly read.
     pub launcher: Option<Box<Catalog>>,
-    /// News of a launcher submission.
+    /// News of a launcher or Add Task agent job.
     pub launch: Option<LaunchEvent>,
     /// Text for the clipboard, with what to call it.
     pub copy: Option<String>,
@@ -1037,9 +1038,7 @@ impl Session {
     }
 
     pub fn create(&mut self, mut task: NewTask) {
-        if task.project.is_none() && self.snapshot.projects.is_empty() {
-            task.first_project = Some(self.first_project_name());
-        }
+        self.name_its_first_project(&mut task);
         self.create_from = self.selected.clone();
         self.send(Command::Create(Box::new(task)));
     }
@@ -1059,6 +1058,13 @@ impl Session {
         self.first_project
             .clone()
             .unwrap_or_else(|| first_project_name(&self.snapshot.workspace))
+    }
+
+    /// Names the project a task without one creates in a workspace with none.
+    fn name_its_first_project(&self, task: &mut NewTask) {
+        if task.project.is_none() && self.snapshot.projects.is_empty() {
+            task.first_project = Some(self.first_project_name());
+        }
     }
 
     pub fn name_first_project(&mut self, name: String) {
@@ -1081,13 +1087,30 @@ impl Session {
         self.send(Command::FinishWelcome);
     }
 
-    pub fn intake(&mut self, input: String, project: Option<String>) {
-        let project = project.or_else(|| self.snapshot.view.project.clone());
-        self.send(Command::Intake { input, project });
+    /// The key of the workspace the window shows.
+    pub fn active_workspace_key(&self) -> Option<&str> {
+        self.snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.name == self.snapshot.workspace)
+            .map(|workspace| workspace.key.as_str())
+    }
+
+    /// Creates a task Add Task's agent job `job` read, without review.
+    pub fn create_unreviewed(&mut self, kept: Box<Kept>, mut task: Box<NewTask>) {
+        self.name_its_first_project(&mut task);
+        self.send(Command::CreateUnreviewed { kept, task });
     }
 
     pub fn load_launcher(&mut self) {
         self.send(Command::LoadLauncher);
+    }
+
+    /// Starts Add Task's agent job. A job without a project reads with the
+    /// view's in mind.
+    pub fn read(&mut self, mut job: LaunchJob) {
+        job.project = job.project.or_else(|| self.snapshot.view.project.clone());
+        self.launch(job);
     }
 
     pub fn launch(&mut self, job: LaunchJob) {
@@ -1133,7 +1156,9 @@ impl Session {
                 Command::Goto(id) => self.goto(id),
                 command => self.switch_view(command),
             },
-            action @ (ToastAction::RestoreDraft | ToastAction::Open(_)) => return Some(action),
+            action @ (ToastAction::RestoreDraft
+            | ToastAction::OpenDraft(_)
+            | ToastAction::Open(_)) => return Some(action),
         }
         None
     }
@@ -1571,13 +1596,8 @@ impl Session {
                 self.copied_toast("task report");
                 applied.copy = Some(text);
             }
-            ReplyBody::Intake(task) => applied.intake = Some(task),
             ReplyBody::Launcher(catalog) => applied.launcher = Some(catalog),
             ReplyBody::Launch(event) => applied.launch = Some(event),
-            ReplyBody::IntakeFailed(message) => {
-                applied.intake_failed = true;
-                self.show_toast(failed("Could not read that", &message));
-            }
             ReplyBody::Created(id) => {
                 // Moving on while the write ran keeps the newer selection.
                 if self.selected == self.create_from {
@@ -1614,6 +1634,9 @@ impl Session {
                     failed("Could not create the task", &message)
                         .detail(format!("It is back in New task. {}", capitalised(&message))),
                 );
+            }
+            ReplyBody::SaveFailed(Command::CreateUnreviewed { kept, .. }, message) => {
+                applied.unreviewed_failed = Some((kept, capitalised(&message)));
             }
             ReplyBody::SaveFailed(command, message) => {
                 self.undoable.clear();

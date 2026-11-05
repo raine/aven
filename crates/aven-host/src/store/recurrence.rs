@@ -23,9 +23,21 @@ impl TuiStore {
 
     pub async fn create_recurrence_series(
         &mut self,
-        mut draft: RecurrenceSeriesDraft,
+        draft: RecurrenceSeriesDraft,
         current_selected_index: Option<usize>,
     ) -> Result<(String, Option<usize>)> {
+        let (message, selected, _) = self
+            .create_recurrence_series_with_ref(draft, current_selected_index)
+            .await?;
+        Ok((message, selected))
+    }
+
+    /// Creates the series and says which, by its display reference.
+    pub async fn create_recurrence_series_with_ref(
+        &mut self,
+        mut draft: RecurrenceSeriesDraft,
+        current_selected_index: Option<usize>,
+    ) -> Result<(String, Option<usize>, String)> {
         if draft.project.is_empty() {
             draft.project = self
                 .inferred_add_project()
@@ -73,6 +85,7 @@ impl TuiStore {
             return Ok((
                 format!("Created recurring task {}", outcome.series_ref),
                 selected,
+                outcome.series_ref,
             ));
         }
         let task_id = outcome.task.id.clone();
@@ -87,6 +100,7 @@ impl TuiStore {
         Ok((
             format!("Created recurring task {}", outcome.series_ref),
             selected,
+            outcome.series_ref,
         ))
     }
 

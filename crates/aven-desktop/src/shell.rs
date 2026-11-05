@@ -919,11 +919,8 @@ impl Root {
             self.save_drafts(cx);
             cx.quit();
         }
-        if let Some(task) = applied.intake {
-            self.read_notes_back(Some(*task), cx);
-        }
-        if applied.intake_failed {
-            self.read_notes_back(None, cx);
+        if let Some(failed) = applied.unreviewed_failed {
+            self.unreviewed_failed(failed, cx);
         }
         if let Some(text) = applied.copy {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -932,7 +929,7 @@ impl Root {
             cx.defer(move |cx| crate::launcher::set_catalog(*catalog, cx));
         }
         if let Some(event) = applied.launch {
-            cx.defer(move |cx| crate::launcher::receive(event, cx));
+            self.take_launch_event(event, cx);
         }
         if applied.draft
             && let Some(id) = self.session.selected.clone()
@@ -958,12 +955,7 @@ impl Root {
 
     /// The key of the workspace the window shows.
     pub(crate) fn active_workspace_key(&self) -> Option<&str> {
-        let snapshot = &self.session.snapshot;
-        snapshot
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.name == snapshot.workspace)
-            .map(|workspace| workspace.key.as_str())
+        self.session.active_workspace_key()
     }
 
     /// Says in the window that the launcher saved a task, for when macOS
@@ -1034,6 +1026,7 @@ impl Root {
     ) {
         match self.session.run_toast_action() {
             Some(ToastAction::RestoreDraft) => self.restore_draft(window, cx),
+            Some(ToastAction::OpenDraft(job)) => self.open_kept_draft(job, window, cx),
             Some(ToastAction::Open(url)) => cx.open_url(&url),
             _ => {}
         }

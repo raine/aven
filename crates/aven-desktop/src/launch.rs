@@ -2,6 +2,7 @@
 //! they can be tested on their own.
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
 use aven_core::choices::{TaskPriority, TaskSource};
@@ -191,7 +192,16 @@ pub enum LaunchMode {
     Create,
     /// The agent drafts the task for the composer.
     Review,
+    /// The agent reads Add Task's notes. Add Task checks the result against
+    /// its own fields, so images it cannot send are left out, not refused.
+    Fill,
     Plain(PlainTask),
+}
+
+/// A number for a new job, unique among the launcher's and Add Task's.
+pub fn next_job_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// One submission, fixed when it is made: later launcher edits never reach it.
@@ -267,7 +277,7 @@ pub fn refusal(config: &TaskIntakeConfig, job: &LaunchJob) -> Option<String> {
              was sent; your input is still here."
         ));
     }
-    if !job.images.is_empty() && !delivers_images(config) {
+    if job.mode != LaunchMode::Fill && !job.images.is_empty() && !delivers_images(config) {
         return Some(
             "agent.task_intake has no way to receive images. Set its image_args, or remove \
              the images."
@@ -329,9 +339,12 @@ impl std::error::Error for RepeatsWithImages {}
 
 /// Runs `job` to its end. A cancelled job's agent stops with its future.
 pub async fn run(env: &LaunchEnv, job: LaunchJob) -> LaunchEvent {
-    if job.mode == LaunchMode::Review {
+    if matches!(job.mode, LaunchMode::Review | LaunchMode::Fill) {
         return match review(env, &job).await {
             Ok(task) => LaunchEvent::Draft(job.id, job.workspace.clone(), Box::new(task)),
+            Err(error) if job.mode == LaunchMode::Fill => {
+                LaunchEvent::DraftFailed(job.id, explain(&error))
+            }
             Err(error) => LaunchEvent::DraftFailed(job.id, review_failure(&error)),
         };
     }
@@ -359,9 +372,11 @@ async fn interpret(
     let context =
         TaskIntakeContext::with_project_hint(&env.database, workspace, job.project.as_deref())
             .await?;
+    let sends_images = job.mode != LaunchMode::Fill || delivers_images(&env.intake);
     let images = job
         .images
         .iter()
+        .filter(|_| sends_images)
         .map(|image| TaskIntakeImage {
             name: &image.name,
             bytes: &image.bytes,
@@ -379,6 +394,7 @@ async fn interpret(
     .context(InvalidReply)?;
     result.task.labels = merged(&job.labels, &result.task.labels);
     if let Some(schedule) = &result.recurrence
+        && job.mode != LaunchMode::Fill
         && !job.images.is_empty()
     {
         return Err(RepeatsWithImages {
@@ -860,6 +876,34 @@ mod tests {
         assert_eq!(task.labels, ["bug", "ui"]);
         assert_eq!(task.images.len(), 1);
         assert_eq!(task_count(&env).await, 0);
+    }
+
+    #[tokio::test]
+    async fn add_task_reads_leave_checks_to_add_task() {
+        let (_dir, mut env) = env(r#"{"title":"Water plants","repeat":"daily"}"#).await;
+        env.intake.system_prompt = Some("{input}".to_string());
+        let fill = LaunchJob {
+            images: vec![image()],
+            ..job(LaunchMode::Fill)
+        };
+        assert_eq!(
+            refusal(&env.intake, &fill),
+            None,
+            "an agent without image_args reads the text"
+        );
+        let LaunchEvent::Draft(1, _, task) = run(&env, fill).await else {
+            panic!("a read draft should come back for Add Task to check");
+        };
+        assert!(task.schedule.contains("day"), "{}", task.schedule);
+
+        let (_dir, env) = self::env("I could not decide").await;
+        let LaunchEvent::DraftFailed(1, why) = run(&env, job(LaunchMode::Fill)).await else {
+            panic!("an invalid reply should fail");
+        };
+        assert_eq!(
+            why,
+            "Your agent\u{2019}s reply wasn\u{2019}t a single valid task."
+        );
     }
 
     #[tokio::test]

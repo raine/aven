@@ -19,12 +19,14 @@ use crate::actions::*;
 use crate::adapter::NewTask;
 use crate::adapter::{NavEntry, PendingImage};
 use crate::draft::{
-    CaretWord, Draft, DraftProblem, Suggestion, Token, automatic_status, caret_word, cut,
-    finished_token, parse_title, schedule_chip, schedule_preview, suggestions, title_tokens,
+    Arrival, Background, CaretWord, Draft, DraftProblem, Kept, Notes, Suggestion, Token,
+    automatic_status, caret_word, cut, finished_token, parse_title, schedule_chip,
+    schedule_preview, suggestions, title_tokens,
 };
 use crate::images::{pasted_image, read_image, thumbnail};
 use crate::input::{Editor, EditorEvent, Mode, Tint};
 use crate::kit::*;
+use crate::launch::{LaunchEvent, LaunchJob, LaunchMode, next_job_id};
 use crate::overlays::{Entry, Mark, MenuOptions};
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
@@ -40,6 +42,8 @@ pub(crate) struct Composer {
     discarded: Option<Draft>,
     /// Whether creating leaves the composer open for the next task.
     create_more: bool,
+    /// Agent jobs that create their task on arrival, and drafts they kept.
+    background: Background,
     source: Source,
     focus: FocusHandle,
     anchors: Anchors,
@@ -57,11 +61,19 @@ pub(crate) struct Source {
     pub project: Option<(String, &'static str)>,
     pub first_project: String,
     pub reduced: bool,
+    /// The key of the workspace the window shows.
+    pub workspace: String,
 }
 
 pub(crate) enum ComposerEvent {
     Create(NewTask),
-    Intake(String, Option<String>),
+    /// Starts an agent job reading the draft.
+    Launch(LaunchJob),
+    CancelLaunch(u64),
+    CreateUnreviewed {
+        kept: Box<Kept>,
+        task: Box<NewTask>,
+    },
     Toast(Toast),
     Menu(RefCell<Option<ComposerMenu>>),
     Prompt(String, String, crate::dialogs::SavePromptText),
@@ -90,6 +102,7 @@ impl Composer {
             kept_draft: draft,
             discarded: None,
             create_more: false,
+            background: Background::default(),
             source,
             focus,
             anchors: Rc::default(),
@@ -114,9 +127,14 @@ impl Composer {
         change(&mut self.kept_draft);
     }
 
+    /// The draft that outlives a quit: what Add Task holds, or else the
+    /// oldest one a background create kept.
     pub(crate) fn saved_draft(&self, cx: &App) -> Draft {
-        self.composer_draft(cx)
-            .unwrap_or_else(|| self.kept_draft.clone())
+        let draft = self.unsaved_draft(cx);
+        match self.background.oldest_failed() {
+            Some(kept) if draft.is_blank() => kept.draft.clone(),
+            _ => draft,
+        }
     }
 
     pub(crate) fn set_title(&mut self, title: String) {
@@ -201,6 +219,14 @@ impl Chip {
     }
 }
 
+/// An agent job reading the draft: what it was given, and the key of the
+/// workspace it read for.
+struct Reading {
+    job: u64,
+    notes: Notes,
+    workspace: String,
+}
+
 struct Fields {
     /// The fields that have no editor. Text lives in the editors.
     draft: Draft,
@@ -214,8 +240,8 @@ struct Fields {
     prior: Option<FocusHandle>,
     run: usize,
     pub closing: bool,
-    /// The notes out with the reader. A reply to anything else is stale.
-    reading: Option<String>,
+    /// The agent job reading the draft. A reply to anything else is stale.
+    reading: Option<Reading>,
     /// The title as last seen, to tell a typed space from other edits.
     seen_title: String,
     /// The highlighted suggestion.
@@ -317,7 +343,12 @@ impl Composer {
         if self.composer_open() {
             return;
         }
-        let draft = std::mem::take(&mut self.kept_draft);
+        let mut draft = std::mem::take(&mut self.kept_draft);
+        if draft.is_blank()
+            && let Some(kept) = self.background.take_oldest(&self.source.workspace)
+        {
+            draft = kept.draft;
+        }
         let title = cx.new(|cx| {
             let placeholder = "What needs doing? #label !high @project";
             Editor::new(Mode::Single, placeholder, window, cx).takes_images()
@@ -376,6 +407,9 @@ impl Composer {
             return;
         };
         composer.closing = true;
+        if let Some(reading) = composer.reading.take() {
+            cx.emit(ComposerEvent::CancelLaunch(reading.job));
+        }
         let run = composer.run;
         let focus = composer.prior.clone().unwrap_or_else(|| self.focus.clone());
         self.kept_draft = keep.unwrap_or_default();
@@ -459,6 +493,9 @@ impl Composer {
     pub(crate) fn take_draft(&mut self, draft: Draft, window: &mut Window, cx: &mut Context<Self>) {
         match self.composer.as_mut().filter(|composer| !composer.closing) {
             Some(composer) => {
+                if let Some(reading) = composer.reading.take() {
+                    cx.emit(ComposerEvent::CancelLaunch(reading.job));
+                }
                 composer.show(draft, &self.source.projects, cx);
                 cx.notify();
             }
@@ -476,6 +513,9 @@ impl Composer {
     }
 
     fn submit_composer(&mut self, another: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.create_on_arrival(another, window, cx) {
+            return;
+        }
         let Some(draft) = self.composer_draft(cx) else {
             return;
         };
@@ -486,17 +526,7 @@ impl Composer {
                     .project
                     .or_else(|| self.source.project.as_ref().map(|(key, _)| key.clone()));
                 cx.emit(ComposerEvent::Create(task));
-                if another {
-                    if let Some(composer) = self.composer.as_mut() {
-                        let next = draft.after_created();
-                        let focus = composer.title.read(cx).focus.clone();
-                        composer.show(next, &self.source.projects, cx);
-                        window.focus(&focus, cx);
-                    }
-                    cx.notify();
-                } else {
-                    self.close_composer(None, window, cx);
-                }
+                self.after_submit(&draft, another, window, cx);
             }
             Err(problem @ DraftProblem::Title) => {
                 let title = self
@@ -521,6 +551,78 @@ impl Composer {
             }
             Err(DraftProblem::Schedule) => self.open_schedule(window, cx),
         }
+    }
+
+    /// Clears the composer for the next task, or closes it.
+    fn after_submit(
+        &mut self,
+        draft: &Draft,
+        another: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !another {
+            self.close_composer(None, window, cx);
+            return;
+        }
+        if let Some(composer) = self.composer.as_mut() {
+            let focus = composer.title.read(cx).focus.clone();
+            composer.show(draft.after_created(), &self.source.projects, cx);
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Leaves the draft to the agent job reading it, which creates the task
+    /// without review when it replies. False when no job is reading or the
+    /// notes are gone, which creating handles as usual.
+    fn create_on_arrival(
+        &mut self,
+        another: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(composer) = self.composer.as_mut().filter(|composer| !composer.closing) else {
+            return false;
+        };
+        let Some(reading) = composer.reading.take() else {
+            return false;
+        };
+        let mut draft = composer.current(cx);
+        draft.settle_title(&self.source.projects);
+        if draft.intake_text().is_empty() {
+            cx.emit(ComposerEvent::CancelLaunch(reading.job));
+            return false;
+        }
+        let (job, workspace) = if draft.notes() == reading.notes {
+            (reading.job, reading.workspace)
+        } else {
+            cx.emit(ComposerEvent::CancelLaunch(reading.job));
+            (self.read(&draft, cx), self.source.workspace.clone())
+        };
+        self.background.wait(Kept {
+            job,
+            workspace,
+            draft: draft.clone(),
+            fallback: self.source.project.as_ref().map(|(key, _)| key.clone()),
+        });
+        self.after_submit(&draft, another, window, cx);
+        true
+    }
+
+    /// Starts an agent job reading `draft`, and says which.
+    fn read(&self, draft: &Draft, cx: &mut Context<Self>) -> u64 {
+        let id = next_job_id();
+        cx.emit(ComposerEvent::Launch(LaunchJob {
+            id,
+            mode: LaunchMode::Fill,
+            workspace: self.source.workspace.clone(),
+            project: draft.project.clone(),
+            labels: Vec::new(),
+            text: draft.intake_text(),
+            images: draft.images.clone(),
+        }));
+        id
     }
 
     fn refuse_draft(
@@ -565,41 +667,100 @@ impl Composer {
         cx.notify();
     }
 
+    /// Has the agent read the notes into the fields. Once is enough: while it
+    /// reads, asking again does nothing.
     pub(crate) fn read_notes(&mut self, _: &ReadNotes, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(draft) = self.composer_draft(cx) else {
+        let Some(composer) = self.composer.as_mut().filter(|composer| !composer.closing) else {
             return;
         };
-        let notes = draft.intake_text();
-        if notes.is_empty() {
+        if composer.reading.is_some() {
+            return;
+        }
+        let typed = composer.current(cx);
+        let mut draft = typed.clone();
+        draft.settle_title(&self.source.projects);
+        if draft.intake_text().is_empty() {
             cx.emit(ComposerEvent::Toast(Toast::info("Add rough notes first")));
-        } else {
-            cx.emit(ComposerEvent::Intake(notes.clone(), draft.project.clone()));
-            if let Some(composer) = self.composer.as_mut() {
-                composer.reading = Some(notes);
-            }
+            cx.notify();
+            return;
+        }
+        if draft != typed {
+            composer.show(draft.clone(), &self.source.projects, cx);
+        }
+        let job = self.read(&draft, cx);
+        let workspace = self.source.workspace.clone();
+        if let Some(composer) = self.composer.as_mut() {
+            composer.reading = Some(Reading {
+                job,
+                notes: draft.notes(),
+                workspace,
+            });
         }
         cx.notify();
     }
 
-    /// Takes what the reader made of the notes.
-    pub(crate) fn read_notes_back(
+    /// Takes news of an agent job this composer started, or hands it back.
+    pub(crate) fn take_launch_event(
         &mut self,
-        task: Option<crate::adapter::NewTask>,
+        event: LaunchEvent,
         cx: &mut Context<Self>,
-    ) {
-        let Some(composer) = self.composer.as_mut() else {
-            return;
-        };
-        let Some(notes) = composer.reading.take() else {
-            return;
-        };
-        if let Some(task) = task {
-            let mut draft = composer.current(cx);
-            if draft.fill_from_notes(&notes, task) {
-                composer.show(draft, &self.source.projects, cx);
+    ) -> Option<LaunchEvent> {
+        let (job, reply) = match &event {
+            LaunchEvent::Draft(job, _, task) => (*job, Ok((**task).clone())),
+            LaunchEvent::DraftFailed(job, why) | LaunchEvent::Refused(job, why) => {
+                (*job, Err(why.clone()))
             }
+            _ => return Some(event),
+        };
+        let reading = self.composer.as_mut().filter(|composer| {
+            composer
+                .reading
+                .as_ref()
+                .is_some_and(|read| read.job == job)
+        });
+        if let Some(composer) = reading {
+            let notes = composer.reading.take()?.notes;
+            match reply {
+                Ok(task) => {
+                    let mut draft = composer.current(cx);
+                    if draft.fill_from_notes(&notes, task) {
+                        composer.show(draft, &self.source.projects, cx);
+                    }
+                }
+                Err(why) => cx.emit(ComposerEvent::Toast(
+                    Toast::error("Couldn\u{2019}t read that").detail(why),
+                )),
+            }
+            cx.notify();
+            return None;
         }
-        cx.notify();
+        match self.background.arrive(job, reply, &self.source.projects) {
+            Some(Arrival::Create { kept, task }) => {
+                cx.emit(ComposerEvent::CreateUnreviewed { kept, task });
+            }
+            Some(Arrival::Failed { why }) => {
+                cx.emit(ComposerEvent::Toast(kept_toast(job, why)));
+            }
+            None => return Some(event),
+        }
+        None
+    }
+
+    /// Keeps the draft of an unreviewed task the store could not save.
+    pub(crate) fn unreviewed_failed(&mut self, kept: Kept, why: String, cx: &mut Context<Self>) {
+        let job = kept.job;
+        self.background.keep(kept);
+        cx.emit(ComposerEvent::Toast(kept_toast(job, why)));
+    }
+
+    /// The draft kept for agent job `job`, if it is still kept.
+    pub(crate) fn kept_for(&self, job: u64) -> Option<&Kept> {
+        self.background.failed(job)
+    }
+
+    /// The draft kept for agent job `job`, which is no longer kept.
+    pub(crate) fn take_kept(&mut self, job: u64) -> Option<Kept> {
+        self.background.take_failed(job)
     }
 
     pub(crate) fn composer_fields(&self, cx: &App) -> Vec<FocusHandle> {
@@ -1660,6 +1821,14 @@ impl Composer {
                 })
                 .child(kbd("⌃N", t.faint)),
             )
+            .when(composer.reading.is_some(), |row| {
+                row.child(
+                    div()
+                        .id("c-reading-hint")
+                        .text_color(t.faint)
+                        .child("⌘↵ to create without reviewing"),
+                )
+            })
             .child(div().flex_1())
             .child(
                 btn("c-discard", "Discard", t)
@@ -1941,4 +2110,14 @@ impl Composer {
         })
         .detach();
     }
+}
+
+/// Says an unreviewed task was not created and offers its draft back.
+fn kept_toast(job: u64, mut why: String) -> Toast {
+    if !why.ends_with('.') {
+        why.push('.');
+    }
+    Toast::error("Couldn\u{2019}t create task")
+        .detail(format!("{why} Your draft was kept."))
+        .action(Some(ToastAction::OpenDraft(job)))
 }

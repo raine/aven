@@ -442,7 +442,7 @@ impl Root {
         let buttons = [cx.focus_handle(), cx.focus_handle()];
         let fields = buttons.to_vec();
         let cancel = match action {
-            ConfirmAction::ReplaceDraft { .. } => "Keep draft",
+            ConfirmAction::ReplaceDraft { .. } | ConfirmAction::OpenKeptDraft(_) => "Keep draft",
             _ => "Cancel",
         };
         let dialog = Dialog::Confirm {
@@ -475,6 +475,7 @@ impl Root {
             ConfirmAction::ReplaceDraft { workspace, task } => {
                 self.take_launcher_draft(workspace, *task, window, cx);
             }
+            ConfirmAction::OpenKeptDraft(job) => self.take_kept_draft(job, window, cx),
         }
         cx.notify();
     }

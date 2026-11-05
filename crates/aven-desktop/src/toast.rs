@@ -42,6 +42,8 @@ pub enum ToastAction {
     Go(Go),
     /// Brings a discarded draft back, which the window holds.
     RestoreDraft,
+    /// Opens the draft Add Task kept for the agent job with this id.
+    OpenDraft(u64),
     /// Opens a link in the browser.
     Open(String),
 }
@@ -53,6 +55,7 @@ impl ToastAction {
             Self::Refresh => "Refresh",
             Self::Go(go) => go.label,
             Self::RestoreDraft => "Restore",
+            Self::OpenDraft(_) => "Open draft",
             Self::Open(_) => "Open",
         }
     }

@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 
 use crate::attachments::storage::sha256_hex;
 use crate::config::TaskIntakeConfig;
+use crate::ids::TaskId;
 use crate::operations::{
     AttachmentAddInput, TaskAttachmentAddInput, TaskCreationOptions, TaskCreationUndo, TaskDraft,
     TaskOutcome,
@@ -40,14 +41,24 @@ pub struct TaskCreationCompletion {
     pub message: String,
     pub selected: Option<usize>,
     pub refresh_error: Option<anyhow::Error>,
+    /// The created task, which `selected` may not point at.
+    pub task: TaskId,
+    pub reference: String,
 }
 
 impl TaskCreationCompletion {
-    fn into_legacy(self) -> Result<(String, Option<usize>)> {
-        if let Some(error) = self.refresh_error {
-            return Err(committed_error(error));
+    /// The completion, or an error that says the task was saved when only
+    /// the refresh after it failed.
+    pub fn committed(mut self) -> Result<Self> {
+        match self.refresh_error.take() {
+            Some(error) => Err(committed_error(error)),
+            None => Ok(self),
         }
-        Ok((self.message, self.selected))
+    }
+
+    fn into_legacy(self) -> Result<(String, Option<usize>)> {
+        let completion = self.committed()?;
+        Ok((completion.message, completion.selected))
     }
 }
 
@@ -361,6 +372,8 @@ impl TuiStore {
                 message: format!("created task {message_ref}"),
                 selected: current_selected_index,
                 refresh_error: Some(error),
+                task: task_id,
+                reference: message_ref,
             };
         }
         let created_index = self.tasks.iter().position(|item| item.task.id == task_id);
@@ -369,6 +382,8 @@ impl TuiStore {
                 message: format!("created task {message_ref}"),
                 selected: created_index,
                 refresh_error: None,
+                task: task_id,
+                reference: message_ref,
             };
         }
 
@@ -377,6 +392,8 @@ impl TuiStore {
             message: format!("created task {message_ref} hidden by current filters"),
             selected: restored,
             refresh_error: None,
+            task: task_id,
+            reference: message_ref,
         }
     }
 

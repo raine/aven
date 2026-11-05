@@ -646,15 +646,11 @@ pub enum Command {
     /// Details of a task opened from another one, leaving the selection alone.
     Peek(TaskId),
     Preview(SearchInput),
-    Intake {
-        input: String,
-        project: Option<String>,
-    },
     /// Every workspace with its projects and labels, for the launcher.
     LoadLauncher,
     /// Starts a launcher submission, which runs apart from the store.
     Launch(Box<LaunchJob>),
-    /// Stops the launcher's review with this id, if it still runs.
+    /// Stops the review with this id, if it still runs.
     CancelLaunch(u64),
     CopyReport(TaskId),
     ShowView(TaskQuery),
@@ -697,6 +693,13 @@ pub enum Command {
     SaveImage(String, PathBuf),
     Undo,
     Create(Box<NewTask>),
+    /// A task Add Task's agent job `job` read for the workspace with key
+    /// `workspace`, created without review. It saves nothing if the window
+    /// has since moved to another workspace or database.
+    CreateUnreviewed {
+        kept: Box<crate::draft::Kept>,
+        task: Box<NewTask>,
+    },
     /// A write to exactly these tasks, whatever the list holds by then.
     Bulk(Vec<TaskId>, Bulk),
     CreateChild(TaskId, String),
@@ -779,7 +782,6 @@ impl Command {
                 | Self::LoadDetail(_)
                 | Self::Peek(_)
                 | Self::Preview(_)
-                | Self::Intake { .. }
                 | Self::LoadLauncher
                 | Self::Launch(_)
                 | Self::CancelLaunch(_)
@@ -831,10 +833,6 @@ pub enum ReplyBody {
     Search(SearchResults),
     /// Text a task's report or similar produced for the clipboard.
     Copied(String),
-    /// A draft to fill the composer with.
-    Intake(Box<NewTask>),
-    /// Natural language input that produced no draft.
-    IntakeFailed(String),
     Launcher(Box<Catalog>),
     Launch(LaunchEvent),
     Created(TaskId),

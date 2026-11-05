@@ -128,6 +128,11 @@ pub(crate) fn intake_task(result: aven_host::task_intake::TaskIntakeResult) -> N
     }
 }
 
+/// What an unreviewed create says, as the launcher says it.
+fn created_toast(reference: &str, title: &str) -> Toast {
+    Toast::done("Task created").detail(format!("{reference} \u{b7} {title}"))
+}
+
 fn metadata_inputs(fields: &[(String, String)]) -> Vec<TaskMetadataInput> {
     fields
         .iter()
@@ -364,8 +369,11 @@ struct Actor {
     kept: HashMap<TaskId, Option<i64>>,
     /// Turns for launcher jobs that save, so few agents run at once.
     launch_turns: Arc<Semaphore>,
-    /// The launcher's review in flight, with its id.
-    launch_review: Option<(u64, JoinHandle<()>)>,
+    /// Reviews in flight, by job id.
+    launch_reviews: HashMap<u64, JoinHandle<()>>,
+    /// Add Task's agent jobs started on the open database, whose tasks may
+    /// still be created here, with the key of the workspace each read for.
+    fills: HashMap<u64, String>,
     /// Whether the open database still waits for the welcome.
     welcome: bool,
 }
@@ -443,7 +451,8 @@ impl Actor {
             undoable: Vec::new(),
             kept: HashMap::new(),
             launch_turns: Arc::new(Semaphore::new(LAUNCH_TURNS)),
-            launch_review: None,
+            launch_reviews: HashMap::new(),
+            fills: HashMap::new(),
             welcome: false,
         }
     }
@@ -671,6 +680,7 @@ impl Actor {
         let previous = (self.database.clone(), self.store.tasks.len());
         self.store.database().close().await;
         self.store = store;
+        self.fills.clear();
         self.database = path.clone();
         self.config = config;
         self.selected = None;
@@ -1593,7 +1603,9 @@ impl Actor {
         self.store.delete_attachment(image).await
     }
 
-    async fn create(&mut self, task: &NewTask) -> Result<Outcome> {
+    /// Creates `task`. An unreviewed task says which task it made in the
+    /// launcher's words and leaves the selection where it is.
+    async fn create(&mut self, task: &NewTask, unreviewed: bool) -> Result<Outcome> {
         let parsed = parse_schedule_input(&task.schedule)?;
         if task.replaces.is_some() && !matches!(parsed, ParsedScheduleInput::Recurring { .. }) {
             anyhow::bail!("A replacement needs a repeating schedule");
@@ -1624,7 +1636,7 @@ impl Actor {
                     .filter(|due| !due.is_empty()),
             ),
             ParsedScheduleInput::Recurring { .. } => {
-                return self.create_recurring(task, project).await;
+                return self.create_recurring(task, project, unreviewed).await;
             }
         };
         let deferred = available_at.is_some();
@@ -1641,8 +1653,8 @@ impl Actor {
             due_on,
             is_epic: task.is_epic,
         };
-        let selected = if task.images.is_empty() {
-            self.store.create_task(draft, None).await?.1
+        let completion = if task.images.is_empty() {
+            self.store.create_task_completion(draft, None).await?
         } else {
             let attachments = task
                 .images
@@ -1654,11 +1666,31 @@ impl Actor {
             let blob_dir = self.blob_dir()?;
             let policy = self.config.local.attachment_lifecycle.policy();
             self.store
-                .create_task_with_attachments(draft, None, &blob_dir, policy, attachments)
+                .create_task_with_attachments_completion(
+                    draft,
+                    None,
+                    &blob_dir,
+                    policy,
+                    attachments,
+                )
                 .await?
-                .1
-        };
-        let item = selected.and_then(|index| self.store.tasks.get(index));
+        }
+        .committed()?;
+        if unreviewed {
+            // It arrives on its own time, so undo stays with what the user did.
+            let outcome = Outcome {
+                undo: false,
+                ..Outcome::saved(created_toast(&completion.reference, &task.title))
+            };
+            return Ok(if deferred {
+                outcome.with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming))
+            } else {
+                outcome.with_go("View task", Command::Goto(completion.task))
+            });
+        }
+        let item = completion
+            .selected
+            .and_then(|index| self.store.tasks.get(index));
         let created = item.map(|item| item.task.id.clone());
         let subject = item.map(|item| Subject {
             reference: item.display_ref.clone(),
@@ -1678,6 +1710,7 @@ impl Actor {
         &mut self,
         task: &NewTask,
         project: Option<String>,
+        unreviewed: bool,
     ) -> Result<Outcome> {
         let schedule = crate::draft::recurrence_schedule(&task.schedule)?;
         let status = task.status.clone().unwrap_or_else(|| "todo".to_string());
@@ -1691,10 +1724,19 @@ impl Actor {
             schedule,
         );
         draft.metadata = metadata_inputs(&task.metadata);
-        let (message, _) = self.store.create_recurrence_series(draft, None).await?;
+        let (message, _, reference) = self
+            .store
+            .create_recurrence_series_with_ref(draft, None)
+            .await?;
+        let message = if unreviewed {
+            created_toast(&reference, &task.title)
+        } else {
+            said(&message)
+        };
         Ok(Outcome {
             stop: task.replaces.clone(),
-            ..Outcome::saved(said(&message))
+            undo: !unreviewed,
+            ..Outcome::saved(message)
         }
         .with_go("View in Upcoming", Command::ShowView(TaskQuery::Upcoming)))
     }
@@ -1943,7 +1985,15 @@ impl Actor {
                 ),
                 ..Outcome::default()
             },
-            Command::Create(task) => self.create(task).await?,
+            Command::Create(task) => self.create(task, false).await?,
+            Command::CreateUnreviewed { kept, task } => {
+                let read_for = self.fills.remove(&kept.job);
+                let active = &self.store.active_workspace.key;
+                if read_for.as_ref() != Some(&kept.workspace) || kept.workspace != *active {
+                    anyhow::bail!("Aven moved to another workspace before the task was created");
+                }
+                self.create(task, true).await?
+            }
             _ => Outcome::default(),
         };
         Ok(outcome)
@@ -2070,27 +2120,6 @@ impl Actor {
         });
     }
 
-    /// Runs the configured natural language command off the actor, since it can
-    /// take many seconds.
-    fn intake(&self, input: String, project: Option<String>) {
-        let intake =
-            self.store
-                .spawn_task_intake(self.config.agent.task_intake.clone(), input, project);
-        let replies = self.replies.clone();
-        let request = self.handled;
-        tokio::spawn(async move {
-            let body = match intake
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|run| run)
-            {
-                Ok(result) => ReplyBody::Intake(Box::new(intake_task(result))),
-                Err(error) => ReplyBody::IntakeFailed(format!("{error:#}")),
-            };
-            let _ = replies.send(Reply { request, body });
-        });
-    }
-
     async fn launcher_catalog(&self) -> Result<Catalog> {
         let database = self.store.database();
         let mut places = Vec::new();
@@ -2121,10 +2150,11 @@ impl Actor {
     }
 
     /// Starts `job` off the actor, or says why it cannot start. Saving jobs
-    /// take turns and outlive the launcher; a review replaces the last one.
+    /// take turns and outlive the launcher; reviews run until done or
+    /// cancelled.
     async fn launch(&mut self, job: LaunchJob) {
         let id = job.id;
-        let review = job.mode == LaunchMode::Review;
+        let review = matches!(job.mode, LaunchMode::Review | LaunchMode::Fill);
         let refused = match launch::refusal(&self.config.agent.task_intake, &job) {
             Some(reason) => Some(reason),
             None if !review && self.paused_by_join().await => Some(
@@ -2145,13 +2175,15 @@ impl Actor {
         let replies = self.replies.clone();
         let request = self.handled;
         if review {
+            if job.mode == LaunchMode::Fill {
+                self.fills.insert(id, job.workspace.clone());
+            }
             let task = tokio::spawn(async move {
                 let body = ReplyBody::Launch(launch::run(&env, job).await);
                 let _ = replies.send(Reply { request, body });
             });
-            if let Some((_, previous)) = self.launch_review.replace((id, task)) {
-                previous.abort();
-            }
+            self.launch_reviews.retain(|_, task| !task.is_finished());
+            self.launch_reviews.insert(id, task);
             return;
         }
         self.send(ReplyBody::Launch(LaunchEvent::Accepted(id)));
@@ -2196,7 +2228,6 @@ impl Actor {
             }
             Command::Peek(id) => self.send_detail(&id).await,
             Command::Preview(input) => self.preview(input),
-            Command::Intake { input, project } => self.intake(input, project),
             Command::LoadLauncher => match self.launcher_catalog().await {
                 Ok(catalog) => self.send(ReplyBody::Launcher(Box::new(catalog))),
                 Err(error) => self.send(ReplyBody::Notice(failed(
@@ -2206,7 +2237,8 @@ impl Actor {
             },
             Command::Launch(job) => self.launch(*job).await,
             Command::CancelLaunch(id) => {
-                if let Some((_, review)) = self.launch_review.take_if(|(at, _)| *at == id) {
+                self.fills.remove(&id);
+                if let Some(review) = self.launch_reviews.remove(&id) {
                     review.abort();
                 }
             }
@@ -3191,11 +3223,11 @@ mod tests {
     async fn a_typed_schedule_saves_the_dates_it_means() {
         let (_directory, mut actor, _replies) = actor("One").await;
         actor
-            .create(&new_task("Later", "tomorrow at 9am"))
+            .create(&new_task("Later", "tomorrow at 9am"), false)
             .await
             .unwrap();
         actor
-            .create(&new_task("Dated", "due next friday"))
+            .create(&new_task("Dated", "due next friday"), false)
             .await
             .unwrap();
         let id = task_id(&actor, "Dated");
@@ -3638,6 +3670,129 @@ mod tests {
         assert!(created.plain);
         assert_eq!(created.title, "Buy milk");
         assert!(actor.undoable.is_empty(), "launcher tasks stay out of undo");
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_read_leaves_the_others_running() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let (dir, mut actor, mut replies) = actor("Existing").await;
+        let agent = dir.path().join("agent.sh");
+        std::fs::write(
+            &agent,
+            "#!/bin/sh\ncat > /dev/null\nsleep 0.3\nprintf '{\"title\":\"Read\"}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        actor.config.agent.task_intake.command = Some(agent.display().to_string());
+        let workspace = actor.store.active_workspace.key.clone();
+        let job = |id| LaunchJob {
+            id,
+            mode: LaunchMode::Fill,
+            workspace: workspace.clone(),
+            project: None,
+            labels: Vec::new(),
+            text: "read me".to_string(),
+            images: Vec::new(),
+        };
+        run(&mut actor, Command::Launch(Box::new(job(1)))).await;
+        run(&mut actor, Command::Launch(Box::new(job(2)))).await;
+        run(&mut actor, Command::CancelLaunch(1)).await;
+        let reply = tokio::time::timeout(Duration::from_secs(5), replies.recv())
+            .await
+            .expect("the read should finish")
+            .unwrap();
+        assert!(
+            matches!(&reply.body, ReplyBody::Launch(LaunchEvent::Draft(2, _, task)) if task.title == "Read"),
+            "{:?}",
+            reply.body
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            bodies(&mut replies).is_empty(),
+            "a cancelled read never replies"
+        );
+        assert!(!actor.fills.contains_key(&1));
+    }
+
+    #[tokio::test]
+    async fn unreviewed_tasks_say_which_task_they_made_and_leave_the_selection() {
+        let (_dir, mut actor, mut replies) = actor("Existing").await;
+        let workspace = actor.store.active_workspace.key.clone();
+        let create = |job, workspace: &str, title: &str| Command::CreateUnreviewed {
+            kept: Box::new(crate::draft::Kept {
+                job,
+                workspace: workspace.to_string(),
+                draft: crate::draft::Draft::default(),
+                fallback: None,
+            }),
+            task: Box::new(NewTask {
+                labels: vec!["bug".to_string()],
+                ..NewTask::titled(title)
+            }),
+        };
+        actor.fills.insert(7, workspace.clone());
+        run(&mut actor, create(7, &workspace, "Background")).await;
+        let bodies_seen = bodies(&mut replies);
+        assert!(
+            !bodies_seen
+                .iter()
+                .any(|body| matches!(body, ReplyBody::Created(_))),
+            "{bodies_seen:?}"
+        );
+        let toast = saved_message(&bodies_seen).expect("a saved toast");
+        let id = task_id(&actor, "Background");
+        let reference = actor
+            .store
+            .tasks
+            .iter()
+            .find(|item| item.task.id == id)
+            .unwrap()
+            .display_ref
+            .clone();
+        assert_eq!(toast.title, "Task created");
+        assert!(
+            !toast.undo,
+            "a task the agent made later is not the user's to undo"
+        );
+        assert!(actor.undoable.is_empty());
+        assert_eq!(
+            toast.detail.as_deref(),
+            Some(format!("{reference} \u{b7} Background").as_str())
+        );
+        assert!(
+            matches!(&toast.action, Some(ToastAction::Go(go)) if go.label == "View task" && go.command == Command::Goto(id.clone())),
+            "{toast:?}"
+        );
+
+        // A job this database never started, or one read for another
+        // workspace than the one it would save to, saves nothing.
+        actor.fills.insert(9, "elsewhere".to_string());
+        actor.fills.insert(10, workspace.clone());
+        actor.fills.insert(11, "elsewhere".to_string());
+        for command in [
+            create(8, &workspace, "Unknown job"),
+            create(9, "elsewhere", "Moved"),
+            create(10, "elsewhere", "Moved"),
+            create(11, &workspace, "Moved"),
+        ] {
+            run(&mut actor, command.clone()).await;
+            let seen = bodies(&mut replies);
+            assert!(
+                seen.iter().any(
+                    |body| matches!(body, ReplyBody::SaveFailed(failed, _) if *failed == command)
+                ),
+                "{seen:?}"
+            );
+        }
+        actor.store.refresh(None).await.unwrap();
+        assert!(
+            actor
+                .store
+                .tasks
+                .iter()
+                .all(|item| !matches!(item.task.title.as_str(), "Unknown job" | "Moved"))
+        );
     }
 
     fn task_id(actor: &Actor, title: &str) -> TaskId {

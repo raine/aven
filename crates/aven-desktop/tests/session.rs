@@ -9,6 +9,7 @@ use aven_core::ids::TaskId;
 use aven_core::operations::TaskDraft;
 use aven_core::sync::client::keys::FileProtectedStorage;
 use aven_desktop::adapter::{self, Command, NewTask, Reply, ReplyBody, Request, Snapshot};
+use aven_desktop::launch::{LaunchJob, LaunchMode};
 use aven_desktop::session::{Session, Toast, ToastAction, Tone};
 use aven_host::config::AppConfig;
 use aven_host::store::{TaskQuery, TuiStore};
@@ -814,14 +815,22 @@ async fn a_toast_for_work_under_way_resolves_in_place() {
 async fn natural_add_falls_back_to_the_project_in_scope() {
     let mut h = harness(&["First"]).await;
     h.session.snapshot.view.project = Some("scoped".to_string());
-    h.session.intake("Rough notes".to_string(), None);
-    h.session
-        .intake("Rough notes".to_string(), Some("chosen".to_string()));
+    let job = |id, project: Option<&str>| LaunchJob {
+        id,
+        mode: LaunchMode::Fill,
+        workspace: "default".to_string(),
+        project: project.map(str::to_string),
+        labels: Vec::new(),
+        text: "Rough notes".to_string(),
+        images: Vec::new(),
+    };
+    h.session.read(job(1, None));
+    h.session.read(job(2, Some("chosen")));
     let projects: Vec<_> = h
         .take_requests()
         .into_iter()
         .filter_map(|request| match request.command {
-            Command::Intake { project, .. } => project,
+            Command::Launch(job) => job.project,
             _ => None,
         })
         .collect();
