@@ -19,7 +19,7 @@ use crate::app_bundle::{BUNDLE_EXECUTABLE, enclosing_bundle};
 
 /// The directory beside the bundle that holds the previous bundle and the
 /// record of the update.
-const PREVIOUS_DIR: &str = ".aven-update-previous";
+pub(super) const PREVIOUS_DIR: &str = ".aven-update-previous";
 const MARKER: &str = "update.json";
 const EXIT_LIMIT: Duration = Duration::from_secs(120);
 /// How long the new app has to appear, and then to confirm its launch.

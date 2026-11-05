@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::io::{Cursor, Read, Write};
+use std::os::fd::AsRawFd as _;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
@@ -27,6 +28,9 @@ use super::{InstallSuccess, Release, UpdatePhase, UpdateProgress, ensure_not_can
 use crate::app_bundle::{BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle};
 
 const ENTRY_LIMIT: usize = 4096;
+const STAGING_PREFIX: &str = ".aven-update-";
+/// How long a new staging directory may exist before its process locks it.
+const STAGING_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 const EXTRACTED_LIMIT: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +132,7 @@ pub(super) async fn install_desktop(
 /// Dropping it removes the staged copy.
 pub(super) struct StagedBundle {
     staging: tempfile::TempDir,
+    _lock: std::fs::File,
     layout: BundleLayout,
 }
 
@@ -194,15 +199,69 @@ pub(super) async fn stage(
         .parent()
         .context("Aven.app has no parent directory")?;
     std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    remove_abandoned_staging(parent, STAGING_GRACE);
     let staging = tempfile::Builder::new()
-        .prefix(".aven-update-")
+        .prefix(STAGING_PREFIX)
         .tempdir_in(parent)
         .context("stage update beside Aven.app")?;
+    let lock = lock_staging(staging.path())?;
     write_app_entries(staging.path(), &entries)?;
     let staged = staging.path().join(BUNDLE_NAME);
     verify_signature(&staged).await?;
     validate_staged_binary(&staged.join(BUNDLE_EXECUTABLE), &release.version).await?;
-    Ok(StagedBundle { staging, layout })
+    Ok(StagedBundle {
+        staging,
+        _lock: lock,
+        layout,
+    })
+}
+
+/// Takes the advisory lock that marks a staging directory as in use. The
+/// lock lasts as long as the returned file is open, and ends with the process.
+fn lock_staging(staging: &Path) -> Result<std::fs::File> {
+    let file =
+        std::fs::File::open(staging).with_context(|| format!("open {}", staging.display()))?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("lock {}", staging.display()));
+    }
+    Ok(file)
+}
+
+/// Removes the staged updates beside Aven.app that no process holds, left by
+/// one that exited before installing or discarding its update. Directories
+/// changed within `grace` may be about to be locked, and the kept previous
+/// bundle belongs to the launch check, so both stay.
+fn remove_abandoned_staging(parent: &Path, grace: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(STAGING_PREFIX) || name == super::relaunch::PREVIOUS_DIR {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let settled = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= grace);
+        if !metadata.is_dir() || !settled {
+            continue;
+        }
+        // Held while removing, so no other process can claim it meanwhile.
+        let Ok(_lock) = lock_staging(&path) else {
+            continue;
+        };
+        if let Err(error) = std::fs::remove_dir_all(&path) {
+            tracing::debug!(%error, path = %path.display(), "could not remove an abandoned update");
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1123,5 +1182,30 @@ mod tests {
             std::fs::read(staged.join(BUNDLE_EXECUTABLE)).unwrap(),
             b"new"
         );
+    }
+
+    #[test]
+    fn only_abandoned_staging_is_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let abandoned = temp.path().join(".aven-update-abandoned");
+        let held = temp.path().join(".aven-update-held");
+        let previous = temp.path().join(super::super::relaunch::PREVIOUS_DIR);
+        let unrelated = temp.path().join("Other.app");
+        for dir in [&abandoned, &held, &previous, &unrelated] {
+            std::fs::create_dir_all(dir.join("Aven.app")).unwrap();
+        }
+        let _lock = lock_staging(&held).unwrap();
+
+        remove_abandoned_staging(temp.path(), std::time::Duration::from_secs(3600));
+        assert!(
+            abandoned.exists(),
+            "a recent directory may be about to be locked"
+        );
+
+        remove_abandoned_staging(temp.path(), std::time::Duration::ZERO);
+        assert!(!abandoned.exists());
+        assert!(held.exists());
+        assert!(previous.exists());
+        assert!(unrelated.exists());
     }
 }
