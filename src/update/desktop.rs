@@ -1,6 +1,6 @@
 //! The app's own updates, over the release checks and bundle staging that
 //! `aven update` uses. The app calls these from its background executor.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -62,18 +62,26 @@ fn blocked_reason(release: &Release) -> Option<String> {
     let plan = super::install_plan(release.clone());
     match &plan.method {
         InstallMethod::Direct { .. } => None,
-        InstallMethod::Unwritable { target } => Some(format!(
-            "Aven can\u{2019}t replace itself at {}. Move Aven to Applications, or download the \
-             new version and replace it.",
-            enclosing_bundle(target)
-                .unwrap_or_else(|| target.clone())
-                .display()
+        InstallMethod::Unwritable { target } => Some(unwritable_reason(
+            &enclosing_bundle(target).unwrap_or_else(|| target.clone()),
         )),
         // The first line names the versions, which the dialog shows already.
         _ => plan
             .guidance()
             .map(|lines| lines.into_iter().skip(1).collect::<Vec<_>>().join(" ")),
     }
+}
+
+fn unwritable_reason(bundle: &Path) -> String {
+    let remedy = if bundle.starts_with("/Applications") {
+        "Download the new version and replace it."
+    } else {
+        "Move Aven to Applications, or download the new version and replace it."
+    };
+    format!(
+        "Aven can\u{2019}t replace itself at {}. {remedy}",
+        bundle.display()
+    )
 }
 
 impl Updates for DesktopUpdater {
@@ -226,5 +234,20 @@ impl Updates for DesktopUpdater {
                 restored: restored.to_string(),
             },
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unwritable_app_in_applications_is_not_told_to_move_there() {
+        let reason = unwritable_reason(Path::new("/Applications/Aven.app"));
+        assert!(!reason.contains("Move Aven to Applications"));
+        assert!(reason.contains("Download the new version"));
+
+        let elsewhere = unwritable_reason(Path::new("/Users/me/Apps/Aven.app"));
+        assert!(elsewhere.contains("Move Aven to Applications"));
     }
 }
