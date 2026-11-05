@@ -22,6 +22,7 @@ use super::install::{
     ARCHIVE_LIMIT, DESKTOP_ARCHIVE_LIMIT, download_verified, set_phase, validate_staged_binary,
 };
 use super::processes::{wait_for_daemon_exit, wait_for_exit};
+use super::signature::verify_signature;
 use super::{InstallSuccess, Release, UpdatePhase, UpdateProgress, ensure_not_cancelled};
 use crate::app_bundle::{BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle};
 
@@ -199,6 +200,7 @@ pub(super) async fn stage(
         .context("stage update beside Aven.app")?;
     write_app_entries(staging.path(), &entries)?;
     let staged = staging.path().join(BUNDLE_NAME);
+    verify_signature(&staged).await?;
     validate_staged_binary(&staged.join(BUNDLE_EXECUTABLE), &release.version).await?;
     Ok(StagedBundle { staging, layout })
 }
