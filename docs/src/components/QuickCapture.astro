@@ -1,12 +1,14 @@
 ---
 import '../styles/quick-capture.css';
 import ArrowRightIcon from './ArrowRightIcon.astro';
+import TellAvenPhone from './tell-aven-phone/TellAvenPhone.astro';
 
 const captured = [
   { status: '□', statusClass: 'todo', ref: 'AVN-WV80', title: 'Fix flaky CI sync test caused by retry backoff clock skew', priority: '●', priorityClass: 'high', project: 'aven', source: 'tmux' },
   { status: '▣', statusClass: 'inbox', ref: 'AVN-H3QD', title: 'Show sync status in the TUI footer', priority: '─', project: 'aven', source: 'aven' },
   { status: '▣', statusClass: 'inbox', ref: 'APP-P8N3', title: 'Document token rotation', priority: '─', project: 'app', source: 'agent' },
   { status: '▣', statusClass: 'inbox', ref: 'AVN-01PD', title: 'Add docs screenshot showing task creation by voice', priority: '─', project: 'aven', source: 'voice' },
+  { status: '▣', statusClass: 'inbox', ref: 'APP-K2TM', title: 'Rotate staging API keys', priority: '─', project: 'app', source: 'tell aven', fresh: true },
 ];
 const waveform = [3, 6, 9, 5, 11, 7, 4, 10, 12, 6, 3, 8, 11, 9, 5, 7, 12, 10, 4, 6, 8, 3];
 ---
@@ -17,7 +19,7 @@ const waveform = [3, 6, 9, 5, 11, 7, 4, 10, 12, 6, 3, 8, 11, 9, 5, 7, 12, 10, 4,
       <p class="eyebrow">Quick capture</p>
       <h2 id="capture-heading">Capture from wherever you are.<a class="section-anchor" href="#capture" aria-label="Link to this section">#</a></h2>
     </div>
-    <p class="capture-lede">The composer inside aven or over any tmux pane, an agent session, or a voice note to a chat assistant. Every path lands in the same queue, in the right project.</p>
+    <p class="capture-lede">The composer inside aven or over any tmux pane, an agent session, or a voice note to a chat assistant. Away from your desk, just tell Aven. Every path lands in the same queue, in the right project.</p>
   </div>
 
   <ol class="capture-sources">
@@ -53,15 +55,15 @@ const waveform = [3, 6, 9, 5, 11, 7, 4, 10, 12, 6, 3, 8, 11, 9, 5, 7, 12, 10, 4,
 
   <div class="capture-rail" aria-hidden="true"><i></i><i></i><i></i></div>
 
-  <div class="capture-queue" role="img" aria-label="aven queue listing the four tasks captured from the composer, a tmux popup, an agent session, and a voice note">
-    <div class="capture-queue-bar"><span>Queue</span><span class="capture-queue-count">4 captured today</span></div>
+  <div class="capture-queue" role="img" aria-label="aven queue listing the five tasks captured from the composer, a tmux popup, an agent session, a voice note, and Tell Aven">
+    <div class="capture-queue-bar"><span>Queue</span><span class="capture-queue-count">{captured.length} captured today</span></div>
     <ul>
       {captured.map((task) => (
-        <li>
+        <li class:list={{ 'capture-fresh': task.fresh }} data-ref={task.ref}>
           <span class:list={['capture-status', task.statusClass]}>{task.status}</span>
           <span class="capture-ref">{task.ref}</span>
           <span class="capture-title">{task.title}</span>
-          <span class:list={['capture-priority', task.priorityClass]}>{task.priority}</span>
+          <span class:list={['capture-priority', task.priorityClass]} data-priority>{task.priority}</span>
           <span class="capture-project">{task.project}</span>
           <span class="capture-origin">{task.source}</span>
         </li>
@@ -69,8 +71,15 @@ const waveform = [3, 6, 9, 5, 11, 7, 4, 10, 12, 6, 3, 8, 11, 9, 5, 7, 12, 10, 4,
     </ul>
   </div>
 
+  <div class="capture-phone">
+    <span class="capture-phone-connector" aria-hidden="true"></span>
+    <TellAvenPhone />
+  </div>
+
   <div class="capture-links">
     <a class="text-link" href="/tui/#run-aven-from-tmux">Set up tmux capture <ArrowRightIcon /></a>
     <a class="text-link" href="/agents/#connect-chat-integrations">Connect a chat assistant <ArrowRightIcon /></a>
+    <a class="text-link" href="/mobile-app/#tell-aven">Meet Tell Aven <ArrowRightIcon /></a>
   </div>
+  <p class="capture-fine">Tell Aven needs AI set up on your self-hosted sync server. Requests and the task content they need go to its AI provider, outside end-to-end encrypted sync.</p>
 </section>
