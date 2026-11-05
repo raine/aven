@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use aven_host::running_processes::{ProcessKind, running_processes};
 
 use super::bundle::{StagedBundle, rename_with};
-use crate::app_bundle::BUNDLE_EXECUTABLE;
+use crate::app_bundle::{BUNDLE_EXECUTABLE, enclosing_bundle};
 
 /// The directory beside the bundle that holds the previous bundle and the
 /// record of the update.
@@ -85,6 +85,20 @@ fn read_marker(path: &Path) -> Result<Option<PendingUpdate>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
     }
+}
+
+/// Whether `executable` is in a bundle this version was just swapped into and
+/// whose app has not confirmed its launch yet. Until it does, the update can
+/// still be undone, which needs the database as the previous version left it.
+pub(crate) fn launch_pending(executable: &Path, current: &Version) -> bool {
+    let Some(marker) = enclosing_bundle(executable).and_then(|bundle| marker_path(&bundle).ok())
+    else {
+        return false;
+    };
+    matches!(
+        read_marker(&marker),
+        Ok(Some(update)) if update.state == UpdateState::Pending && update.to == *current
+    )
 }
 
 fn write_marker(path: &Path, update: &PendingUpdate) -> Result<()> {
@@ -456,6 +470,26 @@ mod tests {
             })
         );
         assert!(!previous_dir(&bundle).unwrap().exists());
+    }
+
+    #[test]
+    fn only_the_version_awaiting_its_launch_is_pending() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle = temp.path().join("Aven.app");
+        write_bundle(&bundle, b"new");
+        let executable = bundle.join(BUNDLE_EXECUTABLE);
+        let (old, new) = (Version::new(1, 2, 0), Version::new(1, 3, 0));
+        assert!(!launch_pending(&executable, &new), "no update under way");
+
+        std::fs::create_dir(previous_dir(&bundle).unwrap()).unwrap();
+        let marker = marker_path(&bundle).unwrap();
+        write_marker(&marker, &update(&bundle, UpdateState::Pending)).unwrap();
+        assert!(launch_pending(&executable, &new));
+        assert!(!launch_pending(&executable, &old));
+        assert!(!launch_pending(Path::new("/usr/local/bin/aven"), &new));
+
+        write_marker(&marker, &update(&bundle, UpdateState::Restored)).unwrap();
+        assert!(!launch_pending(&executable, &new));
     }
 
     #[tokio::test]

@@ -31,6 +31,9 @@ pub use service::{
 /// Short, because an update waits for the daemon to notice its replaced
 /// executable and exit before the new version opens the database.
 const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+/// Longer than an updated app has to confirm its launch.
+#[cfg(target_os = "macos")]
+const UPDATE_LAUNCH_WAIT: Duration = Duration::from_secs(150);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryFingerprint {
@@ -58,6 +61,15 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     if move_service_into_bundle().await {
         return Ok(());
     }
+    let binary_fingerprint = current_binary_fingerprint()?;
+    #[cfg(target_os = "macos")]
+    if !wait_for_update_launch(&binary_fingerprint).await? {
+        println!(
+            "daemon-executable-changed path={}",
+            binary_fingerprint.path.display()
+        );
+        return Ok(());
+    }
     let database = Database::open(&args.db_path).await?;
     let socket = bind_wake_socket(wake_addr).await?;
     println!(
@@ -68,7 +80,6 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         args.config.reminders.enabled
     );
     let blob_dir = crate::config::resolve_blob_dir(&args.db_path, &args.config)?;
-    let binary_fingerprint = current_binary_fingerprint()?;
     run_loop(
         database,
         &args.config,
@@ -79,6 +90,27 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         Some(binary_fingerprint),
     )
     .await
+}
+
+/// A daemon started from an app that was just updated waits for the new app to
+/// confirm its launch before it opens the database, so that a failed update can
+/// still be undone. Returns false when the update was undone meanwhile and
+/// this executable replaced.
+#[cfg(target_os = "macos")]
+async fn wait_for_update_launch(fingerprint: &BinaryFingerprint) -> Result<bool> {
+    let current = crate::update::current_version();
+    let started = Instant::now();
+    while crate::update::launch_pending(&fingerprint.path, &current) {
+        if binary_changed(fingerprint)? {
+            return Ok(false);
+        }
+        if started.elapsed() > UPDATE_LAUNCH_WAIT {
+            warn!("the updated app has not confirmed its launch; starting anyway");
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    Ok(!binary_changed(fingerprint)?)
 }
 
 async fn bind_wake_socket(wake_addr: SocketAddr) -> Result<UdpSocket> {
