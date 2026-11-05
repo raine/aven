@@ -220,6 +220,11 @@ pub enum Dialog {
         mine: String,
         theirs: String,
     },
+    /// The app's own update, in whatever phase it is.
+    Update {
+        /// The secondary and primary buttons, in Tab order.
+        buttons: [FocusHandle; 2],
+    },
 }
 
 /// What a yes in a confirmation dialog does.
@@ -724,7 +729,8 @@ impl Root {
             | Dialog::Incoming { .. }
             | Dialog::Stop { .. }
             | Dialog::Resolve { .. }
-            | Dialog::Gist { .. } => self.close_dialog(window, cx),
+            | Dialog::Gist { .. }
+            | Dialog::Update { .. } => self.close_dialog(window, cx),
         }
     }
 
@@ -1210,7 +1216,7 @@ impl Root {
     }
 
     fn render_about(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
-        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+        let version = format!("Version {}", crate::updates::version(cx));
         let links = ABOUT_LINKS.iter().map(|(label, url)| {
             bare_btn(*label, *label, t)
                 .role(Role::Link)
@@ -1271,7 +1277,7 @@ impl Root {
                             move |style| style.bg(raised).text_color(ink)
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
-                            let version = format!("Aven {}", env!("CARGO_PKG_VERSION"));
+                            let version = format!("Aven {}", crate::updates::version(cx));
                             cx.write_to_clipboard(ClipboardItem::new_string(version));
                             this.session.show_toast(Toast::done("Version copied"));
                             cx.notify();
@@ -1486,6 +1492,7 @@ impl Root {
                 self.render_about(cx, &t),
                 "Dialog",
             ),
+            Dialog::Update { .. } => ("Update", NARROW_WIDTH, self.render_update(cx, &t), "Dialog"),
             Dialog::Help => (
                 "Keyboard shortcuts",
                 WIDE_WIDTH,

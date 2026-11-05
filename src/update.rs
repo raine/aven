@@ -1,8 +1,16 @@
 #[cfg(target_os = "macos")]
 mod bundle;
 mod cache;
+#[cfg(all(target_os = "macos", feature = "desktop"))]
+mod desktop;
 mod eligibility;
 mod install;
+#[cfg(target_os = "macos")]
+mod processes;
+// The app swaps itself in only in desktop builds; the rest keeps its tests.
+#[cfg(target_os = "macos")]
+#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+mod relaunch;
 mod release;
 
 use std::path::PathBuf;
@@ -21,8 +29,13 @@ pub(crate) use cache::cached_dismissal;
 pub(crate) use cache::{
     UpdateDismissal, background_check_due, cached_update, check_for_update, dismiss_update,
 };
+#[cfg(all(target_os = "macos", feature = "desktop"))]
+pub(crate) use desktop::DesktopUpdater;
 pub(crate) use eligibility::install_plan;
 pub(crate) use install::install_direct;
+#[cfg(target_os = "macos")]
+pub(crate) use relaunch::finish_desktop_update;
+pub(crate) use release::ReleaseChannel;
 
 pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const REPOSITORY: &str = "raine/aven";
@@ -62,6 +75,7 @@ pub(crate) enum InstallMethod {
 pub(crate) struct InstallPlan {
     pub(crate) release: Release,
     pub(crate) method: InstallMethod,
+    pub(crate) channel: ReleaseChannel,
 }
 
 impl InstallPlan {
@@ -107,6 +121,14 @@ impl InstallPlan {
                 reason.clone(),
                 format!("Build from source: cargo install --git https://github.com/{REPOSITORY}"),
             ],
+            InstallMethod::Unwritable { target } if self.channel == ReleaseChannel::Desktop => {
+                vec![
+                    format!("{current} can update to {latest}."),
+                    format!("Aven cannot replace {} here.", target.display()),
+                    "Move Aven.app to /Applications, or download the new version and replace it."
+                        .to_string(),
+                ]
+            }
             InstallMethod::Unwritable { target } => vec![
                 format!("{current} can update to {latest}."),
                 format!("Aven cannot replace {} from the TUI.", target.display()),
@@ -130,6 +152,8 @@ pub(crate) enum UpdatePhase {
     Verifying,
     Extracting,
     Staging,
+    /// Other processes still run this installation's executable.
+    Waiting,
     Installing,
 }
 
@@ -140,6 +164,7 @@ impl UpdatePhase {
             Self::Verifying => "Verifying checksum",
             Self::Extracting => "Extracting aven",
             Self::Staging => "Validating new binary",
+            Self::Waiting => "Waiting for other aven processes to exit",
             Self::Installing => "Installing update",
         }
     }
@@ -149,9 +174,36 @@ impl UpdatePhase {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UpdateProgress {
     pub(crate) phase: UpdatePhase,
+    /// Bytes of the archive downloaded so far, and its size when known.
+    pub(crate) downloaded: u64,
+    pub(crate) total: Option<u64>,
+    /// While waiting, the processes that must exit first.
+    pub(crate) blockers: Vec<Blocker>,
+}
+
+impl UpdateProgress {
+    pub(crate) fn new(phase: UpdatePhase) -> Self {
+        Self {
+            phase,
+            downloaded: 0,
+            total: None,
+            blockers: Vec::new(),
+        }
+    }
+}
+
+/// A process that holds up an update of a Desktop install.
+#[cfg(target_os = "macos")]
+pub(crate) use aven_host::running_processes::RunningProcess as Blocker;
+/// Only macOS Desktop installs wait for other processes.
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Blocker {
+    pub(crate) pid: u32,
+    pub(crate) command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +224,17 @@ pub(crate) fn client() -> Result<reqwest::Client> {
         .context("build update client")
 }
 
+/// A client for whole Desktop archives, which can take longer than a check's
+/// overall timeout. Only a stalled read fails it.
+pub(crate) fn download_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .read_timeout(std::time::Duration::from_secs(30))
+        .user_agent(format!("aven/{CURRENT_VERSION}"))
+        .build()
+        .context("build update download client")
+}
+
 pub(crate) fn ensure_not_cancelled(cancelled: &Arc<AtomicBool>) -> Result<()> {
     if cancelled.load(Ordering::Relaxed) {
         bail!("update cancelled");
@@ -183,9 +246,7 @@ pub(crate) fn progress_channel() -> (
     watch::Sender<UpdateProgress>,
     watch::Receiver<UpdateProgress>,
 ) {
-    watch::channel(UpdateProgress {
-        phase: UpdatePhase::Downloading,
-    })
+    watch::channel(UpdateProgress::new(UpdatePhase::Downloading))
 }
 
 #[cfg(test)]

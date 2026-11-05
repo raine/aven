@@ -146,6 +146,29 @@ scripts/test-assemble-macos-app
 scripts/test-create-macos-dmg
 ```
 
+### Desktop updates
+
+The Desktop updater accepts archives up to 192 MiB. It downloads only when
+asked, waits for every other process running the app's executable except the
+daemon, and never stops them: an older version that is already running keeps
+writing to a database the new version migrated, while a fresh older process
+refuses to open it. The previous bundle stays in `.aven-update-previous` beside
+`Aven.app` until the new version confirms its launch, and comes back only if
+the database schema is unchanged.
+
+Debug builds can run the whole flow against fixtures, apart from the installed
+app and real data:
+
+- `AVEN_DEV_RELEASE_API` replaces the GitHub latest-release URL, and allows
+  `http://127.0.0.1` asset URLs.
+- `AVEN_DEV_APPLICATIONS` stands in for `/Applications`, so an app assembled
+  there with `scripts/assemble-macos-app` skips Setup.
+- Isolate `HOME`, the XDG directories and `AVEN_DB` as `scripts/demo-app`
+  does, give the bundle its own identifier, and open it with `open --env`.
+
+Only signed releases show that a notarized bundle passes Gatekeeper after the
+swap and that launchd restarts the daemon on the new executable.
+
 ## Affected-package handoff
 
 `just test-package <package>` runs that package's non-documentation test targets.

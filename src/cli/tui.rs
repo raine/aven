@@ -111,6 +111,18 @@ pub(crate) enum InternalSubcommand {
     /// app's setup does after the user agrees.
     #[command(name = "desktop-setup", hide = true)]
     DesktopSetup,
+    /// Relaunches the app after its own update, from the previous version, and
+    /// restores that version if the new one does not start.
+    #[command(name = "finish-desktop-update", hide = true)]
+    FinishDesktopUpdate(InternalFinishDesktopUpdateArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct InternalFinishDesktopUpdateArgs {
+    #[arg(long)]
+    pub(crate) marker: PathBuf,
+    #[arg(long)]
+    pub(crate) pid: u32,
 }
 
 #[derive(Args)]

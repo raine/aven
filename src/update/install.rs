@@ -13,7 +13,10 @@ use tokio::sync::watch;
 use super::eligibility::can_stage_beside;
 use super::{InstallPlan, InstallSuccess, UpdatePhase, UpdateProgress, ensure_not_cancelled};
 
-const ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
+pub(super) const ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
+/// Desktop archives carry the whole app, and only new updaters read them.
+#[cfg(target_os = "macos")]
+pub(super) const DESKTOP_ARCHIVE_LIMIT: usize = 192 * 1024 * 1024;
 const CHECKSUM_LIMIT: usize = 4096;
 const BINARY_LIMIT: usize = 128 * 1024 * 1024;
 
@@ -23,6 +26,10 @@ pub(crate) async fn install_direct(
     progress: watch::Sender<UpdateProgress>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<InstallSuccess> {
+    let client = match plan.channel {
+        super::ReleaseChannel::Terminal => client,
+        super::ReleaseChannel::Desktop => super::download_client()?,
+    };
     install_direct_for_home(client, plan, progress, cancelled, dirs::home_dir()).await
 }
 
@@ -41,6 +48,16 @@ pub(super) async fn install_direct_for_home(
     if let Some(layout) =
         super::bundle::BundleLayout::for_target(&target, &plan.release, home.as_deref())?
     {
+        if plan.channel == super::ReleaseChannel::Desktop {
+            return super::bundle::install_desktop(
+                &client,
+                &plan.release,
+                layout,
+                &progress,
+                &cancelled,
+            )
+            .await;
+        }
         return super::bundle::install(&client, &plan.release, layout, &progress, &cancelled).await;
     }
     #[cfg(not(target_os = "macos"))]
@@ -51,6 +68,7 @@ pub(super) async fn install_direct_for_home(
         &plan.release.archive_url,
         &plan.release.checksum_url,
         &plan.release.archive_name,
+        ARCHIVE_LIMIT,
         &progress,
         &cancelled,
     )
@@ -87,14 +105,15 @@ pub(super) async fn download_verified(
     archive_url: &str,
     checksum_url: &str,
     archive_name: &str,
+    limit: usize,
     progress: &watch::Sender<UpdateProgress>,
     cancelled: &Arc<AtomicBool>,
 ) -> Result<Vec<u8>> {
     ensure_not_cancelled(cancelled)?;
     set_phase(progress, UpdatePhase::Downloading);
-    let archive = download_limited(client, archive_url, ARCHIVE_LIMIT).await?;
+    let archive = download_limited(client, archive_url, limit, Some(progress), cancelled).await?;
     ensure_not_cancelled(cancelled)?;
-    let checksum = download_limited(client, checksum_url, CHECKSUM_LIMIT).await?;
+    let checksum = download_limited(client, checksum_url, CHECKSUM_LIMIT, None, cancelled).await?;
 
     ensure_not_cancelled(cancelled)?;
     set_phase(progress, UpdatePhase::Verifying);
@@ -103,28 +122,46 @@ pub(super) async fn download_verified(
 }
 
 pub(super) fn set_phase(progress: &watch::Sender<UpdateProgress>, phase: UpdatePhase) {
-    progress.send_replace(UpdateProgress { phase });
+    progress.send_modify(|progress| {
+        progress.phase = phase;
+        progress.blockers.clear();
+    });
 }
 
-async fn download_limited(client: &reqwest::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
-    let response = client
+/// Downloads `url` in chunks, reporting bytes to `progress` when given.
+async fn download_limited(
+    client: &reqwest::Client,
+    url: &str,
+    limit: usize,
+    progress: Option<&watch::Sender<UpdateProgress>>,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<Vec<u8>> {
+    let mut response = client
         .get(url)
         .send()
         .await
         .with_context(|| format!("download {url}"))?
         .error_for_status()
         .with_context(|| format!("download {url}"))?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
+    let total = response.content_length();
+    if total.is_some_and(|length| length > limit as u64) {
         bail!("download is larger than the allowed limit");
     }
-    let bytes = response.bytes().await.context("read release download")?;
-    if bytes.len() > limit {
-        bail!("download is larger than the allowed limit");
+    let mut bytes = Vec::with_capacity(total.unwrap_or(0) as usize);
+    while let Some(chunk) = response.chunk().await.context("read release download")? {
+        ensure_not_cancelled(cancelled)?;
+        if bytes.len() + chunk.len() > limit {
+            bail!("download is larger than the allowed limit");
+        }
+        bytes.extend_from_slice(&chunk);
+        if let Some(progress) = progress {
+            progress.send_modify(|progress| {
+                progress.downloaded = bytes.len() as u64;
+                progress.total = total;
+            });
+        }
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 fn verify_checksum(archive: &[u8], checksum: &[u8], archive_name: &str) -> Result<()> {
@@ -263,9 +300,7 @@ mod tests {
                 }),
             );
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let (progress, _receiver) = watch::channel(UpdateProgress {
-            phase: UpdatePhase::Downloading,
-        });
+        let (progress, _receiver) = watch::channel(UpdateProgress::new(UpdatePhase::Downloading));
         let plan = InstallPlan {
             release: crate::update::Release {
                 version: Version::parse(version)?,
@@ -278,6 +313,7 @@ mod tests {
             method: crate::update::InstallMethod::Direct {
                 target: target.to_path_buf(),
             },
+            channel: crate::update::ReleaseChannel::Terminal,
         };
         let result = install_direct(
             reqwest::Client::builder().no_proxy().build()?,

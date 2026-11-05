@@ -171,11 +171,13 @@ impl App {
                 version,
                 phase,
                 cancelling,
+                blockers,
             })) = self.overlay.as_mut()
         {
-            let next = *progress.borrow();
-            if *phase != next.phase {
+            let next = progress.borrow().clone();
+            if *phase != next.phase || *blockers != next.blockers {
                 *phase = next.phase;
+                *blockers = next.blockers;
                 *cancelling = self
                     .update
                     .cancelled
@@ -286,6 +288,7 @@ impl App {
             version,
             phase: crate::update::UpdatePhase::Downloading,
             cancelling: false,
+            blockers: Vec::new(),
         }));
         self.update.install = Some(tokio::spawn(async move {
             update::install_direct(client, plan, progress_tx, worker_cancelled).await

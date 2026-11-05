@@ -209,6 +209,8 @@ pub(crate) enum UpdateOverlayState {
         version: String,
         phase: crate::update::UpdatePhase,
         cancelling: bool,
+        /// While waiting, the other processes that must exit first.
+        blockers: Vec<crate::update::Blocker>,
     },
     Current {
         version: String,

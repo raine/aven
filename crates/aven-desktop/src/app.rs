@@ -20,6 +20,7 @@ use crate::setup::Setup;
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
 use crate::toast::Toast;
+use crate::updates::Updates;
 use crate::{actions, input, launcher, platform};
 
 /// How long an outside quit leaves the store to finish queued writes.
@@ -66,6 +67,10 @@ fn relaunch_after_update(cx: &mut App) {
                 continue;
             }
             let finished = cx.update(|cx| {
+                // The app's own update opens the new version itself.
+                if crate::updates::restarting(cx) {
+                    return true;
+                }
                 if platform::is_active() {
                     return false;
                 }
@@ -186,9 +191,10 @@ fn window_placement(saved: Option<&SavedWindow>, cx: &App) -> (WindowBounds, Opt
 }
 
 /// Runs on the owner's own configuration and database, as the CLI resolves them.
-pub fn run() -> Result<()> {
+pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
     crate::startup::mark("desktop-entry");
     let config = AppConfig::load()?;
+    let automatic_checks = config.update.automatic_checks;
     let database = resolve_db_path(None, &config)?;
     let prefs = Prefs::path(&database);
     let runtime = tokio::runtime::Runtime::new()?;
@@ -208,6 +214,7 @@ pub fn run() -> Result<()> {
         app.on_reopen(show_window);
         app.run(move |cx: &mut App| {
             prepare_app(cx);
+            crate::updates::install(updates, automatic_checks, cx);
             open_setup(layout, handle, launch, saved, prefs, cx);
             cx.activate(true);
         });
@@ -222,6 +229,7 @@ pub fn run() -> Result<()> {
     app.run(move |cx: &mut App| {
         crate::startup::mark("app-callback");
         prepare_app(cx);
+        crate::updates::install(updates, automatic_checks, cx);
         open_main(session, replies, saved, prefs, cx);
     });
     Ok(())
@@ -376,6 +384,7 @@ fn open_main(
     // Anything but Quit, such as logging out, ends here. Nothing runs on the
     // main thread after this, so the store gets a moment without a reply.
     cx.on_app_quit(|cx| {
+        crate::updates::discard(cx);
         let mut started = false;
         with_root(cx, |root, window, cx| started = root.begin_quit(window, cx));
         let timer = cx.background_executor().timer(STORE_GRACE);
@@ -387,6 +396,7 @@ fn open_main(
     })
     .detach();
     relaunch_after_update(cx);
+    crate::updates::start(cx);
     cx.activate(true);
 }
 

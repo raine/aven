@@ -18,7 +18,10 @@ use flate2::read::GzDecoder;
 use tokio::sync::watch;
 
 use super::eligibility::can_stage_beside;
-use super::install::{download_verified, set_phase, validate_staged_binary};
+use super::install::{
+    ARCHIVE_LIMIT, DESKTOP_ARCHIVE_LIMIT, download_verified, set_phase, validate_staged_binary,
+};
+use super::processes::wait_for_exit;
 use super::{InstallSuccess, Release, UpdatePhase, UpdateProgress, ensure_not_cancelled};
 use crate::app_bundle::{BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle};
 
@@ -57,7 +60,7 @@ impl BundleLayout {
         }
     }
 
-    fn bundle(&self) -> &Path {
+    pub(super) fn bundle(&self) -> &Path {
         match self {
             Self::Update { bundle } | Self::Migrate { bundle, .. } => bundle,
         }
@@ -71,6 +74,96 @@ pub(super) async fn install(
     progress: &watch::Sender<UpdateProgress>,
     cancelled: &Arc<AtomicBool>,
 ) -> Result<InstallSuccess> {
+    let staged = stage(client, release, layout, ARCHIVE_LIMIT, progress, cancelled).await?;
+    ensure_not_cancelled(cancelled)?;
+    if let BundleLayout::Migrate { link, .. } = &staged.layout
+        && !can_stage_beside(link)
+    {
+        bail!("the install directory is not writable");
+    }
+    set_phase(progress, UpdatePhase::Installing);
+    let previous = staged.activate()?;
+    if let Err(error) = previous.close() {
+        tracing::debug!(%error, "failed to remove the previous Aven.app");
+    }
+    Ok(InstallSuccess {
+        version: release.version.clone(),
+    })
+}
+
+/// A command's update of a Desktop install: it also waits for the other
+/// processes running the app's executable, as the app's own update does.
+pub(super) async fn install_desktop(
+    client: &reqwest::Client,
+    release: &Release,
+    layout: BundleLayout,
+    progress: &watch::Sender<UpdateProgress>,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<InstallSuccess> {
+    let staged = stage(
+        client,
+        release,
+        layout,
+        DESKTOP_ARCHIVE_LIMIT,
+        progress,
+        cancelled,
+    )
+    .await?;
+    wait_for_exit(&staged.executable(), progress, cancelled).await?;
+    ensure_not_cancelled(cancelled)?;
+    set_phase(progress, UpdatePhase::Installing);
+    let previous = staged.activate()?;
+    if let Err(error) = previous.close() {
+        tracing::debug!(%error, "failed to remove the previous Aven.app");
+    }
+    Ok(InstallSuccess {
+        version: release.version.clone(),
+    })
+}
+
+/// A verified, extracted release waiting beside the bundle it replaces.
+/// Dropping it removes the staged copy.
+pub(super) struct StagedBundle {
+    staging: tempfile::TempDir,
+    layout: BundleLayout,
+}
+
+impl StagedBundle {
+    /// The installed bundle's main executable.
+    pub(super) fn executable(&self) -> PathBuf {
+        self.layout.bundle().join(BUNDLE_EXECUTABLE)
+    }
+
+    #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+    pub(super) fn bundle(&self) -> &Path {
+        self.layout.bundle()
+    }
+
+    /// Swaps the staged bundle in. The returned directory holds the previous
+    /// bundle, if there was one, at `BUNDLE_NAME`.
+    pub(super) fn activate(self) -> Result<tempfile::TempDir> {
+        let staged = self.staging.path().join(BUNDLE_NAME);
+        let executable = self.executable();
+        match &self.layout {
+            BundleLayout::Update { bundle } => replace_bundle(&staged, bundle, || Ok(()))?,
+            BundleLayout::Migrate { link, bundle } => {
+                replace_bundle(&staged, bundle, || link_executable(link, &executable))?
+            }
+        }
+        Ok(self.staging)
+    }
+}
+
+/// Downloads, verifies and extracts the release's app archive beside the
+/// bundle, and checks that the staged executable reports the release version.
+pub(super) async fn stage(
+    client: &reqwest::Client,
+    release: &Release,
+    layout: BundleLayout,
+    limit: usize,
+    progress: &watch::Sender<UpdateProgress>,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<StagedBundle> {
     let app = release
         .app
         .as_ref()
@@ -80,6 +173,7 @@ pub(super) async fn install(
         &app.url,
         &app.checksum_url,
         &app.name,
+        limit,
         progress,
         cancelled,
     )
@@ -88,6 +182,7 @@ pub(super) async fn install(
     ensure_not_cancelled(cancelled)?;
     set_phase(progress, UpdatePhase::Extracting);
     let entries = read_app_archive(&archive)?;
+    drop(archive);
 
     ensure_not_cancelled(cancelled)?;
     set_phase(progress, UpdatePhase::Staging);
@@ -103,29 +198,7 @@ pub(super) async fn install(
     write_app_entries(staging.path(), &entries)?;
     let staged = staging.path().join(BUNDLE_NAME);
     validate_staged_binary(&staged.join(BUNDLE_EXECUTABLE), &release.version).await?;
-
-    ensure_not_cancelled(cancelled)?;
-    if let BundleLayout::Migrate { link, .. } = &layout
-        && !can_stage_beside(link)
-    {
-        bail!("the install directory is not writable");
-    }
-    set_phase(progress, UpdatePhase::Installing);
-    let executable = bundle.join(BUNDLE_EXECUTABLE);
-    match &layout {
-        BundleLayout::Update { bundle } => replace_bundle(&staged, bundle, || Ok(()))?,
-        BundleLayout::Migrate { link, bundle } => {
-            replace_bundle(&staged, bundle, || link_executable(link, &executable))?
-        }
-    }
-    // The previous bundle now sits in the staging directory.
-    if let Err(error) = staging.close() {
-        tracing::debug!(%error, "failed to remove the previous Aven.app");
-    }
-
-    Ok(InstallSuccess {
-        version: release.version.clone(),
-    })
+    Ok(StagedBundle { staging, layout })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -256,7 +329,7 @@ fn write_app_entries(root: &Path, entries: &[AppEntry]) -> Result<()> {
 /// Moves `staged` to `destination`, atomically swapping it with an existing
 /// bundle, then runs `finish`. If `finish` fails, the swap is undone. After
 /// success, the previous bundle (if any) is left at `staged`.
-fn replace_bundle(
+pub(super) fn replace_bundle(
     staged: &Path,
     destination: &Path,
     finish: impl FnOnce() -> Result<()>,
@@ -292,7 +365,7 @@ fn replace_bundle(
     }
 }
 
-fn rename_with(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
+pub(super) fn rename_with(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
     let from = CString::new(from.as_os_str().as_bytes())?;
     let to = CString::new(to.as_os_str().as_bytes())?;
     if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), flags) } == 0 {
@@ -454,9 +527,7 @@ mod tests {
             )
             .route("/bare", get(|| async { "unused" }));
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let (progress, _receiver) = watch::channel(UpdateProgress {
-            phase: UpdatePhase::Downloading,
-        });
+        let (progress, _receiver) = watch::channel(UpdateProgress::new(UpdatePhase::Downloading));
         let plan = InstallPlan {
             release: Release {
                 version: Version::parse(version)?,
@@ -473,6 +544,7 @@ mod tests {
             method: InstallMethod::Direct {
                 target: target.to_path_buf(),
             },
+            channel: crate::update::ReleaseChannel::Terminal,
         };
         let result = crate::update::install::install_direct_for_home(
             reqwest::Client::builder().no_proxy().build()?,

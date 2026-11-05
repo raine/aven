@@ -865,6 +865,7 @@ impl Root {
             (ThemePref::System, "System"),
         ];
         let zooms = [(92, "Small"), (100, "Default"), (110, "Large")];
+        let (update_note, update_button) = self.update_status(cx, t);
         page("General", Some("Appearance applies to this device."), t)
             .child(group(
                 vec![
@@ -905,11 +906,8 @@ impl Root {
             .child(group(
                 vec![
                     row(t)
-                        .child(row_title(
-                            "Aven",
-                            Some(format!("Version {}", env!("CARGO_PKG_VERSION"))),
-                            t,
-                        ))
+                        .child(row_title("Aven", Some(update_note), t))
+                        .when_some(update_button, |row, button| row.child(button))
                         .child(
                             line_btn("open-about", "About Aven", t).on_click(cx.listener(
                                 |this, _, window, cx| this.open_about(&OpenAbout, window, cx),
