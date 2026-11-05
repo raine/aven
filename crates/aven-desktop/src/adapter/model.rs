@@ -1,3 +1,4 @@
+use crate::launch::{Catalog, LaunchEvent, LaunchJob};
 use crate::sync_ops::{SyncEvent, SyncRequest};
 use crate::toast::Toast;
 use anyhow::Result;
@@ -647,6 +648,12 @@ pub enum Command {
         input: String,
         project: Option<String>,
     },
+    /// Every workspace with its projects and labels, for the launcher.
+    LoadLauncher,
+    /// Starts a launcher submission, which runs apart from the store.
+    Launch(Box<LaunchJob>),
+    /// Stops the launcher's review with this id, if it still runs.
+    CancelLaunch(u64),
     CopyReport(TaskId),
     ShowView(TaskQuery),
     ShowProject(Option<String>),
@@ -771,6 +778,9 @@ impl Command {
                 | Self::Peek(_)
                 | Self::Preview(_)
                 | Self::Intake { .. }
+                | Self::LoadLauncher
+                | Self::Launch(_)
+                | Self::CancelLaunch(_)
                 | Self::CopyReport(..)
                 | Self::SaveImage(..)
                 | Self::LoadSeries(_)
@@ -823,6 +833,8 @@ pub enum ReplyBody {
     Intake(Box<NewTask>),
     /// Natural language input that produced no draft.
     IntakeFailed(String),
+    Launcher(Box<Catalog>),
+    Launch(LaunchEvent),
     Created(TaskId),
     /// A write landed, with the toast that says so. Its `undo` is set when the
     /// store's undo would take this write back.

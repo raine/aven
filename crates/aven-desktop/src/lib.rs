@@ -19,6 +19,7 @@ mod images;
 mod input;
 pub mod intro;
 mod kit;
+pub mod launch;
 mod lazy_row;
 mod ledger;
 mod markdown;

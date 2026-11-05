@@ -1,3 +1,5 @@
+use crate::launch;
+use crate::launch::{Catalog, LaunchEnv, LaunchEvent, LaunchJob, LaunchMode, Place};
 use crate::session::Session;
 use crate::sync_ops;
 use crate::sync_ops::{SyncOp, SyncRequest, SyncWork};
@@ -50,7 +52,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{
     Instant, MissedTickBehavior, interval, interval_at, sleep, sleep_until, timeout,
@@ -87,7 +89,7 @@ fn join_paused() -> Toast {
     Toast::info("Joining sync").detail("Local changes wait until synced tasks are downloaded")
 }
 
-fn attachment_input(image: &PendingImage, alt: String) -> AttachmentAddInput {
+pub(crate) fn attachment_input(image: &PendingImage, alt: String) -> AttachmentAddInput {
     AttachmentAddInput {
         filename: Some(image.name.clone()),
         alt_text: Some(alt).filter(|alt| !alt.is_empty()),
@@ -95,6 +97,34 @@ fn attachment_input(image: &PendingImage, alt: String) -> AttachmentAddInput {
         bytes: image.bytes.to_vec(),
         optimization_policy: ImageOptimizationPolicy::Optimize,
         dedupe_existing: false,
+    }
+}
+
+/// The composer fields an agent's task fills.
+pub(crate) fn intake_task(result: aven_host::task_intake::TaskIntakeResult) -> NewTask {
+    let task = result.task;
+    let schedule = crate::draft::schedule_text(
+        task.available_at.as_deref().unwrap_or_default(),
+        task.due_on.as_deref().unwrap_or_default(),
+        result.recurrence.as_ref(),
+    );
+    NewTask {
+        title: task.title,
+        description: task.description,
+        project: task.project,
+        status: task.status,
+        priority: task.priority,
+        labels: task.labels,
+        metadata: task
+            .metadata
+            .into_iter()
+            .map(|field| (field.key, field.value))
+            .collect(),
+        is_epic: task.is_epic,
+        schedule,
+        images: Vec::new(),
+        replaces: None,
+        first_project: None,
     }
 }
 
@@ -304,6 +334,9 @@ pub fn create_secret_gist(
     Ok(url)
 }
 
+/// How many saving launcher jobs run their agent at once. More wait.
+const LAUNCH_TURNS: usize = 3;
+
 struct Actor {
     store: TuiStore,
     database: PathBuf,
@@ -329,6 +362,10 @@ struct Actor {
     undoable: Vec<Toast>,
     /// Review marks a keep replaced, for taking the keep back.
     kept: HashMap<TaskId, Option<i64>>,
+    /// Turns for launcher jobs that save, so few agents run at once.
+    launch_turns: Arc<Semaphore>,
+    /// The launcher's review in flight, with its id.
+    launch_review: Option<(u64, JoinHandle<()>)>,
     /// Whether the open database still waits for the welcome.
     welcome: bool,
 }
@@ -405,6 +442,8 @@ impl Actor {
             column_views: Vec::new(),
             undoable: Vec::new(),
             kept: HashMap::new(),
+            launch_turns: Arc::new(Semaphore::new(LAUNCH_TURNS)),
+            launch_review: None,
             welcome: false,
         }
     }
@@ -2044,35 +2083,90 @@ impl Actor {
                 .map_err(anyhow::Error::from)
                 .and_then(|run| run)
             {
-                Ok(result) => {
-                    let task = result.task;
-                    let schedule = crate::draft::schedule_text(
-                        task.available_at.as_deref().unwrap_or_default(),
-                        task.due_on.as_deref().unwrap_or_default(),
-                        result.recurrence.as_ref(),
-                    );
-                    ReplyBody::Intake(Box::new(NewTask {
-                        title: task.title,
-                        description: task.description,
-                        project: task.project,
-                        status: task.status,
-                        priority: task.priority,
-                        labels: task.labels,
-                        metadata: task
-                            .metadata
-                            .into_iter()
-                            .map(|field| (field.key, field.value))
-                            .collect(),
-                        is_epic: task.is_epic,
-                        schedule,
-                        images: Vec::new(),
-                        replaces: None,
-                        first_project: None,
-                    }))
-                }
+                Ok(result) => ReplyBody::Intake(Box::new(intake_task(result))),
                 Err(error) => ReplyBody::IntakeFailed(format!("{error:#}")),
             };
             let _ = replies.send(Reply { request, body });
+        });
+    }
+
+    async fn launcher_catalog(&self) -> Result<Catalog> {
+        let database = self.store.database();
+        let mut places = Vec::new();
+        for workspace in database.list_workspaces().await? {
+            let projects = database
+                .list_project_items(&workspace.id)
+                .await?
+                .into_iter()
+                .map(|project| NavEntry {
+                    name: project.name,
+                    key: project.key,
+                    prefix: project.prefix,
+                    count: project.open_count,
+                })
+                .collect();
+            places.push(Place {
+                labels: database.list_labels(&workspace.id, None).await?,
+                key: workspace.key,
+                name: workspace.name,
+                projects,
+            });
+        }
+        Ok(Catalog {
+            active: self.store.active_workspace.key.clone(),
+            places,
+        })
+    }
+
+    /// Starts `job` off the actor, or says why it cannot start. Saving jobs
+    /// take turns and outlive the launcher; a review replaces the last one.
+    async fn launch(&mut self, job: LaunchJob) {
+        let id = job.id;
+        let review = job.mode == LaunchMode::Review;
+        let refused = match launch::refusal(&self.config.agent.task_intake, &job) {
+            Some(reason) => Some(reason),
+            None if !review && self.paused_by_join().await => Some(
+                "Joining sync. Tasks can be added once synced tasks are downloaded.".to_string(),
+            ),
+            None => self.blob_dir().err().map(|error| format!("{error:#}")),
+        };
+        if let Some(reason) = refused {
+            self.send(ReplyBody::Launch(LaunchEvent::Refused(id, reason)));
+            return;
+        }
+        let env = LaunchEnv {
+            database: self.store.database(),
+            intake: self.config.agent.task_intake.clone(),
+            blob_dir: self.blob_dir().unwrap_or_default(),
+            policy: self.config.local.attachment_lifecycle.policy(),
+        };
+        let replies = self.replies.clone();
+        let request = self.handled;
+        if review {
+            let task = tokio::spawn(async move {
+                let body = ReplyBody::Launch(launch::run(&env, job).await);
+                let _ = replies.send(Reply { request, body });
+            });
+            if let Some((_, previous)) = self.launch_review.replace((id, task)) {
+                previous.abort();
+            }
+            return;
+        }
+        self.send(ReplyBody::Launch(LaunchEvent::Accepted(id)));
+        let turns = self.launch_turns.clone();
+        let wake = self.sync_wake.clone();
+        tokio::spawn(async move {
+            let Ok(_turn) = turns.acquire_owned().await else {
+                return;
+            };
+            let event = launch::run(&env, job).await;
+            if matches!(event, LaunchEvent::Created(_)) {
+                wake.notify_one();
+            }
+            let _ = replies.send(Reply {
+                request,
+                body: ReplyBody::Launch(event),
+            });
         });
     }
 
@@ -2101,6 +2195,19 @@ impl Actor {
             Command::Peek(id) => self.send_detail(&id).await,
             Command::Preview(input) => self.preview(input),
             Command::Intake { input, project } => self.intake(input, project),
+            Command::LoadLauncher => match self.launcher_catalog().await {
+                Ok(catalog) => self.send(ReplyBody::Launcher(Box::new(catalog))),
+                Err(error) => self.send(ReplyBody::Notice(failed(
+                    "Could not load the launcher",
+                    &error,
+                ))),
+            },
+            Command::Launch(job) => self.launch(*job).await,
+            Command::CancelLaunch(id) => {
+                if let Some((_, review)) = self.launch_review.take_if(|(at, _)| *at == id) {
+                    review.abort();
+                }
+            }
             Command::LoadSeries(id) => self.send_series(&id).await,
             Command::StartReview(exclude) => match self.review(&exclude).await {
                 Ok((cards, more)) => self.send(ReplyBody::Review(cards, more)),
@@ -3469,6 +3576,66 @@ mod tests {
     async fn run(actor: &mut Actor, command: Command) {
         let id = actor.handled + 1;
         actor.handle(Request { id, command }).await;
+    }
+
+    #[tokio::test]
+    async fn launcher_jobs_start_apart_from_the_store() {
+        let (_dir, mut actor, mut replies) = actor("Existing").await;
+        run(&mut actor, Command::LoadLauncher).await;
+        let catalog = bodies(&mut replies)
+            .into_iter()
+            .find_map(|body| match body {
+                ReplyBody::Launcher(catalog) => Some(catalog),
+                _ => None,
+            });
+        let catalog = catalog.expect("the launcher's catalog");
+        let place = catalog
+            .place(&catalog.active)
+            .expect("the active workspace");
+        assert!(!place.projects.is_empty());
+
+        let job = |id, mode| LaunchJob {
+            id,
+            mode,
+            workspace: catalog.active.clone(),
+            project: None,
+            labels: Vec::new(),
+            text: "Buy milk".to_string(),
+            images: Vec::new(),
+        };
+        run(
+            &mut actor,
+            Command::Launch(Box::new(job(1, LaunchMode::Create))),
+        )
+        .await;
+        assert!(matches!(
+            bodies(&mut replies)[..],
+            [ReplyBody::Launch(LaunchEvent::Refused(1, _))]
+        ));
+
+        let plain = LaunchMode::Plain(launch::PlainTask {
+            title: "Buy milk".to_string(),
+            description: String::new(),
+            priority: TaskPriority::None,
+        });
+        run(&mut actor, Command::Launch(Box::new(job(2, plain)))).await;
+        let mut events = Vec::new();
+        while events.len() < 2 {
+            let reply = tokio::time::timeout(Duration::from_secs(5), replies.recv())
+                .await
+                .expect("the job should finish")
+                .unwrap();
+            if let ReplyBody::Launch(event) = reply.body {
+                events.push(event);
+            }
+        }
+        assert_eq!(events[0], LaunchEvent::Accepted(2));
+        let LaunchEvent::Created(created) = &events[1] else {
+            panic!("expected a created task, got {:?}", events[1]);
+        };
+        assert!(created.plain);
+        assert_eq!(created.title, "Buy milk");
+        assert!(actor.undoable.is_empty(), "launcher tasks stay out of undo");
     }
 
     fn task_id(actor: &Actor, title: &str) -> TaskId {

@@ -178,7 +178,7 @@ pub async fn run_task_intake_command_with_images(
             "error task-intake-command-required hint=\"configure agent.task_intake.command\"",
         )?;
     let template = task_intake_template(config);
-    if !images.is_empty() && config.image_args.is_empty() && !template.contains("{images}") {
+    if !images.is_empty() && !delivers_images(config) {
         bail!(
             "error task-intake-images-unsupported hint=\"set agent.task_intake.image_args or use {{images}} in agent.task_intake.system_prompt\""
         );
@@ -247,6 +247,12 @@ pub async fn run_task_intake_command_with_images(
         );
     }
     String::from_utf8(output.stdout).context("task intake output was not utf-8")
+}
+
+/// Whether `config` gives the agent submitted images, through `image_args` or
+/// a prompt that lists them.
+pub fn delivers_images(config: &TaskIntakeConfig) -> bool {
+    !config.image_args.is_empty() || task_intake_template(config).contains("{images}")
 }
 
 fn task_intake_template(config: &TaskIntakeConfig) -> &str {

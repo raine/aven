@@ -19,6 +19,7 @@ use crate::adapter::{
     SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed,
     first_project_name,
 };
+use crate::launch::{Catalog, LaunchEvent, LaunchJob};
 use crate::sync_ops::{
     DeviceList, Finished, Secret, SetupFacts, SyncEvent, SyncKind, SyncOp, SyncRequest,
 };
@@ -158,6 +159,10 @@ pub struct Applied {
     /// A draft natural language input produced.
     pub intake: Option<Box<NewTask>>,
     pub intake_failed: bool,
+    /// What the launcher offers, freshly read.
+    pub launcher: Option<Box<Catalog>>,
+    /// News of a launcher submission.
+    pub launch: Option<LaunchEvent>,
     /// Text for the clipboard, with what to call it.
     pub copy: Option<String>,
     /// The task whose local write produced this list, so the list may animate.
@@ -1080,6 +1085,18 @@ impl Session {
         self.send(Command::Intake { input, project });
     }
 
+    pub fn load_launcher(&mut self) {
+        self.send(Command::LoadLauncher);
+    }
+
+    pub fn launch(&mut self, job: LaunchJob) {
+        self.send(Command::Launch(Box::new(job)));
+    }
+
+    pub fn cancel_launch(&mut self, id: u64) {
+        self.send(Command::CancelLaunch(id));
+    }
+
     /// A refresh the user asked for: the Done group empties.
     pub fn refresh_view(&mut self) {
         self.leave_done();
@@ -1554,6 +1571,8 @@ impl Session {
                 applied.copy = Some(text);
             }
             ReplyBody::Intake(task) => applied.intake = Some(task),
+            ReplyBody::Launcher(catalog) => applied.launcher = Some(catalog),
+            ReplyBody::Launch(event) => applied.launch = Some(event),
             ReplyBody::IntakeFailed(message) => {
                 applied.intake_failed = true;
                 self.show_toast(failed("Could not read that", &message));

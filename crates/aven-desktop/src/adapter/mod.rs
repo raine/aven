@@ -10,8 +10,8 @@ mod model;
 mod prefs;
 mod rows;
 
+pub(crate) use actor::{attachment_input, failed, intake_task, prepare};
 pub use actor::{create_secret_gist, first_project_name, first_project_prefix, open_store, start};
-pub(crate) use actor::{failed, prepare};
 pub use model::*;
 pub use prefs::*;
 pub(crate) use rows::capitalised;
