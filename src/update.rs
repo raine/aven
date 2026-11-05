@@ -36,7 +36,7 @@ pub(crate) use desktop::DesktopUpdater;
 pub(crate) use eligibility::install_plan;
 pub(crate) use install::install_direct;
 #[cfg(target_os = "macos")]
-pub(crate) use relaunch::finish_desktop_update;
+pub(crate) use relaunch::{finish_desktop_update, launch_pending};
 pub(crate) use release::ReleaseChannel;
 
 pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
