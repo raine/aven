@@ -6,7 +6,7 @@ PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 
 if [[ $# -lt 1 ]]; then
-  echo "usage: sign-macos-release BINARY_OR_APP..." >&2
+  echo "usage: sign-macos-release BINARY_OR_APP_OR_DMG..." >&2
   exit 2
 fi
 
@@ -23,7 +23,7 @@ fi
 identifier=fi.zendit.Aven
 for target in "$@"; do
   if [[ ! -f $target && ! ( -d $target && $target == *.app ) ]]; then
-    echo "binary or app bundle not found: $target" >&2
+    echo "binary, app bundle or disk image not found: $target" >&2
     exit 2
   fi
 done
@@ -106,9 +106,14 @@ fi
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # A bundle and a bare binary signed this way share one designated requirement.
+# A disk image is not code, so it keeps its default identifier and no runtime.
 for target in "$@"; do
-  codesign --force --options runtime --timestamp --identifier "$identifier" \
-    --keychain "$keychain" --sign "$identity_hash" "$target"
+  if [[ $target == *.dmg ]]; then
+    codesign --force --timestamp --keychain "$keychain" --sign "$identity_hash" "$target"
+  else
+    codesign --force --options runtime --timestamp --identifier "$identifier" \
+      --keychain "$keychain" --sign "$identity_hash" "$target"
+  fi
   codesign --verify --strict --verbose=2 "$target"
   "$script_dir/verify-macos-release" "$target"
 done

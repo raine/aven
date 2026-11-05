@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use only system tools so the image matches the signing environment.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: create-macos-dmg APP DMG" >&2
+  exit 2
+fi
+app=$1
+dmg=$2
+if [[ $(basename "$app") != Aven.app || -L $app || ! -d $app ]]; then
+  echo "expected an Aven.app bundle directory: $app" >&2
+  exit 2
+fi
+if [[ $dmg != *.dmg ]]; then
+  echo "disk image name must end in .dmg: $dmg" >&2
+  exit 2
+fi
+if [[ -e $dmg || -L $dmg ]]; then
+  echo "refusing to replace existing disk image: $dmg" >&2
+  exit 2
+fi
+if [[ ! -d $(dirname "$dmg") ]]; then
+  echo "output directory not found: $(dirname "$dmg")" >&2
+  exit 2
+fi
+
+runner_temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+work_dir=$(mktemp -d "$runner_temp/aven-dmg.XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
+
+# The window shows the app beside a link to drag it onto.
+volume="$work_dir/Aven"
+mkdir "$volume"
+ditto "$app" "$volume/Aven.app"
+ln -s /Applications "$volume/Applications"
+hdiutil create -quiet -volname Aven -srcfolder "$volume" -fs HFS+ -format UDZO "$dmg"
+echo "$dmg"

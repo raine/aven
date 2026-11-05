@@ -147,10 +147,30 @@ pub(super) fn platform_archive_name() -> Result<String> {
 
 /// The archive holding only `Aven.app`, published for macOS.
 fn platform_app_archive_name() -> Result<Option<String>> {
+    channel_app_archive_name(ReleaseChannel::Terminal)
+}
+
+/// The product line an installation updates within. Each channel has its own
+/// release archives and never falls back to the other channel's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReleaseChannel {
+    /// CLI, TUI and daemon without the desktop app.
+    Terminal,
+    /// The desktop app, which also provides the CLI, TUI and daemon.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Desktop,
+}
+
+/// The archive holding only `Aven.app` for `channel` on this platform, or
+/// `None` where the terminal channel ships only the bare binary archive.
+pub(super) fn channel_app_archive_name(channel: ReleaseChannel) -> Result<Option<String>> {
     let suffix = platform_suffix()?;
-    Ok(suffix
-        .starts_with("darwin-")
-        .then(|| format!("aven-{suffix}-app.tar.gz")))
+    let macos = suffix.starts_with("darwin-");
+    match channel {
+        ReleaseChannel::Terminal => Ok(macos.then(|| format!("aven-{suffix}-app.tar.gz"))),
+        ReleaseChannel::Desktop if macos => Ok(Some(format!("aven-desktop-{suffix}-app.tar.gz"))),
+        ReleaseChannel::Desktop => bail!("Aven Desktop releases do not support {suffix}"),
+    }
 }
 
 fn platform_suffix() -> Result<&'static str> {
@@ -255,6 +275,27 @@ mod tests {
             );
         } else {
             assert_eq!(parsed.app, None);
+        }
+    }
+
+    #[test]
+    fn channels_select_separate_app_archives() {
+        let suffix = platform_suffix().unwrap();
+        let terminal = channel_app_archive_name(ReleaseChannel::Terminal).unwrap();
+        let desktop = channel_app_archive_name(ReleaseChannel::Desktop);
+        assert_eq!(terminal, platform_app_archive_name().unwrap());
+        if cfg!(target_os = "macos") {
+            assert_eq!(terminal, Some(format!("aven-{suffix}-app.tar.gz")));
+            assert_eq!(
+                desktop.unwrap(),
+                Some(format!("aven-desktop-{suffix}-app.tar.gz"))
+            );
+        } else {
+            assert_eq!(terminal, None);
+            assert!(
+                desktop.is_err(),
+                "the desktop channel must not fall back to terminal archives"
+            );
         }
     }
 
