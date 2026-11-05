@@ -11,7 +11,7 @@ use aven_host::store::ConflictTarget;
 use gpui::{
     AnyElement, ClipboardItem, Context, Entity, FocusHandle, FontWeight, HighlightStyle,
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription,
-    Window, div, img, prelude::*,
+    UnderlineStyle, Window, div, img, prelude::*,
 };
 
 use crate::actions::*;
@@ -882,11 +882,22 @@ impl Root {
         let detail = hit.snippet.as_ref().map_or(status.to_string(), |snippet| {
             format!("{status} · {snippet}")
         });
+        // Matches are weight and underline rather than a fill, so they never
+        // read as a second selection.
         let highlight = HighlightStyle {
-            background_color: Some(t.accent.opacity(0.24)),
+            font_weight: Some(FontWeight::SEMIBOLD),
+            underline: Some(UnderlineStyle {
+                thickness: px(1.5),
+                color: Some(t.accent.opacity(0.7)),
+                wavy: false,
+            }),
             ..HighlightStyle::default()
         };
-        let marked = |line: &str| -> StyledText {
+        let detail_highlight = HighlightStyle {
+            color: Some(t.body),
+            ..highlight
+        };
+        let marked = |line: &str, highlight: HighlightStyle| -> StyledText {
             let lower = line.to_lowercase();
             let ranges = text
                 .split_whitespace()
@@ -920,7 +931,7 @@ impl Root {
             .items_center()
             .gap(px(10.))
             .rounded(px(RADIUS_CONTROL))
-            .when(on, |row| row.bg(t.tint))
+            .when(on, |row| row.bg(t.pick()))
             .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
                 let hovered = match this.dialog.as_ref() {
                     Some(Layer {
@@ -954,17 +965,27 @@ impl Root {
                                     .truncate()
                                     .text_color(t.ink)
                                     .when(hit.deleted, |title| title.line_through())
-                                    .child(marked(&hit.title)),
+                                    .child(marked(&hit.title, highlight)),
                             )
                             .when(hit.is_epic, |line| {
                                 line.child(epic_star(hit.status.is_terminal() || hit.deleted, t))
                             }),
                     )
                     .child(
+                        // The ref leads the line, so the project sits under the
+                        // start of the title.
                         small(Text::Secondary)
-                            .truncate()
-                            .text_color(t.muted)
-                            .child(marked(&detail)),
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .text_color(if on { t.body } else { t.muted })
+                            .child(ref_label(&hit.reference, &hit.project_key, None, t))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(marked(&detail, detail_highlight)),
+                            ),
                     ),
             )
             .when(hit.deleted, |row| {
@@ -975,7 +996,6 @@ impl Root {
                         .child("Deleted"),
                 )
             })
-            .child(ref_label(&hit.reference, &hit.project_key, None, t))
     }
 
     /// Prefixes are capitals, so typing shows them as they will save.
