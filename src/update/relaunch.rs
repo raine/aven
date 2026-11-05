@@ -193,6 +193,10 @@ pub(crate) async fn finish_desktop_update(marker: &Path, pid: u32) -> Result<()>
     if update.state != UpdateState::Pending {
         return Ok(());
     }
+    let previous = previous_bundle(&update.bundle)?;
+    if !super::processes::wait_for_daemon_exit(&previous.join(BUNDLE_EXECUTABLE)).await {
+        println!("update-daemon-still-running");
+    }
     open_app(&update.bundle)?;
     match watch_launch(marker, &update.bundle).await? {
         Launch::Confirmed => {

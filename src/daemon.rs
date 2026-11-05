@@ -28,7 +28,9 @@ pub use service::{
     repair, restart, status_snapshot, uninstall,
 };
 
-const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+/// Short, because an update waits for the daemon to notice its replaced
+/// executable and exit before the new version opens the database.
+const BINARY_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BinaryFingerprint {

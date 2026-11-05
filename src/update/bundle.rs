@@ -21,7 +21,7 @@ use super::eligibility::can_stage_beside;
 use super::install::{
     ARCHIVE_LIMIT, DESKTOP_ARCHIVE_LIMIT, download_verified, set_phase, validate_staged_binary,
 };
-use super::processes::wait_for_exit;
+use super::processes::{wait_for_daemon_exit, wait_for_exit};
 use super::{InstallSuccess, Release, UpdatePhase, UpdateProgress, ensure_not_cancelled};
 use crate::app_bundle::{BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle};
 
@@ -83,6 +83,7 @@ pub(super) async fn install(
     }
     set_phase(progress, UpdatePhase::Installing);
     let previous = staged.activate()?;
+    wait_for_daemon_exit(&previous.path().join(BUNDLE_NAME).join(BUNDLE_EXECUTABLE)).await;
     if let Err(error) = previous.close() {
         tracing::debug!(%error, "failed to remove the previous Aven.app");
     }
@@ -113,6 +114,7 @@ pub(super) async fn install_desktop(
     ensure_not_cancelled(cancelled)?;
     set_phase(progress, UpdatePhase::Installing);
     let previous = staged.activate()?;
+    wait_for_daemon_exit(&previous.path().join(BUNDLE_NAME).join(BUNDLE_EXECUTABLE)).await;
     if let Err(error) = previous.close() {
         tracing::debug!(%error, "failed to remove the previous Aven.app");
     }
