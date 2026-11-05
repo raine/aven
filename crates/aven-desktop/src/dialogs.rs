@@ -10,14 +10,15 @@ use aven_core::recurrence::RecurrenceSeriesId;
 use aven_host::store::ConflictTarget;
 use gpui::{
     AnyElement, ClipboardItem, Context, Entity, FocusHandle, FontWeight, HighlightStyle,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, SharedString, StyledText, Subscription,
-    UnderlineStyle, Window, div, img, prelude::*,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, ScrollHandle, SharedString, StyledText,
+    Subscription, UnderlineStyle, Window, div, img, prelude::*,
 };
 
 use crate::actions::*;
 use crate::adapter::{Command, Image, SearchHit, SearchInput, SyncPhase};
 use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
+use crate::overlays::reveal_item;
 use crate::session::SyncPage;
 use crate::shell::Root;
 use crate::theme::{Theme, theme};
@@ -41,6 +42,7 @@ const ABOUT_LINKS: [(&str, &str); 3] = [
 const SEARCH_WIDTH: f32 = 660.;
 const SEARCH_LIST_HEIGHT: f32 = 312.;
 const SEARCH_ROW_HEIGHT: f32 = 50.;
+const SEARCH_LIST_PADDING: f32 = 6.;
 
 pub(crate) type SavePromptText = Rc<dyn Fn(&mut Root, String, &mut Window, &mut Context<Root>)>;
 
@@ -151,6 +153,7 @@ pub enum Dialog {
         all: bool,
         deleted: bool,
         index: usize,
+        scroll: ScrollHandle,
     },
     /// What becomes of a stopped series' current task.
     Stop {
@@ -323,6 +326,14 @@ impl Root {
             EditorEvent::Cancel => self.close_dialog(window, cx),
             EditorEvent::Changed if searching => {
                 self.set_search_index(0, cx);
+                if let Some(Layer {
+                    dialog: Dialog::Search { scroll, .. },
+                    ..
+                }) = &self.dialog
+                {
+                    // Filtering invalidates the previous results' measured bounds.
+                    scroll.set_offset(gpui::point(px(0.), px(0.)));
+                }
                 self.run_search_preview(cx);
             }
             EditorEvent::Up if searching => self.step_search(-1, cx),
@@ -381,6 +392,7 @@ impl Root {
             all: self.session.snapshot.view.project.is_none(),
             deleted: self.session.snapshot.view.deleted != crate::adapter::DeletedFilter::Hide,
             index: 0,
+            scroll: ScrollHandle::new(),
         };
         self.session.search = Default::default();
         self.open_dialog(dialog, vec![input], window, cx);
@@ -460,6 +472,19 @@ impl Root {
         {
             let next = (*index as isize + delta).clamp(0, (count - 1).max(0));
             self.set_search_index(next as usize, cx);
+            if let Some(Layer {
+                dialog: Dialog::Search { input, scroll, .. },
+                ..
+            }) = &self.dialog
+            {
+                // Recent results have a heading before the first selectable row.
+                let heading = usize::from(input.read(cx).text().trim().is_empty());
+                if next == 0 {
+                    scroll.set_offset(gpui::point(px(0.), px(0.)));
+                } else {
+                    reveal_item(scroll, next as usize + heading, px(SEARCH_LIST_PADDING));
+                }
+            }
         }
     }
 
@@ -709,6 +734,7 @@ impl Root {
                     all,
                     deleted,
                     index,
+                    scroll,
                 },
             ..
         }) = self.dialog.as_ref()
@@ -730,7 +756,8 @@ impl Root {
             .id("search-list")
             .h(px(SEARCH_LIST_HEIGHT))
             .overflow_y_scroll()
-            .p(px(6.));
+            .track_scroll(scroll)
+            .p(px(SEARCH_LIST_PADDING));
         if text.is_empty() {
             list = list.child(
                 div()

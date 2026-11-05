@@ -333,9 +333,26 @@ fn closeness(query: &str, label: &str, hint: &str) -> Option<Closeness> {
     Some(Closeness::Scattered { span, start })
 }
 
-/// The scroll offset that shows `row` inside `view` with the list's padding around it.
-fn revealed_offset(row: Bounds<Pixels>, view: Bounds<Pixels>, offset: Pixels) -> Pixels {
-    let padding = px(MENU_PADDING);
+/// Reveals a list child with breathing room without changing horizontal scrolling.
+pub(crate) fn reveal_item(scroll: &ScrollHandle, child: usize, padding: Pixels) {
+    if let Some(row) = scroll.bounds_for_item(child) {
+        let offset = scroll.offset();
+        let y = revealed_offset(row, scroll.bounds(), offset.y, padding);
+        scroll.set_offset(point(offset.x, y.clamp(-scroll.max_offset().y, px(0.))));
+    } else {
+        scroll.scroll_to_item(child);
+    }
+}
+
+/// The scroll offset that shows `row` inside `view` with padding around it.
+fn revealed_offset(
+    row: Bounds<Pixels>,
+    view: Bounds<Pixels>,
+    offset: Pixels,
+    padding: Pixels,
+) -> Pixels {
+    // Preserve the whole row when the viewport cannot also fit the margin.
+    let padding = padding.min(((view.size.height - row.size.height) / 2.).max(px(0.)));
     if row.top() + offset < view.top() + padding {
         view.top() + padding - row.top()
     } else if row.bottom() + offset > view.bottom() - padding {
@@ -689,11 +706,7 @@ impl Root {
                     })
                     .count();
                 let child = position + separators;
-                if let Some(row) = menu.scroll.bounds_for_item(child) {
-                    let offset = menu.scroll.offset();
-                    let y = revealed_offset(row, menu.scroll.bounds(), offset.y);
-                    menu.scroll.set_offset(point(offset.x, y));
-                }
+                reveal_item(&menu.scroll, child, px(MENU_PADDING));
             }
             cx.notify();
         }
@@ -1401,11 +1414,47 @@ mod tests {
         let view = Bounds::new(point(px(0.), px(100.)), size(px(200.), px(300.)));
         let row = |top: f32| Bounds::new(point(px(0.), px(top)), size(px(200.), px(30.)));
 
-        let below = revealed_offset(row(500.), view, px(0.));
+        let below = revealed_offset(row(500.), view, px(0.), px(MENU_PADDING));
         assert_eq!(px(530.) + below, view.bottom() - px(MENU_PADDING));
-        let above = revealed_offset(row(120.), view, px(-200.));
+        let above = revealed_offset(row(120.), view, px(-200.), px(MENU_PADDING));
         assert_eq!(px(120.) + above, view.top() + px(MENU_PADDING));
-        assert_eq!(revealed_offset(row(200.), view, px(-10.)), px(-10.));
+        assert_eq!(
+            revealed_offset(row(200.), view, px(-10.), px(MENU_PADDING)),
+            px(-10.)
+        );
+    }
+
+    #[test]
+    fn search_sized_rows_remain_visible_through_navigation_in_both_directions() {
+        let padding = px(6.);
+        let view = Bounds::new(point(px(20.), px(100.)), size(px(600.), px(312.)));
+        // Both ordinary results and recent results with a leading heading.
+        for heading in [0., 26.] {
+            let total = px(12. + heading + 35. * 50.);
+            let mut offset = px(0.);
+            for index in (0..35).chain((0..35).rev()) {
+                let row = Bounds::new(
+                    point(px(26.), px(106. + heading + index as f32 * 50.)),
+                    size(px(588.), px(50.)),
+                );
+                offset = revealed_offset(row, view, offset, padding)
+                    .clamp(view.size.height - total, px(0.));
+                assert!(row.top() + offset >= view.top() + padding);
+                assert!(row.bottom() + offset <= view.bottom() - padding);
+                assert_eq!(revealed_offset(row, view, offset, padding), offset);
+            }
+        }
+    }
+
+    #[test]
+    fn reveal_prioritizes_the_whole_row_in_a_short_viewport() {
+        let view = Bounds::new(point(px(0.), px(100.)), size(px(200.), px(54.)));
+        let row = Bounds::new(point(px(0.), px(200.)), size(px(200.), px(50.)));
+        for current in [px(0.), px(-200.)] {
+            let offset = revealed_offset(row, view, current, px(6.));
+            assert_eq!(row.top() + offset, view.top() + px(2.));
+            assert_eq!(row.bottom() + offset, view.bottom() - px(2.));
+        }
     }
 
     /// The labels `query` leaves, as a menu lists them.
