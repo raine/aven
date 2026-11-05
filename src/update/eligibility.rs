@@ -8,7 +8,7 @@ pub(crate) fn install_plan(release: Release) -> InstallPlan {
     let launch = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aven"));
     let canonical = std::fs::canonicalize(&launch).unwrap_or_else(|_| launch.clone());
     let supported = platform_archive_name().is_ok();
-    let writable = can_stage_beside(&replaced_path(&canonical));
+    let writable = can_replace(&replaced_path(&canonical));
     let channel = release_channel();
     InstallPlan {
         release,
@@ -131,6 +131,28 @@ fn replaced_path(canonical: &Path) -> PathBuf {
         return bundle;
     }
     canonical.to_path_buf()
+}
+
+/// Whether an update can replace `target`. It stages the new copy beside it,
+/// and swapping a directory such as `Aven.app` into another directory also
+/// needs write access to the directory itself, which an `Aven.app` owned by
+/// another user does not give.
+fn can_replace(target: &Path) -> bool {
+    can_stage_beside(target) && (!target.is_dir() || is_writable(target))
+}
+
+#[cfg(unix)]
+fn is_writable(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt as _;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    unsafe { libc::access(path.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_writable(_: &Path) -> bool {
+    true
 }
 
 pub(super) fn can_stage_beside(target: &Path) -> bool {
@@ -278,6 +300,25 @@ mod tests {
             ),
             InstallMethod::Development
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_bundle_this_user_cannot_write_cannot_be_replaced() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bundle = temp.path().join("Aven.app");
+        std::fs::create_dir(&bundle).unwrap();
+        let executable = temp.path().join("aven");
+        std::fs::write(&executable, b"aven").unwrap();
+        assert!(can_replace(&bundle));
+        assert!(can_replace(&executable));
+
+        std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let replaceable = can_replace(&bundle);
+        std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!replaceable);
     }
 
     #[test]
