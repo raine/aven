@@ -429,8 +429,27 @@ pub struct SettingsData {
     pub fields: Vec<(String, usize)>,
     pub commands: Vec<(String, String)>,
     pub reminders: Reminders,
-    /// Whether an agent command is configured for task intake.
-    pub agent: bool,
+    /// The agent command configured for task intake, if any.
+    pub agent: Option<AgentSetup>,
+}
+
+/// The agent command task intake runs, as the config sets it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentSetup {
+    pub command: String,
+    pub args: Vec<String>,
+    /// Whether `command` names an executable, by path or on `PATH`.
+    pub runnable: bool,
+}
+
+/// The note the settings' agent test sends.
+pub const AGENT_TEST_NOTE: &str = "pay rent friday, it\u{2019}s important";
+
+/// What the agent wrote for the test note, and how long it took.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTest {
+    pub task: Box<NewTask>,
+    pub elapsed: std::time::Duration,
 }
 
 /// The shared config's reminder settings, as the Reminders tab edits them.
@@ -646,6 +665,8 @@ pub enum Command {
     /// Details of a task opened from another one, leaving the selection alone.
     Peek(TaskId),
     Preview(SearchInput),
+    /// Runs the agent once on the test note, saving nothing.
+    TestAgent,
     /// Every workspace with its projects and labels, for the launcher.
     LoadLauncher,
     /// Starts a launcher submission, which runs apart from the store.
@@ -782,6 +803,7 @@ impl Command {
                 | Self::LoadDetail(_)
                 | Self::Peek(_)
                 | Self::Preview(_)
+                | Self::TestAgent
                 | Self::LoadLauncher
                 | Self::Launch(_)
                 | Self::CancelLaunch(_)
@@ -833,6 +855,8 @@ pub enum ReplyBody {
     Search(SearchResults),
     /// Text a task's report or similar produced for the clipboard.
     Copied(String),
+    /// The agent test's result, or why it failed.
+    AgentTest(Result<AgentTest, String>),
     Launcher(Box<Catalog>),
     Launch(LaunchEvent),
     Created(TaskId),

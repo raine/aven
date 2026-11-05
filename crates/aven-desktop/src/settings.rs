@@ -1,24 +1,32 @@
 //! The settings surface, the Sync dialog and data recovery.
+use std::f32::consts::{FRAC_PI_2, TAU};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use accesskit::Role;
 use aven_core::sync::client::engine::Stage;
 use aven_core::sync::client::invitation::InvitationCheck;
+use aven_host::config::config_file_path;
 use aven_host::store::TaskQuery;
 use chrono::Local;
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, Div, Entity, FocusHandle, FontWeight, Hsla,
-    SharedString, Stateful, Window, canvas, div, fill, point, prelude::*, size,
+    Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div, Entity,
+    FocusHandle, FontWeight, HighlightStyle, Hsla, SharedString, Stateful, StyledText,
+    Transformation, Window, canvas, div, fill, point, prelude::*, radians, size, svg,
 };
 use qrcode::{Color, EcLevel, QrCode};
 
 use crate::actions::*;
-use crate::adapter::{Command, Reminders, SettingsEdit, SyncPhase, ThemePref};
+use crate::adapter::{
+    AGENT_TEST_NOTE, AgentSetup, Command, NewTask, ProjectEntry, Reminders, SettingsEdit,
+    SyncPhase, ThemePref, capitalised,
+};
 use crate::dialogs::{ConfirmAction, Dialog, Layer};
 use crate::input::{Editor, Mode};
 use crate::kit::*;
-use crate::session::{SettingsTab, SyncPage, SyncTone, count_text};
+use crate::session::{AgentTestState, SettingsTab, SyncPage, SyncTone, count_text};
 use crate::shell::Root;
 use crate::sync_ops::{Secret, SetupFacts, SyncKind, SyncOp, SyncRequest, steps};
 use crate::theme::{Theme, theme};
@@ -136,6 +144,112 @@ fn page(title: &'static str, lead: Option<&'static str>, t: &Theme) -> Div {
         .when_some(lead, |page, lead| {
             page.child(div().mb(px(20.)).text_color(t.muted).child(lead))
         })
+}
+
+/// A config file block, set in the code face.
+fn command_block(t: &Theme) -> Div {
+    small(Text::Secondary)
+        .px(px(10.))
+        .py(px(8.))
+        .rounded(px(RADIUS_CONTROL))
+        .bg(t.page)
+        .shadow(vec![t.inset_ring(t.line)])
+        .font_family(MONO)
+        .text_color(t.body)
+        .whitespace_normal()
+}
+
+fn status_pill(label: &'static str, tone: Option<Hsla>, t: &Theme) -> Div {
+    small(Text::Caption)
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .h(px(20.))
+        .px(px(8.))
+        .rounded_full()
+        .bg(t.raised)
+        .text_color(tone.unwrap_or(t.muted))
+        .when_some(tone, |pill, tone| {
+            pill.child(div().size(px(6.)).rounded_full().bg(tone))
+        })
+        .child(label)
+}
+
+fn open_config_btn(t: &Theme) -> Stateful<Div> {
+    line_btn("agent-open-config", "Open config", t).on_click(|_, _, cx| {
+        if let Ok(path) = config_file_path() {
+            if path.exists() {
+                cx.open_with_system(&path);
+            } else if let Some(dir) = path.parent() {
+                cx.open_with_system(dir);
+            }
+        }
+    })
+}
+
+/// The config file's path, with the home directory as `~`.
+fn config_path_text() -> String {
+    let Ok(path) = config_file_path() else {
+        return "config.yaml".to_string();
+    };
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    match home.and_then(|home| path.strip_prefix(home).ok().map(PathBuf::from)) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
+const AGENT_SNIPPET: &str = "agent:\n  task_intake:\n    command: claude\n    image_args: \
+                             [\"--add-dir\", \"{image_dir}\"]";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Command,
+    Placeholder,
+}
+
+/// The agent's command line as one string, with the command and each
+/// `{placeholder}` marked.
+fn command_line(setup: &AgentSetup) -> (String, Vec<(Range<usize>, Part)>) {
+    let mut line = setup.command.clone();
+    let mut spans = vec![(0..line.len(), Part::Command)];
+    for arg in &setup.args {
+        line.push(' ');
+        let start = line.len();
+        line.push_str(arg);
+        let mut from = 0;
+        while let Some(open) = arg[from..].find('{') {
+            let open = from + open;
+            let Some(close) = arg[open..].find('}') else {
+                break;
+            };
+            let close = open + close + 1;
+            spans.push((start + open..start + close, Part::Placeholder));
+            from = close;
+        }
+    }
+    (line, spans)
+}
+
+/// The fields of a test task worth showing beside its title.
+fn test_chips(task: &NewTask, projects: &[ProjectEntry]) -> Vec<String> {
+    let mut chips = Vec::new();
+    if let Some(key) = &task.project {
+        let name = projects
+            .iter()
+            .find(|project| &project.key == key)
+            .map_or(key.as_str(), |project| project.name.as_str());
+        chips.push(name.to_string());
+    }
+    if !task.schedule.trim().is_empty() {
+        chips.push(task.schedule.trim().to_string());
+    }
+    if !task.priority.is_empty() && task.priority != "none" {
+        chips.push(format!("! {}", capitalised(&task.priority)));
+    }
+    chips.extend(task.labels.iter().map(|label| format!("#{label}")));
+    chips
 }
 
 fn tool_row(child: impl IntoElement) -> Div {
@@ -813,9 +927,242 @@ impl Root {
             t,
         )
         .child(group(
-            vec![self.shortcut_row(cx, t), self.launcher_ai_row(cx, t)],
+            vec![
+                self.shortcut_row(cx, t),
+                self.launcher_ai_row(cx, t),
+                self.agent_row(cx, t),
+            ],
             t,
         ))
+    }
+
+    /// The agent task intake runs, opening into its command line and a test.
+    fn agent_row(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let setup = self.session.settings_data.agent.as_ref();
+        let open = self.agent_open;
+        let (status, tone) = match setup {
+            Some(setup) if setup.runnable => ("Ready", Some(t.good)),
+            Some(_) => ("Not found", Some(t.bad)),
+            None => ("Not set up", None),
+        };
+        let note = match setup {
+            Some(setup) => small(Text::Secondary)
+                .mt(px(1.))
+                .font_family(MONO)
+                .text_color(t.muted)
+                .child(setup.command.clone()),
+            None => small(Text::Secondary)
+                .mt(px(1.))
+                .text_color(t.muted)
+                .child("Set agent.task_intake.command to use your agent."),
+        };
+        let chevron = svg()
+            .path("icons/chevron.svg")
+            .size(px(14.))
+            .flex_none()
+            .text_color(t.faint)
+            .when(open, |glyph| {
+                glyph.with_transformation(Transformation::rotate(radians(FRAC_PI_2)))
+            });
+        let raised = t.raised;
+        let head = row(t)
+            .id("agent-row")
+            .role(Role::Button)
+            .aria_label("Agent")
+            .aria_expanded(open)
+            .cursor_pointer()
+            .hover(move |style| style.bg(raised))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.agent_open = !this.agent_open;
+                if this.agent_open {
+                    this.session.reload_settings();
+                }
+                cx.notify();
+            }))
+            .child(div().flex_1().min_w_0().child("Agent").child(note))
+            .child(status_pill(status, tone, t))
+            .child(chevron);
+        let details = match setup {
+            Some(setup) => self.agent_details(setup, cx, t),
+            None => self.agent_snippet(cx, t),
+        };
+        div()
+            .child(head)
+            .when(open, |row| row.child(details.px(px(14.)).pb(px(12.))))
+    }
+
+    fn agent_details(&self, setup: &AgentSetup, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let (line, spans) = command_line(setup);
+        let highlights = spans
+            .into_iter()
+            .map(|(range, part)| {
+                let style = match part {
+                    Part::Command => HighlightStyle {
+                        font_weight: Some(FontWeight::SEMIBOLD),
+                        color: Some(t.ink),
+                        ..HighlightStyle::default()
+                    },
+                    Part::Placeholder => HighlightStyle {
+                        color: Some(t.accent),
+                        ..HighlightStyle::default()
+                    },
+                };
+                (range, style)
+            })
+            .collect::<Vec<_>>();
+        let running = matches!(self.session.agent_test, Some(AgentTestState::Running));
+        let label = if running { "Testing\u{2026}" } else { "Test" };
+        let test = btn("agent-test", label, t)
+            .shadow(vec![t.inset_ring(t.line2)])
+            .when(running, |button| {
+                button.text_color(t.muted).child(
+                    svg()
+                        .path("icons/toast-progress.svg")
+                        .size(px(13.))
+                        .text_color(t.accent)
+                        .with_animation(
+                            "agent-test-spin",
+                            Animation::new(Duration::from_millis(700)).repeat(),
+                            |glyph, delta| {
+                                glyph.with_transformation(Transformation::rotate(radians(
+                                    delta * TAU,
+                                )))
+                            },
+                        ),
+                )
+            })
+            .when(!running, |button| {
+                button.on_click(cx.listener(|this, _, _, cx| {
+                    this.session.test_agent();
+                    cx.notify();
+                }))
+            })
+            .child(label);
+        div()
+            .child(command_block(t).child(StyledText::new(line).with_highlights(highlights)))
+            .when(!setup.runnable, |details| {
+                details.child(
+                    small(Text::Secondary)
+                        .mt(px(6.))
+                        .text_color(t.bad)
+                        .child(format!("`{}` isn\u{2019}t on PATH.", setup.command)),
+                )
+            })
+            .child(
+                div()
+                    .mt(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(test)
+                    .child(open_config_btn(t)),
+            )
+            .when_some(self.agent_result(setup, t), |details, result| {
+                details.child(result)
+            })
+    }
+
+    /// What the last test sent and what came back, or why it failed.
+    fn agent_result(&self, setup: &AgentSetup, t: &Theme) -> Option<Div> {
+        let card = div()
+            .mt(px(10.))
+            .p(px(10.))
+            .rounded(px(RADIUS_CONTROL))
+            .bg(t.page)
+            .shadow(vec![t.inset_ring(t.line)]);
+        match self.session.agent_test.as_ref()? {
+            AgentTestState::Running => None,
+            AgentTestState::Failed(message) => {
+                Some(
+                    card.child(div().text_color(t.bad).child(message.clone()))
+                        .when(!setup.runnable, |card| {
+                            card.child(small(Text::Secondary).mt(px(2.)).text_color(t.muted).child(
+                                "Install it, or set command to its full path in config.yaml.",
+                            ))
+                        }),
+                )
+            }
+            AgentTestState::Done(test) => {
+                let projects = &self.session.settings_data.projects;
+                let chips = test_chips(&test.task, projects);
+                Some(
+                    card.child(small(Text::Secondary).mb(px(4.)).text_color(t.muted).child(
+                        format!("Sent \u{201c}{AGENT_TEST_NOTE}\u{201d}. Your agent wrote:"),
+                    ))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(t.ink)
+                            .child(test.task.title.clone()),
+                    )
+                    .when(!chips.is_empty(), |card| {
+                        card.child(div().mt(px(6.)).flex().flex_wrap().gap(px(6.)).children(
+                            chips.into_iter().map(|chip| {
+                                small(Text::Secondary)
+                                    .px(px(7.))
+                                    .rounded(px(RADIUS_CHIP))
+                                    .bg(t.raised)
+                                    .text_color(t.body)
+                                    .child(chip)
+                            }),
+                        ))
+                    })
+                    .child(
+                        small(Text::Secondary)
+                            .mt(px(6.))
+                            .text_color(t.muted)
+                            .child(format!(
+                                "Answered in {:.1} s. Nothing was saved.",
+                                test.elapsed.as_secs_f32()
+                            )),
+                    ),
+                )
+            }
+        }
+    }
+
+    /// The config to add when no agent is set up.
+    fn agent_snippet(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let path = config_path_text();
+        div()
+            .child(
+                small(Text::Secondary)
+                    .mb(px(8.))
+                    .flex()
+                    .flex_wrap()
+                    .text_color(t.muted)
+                    .child("Add to\u{a0}")
+                    .child(div().font_family(MONO).child(path))
+                    .child(":"),
+            )
+            .child(command_block(t).child(AGENT_SNIPPET))
+            .child(
+                div()
+                    .mt(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(line_btn("agent-copy", "Copy", t).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                AGENT_SNIPPET.to_string(),
+                            ));
+                            this.session.copied_toast("agent config");
+                            cx.notify();
+                        },
+                    )))
+                    .child(open_config_btn(t))
+                    .child(div().flex_1())
+                    .child(
+                        small(Text::Secondary)
+                            .id("agent-snippet-docs")
+                            .role(Role::Link)
+                            .aria_label("Agent setup")
+                            .text_color(t.accent)
+                            .on_click(|_, _, cx| cx.open_url(AGENT_DOCS_URL))
+                            .child("Agent setup"),
+                    ),
+            )
     }
 
     fn shortcut_row(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
@@ -870,12 +1217,12 @@ impl Root {
     /// fixed while no agent is configured.
     fn launcher_ai_row(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
         const NAME: &str = "Create tasks with AI";
-        let agent = self.session.settings_data.agent;
+        let agent = self.session.settings_data.agent.is_some();
         let on = agent && self.prefs.launcher.ai;
         let note = if agent {
             "Return has your agent write the task, and \u{2325}\u{21b5} adds it as typed."
         } else {
-            "Set agent.task_intake.command to use your agent."
+            "Set up an agent below to have it write your tasks."
         };
         let track = div()
             .id(NAME)
@@ -2756,4 +3103,57 @@ fn qr_code(text: &str) -> AnyElement {
             .size_full(),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_lines_mark_the_command_and_placeholders() {
+        let setup = AgentSetup {
+            command: "claude".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "--dir={image_dir}".to_string(),
+                "{prompt}".to_string(),
+            ],
+            runnable: true,
+        };
+        let (line, spans) = command_line(&setup);
+        assert_eq!(line, "claude -p --dir={image_dir} {prompt}");
+        let marked = spans
+            .iter()
+            .map(|(range, part)| (&line[range.clone()], *part))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            marked,
+            [
+                ("claude", Part::Command),
+                ("{image_dir}", Part::Placeholder),
+                ("{prompt}", Part::Placeholder),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_chips_name_the_project_and_skip_empty_fields() {
+        let projects = [ProjectEntry {
+            key: "home".to_string(),
+            name: "Home".to_string(),
+            prefix: "HOME".to_string(),
+        }];
+        let task = NewTask {
+            project: Some("home".to_string()),
+            schedule: "due fri".to_string(),
+            priority: "high".to_string(),
+            labels: vec!["bills".to_string()],
+            ..NewTask::titled("Pay rent")
+        };
+        assert_eq!(
+            test_chips(&task, &projects),
+            ["Home", "due fri", "! High", "#bills"]
+        );
+        assert!(test_chips(&NewTask::titled("Pay rent"), &projects).is_empty());
+    }
 }

@@ -5,7 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
-- New: Capture a task from any app with a desktop launcher shortcut, set in Settings › Quick capture. Enter has your configured agent create it in the background, ⌘↵ drafts it for review in Add Task, and ⌥↵ adds it without AI; turn off Create tasks with AI to make Enter add tasks as typed; type `#label`, `@project`, or `!high`, pick a workspace and project hint, and paste or drop images.
+- New: Capture a task from any app with a desktop launcher shortcut, set in Settings › Quick capture. Enter has your configured agent create it in the background, ⌘↵ drafts it for review in Add Task, and ⌥↵ adds it without AI; turn off Create tasks with AI to make Enter add tasks as typed; type `#label`, `@project`, or `!high`, pick a workspace and project hint, and paste or drop images. The Agent row on that page shows the command your agent runs, and Test has it write a sample task without saving anything.
 - Fix: Hide task counts and filters on the desktop Settings screen.
 - New: Aven.app on macOS now includes a desktop app. Open it from Finder or the Dock; `aven` in a terminal and the background daemon work as before. An update relaunches the app once it is in the background.
 - UX: Clicking an Aven notification on macOS opens the desktop app.

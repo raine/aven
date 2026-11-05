@@ -580,7 +580,7 @@ impl Actor {
                 .map(|command| (command.name.clone(), command.description.clone()))
                 .collect(),
             reminders: (&self.config.reminders).into(),
-            agent: launch::has_agent(&self.config.agent.task_intake),
+            agent: launch::agent_setup(&self.config.agent.task_intake),
         })
     }
 
@@ -2144,6 +2144,44 @@ impl Actor {
         });
     }
 
+    /// Runs the agent on the test note off the actor, keeping only its reply.
+    fn test_agent(&self) {
+        let config = self.config.agent.task_intake.clone();
+        let refused = match launch::agent_setup(&config) {
+            None => Some("No agent is set up.".to_string()),
+            Some(setup) if !setup.runnable => Some(format!(
+                "Couldn\u{2019}t start `{}`: it isn\u{2019}t on PATH.",
+                setup.command
+            )),
+            Some(_) => None,
+        };
+        if let Some(message) = refused {
+            self.send(ReplyBody::AgentTest(Err(message)));
+            return;
+        }
+        let started = std::time::Instant::now();
+        let intake = self
+            .store
+            .spawn_task_intake(config, AGENT_TEST_NOTE.to_string(), None);
+        let replies = self.replies.clone();
+        let request = self.handled;
+        tokio::spawn(async move {
+            let result = intake
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|run| run)
+                .map(|result| AgentTest {
+                    task: Box::new(intake_task(result)),
+                    elapsed: started.elapsed(),
+                })
+                .map_err(|error| format!("{error:#}"));
+            let _ = replies.send(Reply {
+                request,
+                body: ReplyBody::AgentTest(result),
+            });
+        });
+    }
+
     async fn launcher_catalog(&self) -> Result<Catalog> {
         let database = self.store.database();
         let mut places = Vec::new();
@@ -2253,6 +2291,10 @@ impl Actor {
             }
             Command::Peek(id) => self.send_detail(&id).await,
             Command::Preview(input) => self.preview(input),
+            Command::TestAgent => {
+                self.send_settings().await;
+                self.test_agent();
+            }
             Command::LoadLauncher => match self.launcher_catalog().await {
                 Ok(catalog) => self.send(ReplyBody::Launcher(Box::new(catalog))),
                 Err(error) => self.send(ReplyBody::Notice(failed(
@@ -3872,6 +3914,58 @@ mod tests {
                 .iter()
                 .all(|item| !matches!(item.task.title.as_str(), "Unknown job" | "Moved"))
         );
+    }
+
+    #[tokio::test]
+    async fn the_agent_test_saves_nothing() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let (dir, mut actor, mut replies) = actor("Existing").await;
+        run(&mut actor, Command::TestAgent).await;
+        let seen = bodies(&mut replies);
+        assert!(
+            matches!(&seen[..], [ReplyBody::Settings(data), ReplyBody::AgentTest(Err(message))]
+                if data.agent.is_none() && message == "No agent is set up."),
+            "{seen:?}"
+        );
+
+        actor.config.agent.task_intake.command = Some("aven-no-such-agent".to_string());
+        run(&mut actor, Command::TestAgent).await;
+        let seen = bodies(&mut replies);
+        assert!(
+            matches!(&seen[..], [ReplyBody::Settings(_), ReplyBody::AgentTest(Err(message))]
+                if message.contains("`aven-no-such-agent`: it isn\u{2019}t on PATH")),
+            "{seen:?}"
+        );
+
+        let agent = dir.path().join("agent.sh");
+        std::fs::write(
+            &agent,
+            "#!/bin/sh\ncat > /dev/null\nprintf '%s' '{\"title\":\"Pay rent\",\"priority\":\"high\"}'\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&agent).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&agent, permissions).unwrap();
+        actor.config.agent.task_intake.command = Some(agent.display().to_string());
+        actor.config.agent.task_intake.args = Vec::new();
+        let tasks = actor.store.tasks.len();
+        run(&mut actor, Command::TestAgent).await;
+        let test = loop {
+            let reply = tokio::time::timeout(Duration::from_secs(5), replies.recv())
+                .await
+                .expect("the test should finish")
+                .unwrap();
+            match reply.body {
+                ReplyBody::Settings(_) => {}
+                ReplyBody::AgentTest(Ok(test)) => break test,
+                body => panic!("expected the agent's task, got {body:?}"),
+            }
+        };
+        assert_eq!(test.task.title, "Pay rent");
+        assert_eq!(test.task.priority, "high");
+        actor.refresh().await.unwrap();
+        assert_eq!(actor.store.tasks.len(), tasks);
     }
 
     fn task_id(actor: &Actor, title: &str) -> TaskId {

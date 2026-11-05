@@ -445,6 +445,8 @@ pub struct Root {
     pub(crate) recorder: Option<Subscription>,
     /// Why the last recorded launcher shortcut was not taken.
     pub(crate) shortcut_error: Option<String>,
+    /// The Quick capture page shows the agent's command.
+    pub(crate) agent_open: bool,
     quitting: bool,
     pub(crate) welcome: Option<Welcome>,
     /// The welcome's intro, which plays the first time the welcome appears.
@@ -573,6 +575,7 @@ impl Root {
             subscriptions,
             recorder: None,
             shortcut_error: None,
+            agent_open: false,
             quitting: false,
             welcome: None,
             intro: Playback::default(),

@@ -14,10 +14,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::actions::VIEWS;
 use crate::adapter::{
-    Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, LedgerLine, LedgerRun, NewTask,
-    Reply, ReplyBody, Request, ReviewCard, SavedView, SearchInput, SearchResults, SeriesDetail,
-    SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group, failed,
-    first_project_name,
+    AgentTest, Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, LedgerLine, LedgerRun,
+    NewTask, Reply, ReplyBody, Request, ReviewCard, SavedView, SearchInput, SearchResults,
+    SeriesDetail, SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group,
+    failed, first_project_name,
 };
 use crate::draft::Kept;
 use crate::launch::{Catalog, LaunchEvent, LaunchJob};
@@ -262,6 +262,8 @@ pub struct Session {
     pub invitation: Option<OpenInvitation>,
     pub settings: Option<SettingsTab>,
     pub settings_data: SettingsData,
+    /// The settings' agent test, from when it starts.
+    pub agent_test: Option<AgentTestState>,
     /// The open database's path.
     pub database: PathBuf,
     pub database_error: Option<DatabaseError>,
@@ -296,6 +298,14 @@ pub struct Session {
     last_search: u64,
     /// The name given to the project the first task creates.
     first_project: Option<String>,
+}
+
+/// Where the settings' agent test stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentTestState {
+    Running,
+    Done(AgentTest),
+    Failed(String),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -430,6 +440,7 @@ impl Session {
             invitation: None,
             settings: None,
             settings_data: SettingsData::default(),
+            agent_test: None,
             database: PathBuf::new(),
             database_error: None,
             motion: Motion::default(),
@@ -1102,6 +1113,20 @@ impl Session {
         self.send(Command::CreateUnreviewed { kept, task });
     }
 
+    /// Reads the settings rows again, picking up config edits.
+    pub fn reload_settings(&mut self) {
+        self.send(Command::LoadSettings);
+    }
+
+    /// Has the agent write a task for the test note, saving nothing.
+    pub fn test_agent(&mut self) {
+        if matches!(self.agent_test, Some(AgentTestState::Running)) {
+            return;
+        }
+        self.agent_test = Some(AgentTestState::Running);
+        self.send(Command::TestAgent);
+    }
+
     pub fn load_launcher(&mut self) {
         self.send(Command::LoadLauncher);
     }
@@ -1598,6 +1623,12 @@ impl Session {
             }
             ReplyBody::Launcher(catalog) => applied.launcher = Some(catalog),
             ReplyBody::Launch(event) => applied.launch = Some(event),
+            ReplyBody::AgentTest(result) => {
+                self.agent_test = Some(match result {
+                    Ok(test) => AgentTestState::Done(test),
+                    Err(message) => AgentTestState::Failed(message),
+                });
+            }
             ReplyBody::Created(id) => {
                 // Moving on while the write ran keeps the newer selection.
                 if self.selected == self.create_from {

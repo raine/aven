@@ -20,7 +20,9 @@ use aven_host::task_intake::{
     parsed_output_to_result_with_database, run_task_intake_command_with_images,
 };
 
-use crate::adapter::{NavEntry, NewTask, PendingImage, attachment_input, capitalised, intake_task};
+use crate::adapter::{
+    AgentSetup, NavEntry, NewTask, PendingImage, attachment_input, capitalised, intake_task,
+};
 use crate::draft::{CaretWord, Suggestion, Token, suggestions, title_tokens};
 
 /// A workspace as the launcher offers it.
@@ -259,6 +261,15 @@ fn agent_command(config: &TaskIntakeConfig) -> Option<&str> {
 /// Whether an agent command is configured, runnable or not.
 pub fn has_agent(config: &TaskIntakeConfig) -> bool {
     agent_command(config).is_some()
+}
+
+/// The configured agent command and its arguments, as settings show them.
+pub fn agent_setup(config: &TaskIntakeConfig) -> Option<AgentSetup> {
+    agent_command(config).map(|command| AgentSetup {
+        command: command.to_string(),
+        args: config.args.clone(),
+        runnable: runnable(command),
+    })
 }
 
 /// Why `job` cannot start, known before anything runs.
