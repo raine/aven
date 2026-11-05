@@ -1848,12 +1848,11 @@ impl Composer {
             .child(div().flex_1())
             .child(
                 btn("c-discard", "Discard", t)
-                    .hint(Hint::new("Clear the draft and start over"))
+                    .hint(Hint::new("Clear the draft and start over").keys("⌘⇧⌫"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.discard_draft(&DiscardDraft, window, cx);
                     }))
-                    .child("Discard")
-                    .child(kbd("⌘⇧⌫", t.faint)),
+                    .child("Discard"),
             )
             .child(switch)
             .child(
