@@ -314,17 +314,8 @@ pub(super) async fn schema_mark(database: &Path) -> Result<SchemaMark> {
 /// Opens the app through Launch Services. It starts with the user session's
 /// environment, so the settings that point Aven at its data come along.
 fn open_app(bundle: &Path) -> Result<()> {
-    let mut command = std::process::Command::new("/usr/bin/open");
-    for (key, value) in std::env::vars_os() {
-        let key_text = key.to_string_lossy();
-        if forwarded(&key_text) {
-            let mut setting = key.clone();
-            setting.push("=");
-            setting.push(value);
-            command.arg("--env").arg(setting);
-        }
-    }
-    let status = command
+    let status = std::process::Command::new("/usr/bin/open")
+        .args(aven_host::app_bundle::open_environment_args())
         .arg(bundle)
         .stdin(std::process::Stdio::null())
         .status()
@@ -333,14 +324,6 @@ fn open_app(bundle: &Path) -> Result<()> {
         bail!("open {} failed: {status}", bundle.display());
     }
     Ok(())
-}
-
-fn forwarded(key: &str) -> bool {
-    key.starts_with("AVEN_")
-        || matches!(
-            key,
-            "HOME" | "XDG_CONFIG_HOME" | "XDG_STATE_HOME" | "XDG_DATA_HOME" | "XDG_CACHE_HOME"
-        )
 }
 
 fn alert(title: &str, message: &str) {
@@ -491,14 +474,5 @@ mod tests {
             remove_previous(&bundle).unwrap();
             std::fs::remove_dir_all(&bundle).unwrap();
         }
-    }
-
-    #[test]
-    fn launch_settings_are_forwarded_but_not_the_rest() {
-        assert!(forwarded("AVEN_DB"));
-        assert!(forwarded("HOME"));
-        assert!(forwarded("XDG_DATA_HOME"));
-        assert!(!forwarded("PATH"));
-        assert!(!forwarded("XPC_SERVICE_NAME"));
     }
 }
