@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Only system tools may handle the App Store Connect API key.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: notarize-macos-release DMG | BINARY_OR_APP..." >&2
+  exit 2
+fi
+
+: "${ASC_KEY_ID:?missing App Store Connect API key ID}"
+: "${ASC_ISSUER_ID:?missing App Store Connect API issuer ID}"
+: "${ASC_KEY_P8:?missing App Store Connect API private key}"
+
+if [[ ! $ASC_KEY_ID =~ ^[A-Z0-9]+$ ]]; then
+  echo "App Store Connect API key ID must be alphanumeric" >&2
+  exit 2
+fi
+
+# One submission covers every target. A disk image is submitted as is, so it
+# must be the only target; anything else is submitted as one zip.
+for target in "$@"; do
+  if [[ -d $target && $target == *.app ]]; then
+    continue
+  elif [[ -f $target && $target == *.dmg ]]; then
+    if [[ $# -ne 1 ]]; then
+      echo "a disk image must be notarized on its own: $target" >&2
+      exit 2
+    fi
+  elif [[ ! -f $target ]]; then
+    echo "binary, app bundle or disk image not found: $target" >&2
+    exit 2
+  fi
+done
+
+runner_temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+work_dir=$(mktemp -d "$runner_temp/aven-notarization.XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
+key="$work_dir/AuthKey_$ASC_KEY_ID.p8"
+(umask 077 && printf '%s\n' "$ASC_KEY_P8" >"$key")
+credentials=(--key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+
+if [[ $# -eq 1 && $1 == *.dmg ]]; then
+  submission=$1
+else
+  mkdir "$work_dir/payload"
+  for target in "$@"; do
+    name=$(basename "$target")
+    if [[ -e $work_dir/payload/$name ]]; then
+      echo "targets must have distinct names: $name" >&2
+      exit 2
+    fi
+    ditto "$target" "$work_dir/payload/$name"
+  done
+  submission="$work_dir/submission.zip"
+  ditto -c -k --sequesterRsrc "$work_dir/payload" "$submission"
+fi
+
+# The exit status alone does not distinguish rejection, so read the result.
+result="$work_dir/result.json"
+xcrun notarytool submit "$submission" "${credentials[@]}" --wait \
+  --timeout 1h --output-format json >"$result" || true
+if ! submission_id=$(plutil -extract id raw -o - "$result" 2>/dev/null) ||
+   ! status=$(plutil -extract status raw -o - "$result" 2>/dev/null); then
+  echo "notarytool did not report a submission result" >&2
+  exit 1
+fi
+echo "notarization $submission_id: $status"
+if [[ $status != Accepted ]]; then
+  xcrun notarytool log "$submission_id" "${credentials[@]}" >&2 || true
+  echo "notarization was not accepted: $status" >&2
+  exit 1
+fi
+
+# Bare binaries cannot hold a ticket; Gatekeeper finds theirs online.
+for target in "$@"; do
+  if [[ $target == *.app || $target == *.dmg ]]; then
+    xcrun stapler staple "$target"
+    xcrun stapler validate "$target"
+  fi
+done

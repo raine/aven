@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Checks the generated Homebrew cask: Ruby syntax, per-architecture disk image
+# URL and checksums, the linked command, and what uninstall and zap remove.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+generate="$script_dir/homebrew-cask"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+expect() {
+  grep -qF -- "$1" "$tmp/aven.rb" || fail "cask lacks: $1"
+}
+
+i=0
+for name in Aven-Desktop-arm64 Aven-Desktop-amd64 aven-darwin-arm64-app aven-darwin-amd64-app; do
+  i=$((i + 1))
+  printf '%064d  %s\n' "$i" "$name" >"$tmp/$name.sha256"
+done
+
+"$generate" 1.2.3 "$tmp" >"$tmp/aven.rb"
+ruby -c "$tmp/aven.rb" >/dev/null || fail "cask is not valid Ruby"
+
+expect 'cask "aven" do'
+expect 'arch arm: "arm64", intel: "amd64"'
+expect 'version "1.2.3"'
+expect "sha256 arm:   \"$(printf '%064d' 1)\","
+expect "intel: \"$(printf '%064d' 2)\""
+expect 'url "https://github.com/raine/aven/releases/download/v#{version}/Aven-Desktop-#{arch}.dmg"'
+expect 'auto_updates true'
+expect 'app "Aven.app"'
+expect 'binary "#{appdir}/Aven.app/Contents/MacOS/aven"'
+expect 'uninstall launchctl: "com.raine.aven.daemon"'
+expect '"~/Library/Preferences/fi.zendit.Aven.plist",'
+expect '"~/Library/Saved Application State/fi.zendit.Aven.savedState",'
+if grep -qE 'aven-darwin-|-app\.tar\.gz' "$tmp/aven.rb"; then
+  fail "cask uses a terminal-only archive"
+fi
+
+# zap may remove only preferences, caches and saved state: never the task
+# database, configuration, logs or sync credentials.
+zap=$(sed -n '/zap trash: \[/,/\]/p' "$tmp/aven.rb" | grep -o '"[^"]*"')
+[[ -n $zap ]] || fail "cask has no zap stanza"
+while IFS= read -r path; do
+  case $path in
+    '"~/.cache/aven"' | '"~/Library/Caches/fi.zendit.Aven"' | \
+      '"~/Library/Preferences/fi.zendit.Aven.plist"' | \
+      '"~/Library/Saved Application State/fi.zendit.Aven.savedState"') ;;
+    *) fail "zap removes $path" ;;
+  esac
+done <<<"$zap"
+if grep -qE '\.local/state|\.config/aven|\.local/share|Keychain|Application Support|rmdir|delete:' "$tmp/aven.rb"; then
+  fail "cask removes user data"
+fi
+
+reject() {
+  if "$generate" "$@" >/dev/null 2>&1; then
+    fail "accepted invalid input: $*"
+  fi
+}
+reject v1.2.3 "$tmp"
+reject 1.2.3-signtest.1 "$tmp"
+reject 1.2.3
+printf 'not-a-checksum  Aven-Desktop-amd64.dmg\n' >"$tmp/Aven-Desktop-amd64.sha256"
+reject 1.2.3 "$tmp"
+rm "$tmp/Aven-Desktop-amd64.sha256"
+reject 1.2.3 "$tmp"
+
+echo "ok: cask installs the Aven Desktop disk image per architecture, links aven, and zaps only preferences, caches and saved state; invalid versions and checksums rejected"

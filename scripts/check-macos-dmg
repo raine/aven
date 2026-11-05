@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use only system tools to inspect release disk images.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: check-macos-dmg DMG EXPECTED_APP" >&2
+  exit 2
+fi
+dmg=$1
+expected_app=$2
+if [[ ! -f $dmg ]]; then
+  echo "disk image not found: $dmg" >&2
+  exit 2
+fi
+if [[ ! -d $expected_app ]]; then
+  echo "app bundle not found: $expected_app" >&2
+  exit 2
+fi
+
+runner_temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+mountpoint=$(mktemp -d "$runner_temp/aven-dmg-mount.XXXXXX")
+attached=0
+cleanup() {
+  local status=$?
+  if [[ $attached == 1 ]]; then
+    hdiutil detach -quiet "$mountpoint" || hdiutil detach -quiet -force "$mountpoint" || status=1
+  fi
+  rmdir "$mountpoint" 2>/dev/null || true
+  exit "$status"
+}
+trap cleanup EXIT
+
+hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$mountpoint" "$dmg"
+attached=1
+
+# Hidden volume metadata such as .fseventsd is not part of the image layout.
+entries=$(cd "$mountpoint" && find . -mindepth 1 -maxdepth 1 ! -name '.*' | sed 's|^\./||' | LC_ALL=C sort)
+if [[ $entries != $'Applications\nAven.app' ]]; then
+  echo "disk image must contain only Aven.app and Applications: $dmg" >&2
+  exit 1
+fi
+if [[ ! -L $mountpoint/Applications || $(readlink "$mountpoint/Applications") != /Applications ]]; then
+  echo "disk image Applications entry must link to /Applications: $dmg" >&2
+  exit 1
+fi
+if [[ -L $mountpoint/Aven.app ]] || ! diff -r "$expected_app" "$mountpoint/Aven.app"; then
+  echo "disk image Aven.app differs from $expected_app" >&2
+  exit 1
+fi
+echo "ok: $dmg contains Aven.app and an Applications link"

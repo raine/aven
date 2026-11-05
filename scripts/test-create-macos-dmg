@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $(uname -s) != Darwin ]]; then
+  echo "macOS disk image fixtures require macOS" >&2
+  exit 2
+fi
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+create="$script_dir/create-macos-dmg"
+check="$script_dir/check-macos-dmg"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+reject() {
+  if "$@" >"$tmp/rejection.log" 2>&1; then
+    fail "accepted invalid input: $*"
+  fi
+}
+image_from() {
+  /usr/bin/hdiutil create -quiet -volname Aven -srcfolder "$1" -fs HFS+ -format UDZO "$2"
+}
+
+printf '#!/bin/sh\necho "aven $*"\n' >"$tmp/aven"
+mkdir "$tmp/app"
+"$script_dir/assemble-macos-app" "$tmp/aven" 1.2.3 "$tmp/app" >/dev/null
+app="$tmp/app/Aven.app"
+/usr/bin/codesign --force --sign - --identifier fi.zendit.Aven "$app" 2>/dev/null
+
+[[ $("$create" "$app" "$tmp/Aven.dmg") == "$tmp/Aven.dmg" ]] || fail "unexpected image path"
+"$check" "$tmp/Aven.dmg" "$app" >/dev/null || fail "created image did not pass its check"
+/usr/bin/hdiutil imageinfo "$tmp/Aven.dmg" | grep -q 'Format: UDZO' || fail "image is not compressed"
+
+reject "$create" "$app" "$tmp/Aven.dmg"
+reject "$create" "$app" "$tmp/Aven.img"
+reject "$create" "$app" "$tmp/missing/Aven.dmg"
+reject "$create" "$tmp/app" "$tmp/Other.dmg"
+reject "$create" "$app"
+[[ ! -e $tmp/Other.dmg ]] || fail "rejected creation left an image"
+
+# The check fails for an image built from different bytes.
+cp -R "$app" "$tmp/Changed.app"
+printf x >>"$tmp/Changed.app/Contents/Resources/Aven.icns"
+reject "$check" "$tmp/Aven.dmg" "$tmp/Changed.app"
+
+mkdir -p "$tmp/extra"
+cp -R "$app" "$tmp/extra/Aven.app"
+ln -s /Applications "$tmp/extra/Applications"
+touch "$tmp/extra/README"
+image_from "$tmp/extra" "$tmp/extra.dmg"
+reject "$check" "$tmp/extra.dmg" "$app"
+
+mkdir -p "$tmp/link"
+cp -R "$app" "$tmp/link/Aven.app"
+ln -s /tmp "$tmp/link/Applications"
+image_from "$tmp/link" "$tmp/link.dmg"
+reject "$check" "$tmp/link.dmg" "$app"
+
+mkdir -p "$tmp/nolink"
+cp -R "$app" "$tmp/nolink/Aven.app"
+image_from "$tmp/nolink" "$tmp/nolink.dmg"
+reject "$check" "$tmp/nolink.dmg" "$app"
+
+echo "ok: disk image holds the exact Aven.app and an Applications link; existing, misnamed and incomplete images rejected"

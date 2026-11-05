@@ -16,14 +16,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: macos-signing
     steps:
-      - name: Check macOS signing secrets
+      - name: Check macOS signing and notarization secrets
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
           APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
           APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           missing=0
-          for name in APPLE_DEVELOPER_ID_CERT_BASE64 APPLE_DEVELOPER_ID_CERT_PASSWORD APPLE_DEVELOPER_ID_IDENTITY; do
+          for name in APPLE_DEVELOPER_ID_CERT_BASE64 APPLE_DEVELOPER_ID_CERT_PASSWORD APPLE_DEVELOPER_ID_IDENTITY \
+            ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is not set in the macos-signing environment"
               missing=1
@@ -36,6 +40,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macOS builds twice per architecture: terminal-only under the
+        # aven-darwin-* names, and Desktop under aven-desktop-darwin-*.
         include:
           - os: macos-15
             target: aarch64-apple-darwin
@@ -44,6 +50,16 @@ jobs:
           - os: macos-15
             target: x86_64-apple-darwin
             artifact: aven-darwin-amd64
+            use_cross: false
+          - os: macos-15
+            target: aarch64-apple-darwin
+            artifact: aven-desktop-darwin-arm64
+            features: desktop
+            use_cross: false
+          - os: macos-15
+            target: x86_64-apple-darwin
+            artifact: aven-desktop-darwin-amd64
+            features: desktop
             use_cross: false
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -68,13 +84,15 @@ jobs:
           fallback: none
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.artifact }}
       - name: Build
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
           if [ "${{ matrix.use_cross }}" == "true" ]; then
             cross build --release --locked --target "${{ matrix.target }}"
-          elif [ "${{ runner.os }}" == "macOS" ]; then
-            cargo build --release --locked --target "${{ matrix.target }}" --features desktop
+          elif [ -n "$FEATURES" ]; then
+            cargo build --release --locked --target "${{ matrix.target }}" --features "$FEATURES"
           else
             cargo build --release --locked --target "${{ matrix.target }}"
           fi
@@ -107,8 +125,9 @@ jobs:
             ${{ matrix.artifact }}.tar.gz
             ${{ matrix.artifact }}.sha256
 
-  # Runs no cargo or build scripts. The signing script removes the imported key
-  # before package validation and binary smoke tests; GitHub actions are pinned.
+  # Runs no cargo or build scripts. The signing and notarization scripts remove
+  # the imported key and API key before package validation and smoke tests;
+  # GitHub actions are pinned.
   sign-macos:
     needs: build
     runs-on: macos-15
@@ -120,9 +139,19 @@ jobs:
       matrix:
         include:
           - artifact: aven-darwin-arm64
+            channel: terminal
             architecture: arm64
           - artifact: aven-darwin-amd64
+            channel: terminal
             architecture: x86_64
+          - artifact: aven-desktop-darwin-arm64
+            channel: desktop
+            architecture: arm64
+            dmg: Aven-Desktop-arm64
+          - artifact: aven-desktop-darwin-amd64
+            channel: desktop
+            architecture: x86_64
+            dmg: Aven-Desktop-amd64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -137,6 +166,7 @@ jobs:
           version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
           mkdir unsigned-app
           scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app
+      # Desktop ships only the bundle; terminal-only also ships the bare binary.
       - name: Sign
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
@@ -144,36 +174,82 @@ jobs:
           APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
         run: |
           chmod 755 "unsigned/${BIN_NAME}"
-          scripts/sign-macos-release "unsigned/${BIN_NAME}" unsigned-app/Aven.app
+          if [[ "${{ matrix.channel }}" == terminal ]]; then
+            scripts/sign-macos-release "unsigned/${BIN_NAME}" unsigned-app/Aven.app
+          else
+            scripts/sign-macos-release unsigned-app/Aven.app
+          fi
+      # Staples the app; the bare binary's ticket is found online by Gatekeeper.
+      - name: Notarize
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [[ "${{ matrix.channel }}" == terminal ]]; then
+            scripts/notarize-macos-release "unsigned/${BIN_NAME}" unsigned-app/Aven.app
+          else
+            scripts/notarize-macos-release unsigned-app/Aven.app
+          fi
+      # The image holds the stapled app, so it installs offline without prompts.
+      - name: Create disk image
+        if: matrix.channel == 'desktop'
+        run: |
+          mkdir dmg
+          scripts/create-macos-dmg unsigned-app/Aven.app "dmg/${{ matrix.dmg }}.dmg"
+      - name: Sign disk image
+        if: matrix.channel == 'desktop'
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+        run: scripts/sign-macos-release "dmg/${{ matrix.dmg }}.dmg"
+      - name: Notarize disk image
+        if: matrix.channel == 'desktop'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: scripts/notarize-macos-release "dmg/${{ matrix.dmg }}.dmg"
       - name: Package
         run: |
-          scripts/package-macos-binary "unsigned/${BIN_NAME}" "${{ matrix.artifact }}.tar.gz"
-          shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
-          tar --no-mac-metadata -C unsigned-app -czf "${{ matrix.artifact }}-app.tar.gz" Aven.app
-          shasum -a 256 "${{ matrix.artifact }}-app.tar.gz" > "${{ matrix.artifact }}-app.sha256"
+          mkdir dist
+          if [[ "${{ matrix.channel }}" == terminal ]]; then
+            scripts/package-macos-binary "unsigned/${BIN_NAME}" "dist/${{ matrix.artifact }}.tar.gz"
+          else
+            mv "dmg/${{ matrix.dmg }}.dmg" dist/
+          fi
+          tar --no-mac-metadata -C unsigned-app -czf "dist/${{ matrix.artifact }}-app.tar.gz" Aven.app
+          cd dist
+          for archive in *; do
+            shasum -a 256 "$archive" > "${archive%%.*}.sha256"
+          done
+          ls -l
       # `aven update` in every installed version refuses larger archives.
       - name: Check archive sizes
+        if: matrix.channel == 'terminal'
         run: |
-          for archive in "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}-app.tar.gz"; do
+          for archive in "dist/${{ matrix.artifact }}.tar.gz" "dist/${{ matrix.artifact }}-app.tar.gz"; do
             if (( $(stat -f %z "$archive") > 64 * 1024 * 1024 )); then
               echo "::error::$archive exceeds the 64 MiB update limit"
               exit 1
             fi
           done
       - name: Smoke test packaged binary
+        if: matrix.channel == 'terminal'
         run: |
           package_dir="package-${{ matrix.artifact }}"
           mkdir "$package_dir"
-          shasum -a 256 -c "${{ matrix.artifact }}.sha256"
+          (cd dist && shasum -a 256 -c "${{ matrix.artifact }}.sha256")
           # macOS tar hides AppleDouble ._ entries when listing; the updater does not.
           entries=$(python3 -I -c 'import sys, tarfile
           for m in tarfile.open(sys.argv[1]):
-              print("file" if m.isreg() else "other", m.name)' "${{ matrix.artifact }}.tar.gz")
+              print("file" if m.isreg() else "other", m.name)' "dist/${{ matrix.artifact }}.tar.gz")
           if [[ $entries != "file $BIN_NAME" ]]; then
             echo "::error::bare archive must contain only $BIN_NAME"
             exit 1
           fi
-          tar -xzf "${{ matrix.artifact }}.tar.gz" -C "$package_dir"
+          tar -xzf "dist/${{ matrix.artifact }}.tar.gz" -C "$package_dir"
           cmp "unsigned/${BIN_NAME}" "$package_dir/${BIN_NAME}"
           scripts/verify-macos-release "$package_dir/${BIN_NAME}" "${{ matrix.architecture }}"
           scripts/test-verify-macos-release "$package_dir/${BIN_NAME}"
@@ -182,25 +258,44 @@ jobs:
         run: |
           package_dir="package-${{ matrix.artifact }}-app"
           mkdir "$package_dir"
-          shasum -a 256 -c "${{ matrix.artifact }}-app.sha256"
-          if tar -tzf "${{ matrix.artifact }}-app.tar.gz" | grep -v '^Aven\.app/'; then
+          (cd dist && shasum -a 256 -c "${{ matrix.artifact }}-app.sha256")
+          if tar -tzf "dist/${{ matrix.artifact }}-app.tar.gz" | grep -v '^Aven\.app/'; then
             echo "::error::app archive contains entries outside Aven.app/"
             exit 1
           fi
-          tar -xzf "${{ matrix.artifact }}-app.tar.gz" -C "$package_dir"
+          tar -xzf "dist/${{ matrix.artifact }}-app.tar.gz" -C "$package_dir"
           diff -r unsigned-app/Aven.app "$package_dir/Aven.app"
           scripts/verify-macos-release "$package_dir/Aven.app" "${{ matrix.architecture }}"
           scripts/test-verify-macos-release "$package_dir/Aven.app"
+          xcrun stapler validate "$package_dir/Aven.app"
+          if ! spctl --assess --type execute --verbose=4 "$package_dir/Aven.app" >spctl.log 2>&1; then
+            cat spctl.log
+            exit 1
+          fi
+          cat spctl.log
+          grep -qx 'source=Notarized Developer ID' spctl.log
           ln -s "$PWD/$package_dir/Aven.app/Contents/MacOS/${BIN_NAME}" "$package_dir/${BIN_NAME}"
           "$package_dir/${BIN_NAME}" --help </dev/null
+      - name: Smoke test disk image
+        if: matrix.channel == 'desktop'
+        run: |
+          dmg="dist/${{ matrix.dmg }}.dmg"
+          (cd dist && shasum -a 256 -c "${{ matrix.dmg }}.sha256")
+          scripts/verify-macos-release "$dmg"
+          scripts/test-verify-macos-release "$dmg"
+          xcrun stapler validate "$dmg"
+          if ! spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg" >spctl.log 2>&1; then
+            cat spctl.log
+            exit 1
+          fi
+          cat spctl.log
+          grep -qx 'source=Notarized Developer ID' spctl.log
+          scripts/check-macos-dmg "$dmg" unsigned-app/Aven.app
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.sha256
-            ${{ matrix.artifact }}-app.tar.gz
-            ${{ matrix.artifact }}-app.sha256
+          path: dist/
+          if-no-files-found: error
 
   release:
     needs: [build, sign-macos]
@@ -225,6 +320,7 @@ jobs:
           generate_release_notes: true
           files: |
             *.tar.gz
+            *.dmg
             *.sha256
 
   update-tap:
@@ -245,19 +341,21 @@ jobs:
         with:
           path: source
           persist-credentials: false
-      - name: Generate formula and push to tap
+      - name: Generate formula and cask and push to tap
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           VERSION="${VERSION#v}"
           source/scripts/homebrew-formula "$VERSION" . > tap/Formula/aven.rb
+          mkdir -p tap/Casks
+          source/scripts/homebrew-cask "$VERSION" . > tap/Casks/aven.rb
 
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/aven.rb
+          git add Formula/aven.rb Casks/aven.rb
           if git diff --cached --quiet; then
-            echo "Formula is up to date"
+            echo "Formula and cask are up to date"
           else
             git commit -m "aven ${VERSION}"
             git pull --rebase

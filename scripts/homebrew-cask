@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Prints the Homebrew cask for a release's Aven Desktop disk images.
+# CHECKSUM_DIR holds the release's .sha256 files.
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: homebrew-cask VERSION CHECKSUM_DIR" >&2
+  exit 2
+fi
+version=$1
+checksum_dir=$2
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "version must be MAJOR.MINOR.PATCH: $version" >&2
+  exit 2
+fi
+
+checksum() {
+  local file="$checksum_dir/$1.sha256"
+  local sum
+  sum=$(awk '{print $1; exit}' "$file")
+  if [[ ! $sum =~ ^[0-9a-f]{64}$ ]]; then
+    echo "invalid checksum in $file" >&2
+    exit 1
+  fi
+  printf '%s\n' "$sum"
+}
+
+sha_arm=$(checksum Aven-Desktop-arm64)
+sha_intel=$(checksum Aven-Desktop-amd64)
+
+# The zap stanza removes only regenerable app state. Tasks, configuration
+# and sync credentials stay, so reinstalling resumes where the user left off.
+cat <<EOF
+cask "aven" do
+  arch arm: "arm64", intel: "amd64"
+
+  version "${version}"
+  sha256 arm:   "${sha_arm}",
+         intel: "${sha_intel}"
+
+  url "https://github.com/raine/aven/releases/download/v#{version}/Aven-Desktop-#{arch}.dmg"
+  name "Aven"
+  desc "Local-first task manager"
+  homepage "https://github.com/raine/aven"
+
+  auto_updates true
+
+  app "Aven.app"
+  binary "#{appdir}/Aven.app/Contents/MacOS/aven"
+
+  uninstall launchctl: "com.raine.aven.daemon"
+
+  zap trash: [
+    "~/.cache/aven",
+    "~/Library/Caches/fi.zendit.Aven",
+    "~/Library/Preferences/fi.zendit.Aven.plist",
+    "~/Library/Saved Application State/fi.zendit.Aven.savedState",
+  ]
+end
+EOF

@@ -105,6 +105,47 @@ workflow pulls do not establish public visibility or anonymous access. Release
 tags and registry publishing are remote mutations; only run them when
 authorized.
 
+## macOS release packaging
+
+Each macOS architecture (`arm64`, `amd64`) is built twice and published under
+separate names per channel. Updaters choose by channel and never fall back to
+the other channel's files (`ReleaseChannel` in `src/update/release.rs`).
+
+| Channel | Asset | Used by |
+| --- | --- | --- |
+| Terminal | `aven-darwin-<arch>.tar.gz` | `aven update` from a bare binary, Nix |
+| Terminal | `aven-darwin-<arch>-app.tar.gz` | `aven update`, `scripts/install`, the formula |
+| Desktop | `Aven-Desktop-<arch>.dmg` | People downloading Desktop, the cask |
+| Desktop | `aven-desktop-darwin-<arch>-app.tar.gz` | The Desktop updater |
+
+Terminal builds omit the `desktop` feature. Each asset has a checksum file
+named after it with `.sha256` in place of its extension, for example
+`Aven-Desktop-arm64.sha256`. Disk image names carry no version, so
+`releases/latest/download/Aven-Desktop-arm64.dmg` always points at the newest
+release. Released updaters refuse terminal archives over 64 MiB, so the release
+checks that limit for them.
+
+Every `Aven.app` and disk image is signed as `fi.zendit.Aven`, notarized with
+`scripts/notarize-macos-release` and stapled. The release fails unless
+`spctl --assess` reports each shipped app and disk image as notarized. The bare
+terminal binary is notarized too but cannot hold a ticket; Gatekeeper looks its
+ticket up online. Notarization uses an App Store Connect API key from the
+`macos-signing` environment: `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8`,
+which holds the `.p8` file contents.
+
+Stable tags publish the assets and push `Formula/aven.rb` and `Casks/aven.rb`
+to `raine/homebrew-aven`. Hyphenated tags such as `v1.2.3-signtest.1` build,
+sign and notarize without publishing or updating the tap.
+
+Local fixtures need no credentials:
+
+```sh
+scripts/test-homebrew-formula
+scripts/test-homebrew-cask
+scripts/test-assemble-macos-app
+scripts/test-create-macos-dmg
+```
+
 ## Affected-package handoff
 
 `just test-package <package>` runs that package's non-documentation test targets.
