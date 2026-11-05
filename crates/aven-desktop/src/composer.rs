@@ -444,23 +444,33 @@ impl Composer {
         Some(composer.current(cx))
     }
 
-    fn discard_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Empties the composer for a fresh start, leaving it open.
+    pub(crate) fn discard_draft(
+        &mut self,
+        _: &DiscardDraft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(draft) = self.composer_draft(cx) else {
             return;
         };
-        if draft.has_text() {
+        if !draft.is_blank() {
             self.discarded = Some(draft);
             cx.emit(ComposerEvent::Toast(
                 Toast::done("Draft discarded").action(Some(ToastAction::RestoreDraft)),
             ));
         }
-        self.close_composer(None, window, cx);
+        self.take_draft(Draft::default(), window, cx);
+        if let Some(composer) = self.composer.as_ref() {
+            let focus = composer.title.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        }
     }
 
+    /// Brings the discarded draft back, in place of what the composer holds.
     pub(crate) fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(draft) = self.discarded.take() {
-            self.kept_draft = draft;
-            self.open_composer(window, cx);
+            self.take_draft(draft, window, cx);
         }
     }
 
@@ -1422,6 +1432,7 @@ impl Composer {
             .key_context("Dialog Composer")
             .on_action(cx.listener(Self::create_task))
             .on_action(cx.listener(Self::create_another))
+            .on_action(cx.listener(Self::discard_draft))
             .on_action(cx.listener(Self::read_notes))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::next_field))
@@ -1837,8 +1848,12 @@ impl Composer {
             .child(div().flex_1())
             .child(
                 btn("c-discard", "Discard", t)
-                    .on_click(cx.listener(|this, _, window, cx| this.discard_draft(window, cx)))
-                    .child("Discard"),
+                    .hint(Hint::new("Clear the draft and start over"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.discard_draft(&DiscardDraft, window, cx);
+                    }))
+                    .child("Discard")
+                    .child(kbd("⌘⇧⌫", t.faint)),
             )
             .child(switch)
             .child(
