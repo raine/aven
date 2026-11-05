@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{
@@ -352,6 +352,8 @@ struct Actor {
     storage: Option<Arc<dyn ProtectedStorage>>,
     /// The launch database's config, which other databases start from.
     launch_config: AppConfig,
+    /// Where `launch_config` is read from, and when it last changed there.
+    config_file: Option<(PathBuf, Option<SystemTime>)>,
     launch_path: PathBuf,
     background_sync: Option<JoinHandle<()>>,
     /// Set while user-started work holds the sync slot.
@@ -436,6 +438,7 @@ impl Actor {
             launch_path: database.clone(),
             database,
             launch_config: config.clone(),
+            config_file: None,
             config,
             replies,
             sync_wake,
@@ -662,6 +665,27 @@ impl Actor {
                 "Reminders saved".to_string()
             }
         })
+    }
+
+    /// Takes up edits made to the config file since it was last read. A file
+    /// that no longer reads leaves the config as it was.
+    fn reread_config(&mut self) {
+        let Some((path, changed)) = self.config_file.as_mut() else {
+            return;
+        };
+        let now = modified(path);
+        if now == *changed {
+            return;
+        }
+        *changed = now;
+        let path = path.clone();
+        match AppConfig::load_from_path(&path) {
+            Ok(config) => {
+                self.config = sync_ops::config_for(&self.database, &self.launch_path, &config);
+                self.launch_config = config;
+            }
+            Err(error) => eprintln!("aven-desktop: {error:#}"),
+        }
     }
 
     /// Replaces the open database. The old one stays open if the new one fails.
@@ -2216,6 +2240,7 @@ impl Actor {
 
     async fn handle(&mut self, request: Request) {
         self.handled = request.id;
+        self.reread_config();
         match request.command {
             Command::Refresh => self.outside_change().await,
             Command::RefreshView => {
@@ -2554,6 +2579,13 @@ pub fn start(handle: tokio::runtime::Handle, launch: Launch) -> Result<(Session,
 
 /// Starts the store while the main thread initializes the native platform.
 /// The returned function waits for a fresh snapshot, never a persisted UI cache.
+/// When the file at `path` last changed, if it exists.
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
 pub(crate) fn prepare(
     handle: tokio::runtime::Handle,
     launch: Launch,
@@ -2630,6 +2662,10 @@ pub(crate) fn prepare(
                 );
                 actor.database = path;
                 actor.config = config;
+                actor.config_file = launch.config_file.map(|path| {
+                    let changed = modified(&path);
+                    (path, changed)
+                });
                 actor.welcome = welcome;
                 actor.spawn_background_sync();
                 actor.send_list().await;
@@ -2892,6 +2928,7 @@ mod tests {
             Launch {
                 database: path,
                 config: AppConfig::default(),
+                config_file: None,
                 storage: None,
             },
             Some(SavedView {
@@ -2950,6 +2987,7 @@ mod tests {
                     Launch {
                         database: path,
                         config: AppConfig::default(),
+                        config_file: None,
                         storage: None,
                     },
                     None
@@ -2985,6 +3023,7 @@ mod tests {
         let launch = Launch {
             database: path.clone(),
             config: AppConfig::default(),
+            config_file: None,
             storage: Some(Arc::new(
                 aven_core::sync::client::keys::FileProtectedStorage::new(
                     directory.path().join("keys"),
@@ -3610,6 +3649,46 @@ mod tests {
     async fn run(actor: &mut Actor, command: Command) {
         let id = actor.handled + 1;
         actor.handle(Request { id, command }).await;
+    }
+
+    #[tokio::test]
+    async fn edits_to_the_config_file_apply_without_a_restart() {
+        let (dir, mut actor, mut replies) = actor("Existing").await;
+        let path = dir.path().join("config.yaml");
+        actor.config_file = Some((path.clone(), modified(&path)));
+        async fn has_agent(
+            actor: &mut Actor,
+            replies: &mut mpsc::UnboundedReceiver<Reply>,
+        ) -> bool {
+            run(actor, Command::LoadLauncher).await;
+            bodies(replies)
+                .into_iter()
+                .find_map(|body| match body {
+                    ReplyBody::Launcher(catalog) => Some(catalog.agent),
+                    _ => None,
+                })
+                .expect("the launcher's catalog")
+        }
+        let write = |text: &str, at: u64| {
+            std::fs::write(&path, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(at))
+                .unwrap();
+        };
+
+        assert!(!has_agent(&mut actor, &mut replies).await);
+        write("agent:\n  task_intake:\n    command: my-agent\n", 1_000);
+        assert!(has_agent(&mut actor, &mut replies).await);
+        write("agent: [", 2_000);
+        assert!(
+            has_agent(&mut actor, &mut replies).await,
+            "a file that no longer reads keeps the config"
+        );
+        write("{}\n", 3_000);
+        assert!(!has_agent(&mut actor, &mut replies).await);
     }
 
     #[tokio::test]

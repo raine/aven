@@ -876,6 +876,9 @@ pub struct Reply {
 pub struct Launch {
     pub database: PathBuf,
     pub config: AppConfig,
+    /// The file `config` was read from, read again whenever it changes.
+    /// `None` keeps `config` as given.
+    pub config_file: Option<PathBuf>,
     /// Replaces the installation's protected key storage. `None` keeps it, so
     /// each host mode decides on Keychain access itself.
     pub storage: Option<Arc<dyn ProtectedStorage>>,

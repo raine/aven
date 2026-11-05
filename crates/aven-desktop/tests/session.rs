@@ -314,6 +314,7 @@ async fn writes_run_in_order_and_outside_writes_arrive() {
     let launch = adapter::Launch {
         database: path.clone(),
         config: AppConfig::default(),
+        config_file: None,
         storage: Some(Arc::new(FileProtectedStorage::new(
             directory.path().join("keys"),
         ))),
@@ -634,6 +635,7 @@ async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
     let launch = adapter::Launch {
         database: path,
         config: AppConfig::default(),
+        config_file: None,
         storage: Some(storage),
     };
     let (mut session, mut replies) =
@@ -960,6 +962,7 @@ async fn review_undo_case(view: Option<TaskQuery>) {
     let launch = adapter::Launch {
         database: path,
         config: AppConfig::default(),
+        config_file: None,
         storage: Some(storage),
     };
     let (mut session, mut replies) =

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use aven_host::app_bundle::enclosing_bundle;
-use aven_host::config::{AppConfig, resolve_db_path};
+use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
 use gpui::{
     App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, point, prelude::*, px, size,
@@ -170,6 +170,7 @@ pub fn run() -> Result<()> {
     let launch = Launch {
         database,
         config,
+        config_file: config_file_path().ok(),
         storage: None,
     };
     crate::startup::mark("runtime-ready");
