@@ -667,15 +667,16 @@ impl Actor {
         })
     }
 
-    /// Takes up edits made to the config file since it was last read. A file
-    /// that no longer reads leaves the config as it was.
-    fn reread_config(&mut self) {
+    /// Takes up edits made to the config file since it was last read, and
+    /// says whether it did. A file that no longer reads leaves the config as
+    /// it was.
+    fn reread_config(&mut self) -> bool {
         let Some((path, changed)) = self.config_file.as_mut() else {
-            return;
+            return false;
         };
         let now = modified(path);
         if now == *changed {
-            return;
+            return false;
         }
         *changed = now;
         let path = path.clone();
@@ -683,8 +684,25 @@ impl Actor {
             Ok(config) => {
                 self.config = sync_ops::config_for(&self.database, &self.launch_path, &config);
                 self.launch_config = config;
+                true
             }
-            Err(error) => eprintln!("aven-desktop: {error:#}"),
+            Err(error) => {
+                eprintln!("aven-desktop: {error:#}");
+                false
+            }
+        }
+    }
+
+    /// Sends settings and the launcher's catalog again when the config file
+    /// changed, so open Settings and an open launcher follow the edit as soon
+    /// as it is saved.
+    async fn watch_config(&mut self) {
+        if !self.reread_config() {
+            return;
+        }
+        self.send_settings().await;
+        if let Ok(catalog) = self.launcher_catalog().await {
+            self.send(ReplyBody::Launcher(Box::new(catalog)));
         }
     }
 
@@ -2534,6 +2552,7 @@ impl Actor {
                 }
                 _ = clock.tick() => self.outside_change().await,
                 _ = poll.tick() => {
+                    self.watch_config().await;
                     let Some(version) = writes.as_mut() else { continue };
                     if version.changed().await.unwrap_or(false) {
                         self.outside_change().await;
@@ -3913,6 +3932,28 @@ mod tests {
                 .tasks
                 .iter()
                 .all(|item| !matches!(item.task.title.as_str(), "Unknown job" | "Moved"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_saved_config_edit_reaches_settings() {
+        let (dir, mut actor, mut replies) = actor("Existing").await;
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "agent:\n  task_intake:\n    command: first\n").unwrap();
+        actor.config_file = Some((path.clone(), None));
+        actor.watch_config().await;
+        let seen = bodies(&mut replies);
+        assert!(
+            matches!(&seen[..], [ReplyBody::Settings(data), ReplyBody::Launcher(catalog)]
+                if data.agent.as_ref().is_some_and(|agent| agent.command == "first")
+                    && catalog.agent),
+            "{seen:?}"
+        );
+
+        actor.watch_config().await;
+        assert!(
+            bodies(&mut replies).is_empty(),
+            "an unchanged file sends nothing"
         );
     }
 
