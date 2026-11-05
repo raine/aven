@@ -12,6 +12,8 @@ mod processes;
 #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
 mod relaunch;
 mod release;
+#[cfg(target_os = "macos")]
+mod signature;
 
 use std::path::PathBuf;
 use std::sync::{

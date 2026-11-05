@@ -81,6 +81,8 @@ pub(super) async fn install_direct_for_home(
     ensure_not_cancelled(&cancelled)?;
     set_phase(&progress, UpdatePhase::Staging);
     let staged = stage_binary(&target, &binary)?.into_temp_path();
+    #[cfg(target_os = "macos")]
+    super::signature::verify_signature(&staged).await?;
     validate_staged_binary(&staged, &plan.release.version).await?;
 
     ensure_not_cancelled(&cancelled)?;
