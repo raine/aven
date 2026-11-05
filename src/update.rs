@@ -124,11 +124,12 @@ impl InstallPlan {
                 format!("Build from source: cargo install --git https://github.com/{REPOSITORY}"),
             ],
             InstallMethod::Unwritable { target } if self.channel == ReleaseChannel::Desktop => {
+                let bundle =
+                    crate::app_bundle::enclosing_bundle(target).unwrap_or_else(|| target.clone());
                 vec![
                     format!("{current} can update to {latest}."),
-                    format!("Aven cannot replace {} here.", target.display()),
-                    "Move Aven.app to /Applications, or download the new version and replace it."
-                        .to_string(),
+                    format!("Aven cannot replace {} here.", bundle.display()),
+                    unwritable_bundle_remedy(&bundle).to_string(),
                 ]
             }
             InstallMethod::Unwritable { target } => vec![
@@ -139,6 +140,15 @@ impl InstallPlan {
             ],
         };
         Some(lines)
+    }
+}
+
+/// What to do about an `Aven.app` at `bundle` that this user cannot replace.
+fn unwritable_bundle_remedy(bundle: &std::path::Path) -> &'static str {
+    if bundle.starts_with("/Applications") {
+        "Download the new version and replace it."
+    } else {
+        "Move Aven to Applications, or download the new version and replace it."
     }
 }
 
@@ -261,6 +271,42 @@ mod tests {
         assert_eq!(
             ensure_not_cancelled(&cancelled).unwrap_err().to_string(),
             "update cancelled"
+        );
+    }
+
+    #[test]
+    fn an_unwritable_app_is_named_with_a_remedy_for_its_location() {
+        let release = Release {
+            version: Version::new(9, 9, 9),
+            tag: "v9.9.9".to_string(),
+            archive_name: String::new(),
+            archive_url: String::new(),
+            checksum_url: String::new(),
+            app: None,
+        };
+        let guidance = |bundle: &str| {
+            InstallPlan {
+                release: release.clone(),
+                method: InstallMethod::Unwritable {
+                    target: PathBuf::from(bundle).join("Contents/MacOS/aven"),
+                },
+                channel: ReleaseChannel::Desktop,
+            }
+            .guidance()
+            .unwrap()[1..]
+                .to_vec()
+        };
+
+        assert_eq!(
+            guidance("/Applications/Aven.app"),
+            [
+                "Aven cannot replace /Applications/Aven.app here.",
+                "Download the new version and replace it.",
+            ]
+        );
+        assert_eq!(
+            guidance("/Users/me/Apps/Aven.app")[1],
+            "Move Aven to Applications, or download the new version and replace it."
         );
     }
 }

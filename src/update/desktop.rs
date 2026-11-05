@@ -73,11 +73,7 @@ fn blocked_reason(release: &Release) -> Option<String> {
 }
 
 fn unwritable_reason(bundle: &Path) -> String {
-    let remedy = if bundle.starts_with("/Applications") {
-        "Download the new version and replace it."
-    } else {
-        "Move Aven to Applications, or download the new version and replace it."
-    };
+    let remedy = super::unwritable_bundle_remedy(bundle);
     format!(
         "Aven can\u{2019}t replace itself at {}. {remedy}",
         bundle.display()
