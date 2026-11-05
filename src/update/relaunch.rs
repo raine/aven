@@ -197,8 +197,7 @@ pub(crate) async fn finish_desktop_update(marker: &Path, pid: u32) -> Result<()>
     if !super::processes::wait_for_daemon_exit(&previous.join(BUNDLE_EXECUTABLE)).await {
         println!("update-daemon-still-running");
     }
-    open_app(&update.bundle)?;
-    match watch_launch(marker, &update.bundle).await? {
+    match launch(marker, &update.bundle, open_app).await? {
         Launch::Confirmed => {
             println!("update-launched version={}", update.to);
             Ok(())
@@ -227,6 +226,20 @@ fn process_alive(pid: u32) -> bool {
         return false;
     };
     unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Opens the new app and watches it start. An app Launch Services refuses to
+/// open has failed like one that quits at once.
+async fn launch(
+    marker: &Path,
+    bundle: &Path,
+    open: impl FnOnce(&Path) -> Result<()>,
+) -> Result<Launch> {
+    if let Err(error) = open(bundle) {
+        println!("update-open-failed error={error:#}");
+        return Ok(Launch::Failed);
+    }
+    watch_launch(marker, bundle).await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -443,6 +456,18 @@ mod tests {
             })
         );
         assert!(!previous_dir(&bundle).unwrap().exists());
+    }
+
+    #[tokio::test]
+    async fn an_app_that_will_not_open_has_failed() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle = temp.path().join("Aven.app");
+        write_bundle(&bundle, b"new");
+        let marker = marker_path(&bundle).unwrap();
+
+        let launched = launch(&marker, &bundle, |_| bail!("open failed")).await;
+
+        assert_eq!(launched.unwrap(), Launch::Failed);
     }
 
     #[tokio::test]
