@@ -494,6 +494,10 @@ agent:
 
 The isolation flags keep task intake independent of project resources and prevent it from creating sessions or invoking tools. Add `--provider` and `--model` arguments when task intake should use a specific authenticated model.
 
+:::tip[Benchmark: OpenAI models]
+`--provider openai-codex --model gpt-6.1-sol --thinking low` performed best among OpenAI models in our intake benchmark. It chose the correct project, priority, and existing labels on every run, with a median latency of about three seconds. Higher thinking levels added latency without improving accuracy. `gpt-6-luna` was slightly faster but sometimes invented labels, which makes Aven reject the task.
+:::
+
 ## Environment overrides
 
 Useful environment overrides include:
