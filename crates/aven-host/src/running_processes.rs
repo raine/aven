@@ -20,12 +20,13 @@ pub struct RunningProcess {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessKind {
-    /// The app, or a launch with nothing to do.
+    /// The app, or a launch with nothing to do outside a terminal.
     App,
     /// The background daemon, which exits by itself when its executable is
     /// replaced and is then started again by launchd.
     Daemon,
-    /// A command, such as the TUI or `aven mcp`.
+    /// A command, such as the TUI or `aven mcp`. A launch with no arguments
+    /// in a terminal is the TUI.
     Command,
 }
 
@@ -41,7 +42,7 @@ pub fn running_processes(executable: &Path) -> Vec<RunningProcess> {
         .filter(|(_, id)| *id != own)
         .filter(|(pid, _)| executable_of(*pid).as_deref() == Some(executable.as_path()))
         .filter_map(|(pid, id)| {
-            let (kind, command) = describe(&arguments_of(pid)?);
+            let (kind, command) = describe(&arguments_of(pid)?, has_terminal(pid));
             Some(RunningProcess {
                 pid: id,
                 command,
@@ -61,17 +62,18 @@ pub fn blocking_processes(executable: &Path) -> Vec<RunningProcess> {
     found
 }
 
-/// What a process of the executable is, from its arguments: none is the app
-/// or an idle launch, `daemon` alone is the daemon, and anything else is a
-/// command, shown as typed.
-fn describe(arguments: &[String]) -> (ProcessKind, String) {
+/// What a process of the executable is, from its arguments and whether it has
+/// a terminal: none is the app or an idle launch, or the TUI in a terminal,
+/// `daemon` alone is the daemon, and anything else is a command, shown as
+/// typed.
+fn describe(arguments: &[String], has_terminal: bool) -> (ProcessKind, String) {
     let rest = arguments
         .get(1..)
         .unwrap_or_default()
         .iter()
         .filter(|argument| !argument.starts_with("-psn_"))
         .collect::<Vec<_>>();
-    if rest.is_empty() {
+    if rest.is_empty() && !has_terminal {
         return (ProcessKind::App, "Aven".to_string());
     }
     let mut positional = Vec::new();
@@ -114,6 +116,24 @@ fn all_pids() -> Vec<libc::pid_t> {
     pids.truncate(filled as usize);
     pids.retain(|pid| *pid > 0);
     pids
+}
+
+/// Whether the process has a controlling terminal, as `aven` decides between
+/// the TUI and the app.
+fn has_terminal(pid: libc::pid_t) -> bool {
+    const PROC_FLAG_CONTROLT: u32 = 0x2;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let filled = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    filled == size && unsafe { info.assume_init() }.pbi_flags & PROC_FLAG_CONTROLT != 0
 }
 
 fn executable_of(pid: libc::pid_t) -> Option<PathBuf> {
@@ -192,7 +212,7 @@ mod tests {
     #[test]
     fn the_daemon_and_the_app_are_told_apart_from_commands() {
         let exe = "/Applications/Aven.app/Contents/MacOS/aven";
-        let kind = |line: &str| describe(&words(line)).0;
+        let kind = |line: &str| describe(&words(line), false).0;
         assert_eq!(kind(exe), ProcessKind::App);
         assert_eq!(kind(&format!("{exe} -psn_0_12345")), ProcessKind::App);
         assert_eq!(
@@ -200,15 +220,20 @@ mod tests {
             ProcessKind::Daemon
         );
         assert_eq!(
-            describe(&words("aven daemon status")),
+            describe(&words("aven daemon status"), true),
             (ProcessKind::Command, "aven daemon status".to_string())
         );
         assert_eq!(
-            describe(&words("/usr/local/bin/aven --db daemon tui")),
+            describe(&words("/usr/local/bin/aven --db daemon tui"), true),
             (ProcessKind::Command, "aven --db daemon tui".to_string()),
             "a flag's value is not a subcommand"
         );
-        let (_, long) = describe(&words(&format!("aven add {}", "x".repeat(200))));
+        assert_eq!(
+            describe(&words(exe), true),
+            (ProcessKind::Command, "aven".to_string()),
+            "a bare launch in a terminal is the TUI"
+        );
+        let (_, long) = describe(&words(&format!("aven add {}", "x".repeat(200))), true);
         assert_eq!(long.chars().count(), COMMAND_LIMIT);
         assert!(long.ends_with('…'));
     }
