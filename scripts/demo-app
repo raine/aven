@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Opens the app on a fresh demo database, apart from real data: its own
 # identifier, home, config, state and data directories, with sync disabled.
+# The demo config carries only agent.task_intake from the real config.
 #
 #   demo-app            the installed /Applications/Aven.app
 #   demo-app --debug    a debug build of this checkout
@@ -50,6 +51,22 @@ plutil -replace CFBundleIdentifier -string fi.zendit.AvenDemo "$plist"
 plutil -replace CFBundleName -string "$name" "$plist"
 plutil -replace CFBundleDisplayName -string "$name" "$plist"
 codesign --force --sign - "$app" 2>/dev/null
+
+# Create with AI needs an agent, so the demo uses the one from the real config.
+# The agent runs with the real HOME so that it finds its own login.
+real_config="${AVEN_CONFIG_DIR:-$HOME/.config/aven}/config.yaml"
+if [[ -f $real_config ]] && command -v yq >/dev/null &&
+  [[ $(yq '.agent.task_intake.command // ""' "$real_config") ]]; then
+  mkdir -p "$root/home/.config/aven"
+  REAL_HOME=$HOME yq '
+    {"agent": {"task_intake": .agent.task_intake}}
+    | .agent.task_intake.args = ["HOME=" + strenv(REAL_HOME), .agent.task_intake.command]
+      + (.agent.task_intake.args // [])
+    | .agent.task_intake.command = "/usr/bin/env"
+  ' "$real_config" >"$root/home/.config/aven/config.yaml"
+elif [[ -f $real_config ]] && ! command -v yq >/dev/null; then
+  echo "warning: yq is not installed, so Create with AI has no agent" >&2
+fi
 
 isolated=(
   HOME="$root/home"
