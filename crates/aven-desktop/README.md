@@ -16,9 +16,13 @@ Install a release build from this checkout to `/Applications`:
 just install-app
 ```
 
-This also relinks `~/.cargo/bin/aven` to the new bundle, reinstalls the daemon
-when sync is enabled, and removes `~/.local/share/aven/Aven.app`. Quit a running
-app first; it keeps its old executable until restarted.
+This then runs the app's setup from the terminal: links to the old bundle and
+the daemon's LaunchAgent move to the new one, keeping the daemon's settings and
+whether it runs, `~/.local/share/aven/Aven.app` is removed, and
+`~/.local/bin/aven` is created if no `aven` command runs the app. A running
+daemon restarts on the new build. Quit a running app first; it keeps its old
+executable until restarted. With `/Applications/Aven.app` installed, `just
+install` refuses, since the app owns the command and the daemon.
 
 ## Startup timing
 

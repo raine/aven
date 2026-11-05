@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Builds the release Aven.app from this checkout and installs it to
-# /Applications, then moves the `aven` command and the daemon onto that bundle:
-# they share one database, so they must run the same version.
+# /Applications, then moves the `aven` command and the daemon onto that bundle
+# as the app's setup does: they share one database, so they must run the same
+# version.
 #
 # With DIR, only places the signed bundle in DIR.
 
@@ -58,22 +59,15 @@ rm -rf /Applications/.Aven.app.old
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$lsregister" -f "$target"
 
-bin="$HOME/.cargo/bin/aven"
-mkdir -p "$(dirname "$bin")"
-ln -sfn "$target/Contents/MacOS/aven" "$bin.tmp.$$"
-mv -f "$bin.tmp.$$" "$bin"
-# Worktree shells disable sync for their dev database, but this is the real daemon.
-if [[ $("$bin" config get sync.enabled) == true ]]; then
-  env -u AVEN_SYNC_DISABLED "$bin" daemon install
+# The app's own setup moves the command and the daemon onto the bundle,
+# keeping the daemon's settings and whether it runs, and retires the bundle the
+# install script left in ~/.local/share/aven.
+"$target/Contents/MacOS/aven" internal desktop-setup
+
+# A daemon that already ran from this path still runs the replaced executable.
+service="gui/$(id -u)/com.raine.aven.daemon"
+if launchctl print "$service" >/dev/null 2>&1; then
+  launchctl kickstart -k "$service"
 fi
 
-# A second bundle with the same identifier could take Launch Services opens,
-# including clicked notifications. A daemon still pointing at it keeps it.
-old_app="$HOME/.local/share/aven/Aven.app"
-daemon_plist="$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
-if [[ -d $old_app ]] && ! grep -qs "$old_app" "$daemon_plist"; then
-  "$lsregister" -u "$old_app"
-  rm -rf "$old_app"
-fi
-
-echo "Installed $target ($version) and linked $bin"
+echo "Installed $target ($version)"

@@ -191,6 +191,12 @@ install:
     set -euo pipefail
     bin="$HOME/.cargo/bin/aven"
     if [[ "$(uname -s)" == "Darwin" ]]; then
+        # Desktop owns the command and the daemon once it is installed.
+        if [[ -d /Applications/Aven.app ]]; then
+            echo "Error: /Applications/Aven.app runs aven and the daemon on this Mac" >&2
+            echo "Use 'just install-app' to install this checkout" >&2
+            exit 1
+        fi
         env SQLX_OFFLINE=true cargo build --release --offline --locked
         pkgid=$(cargo pkgid --offline)
         version=${pkgid##*[#@]}
@@ -234,7 +240,7 @@ install-dev:
     daemon_plist="$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
     if [[ -f "$daemon_plist" ]]; then
         echo "Error: install-dev cannot replace the binary used by the installed daemon" >&2
-        echo "Use 'just install' for a daemon-safe local installation, or uninstall the daemon first" >&2
+        echo "Use 'just install', or 'just install-app' with Aven.app in /Applications, for a daemon-safe local installation, or uninstall the daemon first" >&2
         exit 1
     fi
     cargo build

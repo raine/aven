@@ -1,20 +1,24 @@
 //! Application start.
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use aven_host::app_bundle::enclosing_bundle;
 use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
+use aven_host::desktop_install::{self, Layout, MacSystem};
 use gpui::{
     App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 
-use crate::adapter::{self, Launch, Prefs, SavedWindow, WindowMode};
+use crate::adapter::{self, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
 use crate::assets::{Assets, load_fonts};
+use crate::session::Session;
+use crate::setup::Setup;
 use crate::shell::Root;
-use crate::theme::Theme;
+use crate::theme::{Theme, theme};
 use crate::toast::Toast;
 use crate::{actions, input, launcher, platform};
 
@@ -89,13 +93,20 @@ pub(crate) fn with_root(
     cx: &mut App,
     f: impl FnOnce(&mut Root, &mut gpui::Window, &mut gpui::Context<Root>),
 ) {
-    let window = cx.global::<MainWindow>().0;
+    // Setup shows before the main window exists.
+    let Some(window) = cx.try_global::<MainWindow>().map(|main| main.0) else {
+        return;
+    };
     if let Err(error) = window.update(cx, f) {
         tracing::error!(%error, "the window could not be reached");
     }
 }
 
 pub(crate) fn show_window(cx: &mut App) {
+    if !cx.has_global::<MainWindow>() {
+        cx.activate(true);
+        return;
+    }
     with_root(cx, |_, window, _| window.activate_window());
     cx.activate(true);
 }
@@ -104,12 +115,26 @@ pub(crate) fn show_window(cx: &mut App) {
 /// open window runs while GPUI holds that window, which nothing else can update
 /// until the action returns, so those that use it wait with `defer`.
 pub fn register_actions(cx: &mut App) {
-    cx.on_action(|_: &actions::Quit, cx| cx.defer(|cx| with_root(cx, Root::quit)));
+    cx.on_action(|_: &actions::Quit, cx| {
+        cx.defer(|cx| {
+            if cx.has_global::<MainWindow>() {
+                with_root(cx, Root::quit);
+            } else {
+                cx.quit();
+            }
+        })
+    });
     cx.on_action(|_: &actions::Hide, cx| cx.hide());
     cx.on_action(|_: &actions::HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &actions::ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &actions::ShowWindow, cx| cx.defer(show_window));
 }
+
+/// The setup window's frame.
+const SETUP_SIZE: Size<f32> = Size {
+    width: 720.,
+    height: 720.,
+};
 
 /// The default frame, which also stands in for a saved one no display can show.
 const DEFAULT_SIZE: Size<f32> = Size {
@@ -175,6 +200,19 @@ pub fn run() -> Result<()> {
     };
     crate::startup::mark("runtime-ready");
     let saved = Prefs::load(&prefs);
+    // The database waits until this app is the installation that runs the
+    // command and the daemon.
+    if let Some(layout) = Layout::current().ok().filter(desktop_install::needs_setup) {
+        let app = application().with_assets(Assets);
+        let handle = runtime.handle().clone();
+        app.on_reopen(show_window);
+        app.run(move |cx: &mut App| {
+            prepare_app(cx);
+            open_setup(layout, handle, launch, saved, prefs, cx);
+            cx.activate(true);
+        });
+        return Ok(());
+    }
     let finish_store = adapter::prepare(runtime.handle().clone(), launch, saved.view.clone())?;
     let app = application().with_assets(Assets);
     crate::startup::mark("platform-ready");
@@ -183,82 +221,173 @@ pub fn run() -> Result<()> {
     app.on_reopen(show_window);
     app.run(move |cx: &mut App| {
         crate::startup::mark("app-callback");
-        load_fonts(cx);
-        crate::startup::mark("fonts-ready");
-        cx.set_global(Theme::dark());
-        cx.bind_keys(input::key_bindings());
-        cx.bind_keys(actions::key_bindings());
-        register_actions(cx);
-        cx.set_menus(actions::menus());
-        let (bounds, display_id) = window_placement(saved.window.as_ref(), cx);
-        let launcher_prefs = saved.launcher.clone();
-        crate::startup::mark("window-start");
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(bounds),
-                    display_id,
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(TITLE.into()),
-                        appears_transparent: true,
-                        traffic_light_position: Some(point(px(14.), px(21.))),
-                    }),
-                    window_min_size: Some(size(px(960.), px(600.))),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    crate::startup::mark("native-window-ready");
-                    cx.new(|cx| {
-                        let mut root = Root::new(session, replies, saved, prefs, window, cx);
-                        root.follow_system(window, cx);
-                        let this = cx.weak_entity();
-                        window.on_window_should_close(cx, move |window, cx| {
-                            let _ = this.update(cx, |root, cx| root.close(window, cx));
-                            false
-                        });
-                        root
-                    })
-                },
-            )
-            .expect("the window opens");
-        crate::startup::mark("window-ready");
-        cx.set_global(MainWindow(window));
-        if let Some(error) = launcher::init(&launcher_prefs, cx) {
-            with_root(cx, |root, _, cx| {
-                let toast = Toast::error("The launcher shortcut isn\u{2019}t set").detail(error);
-                root.session.show_toast(toast);
-                cx.notify();
-            });
-        }
-        cx.on_system_notification_response(|response, cx| {
-            let Some((workspace, id)) = launcher::tagged_task(&response.tag) else {
-                show_window(cx);
-                return;
-            };
-            show_window(cx);
-            if let Ok(id) = id.parse() {
-                with_root(cx, |root, window, cx| {
-                    root.open_launched(workspace, id, window, cx);
-                });
-            }
-        });
-        // Anything but Quit, such as logging out, ends here. Nothing runs on the
-        // main thread after this, so the store gets a moment without a reply.
-        cx.on_app_quit(|cx| {
-            let mut started = false;
-            with_root(cx, |root, window, cx| started = root.begin_quit(window, cx));
-            let timer = cx.background_executor().timer(STORE_GRACE);
-            async move {
-                if started {
-                    timer.await;
-                }
-            }
-        })
-        .detach();
-        relaunch_after_update(cx);
-        cx.activate(true);
+        prepare_app(cx);
+        open_main(session, replies, saved, prefs, cx);
     });
     Ok(())
+}
+
+/// What both windows need: fonts, theme, keys and menus.
+fn prepare_app(cx: &mut App) {
+    load_fonts(cx);
+    crate::startup::mark("fonts-ready");
+    cx.set_global(Theme::dark());
+    cx.bind_keys(input::key_bindings());
+    cx.bind_keys(actions::key_bindings());
+    register_actions(cx);
+    cx.set_menus(actions::menus());
+}
+
+/// Opens setup, and the main window on the database once setup is through.
+fn open_setup(
+    layout: Layout,
+    handle: tokio::runtime::Handle,
+    launch: Launch,
+    saved: Prefs,
+    prefs: PathBuf,
+    cx: &mut App,
+) {
+    let dark = match saved.theme {
+        ThemePref::Dark => Some(true),
+        ThemePref::Light => Some(false),
+        ThemePref::System => None,
+    };
+    let on_done = Box::new(move |window: &mut gpui::Window, cx: &mut App| {
+        let started =
+            adapter::prepare(handle, launch, saved.view.clone()).and_then(|finish| finish());
+        match started {
+            Ok((session, replies)) => {
+                open_main(session, replies, saved, prefs, cx);
+                window.remove_window();
+            }
+            Err(error) => {
+                tracing::error!(error = %format_args!("{error:#}"), "the app could not start");
+                cx.quit();
+            }
+        }
+    });
+    let bounds = Bounds::centered(None, size(px(SETUP_SIZE.width), px(SETUP_SIZE.height)), cx);
+    let opened = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(TITLE.into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(14.), px(21.))),
+            }),
+            window_min_size: Some(size(px(560.), px(560.))),
+            ..Default::default()
+        },
+        |window, cx| {
+            follow_appearance(dark, window, cx);
+            window.on_window_should_close(cx, |_, cx| {
+                cx.quit();
+                false
+            });
+            cx.new(|cx| Setup::new(layout, Arc::new(MacSystem), on_done, window, cx))
+        },
+    );
+    if let Err(error) = opened {
+        tracing::error!(%error, "the setup window could not open");
+        cx.quit();
+    }
+}
+
+/// Keeps the theme on the saved choice, or on the system's while it changes.
+fn follow_appearance(dark: Option<bool>, window: &mut gpui::Window, cx: &mut App) {
+    let apply = move |window: &gpui::Window, cx: &mut App| {
+        let dark = dark.unwrap_or_else(|| {
+            matches!(
+                window.appearance(),
+                gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+            )
+        });
+        if theme(cx).dark != dark {
+            cx.set_global(if dark { Theme::dark() } else { Theme::light() });
+            cx.refresh_windows();
+        }
+    };
+    apply(window, cx);
+    window
+        .observe_window_appearance(move |window, cx| apply(window, cx))
+        .detach();
+}
+
+/// Opens the app's one window on a started store.
+fn open_main(
+    session: Session,
+    replies: adapter::Replies,
+    saved: Prefs,
+    prefs: PathBuf,
+    cx: &mut App,
+) {
+    let (bounds, display_id) = window_placement(saved.window.as_ref(), cx);
+    let launcher_prefs = saved.launcher.clone();
+    crate::startup::mark("window-start");
+    let window = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(bounds),
+                display_id,
+                titlebar: Some(TitlebarOptions {
+                    title: Some(TITLE.into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(14.), px(21.))),
+                }),
+                window_min_size: Some(size(px(960.), px(600.))),
+                ..Default::default()
+            },
+            |window, cx| {
+                crate::startup::mark("native-window-ready");
+                cx.new(|cx| {
+                    let mut root = Root::new(session, replies, saved, prefs, window, cx);
+                    root.follow_system(window, cx);
+                    let this = cx.weak_entity();
+                    window.on_window_should_close(cx, move |window, cx| {
+                        let _ = this.update(cx, |root, cx| root.close(window, cx));
+                        false
+                    });
+                    root
+                })
+            },
+        )
+        .expect("the window opens");
+    crate::startup::mark("window-ready");
+    cx.set_global(MainWindow(window));
+    if let Some(error) = launcher::init(&launcher_prefs, cx) {
+        with_root(cx, |root, _, cx| {
+            let toast = Toast::error("The launcher shortcut isn\u{2019}t set").detail(error);
+            root.session.show_toast(toast);
+            cx.notify();
+        });
+    }
+    cx.on_system_notification_response(|response, cx| {
+        let Some((workspace, id)) = launcher::tagged_task(&response.tag) else {
+            show_window(cx);
+            return;
+        };
+        show_window(cx);
+        if let Ok(id) = id.parse() {
+            with_root(cx, |root, window, cx| {
+                root.open_launched(workspace, id, window, cx);
+            });
+        }
+    });
+    // Anything but Quit, such as logging out, ends here. Nothing runs on the
+    // main thread after this, so the store gets a moment without a reply.
+    cx.on_app_quit(|cx| {
+        let mut started = false;
+        with_root(cx, |root, window, cx| started = root.begin_quit(window, cx));
+        let timer = cx.background_executor().timer(STORE_GRACE);
+        async move {
+            if started {
+                timer.await;
+            }
+        }
+    })
+    .detach();
+    relaunch_after_update(cx);
+    cx.activate(true);
 }
 
 #[cfg(test)]

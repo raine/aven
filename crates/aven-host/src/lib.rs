@@ -8,6 +8,8 @@ pub mod attachments;
 pub mod config;
 pub mod config_edit;
 pub mod daemon;
+#[cfg(target_os = "macos")]
+pub mod desktop_install;
 pub mod gist;
 pub mod operations;
 pub mod projects;

@@ -31,6 +31,7 @@ mod platform;
 mod schedule;
 pub mod session;
 mod settings;
+mod setup;
 mod shell;
 mod startup;
 mod switch;

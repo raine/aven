@@ -107,6 +107,10 @@ pub(crate) enum InternalSubcommand {
     /// Reloads the daemon's LaunchAgent from its plist on disk.
     #[command(name = "reload-daemon", hide = true)]
     ReloadDaemon,
+    /// Moves the command and the daemon onto /Applications/Aven.app, as the
+    /// app's setup does after the user agrees.
+    #[command(name = "desktop-setup", hide = true)]
+    DesktopSetup,
 }
 
 #[derive(Args)]
