@@ -1985,6 +1985,47 @@ mod tests {
     }
 
     #[test]
+    fn gist_publication_reports_progress_copies_the_url_and_allows_retry() {
+        let (requests, mut received) = mpsc::unbounded_channel();
+        let mut session = Session::new(Snapshot::default(), requests);
+        let task = TaskId::new();
+        session.publish_gist(task.clone());
+        assert_eq!(session.toast().unwrap().title, "Publishing secret gist");
+        let request = received.try_recv().unwrap();
+        assert!(matches!(request.command, Command::PublishGist(ref id) if id == &task));
+        session.publish_gist(task.clone());
+        assert!(received.try_recv().is_err());
+
+        let url = "https://gist.example/secret".to_string();
+        let applied = session.apply(Reply {
+            request: request.id,
+            body: ReplyBody::Gist(Ok(url.clone())),
+        });
+        assert_eq!(applied.copy, Some(url.clone()));
+        assert_eq!(session.toast().unwrap().title, "Gist link copied");
+        assert!(
+            matches!(session.toast().unwrap().action.as_ref(), Some(ToastAction::Open(link)) if link == &url)
+        );
+        assert!(session.publishing.is_none());
+
+        session.publish_gist(task.clone());
+        let request = received.try_recv().unwrap();
+        let applied = session.apply(Reply {
+            request: request.id,
+            body: ReplyBody::Gist(Err("GitHub is unavailable".to_string())),
+        });
+        assert!(applied.copy.is_none());
+        assert_eq!(session.toast().unwrap().title, "Could not publish the gist");
+        assert_eq!(
+            session.toast().unwrap().detail.as_deref(),
+            Some("GitHub is unavailable")
+        );
+        assert!(session.publishing.is_none());
+        session.publish_gist(task);
+        assert!(received.try_recv().is_ok());
+    }
+
+    #[test]
     fn task_strips_stay_hidden_in_settings_and_return_to_the_previous_view() {
         let mut session = session();
         for project in [None, Some("aven".to_string())] {

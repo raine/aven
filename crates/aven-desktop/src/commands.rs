@@ -841,6 +841,7 @@ impl Root {
             Entry::action("Copy ref", "y r", CopyRef)
                 .mark(Mark::Icon("icons/ic-copy.svg"))
                 .sep(),
+            Entry::action("Publish report as secret gist", "t g", PublishGist),
             delete_entry(),
         ];
         let options = MenuOptions {

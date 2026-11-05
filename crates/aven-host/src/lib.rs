@@ -8,6 +8,7 @@ pub mod attachments;
 pub mod config;
 pub mod config_edit;
 pub mod daemon;
+pub mod gist;
 pub mod operations;
 pub mod projects;
 pub mod protected_local_keys;
