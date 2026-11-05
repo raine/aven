@@ -180,7 +180,8 @@ pub fn plain_panel(window: &gpui::Window) {
 }
 
 /// Opens `bundle` in the background once this process has exited, through Launch
-/// Services, so it starts as an app and not as a child of this one.
+/// Services, so it starts as an app and not as a child of this one, with the
+/// settings that point this one at its data.
 pub fn reopen_after_exit(bundle: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
@@ -194,6 +195,7 @@ pub fn reopen_after_exit(bundle: &std::path::Path) -> std::io::Result<()> {
     Command::new("/bin/sh")
         .args(["-c", SCRIPT, "aven-relaunch"])
         .arg(std::process::id().to_string())
+        .args(aven_host::app_bundle::open_environment_args())
         .arg(bundle)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
