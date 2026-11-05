@@ -120,7 +120,8 @@ pub fn order_out(window: &gpui::Window) {
 /// Leaves a transparent panel to draw its own frame and shadow, without the
 /// title bar edge AppKit lights, and shows it at once without the utility
 /// window's fade. Runs before the panel is shown: changing the style of a key
-/// window takes its focus.
+/// window takes its focus. Changing the style also moves first responder off
+/// GPUI's view, which takes typing, so this hands it back.
 pub fn plain_panel(window: &gpui::Window) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::ffi::{CStr, c_void};
@@ -133,6 +134,7 @@ pub fn plain_panel(window: &gpui::Window) {
     const SET_STYLE_MASK: &CStr = c"setStyleMask:";
     const SET_HAS_SHADOW: &CStr = c"setHasShadow:";
     const SET_ANIMATION: &CStr = c"setAnimationBehavior:";
+    const MAKE_FIRST_RESPONDER: &CStr = c"makeFirstResponder:";
     /// `NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel`.
     const BORDERLESS_PANEL: usize = 1 << 7;
     /// `NSWindowAnimationBehaviorNone`.
@@ -166,6 +168,13 @@ pub fn plain_panel(window: &gpui::Window) {
             native,
             sel_registerName(SET_ANIMATION.as_ptr()),
             NO_ANIMATION,
+        );
+        let make_first: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> bool =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        make_first(
+            native,
+            sel_registerName(MAKE_FIRST_RESPONDER.as_ptr()),
+            handle.ns_view.as_ptr(),
         );
     }
 }

@@ -676,11 +676,14 @@ impl Launcher {
                 self.retint(cx);
             }
             EditorEvent::Submit => self.press(Key::Return, cx),
+            // Escape lets go of what was typed; leaving the launcher any other
+            // way keeps it for next time.
             EditorEvent::Cancel => {
                 if self.menu.take().is_some() {
                     cx.notify();
                 } else {
                     self.hide(window, cx);
+                    self.clear(cx);
                 }
             }
             EditorEvent::PastedImage(pasted) => {
