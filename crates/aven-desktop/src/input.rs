@@ -395,6 +395,8 @@ pub struct Editor {
     takes_images: bool,
     content: String,
     placeholder: SharedString,
+    /// Colours for stretches of the placeholder, which is otherwise faint.
+    placeholder_tints: Vec<Tint>,
     selected: Range<usize>,
     reversed: bool,
     marked: Option<Range<usize>>,
@@ -466,6 +468,7 @@ impl Editor {
             takes_images: false,
             content: String::new(),
             placeholder: placeholder.into(),
+            placeholder_tints: Vec::new(),
             selected: 0..0,
             reversed: false,
             marked: None,
@@ -496,6 +499,11 @@ impl Editor {
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
         self
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        self.read_only = read_only;
+        cx.notify();
     }
 
     pub fn emit_arrows(mut self) -> Self {
@@ -572,6 +580,12 @@ impl Editor {
     pub fn set_tints(&mut self, tints: Vec<Tint>, cx: &mut Context<Self>) {
         self.tinted = self.content.clone();
         self.tints = tints;
+        cx.notify();
+    }
+
+    /// Colours stretches of the placeholder. Backgrounds are ignored.
+    pub fn set_placeholder_tints(&mut self, tints: Vec<Tint>, cx: &mut Context<Self>) {
+        self.placeholder_tints = tints;
         cx.notify();
     }
 
@@ -1275,6 +1289,43 @@ impl Editor {
         cx.notify();
     }
 
+    /// Runs for one line of the placeholder, `range` of it.
+    fn placeholder_runs(
+        &self,
+        range: Range<usize>,
+        style: &TextStyle,
+        color: Hsla,
+    ) -> Vec<TextRun> {
+        let inside = |offset: usize| offset > range.start && offset < range.end;
+        let mut cuts = vec![range.start, range.end];
+        for tint in &self.placeholder_tints {
+            cuts.extend(
+                [tint.range.start, tint.range.end]
+                    .into_iter()
+                    .filter(|o| inside(*o)),
+            );
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts.windows(2)
+            .map(|pair| {
+                let (start, end) = (pair[0], pair[1]);
+                let tint = self
+                    .placeholder_tints
+                    .iter()
+                    .find(|tint| tint.range.start <= start && end <= tint.range.end);
+                TextRun {
+                    len: end - start,
+                    font: style.font(),
+                    color: tint.map_or(color, |tint| tint.color),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }
+            })
+            .collect()
+    }
+
     fn runs(&self, range: Range<usize>, style: &TextStyle, color: Hsla, cx: &App) -> Vec<TextRun> {
         let mut cuts = vec![range.start, range.end];
         let inside = |offset: usize| offset > range.start && offset < range.end;
@@ -1549,14 +1600,7 @@ impl Editor {
             let shape_part = |range: Range<usize>, wrap: Option<Pixels>, window: &mut Window| {
                 let runs = if is_placeholder {
                     let mut runs = self.runs(0..0, style, color, cx);
-                    runs.push(TextRun {
-                        len: range.len(),
-                        font: style.font(),
-                        color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    });
+                    runs.extend(self.placeholder_runs(range.clone(), style, color));
                     runs
                 } else {
                     self.runs(range.clone(), style, ink, cx)

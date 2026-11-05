@@ -54,6 +54,34 @@ pub fn is_active() -> bool {
     }
 }
 
+/// Whether Option is held without Command or Control, read from the keyboard
+/// whichever app is in front.
+pub fn option_alone() -> bool {
+    use std::ffi::{CStr, c_void};
+
+    unsafe extern "C" {
+        fn objc_getClass(name: *const std::ffi::c_char) -> *mut c_void;
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+    const CLASS: &CStr = c"NSEvent";
+    const FLAGS: &CStr = c"modifierFlags";
+    const CONTROL: usize = 1 << 18;
+    const OPTION: usize = 1 << 19;
+    const COMMAND: usize = 1 << 20;
+    // SAFETY: `+[NSEvent modifierFlags]` exists since macOS 10.6, and
+    // `objc_msgSend` is cast to its signature.
+    let flags = unsafe {
+        let flags: extern "C" fn(*mut c_void, *mut c_void) -> usize =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        flags(
+            objc_getClass(CLASS.as_ptr()),
+            sel_registerName(FLAGS.as_ptr()),
+        )
+    };
+    flags & (OPTION | CONTROL | COMMAND) == OPTION
+}
+
 /// Takes the window off screen while it stays open, which `orderOut:` does and
 /// `activate_window` undoes.
 pub fn order_out(window: &gpui::Window) {
@@ -85,6 +113,59 @@ pub fn order_out(window: &gpui::Window) {
             native,
             sel_registerName(ORDER_OUT.as_ptr()),
             std::ptr::null_mut(),
+        );
+    }
+}
+
+/// Leaves a transparent panel to draw its own frame and shadow, without the
+/// title bar edge AppKit lights, and shows it at once without the utility
+/// window's fade. Runs before the panel is shown: changing the style of a key
+/// window takes its focus.
+pub fn plain_panel(window: &gpui::Window) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::ffi::{CStr, c_void};
+
+    unsafe extern "C" {
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+    const WINDOW: &CStr = c"window";
+    const SET_STYLE_MASK: &CStr = c"setStyleMask:";
+    const SET_HAS_SHADOW: &CStr = c"setHasShadow:";
+    const SET_ANIMATION: &CStr = c"setAnimationBehavior:";
+    /// `NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel`.
+    const BORDERLESS_PANEL: usize = 1 << 7;
+    /// `NSWindowAnimationBehaviorNone`.
+    const NO_ANIMATION: isize = 2;
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: the handle holds this window's live `NSView`, the selectors exist
+    // on AppKit's classes, and each `objc_msgSend` is cast to the signature of the
+    // method it sends.
+    unsafe {
+        let native: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let set_flag: extern "C" fn(*mut c_void, *mut c_void, bool) =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let set_behavior: extern "C" fn(*mut c_void, *mut c_void, isize) =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let set_mask: extern "C" fn(*mut c_void, *mut c_void, usize) =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let native = native(handle.ns_view.as_ptr(), sel_registerName(WINDOW.as_ptr()));
+        set_mask(
+            native,
+            sel_registerName(SET_STYLE_MASK.as_ptr()),
+            BORDERLESS_PANEL,
+        );
+        set_flag(native, sel_registerName(SET_HAS_SHADOW.as_ptr()), false);
+        set_behavior(
+            native,
+            sel_registerName(SET_ANIMATION.as_ptr()),
+            NO_ANIMATION,
         );
     }
 }

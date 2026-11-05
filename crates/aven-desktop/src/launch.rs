@@ -43,6 +43,8 @@ impl Place {
 pub struct Catalog {
     pub active: String,
     pub places: Vec<Place>,
+    /// Whether an agent command is configured to write tasks.
+    pub agent: bool,
 }
 
 impl Catalog {
@@ -235,33 +237,40 @@ pub enum LaunchEvent {
     DraftFailed(u64, String),
 }
 
+/// The configured agent command, if there is one.
+fn agent_command(config: &TaskIntakeConfig) -> Option<&str> {
+    config
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+}
+
+/// Whether an agent command is configured, runnable or not.
+pub fn has_agent(config: &TaskIntakeConfig) -> bool {
+    agent_command(config).is_some()
+}
+
 /// Why `job` cannot start, known before anything runs.
 pub fn refusal(config: &TaskIntakeConfig, job: &LaunchJob) -> Option<String> {
     if matches!(job.mode, LaunchMode::Plain(_)) {
         return None;
     }
-    let command = config
-        .command
-        .as_deref()
-        .map(str::trim)
-        .filter(|command| !command.is_empty());
-    let Some(command) = command else {
+    let Some(command) = agent_command(config) else {
         return Some(
-            "Set agent.task_intake.command in Aven\u{2019}s config to use your agent. \
-             \u{2325}\u{21b5} adds it without AI."
-                .to_string(),
+            "Set agent.task_intake.command in Aven\u{2019}s config to use your agent.".to_string(),
         );
     };
     if !runnable(command) {
         return Some(format!(
             "Couldn\u{2019}t start agent.task_intake: `{command}` isn\u{2019}t on PATH. Nothing \
-             was sent; your input is still here. \u{2325}\u{21b5} adds it without AI."
+             was sent; your input is still here."
         ));
     }
     if !job.images.is_empty() && !delivers_images(config) {
         return Some(
             "agent.task_intake has no way to receive images. Set its image_args, or remove \
-             the images. \u{2325}\u{21b5} adds it without AI."
+             the images."
                 .to_string(),
         );
     }
@@ -660,6 +669,7 @@ mod tests {
     #[test]
     fn refusals_leave_plain_tasks_alone() {
         let missing = TaskIntakeConfig::default();
+        assert!(!has_agent(&missing));
         let refused = refusal(&missing, &job(LaunchMode::Create)).unwrap();
         assert!(refused.contains("agent.task_intake.command"), "{refused}");
         let plain = LaunchMode::Plain(PlainTask {
@@ -673,12 +683,12 @@ mod tests {
             command: Some("aven-no-such-agent".to_string()),
             ..TaskIntakeConfig::default()
         };
+        assert!(has_agent(&absent));
         let refused = refusal(&absent, &job(LaunchMode::Review)).unwrap();
         assert!(
             refused.contains("`aven-no-such-agent` isn\u{2019}t on PATH"),
             "{refused}"
         );
-        assert!(refused.contains("\u{2325}\u{21b5}"), "{refused}");
 
         let text_only = TaskIntakeConfig {
             command: Some("/bin/sh".to_string()),

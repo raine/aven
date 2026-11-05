@@ -568,6 +568,7 @@ impl Actor {
                 .map(|command| (command.name.clone(), command.description.clone()))
                 .collect(),
             reminders: (&self.config.reminders).into(),
+            agent: launch::has_agent(&self.config.agent.task_intake),
         })
     }
 
@@ -2115,6 +2116,7 @@ impl Actor {
         Ok(Catalog {
             active: self.store.active_workspace.key.clone(),
             places,
+            agent: launch::has_agent(&self.config.agent.task_intake),
         })
     }
 

@@ -15,7 +15,8 @@ use crate::adapter::{self, Launch, Prefs, SavedWindow, WindowMode};
 use crate::assets::{Assets, load_fonts};
 use crate::shell::Root;
 use crate::theme::Theme;
-use crate::{actions, input, platform};
+use crate::toast::Toast;
+use crate::{actions, input, launcher, platform};
 
 /// How long an outside quit leaves the store to finish queued writes.
 const STORE_GRACE: Duration = Duration::from_millis(150);
@@ -84,14 +85,17 @@ struct MainWindow(WindowHandle<Root>);
 
 impl Global for MainWindow {}
 
-fn with_root(cx: &mut App, f: impl FnOnce(&mut Root, &mut gpui::Window, &mut gpui::Context<Root>)) {
+pub(crate) fn with_root(
+    cx: &mut App,
+    f: impl FnOnce(&mut Root, &mut gpui::Window, &mut gpui::Context<Root>),
+) {
     let window = cx.global::<MainWindow>().0;
     if let Err(error) = window.update(cx, f) {
         tracing::error!(%error, "the window could not be reached");
     }
 }
 
-fn show_window(cx: &mut App) {
+pub(crate) fn show_window(cx: &mut App) {
     with_root(cx, |_, window, _| window.activate_window());
     cx.activate(true);
 }
@@ -186,6 +190,7 @@ pub fn run() -> Result<()> {
         register_actions(cx);
         cx.set_menus(actions::menus());
         let (bounds, display_id) = window_placement(saved.window.as_ref(), cx);
+        let launcher_prefs = saved.launcher.clone();
         crate::startup::mark("window-start");
         let window = cx
             .open_window(
@@ -217,6 +222,25 @@ pub fn run() -> Result<()> {
             .expect("the window opens");
         crate::startup::mark("window-ready");
         cx.set_global(MainWindow(window));
+        if let Some(error) = launcher::init(&launcher_prefs, cx) {
+            with_root(cx, |root, _, cx| {
+                let toast = Toast::error("The launcher shortcut isn\u{2019}t set").detail(error);
+                root.session.show_toast(toast);
+                cx.notify();
+            });
+        }
+        cx.on_system_notification_response(|response, cx| {
+            let Some((workspace, id)) = launcher::tagged_task(&response.tag) else {
+                show_window(cx);
+                return;
+            };
+            show_window(cx);
+            if let Ok(id) = id.parse() {
+                with_root(cx, |root, window, cx| {
+                    root.open_launched(workspace, id, window, cx);
+                });
+            }
+        });
         // Anything but Quit, such as logging out, ends here. Nothing runs on the
         // main thread after this, so the store gets a moment without a reply.
         cx.on_app_quit(|cx| {

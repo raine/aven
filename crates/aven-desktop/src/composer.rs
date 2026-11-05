@@ -441,6 +441,34 @@ impl Composer {
         self.open_composer(window, cx);
     }
 
+    /// What Add Task holds that was never saved: the open draft, or the one
+    /// kept for next time.
+    pub(crate) fn unsaved_draft(&self, cx: &App) -> Draft {
+        self.composer_draft(cx)
+            .unwrap_or_else(|| self.kept_draft.clone())
+    }
+
+    /// Closes the composer with its draft kept for next time.
+    pub(crate) fn set_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(draft) = self.composer_draft(cx) {
+            self.close_composer(Some(draft), window, cx);
+        }
+    }
+
+    /// Opens the composer on `draft`, in place of what it held.
+    pub(crate) fn take_draft(&mut self, draft: Draft, window: &mut Window, cx: &mut Context<Self>) {
+        match self.composer.as_mut().filter(|composer| !composer.closing) {
+            Some(composer) => {
+                composer.show(draft, &self.source.projects, cx);
+                cx.notify();
+            }
+            None => {
+                self.kept_draft = draft;
+                self.open_composer(window, cx);
+            }
+        }
+    }
+
     /// Whether creating leaves the composer open: never for a repeating task,
     /// which is created on its own.
     fn creates_more(&self, cx: &App) -> bool {

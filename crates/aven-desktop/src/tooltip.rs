@@ -10,8 +10,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, Div, ElementId, MouseMoveEvent, Pixels,
-    Point, SharedString, Stateful, Task, TextRun, Window, canvas, div, font, prelude::*,
+    Animation, AnimationExt, AnyElement, AnyWindowHandle, App, Bounds, Div, ElementId,
+    MouseMoveEvent, Pixels, Point, SharedString, Stateful, Task, TextRun, Window, canvas, div,
+    font, prelude::*,
 };
 
 use aven_core::choices::{TaskPriority, TaskStatus};
@@ -164,6 +165,8 @@ type Key = (Option<ElementId>, SharedString);
 #[derive(Default)]
 struct Tips {
     target: Option<(Key, Hint, Bounds<Pixels>)>,
+    /// The window the target is in, the only one that draws its tooltip.
+    window: Option<AnyWindowHandle>,
     shown: bool,
     rise: bool,
     run: usize,
@@ -200,6 +203,7 @@ fn enter(key: &Key, hint: &Hint, bounds: Bounds<Pixels>, window: &mut Window, cx
         tips.quiet = None;
         tips.run += 1;
         tips.target = Some((key.clone(), hint.clone(), bounds));
+        tips.window = Some(window.window_handle());
         tips.shown = warm;
         tips.rise = !warm;
         tips.timer = None;
@@ -296,7 +300,8 @@ pub fn host(root: Div, window: &Window, cx: &App, t: &Theme) -> Div {
 /// The tooltip showing now, placed against its control.
 fn layer(window: &Window, cx: &App, t: &Theme) -> Option<AnyElement> {
     let (hint, bounds, rise, run) = TIPS.with_borrow(|tips| {
-        let (_, hint, bounds) = tips.target.clone().filter(|_| tips.shown)?;
+        let here = tips.window == Some(window.window_handle());
+        let (_, hint, bounds) = tips.target.clone().filter(|_| tips.shown && here)?;
         Some((hint, bounds, tips.rise && !cx.reduce_motion(), tips.run))
     })?;
     let viewport = window.viewport_size();

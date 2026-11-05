@@ -30,6 +30,31 @@ pub struct Prefs {
     pub window: Option<SavedWindow>,
     pub view: Option<SavedView>,
     pub row_fields: RowFields,
+    pub launcher: LauncherPrefs,
+}
+
+/// The quick-capture launcher's shortcut and where it last sent tasks. No
+/// project is Auto.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct LauncherPrefs {
+    pub shortcut: Option<crate::hotkey::Shortcut>,
+    pub workspace: Option<String>,
+    pub project: Option<String>,
+    /// Whether Return has the agent write the task. Without an agent
+    /// configured, tasks are added as typed whatever this says.
+    pub ai: bool,
+}
+
+impl Default for LauncherPrefs {
+    fn default() -> Self {
+        Self {
+            shortcut: None,
+            workspace: None,
+            project: None,
+            ai: true,
+        }
+    }
 }
 
 /// Which optional fields task rows show, the same in every view.
@@ -95,6 +120,7 @@ impl Default for Prefs {
             window: None,
             view: None,
             row_fields: RowFields::default(),
+            launcher: LauncherPrefs::default(),
         }
     }
 }
@@ -186,6 +212,16 @@ mod tests {
         });
         prefs.save(&path).unwrap();
         assert_eq!(Prefs::load(&path), prefs);
+    }
+
+    #[test]
+    fn launcher_prefs_without_the_ai_setting_create_with_ai() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prefs.json");
+        std::fs::write(&path, r#"{"launcher":{"project":"work"}}"#).unwrap();
+        let prefs = Prefs::load(&path);
+        assert_eq!(prefs.launcher.project.as_deref(), Some("work"));
+        assert!(prefs.launcher.ai);
     }
 
     #[test]

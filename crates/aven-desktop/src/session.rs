@@ -301,6 +301,7 @@ pub struct Session {
 pub enum SettingsTab {
     #[default]
     General,
+    QuickCapture,
     Sync,
     Reminders,
     Workspaces,

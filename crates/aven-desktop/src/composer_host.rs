@@ -142,6 +142,71 @@ impl Root {
         });
     }
 
+    /// Brings a launcher draft into Add Task, asking first when that would
+    /// replace writing that was never saved.
+    pub(crate) fn hand_off_draft(
+        &mut self,
+        workspace: String,
+        task: Task,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.activate_window();
+        cx.activate(true);
+        self.close_menu(window, cx);
+        let unsaved = self.composer.read(cx).unsaved_draft(cx);
+        if !unsaved.has_text() && unsaved.images.is_empty() {
+            self.take_launcher_draft(workspace, task, window, cx);
+            return;
+        }
+        self.composer
+            .update(cx, |composer, cx| composer.set_aside(window, cx));
+        let mut body = "The launcher drafted a new task, but Add Task already has one you \
+                        haven\u{2019}t saved"
+            .to_string();
+        match unsaved.title.trim() {
+            "" => body.push('.'),
+            title => body.push_str(&format!(": \u{201c}{title}\u{201d}")),
+        }
+        self.open_confirm(
+            "Replace your unsaved draft?".to_string(),
+            body,
+            None,
+            "Replace draft",
+            crate::dialogs::ConfirmAction::ReplaceDraft {
+                workspace,
+                task: Box::new(task),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Opens Add Task on a launcher draft, in the workspace it was written
+    /// for, and lets the launcher forget it.
+    pub(crate) fn take_launcher_draft(
+        &mut self,
+        workspace: String,
+        task: Task,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_workspace_key() != Some(workspace.as_str()) {
+            self.switch_view(
+                crate::adapter::Command::SwitchWorkspace(workspace),
+                window,
+                cx,
+            );
+        }
+        let source = Source::from_session(&self.session);
+        self.composer.update(cx, |composer, cx| {
+            composer.set_source(source, cx);
+            composer.take_draft(Draft::from_task(task), window, cx);
+        });
+        cx.defer(crate::launcher::clear);
+        cx.notify();
+    }
+
     pub(crate) fn read_notes_back(&mut self, task: Option<Task>, cx: &mut Context<Self>) {
         let source = Source::from_session(&self.session);
         self.composer.update(cx, |composer, cx| {

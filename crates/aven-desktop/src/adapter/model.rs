@@ -429,6 +429,8 @@ pub struct SettingsData {
     pub fields: Vec<(String, usize)>,
     pub commands: Vec<(String, String)>,
     pub reminders: Reminders,
+    /// Whether an agent command is configured for task intake.
+    pub agent: bool,
 }
 
 /// The shared config's reminder settings, as the Reminders tab edits them.

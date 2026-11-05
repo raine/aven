@@ -25,8 +25,9 @@ use crate::theme::{Theme, theme};
 use crate::toast::Toast;
 use crate::workflows::tab_stop;
 
-const TABS: [(SettingsTab, &str); 9] = [
+const TABS: [(SettingsTab, &str); 10] = [
     (SettingsTab::General, "General"),
+    (SettingsTab::QuickCapture, "Quick capture"),
     (SettingsTab::Sync, "Sync and devices"),
     (SettingsTab::Reminders, "Reminders"),
     (SettingsTab::Workspaces, "Workspaces"),
@@ -38,6 +39,7 @@ const TABS: [(SettingsTab, &str); 9] = [
 ];
 
 const CLOUD_URL: &str = "https://cloud.aventasks.dev";
+const AGENT_DOCS_URL: &str = "https://aventasks.dev/configuration/#agent-task-intake";
 const QR_SIZE: f32 = 184.;
 
 fn row_title(title: impl Into<SharedString>, note: Option<String>, t: &Theme) -> Div {
@@ -427,7 +429,7 @@ impl Root {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn open_confirm(
+    pub(crate) fn open_confirm(
         &mut self,
         title: String,
         body: String,
@@ -439,11 +441,16 @@ impl Root {
     ) {
         let buttons = [cx.focus_handle(), cx.focus_handle()];
         let fields = buttons.to_vec();
+        let cancel = match action {
+            ConfirmAction::ReplaceDraft { .. } => "Keep draft",
+            _ => "Cancel",
+        };
         let dialog = Dialog::Confirm {
             title,
             body,
             note,
             label,
+            cancel,
             action,
             buttons,
         };
@@ -465,6 +472,9 @@ impl Root {
             ConfirmAction::Reset { unfinished_setup } => {
                 self.session.run_sync(SyncOp::Reset { unfinished_setup });
             }
+            ConfirmAction::ReplaceDraft { workspace, task } => {
+                self.take_launcher_draft(workspace, *task, window, cx);
+            }
         }
         cx.notify();
     }
@@ -477,6 +487,7 @@ impl Root {
                     body,
                     note,
                     label,
+                    cancel: cancel_label,
                     action,
                     buttons: [cancel, confirm],
                 },
@@ -486,6 +497,7 @@ impl Root {
             return Vec::new();
         };
         let action = action.clone();
+        let keeps_draft = matches!(action, ConfirmAction::ReplaceDraft { .. });
         vec![
             Self::heading(title.clone(), t).into_any_element(),
             div()
@@ -504,11 +516,16 @@ impl Root {
                 .into_any_element(),
             Self::footer(t)
                 .child(tab_stop(
-                    line_btn("confirm-cancel", "Cancel", t),
+                    line_btn("confirm-cancel", *cancel_label, t),
                     cancel,
                     t,
                     cx,
-                    |this, window, cx| this.close_dialog(window, cx),
+                    move |this, window, cx| {
+                        this.close_dialog(window, cx);
+                        if keeps_draft {
+                            cx.defer(crate::launcher::show);
+                        }
+                    },
                 ))
                 .child(tab_stop(
                     fill_btn("confirm-ok", *label, t),
@@ -584,6 +601,7 @@ impl Root {
         let current = self.session.settings.unwrap_or_default();
         let body = match current {
             SettingsTab::General => self.general_tab(window, cx, &t),
+            SettingsTab::QuickCapture => self.quick_capture_tab(cx, &t),
             SettingsTab::Sync => self.sync_tab(cx, &t),
             SettingsTab::Reminders => self.reminders_tab(cx, &t),
             SettingsTab::Workspaces => self.workspaces_tab(cx, &t),
@@ -785,6 +803,186 @@ impl Root {
                 ],
                 t,
             ))
+    }
+
+    fn quick_capture_tab(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
+        page(
+            "Quick capture",
+            Some("The launcher adds tasks from any app while Aven runs."),
+            t,
+        )
+        .child(group(
+            vec![self.shortcut_row(cx, t), self.launcher_ai_row(cx, t)],
+            t,
+        ))
+    }
+
+    fn shortcut_row(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let recording = self.recorder.is_some();
+        let shortcut = self.prefs.launcher.shortcut.as_ref();
+        let note = self
+            .shortcut_error
+            .clone()
+            .unwrap_or_else(|| "Opens the launcher.".to_string());
+        let label = match (recording, shortcut) {
+            (true, _) => "Press keys\u{2026}".to_string(),
+            (false, Some(shortcut)) => shortcut.label(),
+            (false, None) => "Record shortcut".to_string(),
+        };
+        let accent = t.accent;
+        row(t)
+            .child(
+                div().flex_1().min_w_0().child("Launcher shortcut").child(
+                    small(Text::Secondary)
+                        .mt(px(1.))
+                        .text_color(if self.shortcut_error.is_some() {
+                            t.bad
+                        } else {
+                            t.muted
+                        })
+                        .child(note),
+                ),
+            )
+            .when(shortcut.is_some() && !recording, |row| {
+                row.child(
+                    btn("shortcut-clear", "Clear shortcut", t)
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_shortcut(cx)))
+                        .child("Clear"),
+                )
+            })
+            .child(
+                line_btn("shortcut-record", label, t)
+                    .when(recording, |button| {
+                        button.text_color(accent).shadow(vec![t.inset_ring(accent)])
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.recorder.is_some() {
+                            this.stop_recording(cx);
+                        } else {
+                            this.record_shortcut(cx);
+                        }
+                    })),
+            )
+    }
+
+    /// Whether the launcher's Return has the agent write the task. Off and
+    /// fixed while no agent is configured.
+    fn launcher_ai_row(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
+        const NAME: &str = "Create tasks with AI";
+        let agent = self.session.settings_data.agent;
+        let on = agent && self.prefs.launcher.ai;
+        let note = if agent {
+            "Return has your agent write the task, and \u{2325}\u{21b5} adds it as typed."
+        } else {
+            "Set agent.task_intake.command to use your agent."
+        };
+        let track = div()
+            .id(NAME)
+            .role(Role::Switch)
+            .aria_label(NAME)
+            .when(agent, |track| {
+                track.on_click(cx.listener(|this, _, _, cx| this.toggle_launcher_ai(cx)))
+            })
+            .when(!agent, |track| track.opacity(0.5));
+        row(t)
+            .child(
+                div().flex_1().min_w_0().child(NAME).child(
+                    small(Text::Secondary)
+                        .mt(px(1.))
+                        .flex()
+                        .flex_wrap()
+                        .text_color(t.muted)
+                        .child(format!("{note} "))
+                        .child(
+                            div()
+                                .id("agent-docs")
+                                .role(Role::Link)
+                                .aria_label("Agent setup")
+                                .text_color(t.accent)
+                                .on_click(|_, _, cx| cx.open_url(AGENT_DOCS_URL))
+                                .child("Agent setup"),
+                        ),
+                ),
+            )
+            .child(self.switch_track(track, NAME, on, 1., cx, t))
+    }
+
+    fn toggle_launcher_ai(&mut self, cx: &mut Context<Self>) {
+        let ai = !self.prefs.launcher.ai;
+        self.prefs.launcher.ai = ai;
+        self.save_prefs();
+        crate::launcher::set_ai(ai, cx);
+        self.mark_switched("Create tasks with AI");
+        cx.notify();
+    }
+
+    /// Takes the next key pressed with Command, Control or Option as the
+    /// launcher shortcut. The current one is free while recording, so it can
+    /// be recorded again.
+    fn record_shortcut(&mut self, cx: &mut Context<Self>) {
+        let _ = crate::launcher::set_shortcut(None, cx);
+        let this = cx.weak_entity();
+        self.recorder = Some(cx.intercept_keystrokes(move |event, _, cx| {
+            if event.keystroke.is_modifier_key() {
+                return;
+            }
+            cx.stop_propagation();
+            let keystroke = event.keystroke.clone();
+            this.update(cx, |root, cx| root.recorded(&keystroke, cx))
+                .ok();
+        }));
+        self.shortcut_error = None;
+        cx.notify();
+    }
+
+    fn recorded(&mut self, keystroke: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let modifiers = keystroke.modifiers;
+        if keystroke.key == "escape" && !modifiers.modified() {
+            self.stop_recording(cx);
+            return;
+        }
+        let shortcut = crate::hotkey::Shortcut::from_keystroke(keystroke);
+        let taken = if shortcut.usable() {
+            crate::launcher::set_shortcut(Some(&shortcut), cx)
+        } else {
+            Err("Use \u{2318}, \u{2303} or \u{2325} with a key".to_string())
+        };
+        match taken {
+            Ok(()) => {
+                self.end_recording(cx);
+                self.shortcut_error = None;
+                self.prefs.launcher.shortcut = Some(shortcut);
+                self.save_prefs();
+            }
+            Err(error) => self.shortcut_error = Some(error),
+        }
+        cx.notify();
+    }
+
+    /// Stops recording and takes back the shortcut there was.
+    fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.end_recording(cx);
+        self.shortcut_error = self
+            .prefs
+            .launcher
+            .shortcut
+            .as_ref()
+            .and_then(|shortcut| crate::launcher::set_shortcut(Some(shortcut), cx).err());
+        cx.notify();
+    }
+
+    fn end_recording(&mut self, cx: &mut Context<Self>) {
+        // The recorder may be the interceptor running now.
+        let recorder = self.recorder.take();
+        cx.defer(move |_| drop(recorder));
+    }
+
+    fn clear_shortcut(&mut self, cx: &mut Context<Self>) {
+        let _ = crate::launcher::set_shortcut(None, cx);
+        self.prefs.launcher.shortcut = None;
+        self.shortcut_error = None;
+        self.save_prefs();
+        cx.notify();
     }
 
     fn device_rows(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<Div> {

@@ -201,6 +201,7 @@ pub enum Dialog {
         body: String,
         note: Option<&'static str>,
         label: &'static str,
+        cancel: &'static str,
         action: ConfirmAction,
         /// Cancel and confirm, in Tab order.
         buttons: [FocusHandle; 2],
@@ -222,9 +223,19 @@ pub enum Dialog {
 #[derive(Clone)]
 pub enum ConfirmAction {
     DeleteProject(String),
-    RemoveDevice { id: [u8; 32], label: String },
+    RemoveDevice {
+        id: [u8; 32],
+        label: String,
+    },
     Restore(PathBuf),
-    Reset { unfinished_setup: bool },
+    Reset {
+        unfinished_setup: bool,
+    },
+    /// Puts a launcher draft for the workspace with this key in Add Task.
+    ReplaceDraft {
+        workspace: String,
+        task: Box<crate::adapter::NewTask>,
+    },
 }
 
 pub struct Layer {

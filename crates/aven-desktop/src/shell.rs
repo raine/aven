@@ -441,6 +441,10 @@ pub struct Root {
     last_scroll: Option<Instant>,
     thumb_drag: Option<(Pixels, Pixels)>,
     subscriptions: Vec<Subscription>,
+    /// Takes every key while the launcher shortcut is being recorded.
+    pub(crate) recorder: Option<Subscription>,
+    /// Why the last recorded launcher shortcut was not taken.
+    pub(crate) shortcut_error: Option<String>,
     quitting: bool,
     pub(crate) welcome: Option<Welcome>,
     /// The welcome's intro, which plays the first time the welcome appears.
@@ -567,6 +571,8 @@ impl Root {
             last_scroll: None,
             thumb_drag: None,
             subscriptions,
+            recorder: None,
+            shortcut_error: None,
             quitting: false,
             welcome: None,
             intro: Playback::default(),
@@ -922,6 +928,12 @@ impl Root {
         if let Some(text) = applied.copy {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
+        if let Some(catalog) = applied.launcher {
+            cx.defer(move |cx| crate::launcher::set_catalog(*catalog, cx));
+        }
+        if let Some(event) = applied.launch {
+            cx.defer(move |cx| crate::launcher::receive(event, cx));
+        }
         if applied.draft
             && let Some(id) = self.session.selected.clone()
         {
@@ -940,6 +952,54 @@ impl Root {
                 self.load_note_draft(cx);
             }
             self.sync_editors(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The key of the workspace the window shows.
+    pub(crate) fn active_workspace_key(&self) -> Option<&str> {
+        let snapshot = &self.session.snapshot;
+        snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.name == snapshot.workspace)
+            .map(|workspace| workspace.key.as_str())
+    }
+
+    /// Says in the window that the launcher saved a task, for when macOS
+    /// holds its notification back.
+    pub(crate) fn launched(
+        &mut self,
+        title: &str,
+        created: &crate::launch::Created,
+        cx: &mut Context<Self>,
+    ) {
+        let here = self.active_workspace_key() == Some(created.workspace.as_str());
+        let go = here.then(|| {
+            ToastAction::Go(crate::adapter::Go {
+                label: "View task",
+                command: Command::Goto(created.task.clone()),
+            })
+        });
+        let detail = format!("{} \u{b7} {}", created.reference, created.title);
+        self.session
+            .show_toast(Toast::done(title).detail(detail).action(go));
+        cx.notify();
+    }
+
+    /// Shows a task a launcher notification was about, in its workspace.
+    pub(crate) fn open_launched(
+        &mut self,
+        workspace: String,
+        id: TaskId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_workspace_key() == Some(workspace.as_str()) {
+            self.session.goto(id);
+        } else {
+            self.switch_view(Command::SwitchWorkspace(workspace), window, cx);
+            self.session.switch_view(Command::Goto(id));
         }
         cx.notify();
     }
