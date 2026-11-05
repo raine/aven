@@ -70,6 +70,11 @@ jobs:
             artifact: aven-linux-arm64
             use_cross: true
     runs-on: ${{ matrix.os }}
+    # One codegen unit shrinks shipped binaries by about a quarter at the cost
+    # of slower compilation; local release builds keep Cargo's default.
+    # cross forwards CARGO_* variables into its container.
+    env:
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
