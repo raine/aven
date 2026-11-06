@@ -8,12 +8,15 @@ use aven_core::ids::TaskId;
 use aven_host::app_bundle::enclosing_bundle;
 use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
 use aven_host::desktop_install::{self, Layout, MacSystem};
+use aven_host::notify::{self, Target};
+use aven_host::store::TaskQuery;
 use gpui::{
     App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 
+use crate::actions::ShowView;
 use crate::adapter::{self, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
 use crate::assets::{Assets, load_fonts};
 use crate::session::Session;
@@ -252,17 +255,26 @@ fn prepare_app(cx: &mut App) {
     follow_notifications(cx);
 }
 
-/// A task a notification pointed at before the main window opened, which it
+/// What a clicked notification opened before the main window did, which it
 /// shows once it opens.
 #[derive(Default)]
-struct NotifiedTask(Option<(String, TaskId)>);
+struct NotifiedTask(Option<Notified>);
 
 impl Global for NotifiedTask {}
 
-/// The workspace and task a notification's tag points at.
-fn notified_task(tag: &str) -> Option<(String, TaskId)> {
-    let (workspace, id) = launcher::tagged_task(tag)?;
-    Some((workspace, id.parse().ok()?))
+/// What a notification opens in the main window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Notified {
+    Task(String, TaskId),
+    /// The due digest's tasks.
+    Due,
+}
+
+fn notified(tag: &str) -> Option<Notified> {
+    match notify::target(tag)? {
+        Target::Task { workspace, task } => Some(Notified::Task(workspace, task.parse().ok()?)),
+        Target::Due { .. } => Some(Notified::Due),
+    }
 }
 
 /// Opens notifications in the app. macOS holds a click that launched the app
@@ -271,20 +283,21 @@ fn follow_notifications(cx: &mut App) {
     cx.set_global(NotifiedTask::default());
     cx.on_system_notification_response(|response, cx| {
         show_window(cx);
-        let Some(task) = notified_task(&response.tag) else {
+        let Some(opens) = notified(&response.tag) else {
             return;
         };
         if cx.has_global::<MainWindow>() {
-            open_notified(task, cx);
+            open_notified(opens, cx);
         } else {
-            cx.global_mut::<NotifiedTask>().0 = Some(task);
+            cx.global_mut::<NotifiedTask>().0 = Some(opens);
         }
     });
 }
 
-fn open_notified((workspace, id): (String, TaskId), cx: &mut App) {
-    with_root(cx, |root, window, cx| {
-        root.open_launched(workspace, id, window, cx)
+fn open_notified(opens: Notified, cx: &mut App) {
+    with_root(cx, |root, window, cx| match opens {
+        Notified::Task(workspace, id) => root.open_launched(workspace, id, window, cx),
+        Notified::Due => root.show_view(&ShowView(TaskQuery::Overdue), window, cx),
     });
 }
 
@@ -439,12 +452,20 @@ mod tests {
 
     #[test]
     fn a_notification_points_at_a_task_only_with_a_valid_id() {
-        assert_eq!(
-            notified_task("task:home:0123456789ABCDEF"),
-            Some(("home".into(), "0123456789ABCDEF".parse().unwrap()))
-        );
-        assert_eq!(notified_task("task:home:nope"), None);
-        assert_eq!(notified_task("launch-failed:3"), None);
+        let task = Some(Notified::Task(
+            "home".into(),
+            "0123456789ABCDEF".parse().unwrap(),
+        ));
+        assert_eq!(notified("task:home:0123456789ABCDEF"), task);
+        assert_eq!(notified("v1:task:home:0123456789ABCDEF:e1"), task);
+        assert_eq!(notified("task:home:nope"), None);
+        assert_eq!(notified("launch-failed:3"), None);
+        assert_eq!(notified("v1:available:e1"), None);
+    }
+
+    #[test]
+    fn the_due_digest_opens_the_due_view() {
+        assert_eq!(notified("v1:digest:2026-11-06"), Some(Notified::Due));
     }
 
     #[test]
