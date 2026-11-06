@@ -47,7 +47,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     let fingerprint = Fingerprint::current()?;
     #[cfg(target_os = "macos")]
     if !wait_for_update_launch(&fingerprint).await? {
-        log_executable_exit(&fingerprint);
+        stop_for_executable(&fingerprint).await;
         return Ok(());
     }
     let mut shutdown = std::pin::pin!(shutdown_signal());
@@ -79,21 +79,36 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         executable: Some(fingerprint.clone()),
     };
     if let Exit::ExecutableChanged(_) = host.run(shutdown).await? {
-        log_executable_exit(&fingerprint);
+        stop_for_executable(&fingerprint).await;
     }
     Ok(())
 }
 
-/// Logs why the daemon stops for its executable. The service manager starts
-/// a replaced executable again; a removed one, as when Aven.app was moved to
-/// the Trash, leaves nothing to restart.
-fn log_executable_exit(fingerprint: &Fingerprint) {
+/// Logs why the daemon stops for its executable, then waits a bounded time
+/// for the replacement to be ready before the process exits. The service
+/// manager starts a replaced executable again as soon as this one exits; a
+/// removed one, as when Aven.app was moved to the Trash, leaves nothing to
+/// restart. Waiting keeps launchd from starting an upgraded app before
+/// Homebrew has carried the user's approval over to it, which would show a
+/// Gatekeeper prompt for the background agent.
+async fn stop_for_executable(fingerprint: &Fingerprint) {
     let event = if fingerprint.missing() {
         "daemon-executable-missing"
     } else {
         "daemon-executable-changed"
     };
     println!("{event} path={}", fingerprint.path.display());
+    let deadline = Instant::now() + executable::REPLACEMENT_WAIT;
+    while !fingerprint.replacement_ready() {
+        if Instant::now() >= deadline {
+            println!(
+                "daemon-replacement-not-ready path={}",
+                fingerprint.path.display()
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
 }
 
 /// Follows the config file `config` was loaded from.
@@ -140,7 +155,7 @@ async fn take_seat(
                 () = tokio::time::sleep(executable::CHECK_INTERVAL) => {}
             }
             if fingerprint.changed()? {
-                log_executable_exit(fingerprint);
+                stop_for_executable(fingerprint).await;
                 return Ok(None);
             }
         }

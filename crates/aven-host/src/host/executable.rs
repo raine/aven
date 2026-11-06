@@ -74,6 +74,61 @@ impl Fingerprint {
     pub fn missing(&self) -> bool {
         matches!(self.launch_path.try_exists(), Ok(false))
     }
+
+    /// Whether the executable now at the path can start without Gatekeeper
+    /// stopping it to ask the user: it exists, and carries no quarantine or
+    /// one the user approved.
+    pub fn replacement_ready(&self) -> bool {
+        !self.missing() && !quarantine_unapproved(&self.launch_path)
+    }
+}
+
+/// How long a host that stopped for its executable waits for
+/// [`Fingerprint::replacement_ready`] before it exits anyway. Homebrew moves
+/// the new app into place unapproved and copies the old app's approval onto
+/// it a moment later, and a service manager starts the new executable as
+/// soon as the old process exits.
+pub const REPLACEMENT_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Whether `path` carries a quarantine the user has not approved.
+#[cfg(target_os = "macos")]
+fn quarantine_unapproved(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    const USER_APPROVED: u32 = 0x40;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut value = [0u8; 256];
+    // SAFETY: both strings are NUL-terminated and `value` outlives the call,
+    // which writes at most `value.len()` bytes.
+    let len = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            c"com.apple.quarantine".as_ptr(),
+            value.as_mut_ptr().cast(),
+            value.len(),
+            0,
+            0,
+        )
+    };
+    let Ok(len) = usize::try_from(len) else {
+        return false;
+    };
+    quarantine_flags(&value[..len]).is_some_and(|flags| flags & USER_APPROVED == 0)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quarantine_unapproved(_path: &Path) -> bool {
+    false
+}
+
+/// The flags field of a `com.apple.quarantine` value such as
+/// `0181;6aee0191;Homebrew Cask;…`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn quarantine_flags(value: &[u8]) -> Option<u32> {
+    let value = std::str::from_utf8(value).ok()?;
+    u32::from_str_radix(value.split(';').next()?, 16).ok()
 }
 
 fn same_file(left: &Path, right: &Path) -> bool {
@@ -95,6 +150,48 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         std::fs::write(&path, "two-two").unwrap();
         assert!(initial.changed().unwrap());
+    }
+
+    #[test]
+    fn quarantine_flags_are_read_from_the_first_field() {
+        assert_eq!(
+            quarantine_flags(b"0181;6aee0191;Homebrew Cask;84D75741"),
+            Some(0x181)
+        );
+        assert_eq!(quarantine_flags(b"01c1;6aee0191;;"), Some(0x1c1));
+        assert_eq!(quarantine_flags(b"garbage"), None);
+    }
+
+    #[test]
+    fn a_present_unquarantined_replacement_is_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aven");
+        std::fs::write(&path, "one").unwrap();
+        let initial = Fingerprint::of(&path).unwrap();
+        assert!(initial.replacement_ready());
+        std::fs::remove_file(&path).unwrap();
+        assert!(!initial.replacement_ready());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_unapproved_quarantine_is_not_ready_until_approved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aven");
+        std::fs::write(&path, "one").unwrap();
+        let initial = Fingerprint::of(&path).unwrap();
+        let set = |value: &str| {
+            let status = std::process::Command::new("/usr/bin/xattr")
+                .args(["-w", "com.apple.quarantine", value])
+                .arg(&path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        set("0181;6aee0191;Homebrew Cask;");
+        assert!(!initial.replacement_ready());
+        set("01c1;6aee0191;Homebrew Cask;");
+        assert!(initial.replacement_ready());
     }
 
     #[test]
