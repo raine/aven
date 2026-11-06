@@ -91,6 +91,15 @@ impl Layout {
         same_file(&self.running, &self.executable())
     }
 
+    /// Whether the running app keeps the LaunchAgent in line with the
+    /// `background` intent: only the app in the real `/Applications`, which
+    /// macOS has opened through Launch Services, so launchd never runs a copy
+    /// Gatekeeper hasn't checked. A debug build pointed at a scratch
+    /// directory never touches the agent.
+    pub fn manages_agent(&self) -> bool {
+        self.app == Path::new("/Applications").join(BUNDLE_NAME) && self.in_place()
+    }
+
     /// Where to look for `aven`: the login shell's `PATH` first, then the
     /// directories installers use, marked as not on `PATH`.
     fn search_dirs(&self) -> Vec<(PathBuf, bool)> {

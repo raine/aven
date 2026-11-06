@@ -264,6 +264,8 @@ pub struct Session {
     pub invitation: Option<OpenInvitation>,
     pub settings: Option<SettingsTab>,
     pub settings_data: SettingsData,
+    /// Whether macOS lets Aven show notifications, as last read.
+    pub notifications: crate::notifications::Permission,
     /// The settings' agent test, from when it starts.
     pub agent_test: Option<AgentTestState>,
     /// The open database's path.
@@ -442,6 +444,7 @@ impl Session {
             invitation: None,
             settings: None,
             settings_data: SettingsData::default(),
+            notifications: Default::default(),
             agent_test: None,
             database: PathBuf::new(),
             database_error: None,
@@ -1115,6 +1118,14 @@ impl Session {
         self.send(Command::CreateUnreviewed { kept, task });
     }
 
+    /// Syncs while Aven is quit, through the background agent, or not.
+    pub fn set_sync_when_quit(&mut self, on: bool) {
+        self.settings_data.background.sync_when_quit = on;
+        self.write(Command::Settings(
+            crate::adapter::SettingsEdit::SyncWhenQuit(on),
+        ));
+    }
+
     /// Reads the settings rows again, picking up config edits.
     pub fn reload_settings(&mut self) {
         self.send(Command::LoadSettings);
@@ -1483,6 +1494,10 @@ impl Session {
                 Err(message) => self.sync = Some(SyncHealth::Failed(message.clone())),
             }
         }
+        if result.is_ok() && op.kind().is_some() {
+            // Setup and join offer this on, on the screen that follows.
+            self.set_sync_when_quit(true);
+        }
         let watching = self.sync_open;
         match (result, op.kind()) {
             (Ok(note), Some(kind)) if watching => {
@@ -1699,6 +1714,7 @@ impl Session {
             ReplyBody::Remind(notification) => applied.remind.push(notification),
             ReplyBody::SyncEvent(event) => self.sync_event(event),
             ReplyBody::Settings(data) => self.settings_data = *data,
+            ReplyBody::Background(background) => self.settings_data.background = background,
             ReplyBody::DatabaseOpened {
                 path,
                 tasks,

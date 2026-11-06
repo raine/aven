@@ -20,13 +20,14 @@ use qrcode::{Color, EcLevel, QrCode};
 
 use crate::actions::*;
 use crate::adapter::{
-    AGENT_TEST_NOTE, AgentSetup, Command, NewTask, ProjectEntry, Reminders, SettingsEdit,
-    SyncPhase, ThemePref, capitalised,
+    AGENT_TEST_NOTE, AgentSetup, AgentShown, Command, NewTask, ProjectEntry, Reminders,
+    SettingsEdit, SyncPhase, ThemePref, capitalised,
 };
 use crate::dialogs::{ConfirmAction, Dialog, Layer};
 use crate::input::{Editor, Mode};
 use crate::kit::*;
-use crate::session::{AgentTestState, SettingsTab, SyncPage, SyncTone, count_text};
+use crate::notifications::{self, Permission};
+use crate::session::{AgentTestState, SettingsTab, SyncPage, SyncTone, ago, count_text};
 use crate::shell::Root;
 use crate::sync_ops::{Secret, SetupFacts, SyncKind, SyncOp, SyncRequest, steps};
 use crate::theme::{Theme, theme};
@@ -47,6 +48,7 @@ const TABS: [(SettingsTab, &str); 10] = [
 ];
 
 const CLOUD_URL: &str = "https://cloud.aventasks.dev";
+const LOGIN_ITEMS_URL: &str = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension";
 const AGENT_DOCS_URL: &str = "https://aventasks.dev/configuration/#agent-task-intake";
 const QR_SIZE: f32 = 184.;
 
@@ -144,6 +146,25 @@ fn page(title: &'static str, lead: Option<&'static str>, t: &Theme) -> Div {
         .when_some(lead, |page, lead| {
             page.child(div().mb(px(20.)).text_color(t.muted).child(lead))
         })
+}
+
+/// A page's lead when it depends on state.
+fn lead(text: impl Into<SharedString>, t: &Theme) -> Div {
+    div().mb(px(20.)).text_color(t.muted).child(text.into())
+}
+
+/// What the Reminders page says about when reminders arrive.
+fn reminders_lead(enabled: bool, agent: AgentShown) -> &'static str {
+    match (enabled, agent) {
+        (false, _) => "Notifications on this Mac when tasks come due or become available again.",
+        (true, AgentShown::Running) => {
+            "Sent while Aven is open or quit. Each device keeps its own record of sent reminders."
+        }
+        (true, AgentShown::Unknown) => "Each device keeps its own record of sent reminders.",
+        (true, _) => {
+            "Sent only while Aven is open. Each device keeps its own record of sent reminders."
+        }
+    }
 }
 
 /// A config file block, set in the code face.
@@ -269,7 +290,43 @@ pub(crate) fn sync_icon(t: &Theme, tone: SyncTone) -> Hsla {
 impl Root {
     pub fn show_settings(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
         self.session.open_settings(tab);
+        self.read_notifications(cx);
         cx.notify();
+    }
+
+    /// Reads what settings show from outside Aven again, as when the user
+    /// returns from System Settings.
+    pub(crate) fn refresh_settings(&mut self, cx: &mut Context<Self>) {
+        if self.session.settings.is_some() {
+            self.session.reload_settings();
+            self.read_notifications(cx);
+        }
+    }
+
+    fn read_notifications(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let permission = notifications::permission().await;
+            this.update(cx, |this, cx| {
+                this.session.notifications = permission;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Asks macOS to let Aven show notifications. Only the first request
+    /// prompts; later ones answer from the user's choice.
+    pub(crate) fn ask_notifications(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let permission = notifications::request().await;
+            this.update(cx, |this, cx| {
+                this.session.notifications = permission;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn open_settings(
@@ -1400,7 +1457,9 @@ impl Root {
             t,
         ))
         .when(set_up, |tab| {
-            tab.child(section("Devices", t))
+            tab.child(section("While Aven is quit", t))
+                .child(group(self.sync_when_quit_rows(cx, t), t))
+                .child(section("Devices", t))
                 .child(group(self.device_rows(cx, t), t))
                 .when(unfinished, |tab| {
                     tab.child(
@@ -1437,74 +1496,188 @@ impl Root {
 
     fn reminders_tab(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
         let reminders = self.session.settings_data.reminders.clone();
+        let agent = self.session.settings_data.background.agent;
         let digest = reminders.digest_time.clone();
-        page(
-            "Reminders",
-            Some(
-                "Sent while the app is closed. Each device keeps its own record of sent reminders.",
+        let on = reminders.enabled;
+        let track = div()
+            .id("Reminders on this Mac")
+            .role(Role::Switch)
+            .aria_label("Reminders on this Mac")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.edit_reminders(|value| value.enabled = !value.enabled);
+                this.mark_switched("Reminders on this Mac");
+                if !on {
+                    this.ask_notifications(cx);
+                }
+                cx.notify();
+            }));
+        let status: Vec<Div> = [
+            self.background_agent_row(cx, t),
+            self.notifications_row(cx, t),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        page("Reminders", None, t)
+            .child(lead(reminders_lead(on, agent), t))
+            .child(group(
+                vec![
+                    row(t)
+                        .child(row_title("Reminders on this Mac", None, t))
+                        .child(self.switch_track(track, "Reminders on this Mac", on, 1., cx, t)),
+                    row(t)
+                        .child(row_title(
+                            "Daily digest",
+                            Some("Due and overdue tasks, once a day".to_string()),
+                            t,
+                        ))
+                        .child(self.switch(
+                            "Daily digest",
+                            reminders.due_digest,
+                            |value| value.due_digest = !value.due_digest,
+                            cx,
+                            t,
+                        )),
+                    row(t).child(row_title("Digest time", None, t)).child(
+                        line_btn("digest", digest.clone(), t).on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.open_prompt(
+                                    "Digest time".to_string(),
+                                    "Time",
+                                    "Local time, as HH:MM.",
+                                    &digest,
+                                    Rc::new(|root, text, _, cx| {
+                                        root.edit_reminders(|value| {
+                                            value.digest_time = text.trim().to_string();
+                                        });
+                                        cx.notify();
+                                    }),
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )),
+                    ),
+                    row(t)
+                        .child(row_title(
+                            "Available again",
+                            Some("When a deferred task reaches its time".to_string()),
+                            t,
+                        ))
+                        .child(self.switch(
+                            "Available again",
+                            reminders.available,
+                            |value| value.available = !value.available,
+                            cx,
+                            t,
+                        )),
+                ],
+                t,
+            ))
+            .when(on && !status.is_empty(), |tab| {
+                tab.child(section("Status", t)).child(group(status, t))
+            })
+    }
+
+    /// The background agent's state, for an app that manages it.
+    fn background_agent_row(&self, cx: &mut Context<Self>, t: &Theme) -> Option<Div> {
+        let background = &self.session.settings_data.background;
+        if !background.managed {
+            return None;
+        }
+        let work = background.sync_when_quit || self.session.settings_data.reminders.enabled;
+        let (pill, tone, note) = match background.agent {
+            AgentShown::Unknown => return None,
+            AgentShown::Running => (
+                "Running",
+                Some(t.good),
+                "Keeps reminders and sync going while Aven is quit",
             ),
-            t,
+            AgentShown::Off => ("Off", None, "Reminders and sync stop when Aven quits"),
+            AgentShown::NotRunning => (
+                "Not running",
+                Some(t.warn),
+                "Reminders and sync stop when Aven quits",
+            ),
+            AgentShown::TurnedOff => (
+                "Turned off",
+                Some(t.warn),
+                "Turned off in System Settings > General > Login Items & Extensions",
+            ),
+        };
+        let button = match background.agent {
+            AgentShown::TurnedOff => Some(
+                line_btn("agent-login-items", "Open Login Items", t)
+                    .on_click(|_, _, cx| cx.open_url(LOGIN_ITEMS_URL)),
+            ),
+            AgentShown::Off | AgentShown::NotRunning if work => Some(
+                line_btn("agent-turn-on", "Turn On", t).on_click(cx.listener(|this, _, _, cx| {
+                    this.session
+                        .write(Command::Settings(SettingsEdit::TurnOnBackground));
+                    cx.notify();
+                })),
+            ),
+            _ => None,
+        };
+        Some(
+            row(t)
+                .child(row_title("Background agent", Some(note.to_string()), t))
+                .child(status_pill(pill, tone, t))
+                .children(button),
         )
-        .child(group(
-            vec![
-                row(t)
-                    .child(row_title("Reminders", None, t))
-                    .child(self.switch(
-                        "Reminders",
-                        reminders.enabled,
-                        |value| value.enabled = !value.enabled,
-                        cx,
-                        t,
-                    )),
-                row(t)
-                    .child(row_title(
-                        "Daily digest",
-                        Some("Due and overdue tasks, once a day".to_string()),
-                        t,
-                    ))
-                    .child(self.switch(
-                        "Daily digest",
-                        reminders.due_digest,
-                        |value| value.due_digest = !value.due_digest,
-                        cx,
-                        t,
-                    )),
-                row(t).child(row_title("Digest time", None, t)).child(
-                    line_btn("digest", digest.clone(), t).on_click(cx.listener(
-                        move |this, _, window, cx| {
-                            this.open_prompt(
-                                "Digest time".to_string(),
-                                "Time",
-                                "Local time, as HH:MM.",
-                                &digest,
-                                Rc::new(|root, text, _, cx| {
-                                    root.edit_reminders(|value| {
-                                        value.digest_time = text.trim().to_string();
-                                    });
-                                    cx.notify();
-                                }),
-                                window,
-                                cx,
-                            );
-                        },
-                    )),
-                ),
-                row(t)
-                    .child(row_title(
-                        "Available again",
-                        Some("When a deferred task reaches its time".to_string()),
-                        t,
-                    ))
-                    .child(self.switch(
-                        "Available again",
-                        reminders.available,
-                        |value| value.available = !value.available,
-                        cx,
-                        t,
-                    )),
-            ],
-            t,
-        ))
+    }
+
+    fn notifications_row(&self, cx: &mut Context<Self>, t: &Theme) -> Option<Div> {
+        let (pill, tone, note) = match self.session.notifications {
+            Permission::Unavailable => return None,
+            Permission::Allowed => ("Allowed", Some(t.good), None),
+            Permission::Denied => (
+                "Denied",
+                Some(t.bad),
+                Some("Reminders can't appear until you allow them".to_string()),
+            ),
+            Permission::NotAsked => ("Not asked", None, None),
+        };
+        let button = if self.session.notifications == Permission::NotAsked {
+            line_btn("notifications-allow", "Allow", t)
+                .on_click(cx.listener(|this, _, _, cx| this.ask_notifications(cx)))
+        } else {
+            line_btn("notifications-settings", "Open System Settings", t)
+                .on_click(|_, _, cx| cx.open_url(notifications::SETTINGS_URL))
+        };
+        Some(
+            row(t)
+                .child(row_title("Notifications", note, t))
+                .child(status_pill(pill, tone, t))
+                .child(button),
+        )
+    }
+
+    /// The Sync tab's switch for syncing while Aven is quit, with the agent's
+    /// last round.
+    fn sync_when_quit_rows(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<Div> {
+        let background = &self.session.settings_data.background;
+        let on = background.sync_when_quit;
+        let note = match background.last_sync {
+            Some(at) => format!("Last background sync {}", ago(at, Local::now().timestamp())),
+            None => "Keeps this Mac up to date in the background".to_string(),
+        };
+        let track = div()
+            .id("Sync when Aven is quit")
+            .role(Role::Switch)
+            .aria_label("Sync when Aven is quit")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.session.set_sync_when_quit(!on);
+                this.mark_switched("Sync when Aven is quit");
+                cx.notify();
+            }));
+        let mut rows = vec![
+            row(t)
+                .child(row_title("Sync when Aven is quit", Some(note), t))
+                .child(self.switch_track(track, "Sync when Aven is quit", on, 1., cx, t)),
+        ];
+        rows.extend(self.background_agent_row(cx, t).filter(|_| on));
+        rows
     }
 
     fn workspaces_tab(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
@@ -2856,6 +3029,34 @@ impl Root {
         ]
     }
 
+    /// The switch sync setup and join end on, on by default.
+    fn sync_when_quit_choice(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
+        let on = self.session.settings_data.background.sync_when_quit;
+        let track = div()
+            .id("sync-done-when-quit")
+            .role(Role::Switch)
+            .aria_label("Sync when Aven is quit")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.session.set_sync_when_quit(!on);
+                this.mark_switched("sync-done-when-quit");
+                cx.notify();
+            }));
+        div()
+            .mt(px(14.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(row_title(
+                "Sync when Aven is quit",
+                Some(
+                    "A background agent keeps this Mac up to date while Aven is closed."
+                        .to_string(),
+                ),
+                t,
+            ))
+            .child(self.switch_track(track, "sync-done-when-quit", on, 1., cx, t))
+    }
+
     fn sync_done(
         &self,
         kind: SyncKind,
@@ -2906,6 +3107,7 @@ impl Root {
                 .pb(px(16.))
                 .children(Self::step_rows(kind, None, None, true, t))
                 .child(div().mt(px(12.)).text_color(t.muted).child(sub))
+                .child(self.sync_when_quit_choice(cx, t))
                 .into_any_element(),
             Self::footer(t)
                 .child(tab_stop(

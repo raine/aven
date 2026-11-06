@@ -26,6 +26,7 @@ mod launcher;
 mod lazy_row;
 mod ledger;
 mod markdown;
+mod notifications;
 mod overlays;
 mod platform;
 mod schedule;

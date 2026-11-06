@@ -11,11 +11,15 @@ accesskit = "0.24"
 anyhow = "1"
 aven-core = { path = "../aven-core" }
 aven-host = { path = "../aven-host" }
+block2 = "0.6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "ba63a022c9a22ca66d68ef2a8f0bb9b5b0a9984d" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "ba63a022c9a22ca66d68ef2a8f0bb9b5b0a9984d", features = ["font-kit", "runtime_shaders"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 linkify = "0.11.0"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSString"] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
 pulldown-cmark = "0.13"
 qrcode = { version = "0.14.1", default-features = false }
 raw-window-handle = "0.6"
