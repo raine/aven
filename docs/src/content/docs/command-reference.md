@@ -1286,7 +1286,7 @@ aven daemon restart
 aven daemon repair [--if-installed] [--program <path>]
 ```
 
-Running `aven daemon` in the foreground requires `sync.enabled: true`, `reminders.enabled: true`, or both. With only reminders on, it sends reminders and does not sync. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
+`aven daemon` syncs when `sync.enabled` is true and sends reminders when `reminders.enabled` is true. With neither on it stays idle, and it picks up changes to `config.yaml` while running. One process runs sync and reminders for a database at a time, whether `aven daemon`, Aven Desktop, or `aven mcp --sync`; a daemon started while another holds the database waits for it to stop, and `aven daemon status` shows which process it is. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
 
 `daemon status` is observational. It reports platform support, installation,
 loaded and running state, executable consistency, configuration validity,

@@ -1,6 +1,7 @@
-//! Due digest and resurfacing reminders sent by the daemon.
+//! Due digest and resurfacing reminders sent by the background host.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -16,7 +17,7 @@ use crate::config::RemindersConfig;
 use crate::due::{DueState, due_state};
 
 /// Upper bound on a reminder sleep, so sleep and clock changes are noticed.
-pub(crate) const MAX_SLEEP: Duration = Duration::from_secs(15 * 60);
+pub const MAX_SLEEP: Duration = Duration::from_secs(15 * 60);
 const CATCH_UP_WINDOW_SECONDS: i64 = 24 * 60 * 60;
 const MAX_INDIVIDUAL_AVAILABLE: usize = 3;
 const PREVIEW_TITLES: usize = 3;
@@ -30,18 +31,29 @@ const SUPPRESSED: &str = "suppressed";
 const WAITING: &str = "waiting";
 const EMPTY: &str = "empty";
 
+/// Hands reminders to the platform's notification service.
+pub trait ReminderSender: Send + Sync {
+    /// May block. Success means the service accepted the notification, not
+    /// that it was displayed.
+    fn send(&self, notification: &Notification) -> Result<()>;
+}
+
 /// An open, non-deleted task.
 #[derive(Debug, Clone)]
 pub(crate) struct ReminderTask {
     pub(crate) task: Task,
+    pub(crate) workspace_key: String,
     pub(crate) display_ref: String,
     pub(crate) blocked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Notification {
-    pub(crate) title: String,
-    pub(crate) message: String,
+pub struct Notification {
+    /// Identifies the notification to the platform. A reminder about one task
+    /// is tagged `task:{workspace key}:{task id}`, which a click can open.
+    pub tag: String,
+    pub title: String,
+    pub message: String,
     /// Entries to record once the notification was sent.
     pub(crate) sent: Vec<ReminderLogEntry>,
 }
@@ -134,6 +146,7 @@ fn plan_digest(
     }
     let list = preview(due.iter().map(|(_, item)| *item));
     plan.notifications.push(Notification {
+        tag: format!("{DIGEST}:{trigger}"),
         title: counts.join(", "),
         message: list,
         sent: vec![entry(SENT)],
@@ -197,13 +210,16 @@ fn plan_available(
     if sendable.len() <= MAX_INDIVIDUAL_AVAILABLE {
         plan.notifications
             .extend(sendable.into_iter().map(|(item, entry)| Notification {
+                tag: format!("task:{}:{}", item.workspace_key, item.task.id),
                 title: format!("Available {}", item.display_ref),
                 message: item.task.title.clone(),
                 sent: vec![entry],
             }));
     } else {
         let list = preview(sendable.iter().map(|(item, _)| *item));
+        let first = sendable[0].1.trigger.clone();
         plan.notifications.push(Notification {
+            tag: format!("{AVAILABLE}:{first}"),
             title: format!("{} tasks available", sendable.len()),
             message: list,
             sent: sendable.into_iter().map(|(_, entry)| entry).collect(),
@@ -239,7 +255,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// Time until the next digest time or deferred task, capped at [`MAX_SLEEP`].
-pub(crate) fn next_wake(
+fn next_wake(
     tasks: &[ReminderTask],
     now: DateTime<Utc>,
     local: NaiveDateTime,
@@ -272,19 +288,39 @@ pub(crate) fn next_wake(
     wait.max(Duration::from_secs(1))
 }
 
-/// Sends the reminders due now and returns how long to wait before the next
-/// check. Failures are logged and retried at a later check.
-pub(crate) async fn remind(database: &Database, config: &RemindersConfig) -> Duration {
-    match remind_once(database, config).await {
-        Ok(wait) => wait,
+/// The result of one reminder check.
+#[derive(Debug, Default)]
+pub struct Check {
+    /// How long to wait before the next check.
+    pub wait: Duration,
+    /// Notifications the sender accepted.
+    pub sent: Vec<Notification>,
+}
+
+/// Sends the reminders due now. Failures are logged and retried at a later
+/// check.
+pub async fn remind(
+    database: &Database,
+    config: &RemindersConfig,
+    sender: &Arc<dyn ReminderSender>,
+) -> Check {
+    match remind_once(database, config, sender).await {
+        Ok(check) => check,
         Err(error) => {
             warn!(error = %format!("{error:#}"), "reminder check failed");
-            MAX_SLEEP
+            Check {
+                wait: MAX_SLEEP,
+                sent: Vec::new(),
+            }
         }
     }
 }
 
-async fn remind_once(database: &Database, config: &RemindersConfig) -> Result<Duration> {
+async fn remind_once(
+    database: &Database,
+    config: &RemindersConfig,
+    sender: &Arc<dyn ReminderSender>,
+) -> Result<Check> {
     let digest_time = config.digest_time()?;
     let tasks = load_tasks(database).await?;
     let now = Utc::now();
@@ -292,24 +328,26 @@ async fn remind_once(database: &Database, config: &RemindersConfig) -> Result<Du
     let log = database.reminder_log().await?;
     let plan = plan(&tasks, &log, now, local, config, digest_time);
     database.record_reminders(&plan.record).await?;
+    let mut sent = Vec::new();
     for notification in plan.notifications {
-        let (title, message) = (notification.title.clone(), notification.message.clone());
-        let sent = tokio::task::spawn_blocking(move || {
-            crate::notification::send_notification(&title, &message)
+        let sender = sender.clone();
+        let (notification, result) = tokio::task::spawn_blocking(move || {
+            let result = sender.send(&notification);
+            (notification, result)
         })
         .await?;
-        match sent {
+        match result {
             Ok(()) => {
-                println!(
-                    "daemon-reminded title={:?} message={:?}",
-                    notification.title, notification.message
-                );
                 database.record_reminders(&notification.sent).await?;
+                sent.push(notification);
             }
             Err(error) => warn!(error = %format!("{error:#}"), "reminder notification failed"),
         }
     }
-    Ok(next_wake(&tasks, now, local, config, digest_time))
+    Ok(Check {
+        wait: next_wake(&tasks, now, local, config, digest_time),
+        sent,
+    })
 }
 
 /// Open tasks across every workspace in the database.
@@ -330,6 +368,7 @@ async fn load_tasks(database: &Database) -> Result<Vec<ReminderTask>> {
             )
             .await?;
         tasks.extend(items.into_iter().map(|item| ReminderTask {
+            workspace_key: workspace.key.clone(),
             blocked: item.unresolved_blocker_count > 0,
             display_ref: item.display_ref,
             task: item.task,
@@ -374,6 +413,7 @@ mod tests {
                 deleted: false,
                 is_epic: false,
             },
+            workspace_key: "personal".to_string(),
             display_ref: format!("APP-{name}"),
             blocked: false,
         }

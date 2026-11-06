@@ -10,11 +10,14 @@ pub mod config_edit;
 pub mod daemon;
 #[cfg(target_os = "macos")]
 pub mod desktop_install;
+pub mod due;
 pub mod gist;
+pub mod host;
 pub mod operations;
 pub mod projects;
 pub mod protected_local_keys;
 pub mod recurrence_input;
+pub mod reminders;
 pub mod render;
 pub mod routing;
 #[cfg(target_os = "macos")]

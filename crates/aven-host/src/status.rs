@@ -47,6 +47,34 @@ pub struct DaemonStatusReport {
     pub paths: DaemonPaths,
     pub guidance: Vec<String>,
     pub sync: aven_core::local_state::DaemonSyncState,
+    /// The database's background host, when the database exists.
+    pub host: Option<HostReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HostReport {
+    pub state: HostReportState,
+    /// The host's own record: the running host's, or the last one's.
+    pub status: Option<aven_core::local_state::HostStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostReportState {
+    Running,
+    /// The host lock is held, but the host stopped recording heartbeats.
+    Unresponsive,
+    Stopped,
+}
+
+impl HostReportState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Unresponsive => "not responding",
+            Self::Stopped => "not running",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -108,6 +136,7 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
     DaemonStatusReport {
         version: 1,
         sync: Default::default(),
+        host: None,
         state,
         platform_supported: service.platform_supported,
         platform: std::env::consts::OS.to_string(),
@@ -138,6 +167,35 @@ impl DaemonStatusReport {
             self.state = StatusState::Blocked;
         }
         self.sync = sync;
+        self
+    }
+
+    /// A host that holds the lock without a recent heartbeat is a fault. No
+    /// other process takes over from it, so the user has to restart it.
+    pub fn with_host(mut self, state: crate::host::HostState) -> Self {
+        use crate::host::HostState;
+        let (report, status) = match state {
+            HostState::Running(status) => (HostReportState::Running, Some(status)),
+            HostState::Unresponsive(status) => (HostReportState::Unresponsive, status),
+            HostState::Stopped(status) => (HostReportState::Stopped, status),
+        };
+        if report == HostReportState::Unresponsive {
+            self.state = StatusState::Failed;
+            self.guidance.push(match &status {
+                Some(status) => format!(
+                    "The background host, {} with pid {}, holds the database but last checked in at {}. Restart it; if it does not stop, end process {}.",
+                    crate::host::describe_role(&status.role),
+                    status.pid,
+                    daemon_time(status.heartbeat_at),
+                    status.pid
+                ),
+                None => "A process holds the database's host lock without recording its status. Restart `aven daemon`, Aven Desktop or `aven mcp --sync`, whichever runs.".to_string(),
+            });
+        }
+        self.host = Some(HostReport {
+            state: report,
+            status,
+        });
         self
     }
 }
@@ -281,5 +339,35 @@ mod tests {
                 .guidance
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn an_unresponsive_host_is_a_failure_with_guidance() {
+        let status = aven_core::local_state::HostStatus {
+            pid: 42,
+            role: "daemon".to_string(),
+            version: "0.1.0".to_string(),
+            capabilities: vec!["sync".to_string()],
+            started_at: 0,
+            heartbeat_at: 0,
+            round_started: 0,
+            round_finished: 0,
+        };
+        let healthy = build_daemon_status(&configured(), service(true));
+        let running = healthy
+            .clone()
+            .with_host(crate::host::HostState::Running(status.clone()));
+        assert_eq!(running.state, StatusState::Healthy);
+        assert_eq!(running.host.unwrap().state, HostReportState::Running);
+
+        let stuck = healthy.with_host(crate::host::HostState::Unresponsive(Some(status)));
+        assert_eq!(stuck.state, StatusState::Failed);
+        assert!(
+            stuck
+                .guidance
+                .iter()
+                .any(|line| line.contains("end process 42"))
+        );
+        assert_eq!(stuck.host.unwrap().state, HostReportState::Unresponsive);
     }
 }

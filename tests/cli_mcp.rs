@@ -1111,6 +1111,39 @@ fn http_without_sync_wakes_the_daemon_and_with_sync_owns_the_wake_address() {
     let second = http_command(&env, &db, &["--bind", "127.0.0.1:0", "--sync"])
         .output()
         .expect("run aven mcp");
-    assert!(fail(second).contains("is `aven daemon` or `aven mcp --sync` already using it?"));
+    let refused = fail(second);
+    assert!(
+        refused.contains("`aven mcp --sync` (pid") && refused.contains("already runs"),
+        "{refused}"
+    );
     assert_eq!(first.call("count_tasks", json!({}))["count"], 1);
+}
+
+#[test]
+fn http_sync_refuses_an_old_daemon_on_the_wake_address_and_then_hosts_reminders_too() {
+    let env = TestEnv::new();
+    let db = env.db("old-daemon.sqlite");
+    let old_daemon = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
+    let wake_addr = old_daemon.local_addr().unwrap().to_string();
+    env.write_config(&format!(
+        "local:\n  db_path: \"{}\"\ndaemon:\n  wake_addr: \"{wake_addr}\"\nreminders:\n  enabled: true\n",
+        db.display()
+    ));
+
+    let refused = http_command(&env, &db, &["--bind", "127.0.0.1:0", "--sync"])
+        .output()
+        .expect("run aven mcp");
+    assert!(fail(refused).contains("is `aven daemon` or `aven mcp --sync` already using it?"));
+    drop(old_daemon);
+
+    let server = HttpServer::start(&env, &db, &["--sync"]);
+    server.wait_for_output("daemon-sync-not-set-up");
+    let status: serde_json::Value =
+        serde_json::from_str(&ok(env.aven_config(["daemon", "status", "--json"]))).unwrap();
+    assert_eq!(status["host"]["state"], "running");
+    assert_eq!(status["host"]["status"]["role"], "mcp");
+    assert_eq!(
+        status["host"]["status"]["capabilities"],
+        json!(["sync", "reminders"])
+    );
 }

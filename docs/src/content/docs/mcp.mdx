@@ -222,8 +222,10 @@ Clients that only support OAuth login can't connect. Requests that carry a
 browser `Origin` header are refused, so web pages can't reach the server.
 
 `--sync` means a container doesn't need `aven daemon`. It syncs even when
-`sync.enabled` is false, but it doesn't send reminders. Don't also run
-`aven daemon` with the same `daemon.wake_addr`: whichever starts second fails.
+`sync.enabled` is false, and sends reminders when `reminders.enabled` is true.
+One process runs sync and reminders for a database at a time: `--sync` won't
+start while `aven daemon` or Aven Desktop does, and a daemon started later
+waits until the server stops.
 
 Keep these limits in mind:
 

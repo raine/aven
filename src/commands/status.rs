@@ -9,16 +9,13 @@ pub(crate) async fn cmd_daemon_status(
     db_path: &std::path::Path,
     json: bool,
 ) -> Result<()> {
-    let sync = if db_path.exists() {
-        aven_core::db::Database::open(db_path)
-            .await?
-            .daemon_sync_state()
-            .await?
-    } else {
-        Default::default()
-    };
-    let report = crate::status::build_daemon_status(config, crate::daemon::status_snapshot()?)
-        .with_sync(sync);
+    let mut report = crate::status::build_daemon_status(config, crate::daemon::status_snapshot()?);
+    if db_path.exists() {
+        let database = aven_core::db::Database::open(db_path).await?;
+        report = report
+            .with_sync(database.daemon_sync_state().await?)
+            .with_host(aven_host::host::host_state(&database).await?);
+    }
     if json {
         print_json_pretty(&report)
     } else {
@@ -49,6 +46,9 @@ fn print_daemon_status(report: &DaemonStatusReport) {
         },
         optional_yes_no(report.executable_matches),
     );
+    if let Some(host) = &report.host {
+        print_host(host);
+    }
     if let Some(path) = &report.paths.service {
         println!("Service file: {}", path.display());
     }
@@ -95,5 +95,35 @@ fn optional_yes_no(value: Option<bool>) -> &'static str {
         Some(true) => "yes",
         Some(false) => "no",
         None => "unavailable",
+    }
+}
+
+fn print_host(host: &aven_host::status::HostReport) {
+    let state = host.state.as_str();
+    let Some(status) = &host.status else {
+        println!("Background host: {state}");
+        return;
+    };
+    let what = format!(
+        "{}, pid {}, version {}",
+        aven_host::host::describe_role(&status.role).replace('`', ""),
+        status.pid,
+        status.version
+    );
+    match host.state {
+        aven_host::status::HostReportState::Stopped => {
+            println!("Background host: {state} (last: {what})");
+        }
+        _ => {
+            let jobs = if status.capabilities.is_empty() {
+                "idle".to_string()
+            } else {
+                status.capabilities.join(", ")
+            };
+            println!(
+                "Background host: {state} ({what}; {jobs}; last check-in {})",
+                crate::status::daemon_time(status.heartbeat_at)
+            );
+        }
     }
 }
