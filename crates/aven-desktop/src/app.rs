@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use aven_core::ids::TaskId;
 use aven_host::app_bundle::enclosing_bundle;
 use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
 use aven_host::desktop_install::{self, Layout, MacSystem};
@@ -244,6 +245,43 @@ fn prepare_app(cx: &mut App) {
     cx.bind_keys(actions::key_bindings());
     register_actions(cx);
     cx.set_menus(actions::menus());
+    follow_notifications(cx);
+}
+
+/// A task a notification pointed at before the main window opened, which it
+/// shows once it opens.
+#[derive(Default)]
+struct NotifiedTask(Option<(String, TaskId)>);
+
+impl Global for NotifiedTask {}
+
+/// The workspace and task a notification's tag points at.
+fn notified_task(tag: &str) -> Option<(String, TaskId)> {
+    let (workspace, id) = launcher::tagged_task(tag)?;
+    Some((workspace, id.parse().ok()?))
+}
+
+/// Opens notifications in the app. macOS holds a click that launched the app
+/// until a handler exists, so it is registered before setup can show.
+fn follow_notifications(cx: &mut App) {
+    cx.set_global(NotifiedTask::default());
+    cx.on_system_notification_response(|response, cx| {
+        show_window(cx);
+        let Some(task) = notified_task(&response.tag) else {
+            return;
+        };
+        if cx.has_global::<MainWindow>() {
+            open_notified(task, cx);
+        } else {
+            cx.global_mut::<NotifiedTask>().0 = Some(task);
+        }
+    });
+}
+
+fn open_notified((workspace, id): (String, TaskId), cx: &mut App) {
+    with_root(cx, |root, window, cx| {
+        root.open_launched(workspace, id, window, cx)
+    });
 }
 
 /// Opens setup, and the main window on the database once setup is through.
@@ -369,18 +407,9 @@ fn open_main(
             cx.notify();
         });
     }
-    cx.on_system_notification_response(|response, cx| {
-        let Some((workspace, id)) = launcher::tagged_task(&response.tag) else {
-            show_window(cx);
-            return;
-        };
-        show_window(cx);
-        if let Ok(id) = id.parse() {
-            with_root(cx, |root, window, cx| {
-                root.open_launched(workspace, id, window, cx);
-            });
-        }
-    });
+    if let Some(task) = cx.global_mut::<NotifiedTask>().0.take() {
+        open_notified(task, cx);
+    }
     // Anything but Quit, such as logging out, ends here. Nothing runs on the
     // main thread after this, so the store gets a moment without a reply.
     cx.on_app_quit(|cx| {
@@ -403,6 +432,16 @@ fn open_main(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_notification_points_at_a_task_only_with_a_valid_id() {
+        assert_eq!(
+            notified_task("task:home:0123456789ABCDEF"),
+            Some(("home".into(), "0123456789ABCDEF".parse().unwrap()))
+        );
+        assert_eq!(notified_task("task:home:nope"), None);
+        assert_eq!(notified_task("launch-failed:3"), None);
+    }
 
     #[test]
     fn only_a_different_file_counts_as_replaced() {
