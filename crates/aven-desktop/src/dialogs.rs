@@ -246,8 +246,12 @@ pub enum ConfirmAction {
     },
     /// Puts the draft Add Task kept for this agent job in Add Task.
     OpenKeptDraft(u64),
-    /// Quits after saying what keeps running. Cancel opens Settings instead.
-    Quit,
+    /// Quits after saying what keeps running. Cancel opens Settings
+    /// instead, or System Settings' notifications for Aven when
+    /// `notification_settings`.
+    Quit {
+        notification_settings: bool,
+    },
 }
 
 pub struct Layer {

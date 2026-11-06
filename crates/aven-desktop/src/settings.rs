@@ -299,7 +299,9 @@ pub(crate) fn sync_icon(t: &Theme, tone: SyncTone) -> Hsla {
 
 impl Root {
     /// Quits, saying the first time that reminders and sync keep running in
-    /// the background, as Quit from the menu or keyboard does.
+    /// the background, as Quit from the menu or keyboard does. The notice
+    /// reads the notification permission first, so it never promises
+    /// reminders macOS won't show.
     pub(crate) fn ask_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let background = &self.session.settings_data.background;
         let running = background.managed && background.wanted;
@@ -307,22 +309,38 @@ impl Root {
             self.quit(window, cx);
             return;
         }
-        let (title, kept) = match (background.reminders, background.sync_when_quit) {
-            (true, true) => ("Reminders and sync keep running", "send reminders and sync"),
-            (true, false) => ("Reminders keep coming", "send reminders"),
-            _ => ("Sync keeps running", "sync"),
+        cx.spawn_in(window, async move |this, cx| {
+            let permission = notifications::permission().await;
+            this.update_in(cx, |this, window, cx| {
+                this.quit_with_notice(permission, window, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn quit_with_notice(
+        &mut self,
+        permission: Permission,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let background = &self.session.settings_data.background;
+        let notice = quit_notice(background.reminders, background.sync_when_quit, permission);
+        let Some(notice) = notice.filter(|_| !self.prefs.quit_notice_shown) else {
+            self.quit(window, cx);
+            return;
         };
         self.prefs.quit_notice_shown = true;
         self.save_prefs();
         self.open_confirm(
-            title.to_string(),
-            format!(
-                "After you quit, a background agent continues to {kept}. You can turn \
-                 this off in Settings."
-            ),
+            notice.title.to_string(),
+            notice.body.to_string(),
             Some("This notice appears only once."),
             "Quit",
-            ConfirmAction::Quit,
+            ConfirmAction::Quit {
+                notification_settings: notice.notification_settings,
+            },
             window,
             cx,
         );
@@ -654,7 +672,10 @@ impl Root {
         let fields = buttons.to_vec();
         let cancel = match action {
             ConfirmAction::ReplaceDraft { .. } | ConfirmAction::OpenKeptDraft(_) => "Keep draft",
-            ConfirmAction::Quit => "Open Settings",
+            ConfirmAction::Quit {
+                notification_settings: true,
+            } => "Open Notification Settings",
+            ConfirmAction::Quit { .. } => "Open Settings",
             _ => "Cancel",
         };
         let dialog = Dialog::Confirm {
@@ -688,7 +709,7 @@ impl Root {
                 self.take_launcher_draft(workspace, *task, window, cx);
             }
             ConfirmAction::OpenKeptDraft(job) => self.take_kept_draft(job, window, cx),
-            ConfirmAction::Quit => self.quit(window, cx),
+            ConfirmAction::Quit { .. } => self.quit(window, cx),
         }
         cx.notify();
     }
@@ -712,7 +733,12 @@ impl Root {
         };
         let action = action.clone();
         let keeps_draft = matches!(action, ConfirmAction::ReplaceDraft { .. });
-        let opens_settings = matches!(action, ConfirmAction::Quit);
+        let opens_settings = match action {
+            ConfirmAction::Quit {
+                notification_settings,
+            } => Some(notification_settings),
+            _ => None,
+        };
         vec![
             Self::heading(title.clone(), t).into_any_element(),
             div()
@@ -740,7 +766,9 @@ impl Root {
                         if keeps_draft {
                             cx.defer(crate::launcher::show);
                         }
-                        if opens_settings {
+                        if opens_settings == Some(true) {
+                            cx.open_url(notifications::SETTINGS_URL);
+                        } else if opens_settings == Some(false) {
                             let tab = if this.session.settings_data.background.reminders {
                                 SettingsTab::Reminders
                             } else {
@@ -3367,8 +3395,91 @@ fn qr_code(text: &str) -> AnyElement {
         .into_any_element()
 }
 
+/// The notice the first Quit shows about what the background agent does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QuitNotice {
+    title: &'static str,
+    body: &'static str,
+    /// Whether the notice offers System Settings, where notifications for
+    /// Aven are turned on.
+    notification_settings: bool,
+}
+
+/// What the first Quit says, or `None` when nothing the agent does after
+/// quitting would be seen: reminders alone, with notifications off.
+/// Undecided notifications count as off, since only the app asks.
+fn quit_notice(reminders: bool, sync: bool, permission: Permission) -> Option<QuitNotice> {
+    let shown = !matches!(permission, Permission::Denied | Permission::NotAsked);
+    let (title, body, notification_settings) = match (reminders, sync, shown) {
+        (true, true, true) => (
+            "Reminders and sync keep running",
+            "After you quit, a background agent continues to send reminders and sync. You \
+             can turn this off in Settings.",
+            false,
+        ),
+        (true, false, true) => (
+            "Reminders keep coming",
+            "After you quit, a background agent continues to send reminders. You can turn \
+             this off in Settings.",
+            false,
+        ),
+        (true, true, false) => (
+            "Sync keeps running",
+            "After you quit, a background agent continues to sync. Reminders won\u{2019}t \
+             show because notifications for Aven are off.",
+            true,
+        ),
+        (true, false, false) => return None,
+        (false, ..) => (
+            "Sync keeps running",
+            "After you quit, a background agent continues to sync. You can turn this off \
+             in Settings.",
+            false,
+        ),
+    };
+    Some(QuitNotice {
+        title,
+        body,
+        notification_settings,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_quit_notice_follows_the_notification_permission() {
+        use super::{QuitNotice, quit_notice};
+        use crate::notifications::Permission::*;
+        let title = |notice: Option<QuitNotice>| notice.map(|notice| notice.title);
+        for allowed in [Allowed, Unavailable] {
+            assert_eq!(
+                title(quit_notice(true, true, allowed)),
+                Some("Reminders and sync keep running")
+            );
+            assert_eq!(
+                title(quit_notice(true, false, allowed)),
+                Some("Reminders keep coming")
+            );
+            assert!(
+                !quit_notice(true, true, allowed)
+                    .unwrap()
+                    .notification_settings
+            );
+        }
+        for off in [Denied, NotAsked] {
+            let notice = quit_notice(true, true, off).unwrap();
+            assert_eq!(notice.title, "Sync keeps running");
+            assert!(notice.body.contains("notifications for Aven are off"));
+            assert!(notice.notification_settings);
+            assert_eq!(quit_notice(true, false, off), None);
+        }
+        for permission in [Allowed, Denied, NotAsked, Unavailable] {
+            let notice = quit_notice(false, true, permission).unwrap();
+            assert_eq!(notice.title, "Sync keeps running");
+            assert!(!notice.body.contains("Reminders") && !notice.notification_settings);
+        }
+    }
+
     use super::*;
 
     #[test]
