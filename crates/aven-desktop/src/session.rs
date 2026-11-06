@@ -176,8 +176,6 @@ pub struct Applied {
     pub opened: Option<(KnownDatabase, Option<KnownDatabase>)>,
     /// The store has finished what a quit waits for.
     pub stopped: bool,
-    /// Reminders to post as system notifications.
-    pub remind: Vec<aven_host::reminders::Notification>,
 }
 
 /// A change a review made, with the card it came from.
@@ -1711,7 +1709,6 @@ impl Session {
                 self.sync = Some(health);
             }
             ReplyBody::SyncArrived(changes) => self.motion.arrived(changes),
-            ReplyBody::Remind(notification) => applied.remind.push(notification),
             ReplyBody::SyncEvent(event) => self.sync_event(event),
             ReplyBody::Settings(data) => {
                 // The agent's state comes only from Background replies.

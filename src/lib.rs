@@ -347,6 +347,7 @@ async fn dispatch_standalone(
             }
             InternalSubcommand::ReloadDaemon => daemon::reload_service_definition(),
             InternalSubcommand::DesktopSetup => cmd_internal_desktop_setup(),
+            InternalSubcommand::Notify => notification::serve_child(),
             #[cfg(target_os = "macos")]
             InternalSubcommand::FinishDesktopUpdate(args) => {
                 update::finish_desktop_update(&args.marker, args.pid).await

@@ -167,6 +167,16 @@ fn reminders_lead(enabled: bool, agent: AgentShown) -> &'static str {
     }
 }
 
+/// What the Notifications row says about notifications that weren't shown
+/// while notifications were off, if any were.
+fn missed_note(missed: u64) -> Option<String> {
+    match missed {
+        0 => None,
+        1 => Some("1 notification this week wasn't shown".to_string()),
+        count => Some(format!("{count} notifications this week weren't shown")),
+    }
+}
+
 /// A config file block, set in the code face.
 fn command_block(t: &Theme) -> Div {
     small(Text::Secondary)
@@ -1676,16 +1686,20 @@ impl Root {
     }
 
     fn notifications_row(&self, cx: &mut Context<Self>, t: &Theme) -> Option<Div> {
-        let (pill, tone, note) = match self.session.notifications {
-            Permission::Unavailable => return None,
-            Permission::Allowed => ("Allowed", Some(t.good), None),
-            Permission::Denied => (
-                "Denied",
-                Some(t.bad),
-                Some("Reminders can't appear until you allow them".to_string()),
-            ),
-            Permission::NotAsked => ("Not asked", None, None),
-        };
+        let missed = missed_note(self.session.settings_data.background.notifications_off);
+        let (pill, tone, note) =
+            match self.session.notifications {
+                Permission::Unavailable => return None,
+                Permission::Allowed => ("Allowed", Some(t.good), None),
+                Permission::Denied => (
+                    "Denied",
+                    Some(t.bad),
+                    Some(missed.unwrap_or_else(|| {
+                        "Reminders can't appear until you allow them".to_string()
+                    })),
+                ),
+                Permission::NotAsked => ("Not asked", None, missed),
+            };
         let button = if self.session.notifications == Permission::NotAsked {
             line_btn("notifications-allow", "Allow", t)
                 .on_click(cx.listener(|this, _, _, cx| this.ask_notifications(cx)))
@@ -3356,6 +3370,19 @@ fn qr_code(text: &str) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_notifications_row_counts_what_was_not_shown() {
+        assert_eq!(missed_note(0), None);
+        assert_eq!(
+            missed_note(1).as_deref(),
+            Some("1 notification this week wasn't shown")
+        );
+        assert_eq!(
+            missed_note(3).as_deref(),
+            Some("3 notifications this week weren't shown")
+        );
+    }
 
     #[test]
     fn command_lines_mark_the_command_and_placeholders() {

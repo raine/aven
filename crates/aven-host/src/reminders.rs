@@ -1,20 +1,22 @@
-//! Due digest and resurfacing reminders sent by the background host.
+//! Due digest and resurfacing reminders the background host queues for
+//! delivery.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use aven_core::db::Database;
 use aven_core::local_state::ReminderLogEntry;
+use aven_core::notification_outbox::QueuedNotification;
 use aven_core::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 use aven_core::queue::{available_since_defer, unix_seconds};
 use aven_core::types::Task;
-use chrono::{DateTime, Local, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use tracing::warn;
 
 use crate::config::RemindersConfig;
 use crate::due::{DueState, due_state};
+use crate::notify;
 
 /// Upper bound on a reminder sleep, so sleep and clock changes are noticed.
 pub const MAX_SLEEP: Duration = Duration::from_secs(15 * 60);
@@ -31,13 +33,6 @@ const SUPPRESSED: &str = "suppressed";
 const WAITING: &str = "waiting";
 const EMPTY: &str = "empty";
 
-/// Hands reminders to the platform's notification service.
-pub trait ReminderSender: Send + Sync {
-    /// May block. Success means the service accepted the notification, not
-    /// that it was displayed.
-    fn send(&self, notification: &Notification) -> Result<()>;
-}
-
 /// An open, non-deleted task.
 #[derive(Debug, Clone)]
 pub(crate) struct ReminderTask {
@@ -48,14 +43,62 @@ pub(crate) struct ReminderTask {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Notification {
-    /// Identifies the notification to the platform. A reminder about one task
-    /// is tagged `task:{workspace key}:{task id}`, which a click can open.
-    pub tag: String,
-    pub title: String,
-    pub message: String,
-    /// Entries to record once the notification was sent.
+pub(crate) struct Notification {
+    pub(crate) kind: &'static str,
+    pub(crate) opens: Opens,
+    pub(crate) title: String,
+    pub(crate) message: String,
+    /// Entries recorded with the queued notification.
     pub(crate) sent: Vec<ReminderLogEntry>,
+}
+
+/// What a click on a reminder opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Opens {
+    Task {
+        workspace: String,
+        task: String,
+    },
+    /// The due tasks of this date.
+    Due(String),
+    App,
+}
+
+impl Notification {
+    fn queued(self, now: DateTime<Utc>, local: NaiveDateTime) -> QueuedNotification {
+        let event = notify::new_event();
+        let (tag, expires_at) = match &self.opens {
+            Opens::Task { workspace, task } => (
+                notify::task_tag(workspace, task, &event),
+                now.timestamp() + CATCH_UP_WINDOW_SECONDS,
+            ),
+            Opens::Due(date) => (notify::digest_tag(date), end_of_day(now, local)),
+            Opens::App => (
+                notify::plain_tag(self.kind, &event),
+                now.timestamp() + CATCH_UP_WINDOW_SECONDS,
+            ),
+        };
+        QueuedNotification {
+            event,
+            kind: self.kind.to_string(),
+            tag,
+            title: self.title,
+            body: self.message,
+            expires_at,
+        }
+    }
+}
+
+/// Unix seconds of the local midnight after `local`, or a day after `now`
+/// when the zone skips it.
+fn end_of_day(now: DateTime<Utc>, local: NaiveDateTime) -> i64 {
+    let midnight = (local.date() + chrono::Days::new(1)).and_time(NaiveTime::MIN);
+    Local
+        .from_local_datetime(&midnight)
+        .earliest()
+        .map_or(now.timestamp() + CATCH_UP_WINDOW_SECONDS, |end| {
+            end.timestamp()
+        })
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -146,7 +189,8 @@ fn plan_digest(
     }
     let list = preview(due.iter().map(|(_, item)| *item));
     plan.notifications.push(Notification {
-        tag: format!("{DIGEST}:{trigger}"),
+        kind: DIGEST,
+        opens: Opens::Due(trigger.clone()),
         title: counts.join(", "),
         message: list,
         sent: vec![entry(SENT)],
@@ -210,16 +254,20 @@ fn plan_available(
     if sendable.len() <= MAX_INDIVIDUAL_AVAILABLE {
         plan.notifications
             .extend(sendable.into_iter().map(|(item, entry)| Notification {
-                tag: format!("task:{}:{}", item.workspace_key, item.task.id),
+                kind: AVAILABLE,
+                opens: Opens::Task {
+                    workspace: item.workspace_key.clone(),
+                    task: item.task.id.to_string(),
+                },
                 title: format!("Available {}", item.display_ref),
                 message: item.task.title.clone(),
                 sent: vec![entry],
             }));
     } else {
         let list = preview(sendable.iter().map(|(item, _)| *item));
-        let first = sendable[0].1.trigger.clone();
         plan.notifications.push(Notification {
-            tag: format!("{AVAILABLE}:{first}"),
+            kind: AVAILABLE,
+            opens: Opens::App,
             title: format!("{} tasks available", sendable.len()),
             message: list,
             sent: sendable.into_iter().map(|(_, entry)| entry).collect(),
@@ -293,60 +341,44 @@ fn next_wake(
 pub struct Check {
     /// How long to wait before the next check.
     pub wait: Duration,
-    /// Notifications the sender accepted.
-    pub sent: Vec<Notification>,
+    /// How many notifications were queued for delivery.
+    pub queued: usize,
 }
 
-/// Sends the reminders due now. Failures are logged and retried at a later
-/// check.
-pub async fn remind(
-    database: &Database,
-    config: &RemindersConfig,
-    sender: &Arc<dyn ReminderSender>,
-) -> Check {
-    match remind_once(database, config, sender).await {
+/// Queues the reminders due now in the database's notification outbox.
+/// Failures are logged and retried at a later check.
+pub async fn remind(database: &Database, config: &RemindersConfig) -> Check {
+    match remind_once(database, config).await {
         Ok(check) => check,
         Err(error) => {
             warn!(error = %format!("{error:#}"), "reminder check failed");
             Check {
                 wait: MAX_SLEEP,
-                sent: Vec::new(),
+                queued: 0,
             }
         }
     }
 }
 
-async fn remind_once(
-    database: &Database,
-    config: &RemindersConfig,
-    sender: &Arc<dyn ReminderSender>,
-) -> Result<Check> {
+async fn remind_once(database: &Database, config: &RemindersConfig) -> Result<Check> {
     let digest_time = config.digest_time()?;
     let tasks = load_tasks(database).await?;
     let now = Utc::now();
     let local = now.with_timezone(&Local).naive_local();
     let log = database.reminder_log().await?;
     let plan = plan(&tasks, &log, now, local, config, digest_time);
-    database.record_reminders(&plan.record).await?;
-    let mut sent = Vec::new();
+    let mut record = plan.record;
+    let mut queued = Vec::new();
     for notification in plan.notifications {
-        let sender = sender.clone();
-        let (notification, result) = tokio::task::spawn_blocking(move || {
-            let result = sender.send(&notification);
-            (notification, result)
-        })
-        .await?;
-        match result {
-            Ok(()) => {
-                database.record_reminders(&notification.sent).await?;
-                sent.push(notification);
-            }
-            Err(error) => warn!(error = %format!("{error:#}"), "reminder notification failed"),
-        }
+        record.extend(notification.sent.iter().cloned());
+        queued.push(notification.queued(now, local));
     }
+    database
+        .queue_notifications(&record, &queued, now.timestamp())
+        .await?;
     Ok(Check {
         wait: next_wake(&tasks, now, local, config, digest_time),
-        sent,
+        queued: queued.len(),
     })
 }
 
@@ -617,6 +649,39 @@ mod tests {
         assert_eq!(
             next_wake(&[], now, local, &config(), digest_time),
             MAX_SLEEP
+        );
+    }
+
+    #[test]
+    fn queued_reminders_open_their_task_or_the_due_view_and_expire() {
+        let (now, local) = at("2026-10-14T09:30:00Z");
+        let mut tasks = vec![deferred("a", "2026-10-14T09:00:00Z")];
+        tasks.push(due("b", "2026-10-14"));
+        let plan = run(&tasks, &[], "2026-10-14T09:30:00Z");
+        let queued: Vec<QueuedNotification> = plan
+            .notifications
+            .into_iter()
+            .map(|notification| notification.queued(now, local))
+            .collect();
+
+        let digest = &queued[0];
+        assert_eq!(digest.kind, DIGEST);
+        assert_eq!(digest.tag, "v1:digest:2026-10-14");
+        assert!(digest.expires_at > now.timestamp());
+        // Tests read the digest's date as UTC, the expiry in the host's zone.
+        assert!(digest.expires_at <= now.timestamp() + 2 * CATCH_UP_WINDOW_SECONDS);
+        let available = &queued[1];
+        assert_eq!(
+            notify::target(&available.tag),
+            Some(notify::Target::Task {
+                workspace: "personal".into(),
+                task: tasks[0].task.id.to_string(),
+            })
+        );
+        assert!(available.tag.ends_with(&available.event));
+        assert_eq!(
+            available.expires_at,
+            now.timestamp() + CATCH_UP_WINDOW_SECONDS
         );
     }
 }

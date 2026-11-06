@@ -1,5 +1,6 @@
-//! The host's run loop: sync rounds, reminders and attachment maintenance on
-//! one schedule, following config changes as they arrive.
+//! The host's run loop: sync rounds, reminders, notification delivery and
+//! attachment maintenance on one schedule, following config changes as they
+//! arrive.
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,13 +18,17 @@ use tracing::{debug, info, warn};
 use super::executable::{self, Fingerprint};
 use super::{CAPABILITY_REMINDERS, CAPABILITY_SYNC, HEARTBEAT_INTERVAL, Role, Seat};
 use crate::config::AppConfig;
-use crate::reminders::{self, Notification, ReminderSender};
+use crate::notify::{self, Deliver};
+use crate::reminders;
 use crate::sync::encrypted::{DaemonRound, DaemonSync, Outcome};
 use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
 use crate::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
 
 pub const ATTACHMENT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How often a host that delivers looks for notifications left waiting, such
+/// as those queued by a command or while another process delivered.
+const DELIVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Why a host stopped.
 #[derive(Debug, PartialEq, Eq)]
@@ -37,7 +42,15 @@ pub enum Exit {
 #[derive(Debug)]
 pub enum HostEvent {
     Round(RoundReport),
-    Reminded(Notification),
+}
+
+/// Who delivers the notifications a host queues.
+pub enum Delivery {
+    /// The host does, through this service, while it holds the delivery lock.
+    Here(Arc<dyn Deliver>),
+    /// Another part of this process does; notified when notifications are
+    /// queued or asked for.
+    Elsewhere(Arc<Notify>),
 }
 
 #[derive(Debug)]
@@ -59,7 +72,7 @@ pub struct Host {
     pub config: watch::Receiver<AppConfig>,
     pub blob_dir: PathBuf,
     pub sync: DaemonSync,
-    pub reminders: Arc<dyn ReminderSender>,
+    pub delivery: Delivery,
     /// Hears what the host did. Called on the host's task, so it must not
     /// block.
     pub events: Box<dyn FnMut(&HostEvent) + Send>,
@@ -117,7 +130,7 @@ impl Host {
             config: mut configs,
             blob_dir,
             mut sync,
-            reminders: sender,
+            delivery,
             mut events,
             wake,
             debounce,
@@ -151,6 +164,7 @@ impl Host {
         let now = Instant::now();
         let mut scheduler = SyncScheduler::new(interval(&config), now);
         let mut next_reminder = now;
+        let mut next_delivery = now;
         let mut next_attachment_maintenance = now;
         let mut next_executable_check = now + executable::CHECK_INTERVAL;
         loop {
@@ -195,6 +209,7 @@ impl Host {
                     let now = Instant::now();
                     requested = true;
                     next_reminder = now;
+                    next_delivery = now;
                     scheduler.wake(retry_now, now);
                 }
                 _ = sleep_until(next_executable_check), if executable.is_some() => {
@@ -208,17 +223,18 @@ impl Host {
                 // Reminders wait while sync rounds have more work, so they
                 // never judge a partly synced database.
                 _ = sleep_until(next_reminder), if reminders_on && !scheduler.catching_up() => {
-                    let check = reminders::remind(&database, &config.reminders, &sender).await;
-                    for notification in check.sent {
-                        if log {
-                            println!(
-                                "daemon-reminded title={:?} message={:?}",
-                                notification.title, notification.message
-                            );
-                        }
-                        events(&HostEvent::Reminded(notification));
+                    let check = reminders::remind(&database, &config.reminders).await;
+                    if check.queued > 0 {
+                        next_delivery = Instant::now();
                     }
                     next_reminder = Instant::now() + check.wait;
+                }
+                _ = sleep_until(next_delivery) => {
+                    match &delivery {
+                        Delivery::Here(service) => deliver(&database, service, log).await,
+                        Delivery::Elsewhere(deliverer) => deliverer.notify_one(),
+                    }
+                    next_delivery = Instant::now() + DELIVERY_INTERVAL;
                 }
                 _ = sleep_until(next_attachment_maintenance), if sync_on => {
                     maintain_attachments(&database, &blob_dir, &config, log).await;
@@ -248,6 +264,35 @@ impl Host {
                 }
             }
         }
+    }
+}
+
+/// Delivers waiting notifications unless another process does.
+async fn deliver(database: &Database, service: &Arc<dyn Deliver>, log: bool) {
+    let drained = match notify::deliver_pending(database, service).await {
+        Ok(drained) => drained,
+        Err(error) => {
+            warn!(error = %format!("{error:#}"), "notification delivery failed");
+            return;
+        }
+    };
+    if !log {
+        return;
+    }
+    for notification in &drained.submitted {
+        println!(
+            "daemon-reminded title={:?} message={:?}",
+            notification.title, notification.body
+        );
+    }
+    for (notification, reason) in &drained.failed {
+        println!(
+            "daemon-notification-failed reason={reason:?} title={:?}",
+            notification.title
+        );
+    }
+    if drained.expired > 0 {
+        println!("daemon-notifications-expired count={}", drained.expired);
     }
 }
 
@@ -509,10 +554,15 @@ mod tests {
 
     struct Recorder(Mutex<Vec<String>>);
 
-    impl ReminderSender for Recorder {
-        fn send(&self, notification: &Notification) -> Result<()> {
-            self.0.lock().unwrap().push(notification.title.clone());
-            Ok(())
+    impl Deliver for Recorder {
+        fn deliver(&self, request: &notify::Request) -> Result<notify::Report> {
+            let mut posted = self.0.lock().unwrap();
+            posted.extend(request.posts.iter().map(|post| post.title.clone()));
+            Ok(notify::Report {
+                authorization: notify::Authorization::Allowed,
+                errors: vec![None; request.posts.len()],
+                delivered: Some(Vec::new()),
+            })
         }
     }
 
@@ -540,7 +590,7 @@ mod tests {
             config: receiver,
             blob_dir: dir.join("blobs"),
             sync: DaemonSync::default(),
-            reminders: recorder.clone(),
+            delivery: Delivery::Here(recorder.clone()),
             events: Box::new(|_| {}),
             wake: Arc::new(Notify::new()),
             debounce: Duration::ZERO,

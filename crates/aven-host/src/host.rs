@@ -23,7 +23,7 @@ use tracing::warn;
 pub mod executable;
 pub mod runtime;
 
-pub use runtime::{Exit, Host, HostEvent, RoundReport, watch_config_file};
+pub use runtime::{Delivery, Exit, Host, HostEvent, RoundReport, watch_config_file};
 
 /// How often a host records that it is alive.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
