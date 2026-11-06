@@ -30,6 +30,8 @@ use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
 use aven_host::config::{AppConfig, RemindersConfig, config_file_path, resolve_blob_dir};
 use aven_host::config_edit;
 use aven_host::gist::create_secret_gist;
+use aven_host::host::{self, Election, Host, HostEvent, HostState, Role, RoundReport, Seat};
+use aven_host::reminders::{Notification, ReminderSender};
 use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
 use aven_host::store::{
@@ -51,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
-use tokio::sync::{Notify, Semaphore, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{
     Instant, MissedTickBehavior, interval, interval_at, sleep, sleep_until, timeout,
@@ -309,6 +311,10 @@ struct Actor {
     /// Where `launch_config` is read from, and when it last changed there.
     config_file: Option<(PathBuf, Option<SystemTime>)>,
     launch_path: PathBuf,
+    /// The config the background host follows, sent on every change.
+    host_config: watch::Sender<AppConfig>,
+    /// The running version, which a host started here records.
+    version: String,
     background_sync: Option<JoinHandle<()>>,
     /// Set while user-started work holds the sync slot.
     sync_busy: Arc<AtomicBool>,
@@ -393,6 +399,8 @@ impl Actor {
             database,
             launch_config: config.clone(),
             config_file: None,
+            host_config: watch::channel(hosted(&config)).0,
+            version: env!("CARGO_PKG_VERSION").to_string(),
             config,
             replies,
             sync_wake,
@@ -421,18 +429,24 @@ impl Actor {
         });
     }
 
+    /// Starts background work for the open database: as its host when this
+    /// app gets the host lock, otherwise as a client that only syncs.
     fn spawn_background_sync(&mut self) {
-        if self.config.sync_is_allowed() {
-            crate::startup::mark("background-sync-start");
-            self.background_sync = Some(tokio::spawn(run_sync(
-                self.store.database(),
-                self.config.clone(),
-                self.storage.clone(),
-                self.sync_wake.clone(),
-                self.sync_stop.clone(),
-                self.replies.clone(),
-            )));
-        }
+        crate::startup::mark("background-sync-start");
+        self.host_config.send_replace(hosted(&self.config));
+        let blob_dir = self.blob_dir();
+        self.background_sync = Some(tokio::spawn(run_background(Background {
+            database: self.store.database(),
+            path: self.database.clone(),
+            hostable: self.database == self.launch_path && blob_dir.is_ok(),
+            config: self.host_config.subscribe(),
+            blob_dir: blob_dir.unwrap_or_default(),
+            version: self.version.clone(),
+            storage: self.storage.clone(),
+            wake: self.sync_wake.clone(),
+            stop: self.sync_stop.clone(),
+            replies: self.replies.clone(),
+        })));
     }
 
     fn sync_work(&self) -> SyncWork {
@@ -616,6 +630,7 @@ impl Actor {
                 }
                 self.config.reminders = config.clone();
                 self.launch_config.reminders = config;
+                self.host_config.send_replace(hosted(&self.config));
                 "Reminders saved".to_string()
             }
         })
@@ -638,6 +653,7 @@ impl Actor {
             Ok(config) => {
                 self.config = sync_ops::config_for(&self.database, &self.launch_path, &config);
                 self.launch_config = config;
+                self.host_config.send_replace(hosted(&self.config));
                 true
             }
             Err(error) => {
@@ -2517,8 +2533,210 @@ impl Actor {
     }
 }
 
-/// Runs background rounds until the app quits. The daemon's enable flag is not
+/// The config a host in this app runs on. The daemon's enable flag is not
 /// read: a running app syncs on its own, and `NotSetUp` idles a local database.
+fn hosted(config: &AppConfig) -> AppConfig {
+    let mut config = config.clone();
+    config.sync.enabled = true;
+    config
+}
+
+/// What the open database's background work needs.
+struct Background {
+    database: Database,
+    path: PathBuf,
+    /// Whether this is the configured database, the one the daemon and the
+    /// wake address belong to. Only it is hosted here.
+    hostable: bool,
+    config: watch::Receiver<AppConfig>,
+    blob_dir: PathBuf,
+    version: String,
+    storage: Option<Arc<dyn ProtectedStorage>>,
+    wake: Arc<Notify>,
+    stop: Arc<Notify>,
+    replies: mpsc::UnboundedSender<Reply>,
+}
+
+impl Background {
+    fn send(&self, body: ReplyBody) {
+        let _ = self.replies.send(Reply { request: 0, body });
+    }
+
+    fn sync(&self) -> DaemonSync {
+        self.storage
+            .clone()
+            .map_or_else(DaemonSync::default, DaemonSync::with_storage)
+    }
+}
+
+/// Hosts the database while this app holds its host lock. Until it gets the
+/// lock it syncs as a client and tries again now and then, so it takes over
+/// once another host stops.
+async fn run_background(mut background: Background) {
+    let mut told = None;
+    loop {
+        if background.hostable
+            && let Some(seat) = try_to_host(&background, &mut told).await
+        {
+            return host_here(background, seat).await;
+        }
+        let config = background.config.borrow_and_update().clone();
+        let retry = background
+            .hostable
+            .then(|| Instant::now() + host::OLD_DAEMON_RETRY);
+        if !config.sync_is_allowed() {
+            tokio::select! {
+                () = background.stop.notified() => return,
+                () = sleep_until(retry.unwrap_or_else(far_future)) => continue,
+            }
+        }
+        match run_sync(
+            background.database.clone(),
+            config,
+            background.storage.clone(),
+            background.wake.clone(),
+            background.stop.clone(),
+            background.replies.clone(),
+            retry,
+        )
+        .await
+        {
+            Client::Stopped => return,
+            Client::Elect => {}
+        }
+    }
+}
+
+fn far_future() -> Instant {
+    Instant::now() + Duration::from_secs(365 * 24 * 60 * 60)
+}
+
+/// Why this app does not host, as last told to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotHosting {
+    OldProcess,
+    Unresponsive,
+}
+
+/// Takes the host lock and wake address if it can. Tells the user, once per
+/// cause, about a host that keeps this app from hosting and needs their help.
+async fn try_to_host(background: &Background, told: &mut Option<NotHosting>) -> Option<Seat> {
+    let wake_addr = background.config.borrow().wake_addr().ok()?;
+    let cause = match host::elect(&background.path, wake_addr).await {
+        Ok(Election::Won(seat)) => return Some(seat),
+        Ok(Election::WakeAddressBusy(_)) => Some(NotHosting::OldProcess),
+        Ok(Election::Taken) => match host::host_state(&background.database).await {
+            Ok(HostState::Unresponsive(status)) => {
+                if *told != Some(NotHosting::Unresponsive) {
+                    *told = Some(NotHosting::Unresponsive);
+                    background.send(ReplyBody::Notice(unresponsive_host(status.as_ref())));
+                }
+                return None;
+            }
+            _ => None,
+        },
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "could not take the host lock");
+            None
+        }
+    };
+    if cause == Some(NotHosting::OldProcess) && *told != cause {
+        *told = cause;
+        background.send(ReplyBody::Notice(
+            Toast::info("An older Aven background process is running").detail(
+                "It keeps reminders to itself, so this app does not send them until it \
+                 stops. Run `aven daemon restart` to start the current version.",
+            ),
+        ));
+    }
+    None
+}
+
+fn unresponsive_host(status: Option<&aven_core::local_state::HostStatus>) -> Toast {
+    let detail = match status {
+        Some(status) => format!(
+            "{} (process {}) still holds the database\u{2019}s background work but stopped \
+             checking in. Sync and reminders may not run until it is restarted.",
+            host::describe_role(&status.role).replace('`', ""),
+            status.pid
+        ),
+        None => "Another process holds the database\u{2019}s background work but has not \
+                 checked in. Sync and reminders may not run until it is restarted."
+            .to_string(),
+    };
+    Toast::error("Aven\u{2019}s background process stopped responding").detail(detail)
+}
+
+/// Posts reminders through the app's own notifications.
+struct AppNotifications(mpsc::UnboundedSender<Reply>);
+
+impl ReminderSender for AppNotifications {
+    fn send(&self, notification: &Notification) -> Result<()> {
+        self.0
+            .send(Reply {
+                request: 0,
+                body: ReplyBody::Remind(notification.clone()),
+            })
+            .map_err(|_| anyhow!("the app is closing"))
+    }
+}
+
+/// Runs the database's host in this app until it quits.
+async fn host_here(background: Background, seat: Seat) {
+    let replies = background.replies.clone();
+    let report = move |body: ReplyBody| {
+        let _ = replies.send(Reply { request: 0, body });
+    };
+    let host = Host {
+        database: background.database.clone(),
+        seat,
+        role: Role::Desktop,
+        version: background.version.clone(),
+        config: background.config.clone(),
+        blob_dir: background.blob_dir.clone(),
+        sync: background.sync(),
+        reminders: Arc::new(AppNotifications(background.replies.clone())),
+        events: Box::new(move |event| {
+            let HostEvent::Round(round) = event else {
+                return;
+            };
+            report(ReplyBody::Sync(match round {
+                RoundReport::Completed(outcome) => {
+                    if outcome.received_changes > 0 {
+                        report(ReplyBody::SyncArrived(outcome.received_changes));
+                    }
+                    SyncHealth::Synced
+                }
+                RoundReport::NotSetUp => SyncHealth::NotSetUp,
+                RoundReport::Deferred => SyncHealth::Waiting,
+                RoundReport::VaultDeleted => SyncHealth::VaultDeleted,
+                RoundReport::Failed(error) => SyncHealth::Failed(sync_ops::explain(
+                    ErrorAction::General,
+                    error,
+                    "Sync couldn't finish. Try again.",
+                )),
+            }));
+        }),
+        wake: background.wake.clone(),
+        debounce: SYNC_DEBOUNCE,
+        executable: None,
+    };
+    let stop = background.stop.clone();
+    if let Err(error) = host.run(stop.notified()).await {
+        tracing::warn!(error = %format!("{error:#}"), "the background host stopped");
+    }
+}
+
+/// How client syncing ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Client {
+    Stopped,
+    /// It is time to try to become the host.
+    Elect,
+}
+
+/// Runs background rounds while another process hosts the database, until the
+/// app quits or `elect_at` comes.
 async fn run_sync(
     database: Database,
     config: AppConfig,
@@ -2526,7 +2744,8 @@ async fn run_sync(
     wake: Arc<Notify>,
     stop: Arc<Notify>,
     replies: mpsc::UnboundedSender<Reply>,
-) {
+    elect_at: Option<Instant>,
+) -> Client {
     let interval = Duration::from_secs(config.sync_interval_seconds());
     let mut scheduler = SyncScheduler::new(interval, Instant::now());
     let mut sync = storage.map_or_else(DaemonSync::default, DaemonSync::with_storage);
@@ -2536,10 +2755,12 @@ async fn run_sync(
             body: ReplyBody::Sync(health),
         });
     };
+    let elect_at = elect_at.unwrap_or_else(far_future);
     loop {
         tokio::select! {
             biased;
-            () = stop.notified() => return,
+            () = stop.notified() => return Client::Stopped,
+            () = sleep_until(elect_at) => return Client::Elect,
             () = wake.notified() => {
                 sleep(SYNC_DEBOUNCE).await;
                 scheduler.wake(false, Instant::now());
@@ -2667,6 +2888,7 @@ pub(crate) fn prepare(
                     }
                 }
                 let launch_config = launch.config;
+                let launch_version = launch.version;
                 let mut actor = Actor::new(
                     store,
                     launch.database,
@@ -2682,6 +2904,7 @@ pub(crate) fn prepare(
                     (path, changed)
                 });
                 actor.welcome = welcome;
+                actor.version = launch_version;
                 actor.spawn_background_sync();
                 actor.send_list().await;
                 actor.run(requests_rx).await;
@@ -2782,7 +3005,7 @@ mod tests {
         let (directory, mut actor, _replies) = actor("Keep").await;
         actor.config = AppConfig::default();
         let (replies, _received) = mpsc::unbounded_channel();
-        actor.background_sync = Some(tokio::spawn(run_sync(
+        let client = run_sync(
             actor.store.database(),
             AppConfig::default(),
             Some(Arc::new(
@@ -2793,10 +3016,117 @@ mod tests {
             Arc::new(Notify::new()),
             actor.sync_stop.clone(),
             replies,
-        )));
+            None,
+        );
+        actor.background_sync = Some(tokio::spawn(async move {
+            assert_eq!(client.await, Client::Stopped);
+        }));
         tokio::time::timeout(Duration::from_secs(5), actor.quit())
             .await
             .expect("sync stopped");
+    }
+
+    /// Waits for a reply `pick` accepts, skipping others.
+    async fn reply_matching<T>(
+        replies: &mut mpsc::UnboundedReceiver<Reply>,
+        mut pick: impl FnMut(ReplyBody) -> Option<T>,
+    ) -> T {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let reply = replies.recv().await.expect("the actor replies");
+                if let Some(found) = pick(reply.body) {
+                    return found;
+                }
+            }
+        })
+        .await
+        .expect("the expected reply arrived")
+    }
+
+    #[tokio::test]
+    async fn the_app_hosts_its_database_and_posts_reminders_itself() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        let mut due = draft("Pay invoice");
+        due.due_on = Some(Local::now().format("%Y-%m-%d").to_string());
+        actor.store.create_task(due, None).await.unwrap();
+        actor.config.reminders.enabled = true;
+        actor.config.reminders.digest_time = "00:00".to_string();
+        actor.spawn_background_sync();
+
+        let reminder = reply_matching(&mut replies, |body| match body {
+            ReplyBody::Remind(notification) => Some(notification),
+            _ => None,
+        })
+        .await;
+        assert_eq!(reminder.title, "1 due today");
+        let status = actor.store.database().host_status().await.unwrap().unwrap();
+        assert_eq!(status.role, "desktop");
+        assert_eq!(status.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(status.capabilities, ["sync", "reminders"]);
+        assert!(host::lock_is_held(&actor.database).unwrap());
+
+        timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
+        assert!(!host::lock_is_held(&actor.database).unwrap());
+    }
+
+    #[tokio::test]
+    async fn the_app_only_syncs_while_another_host_holds_the_lock() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        let Election::Won(_daemon) = host::elect(&actor.database, "127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap()
+        else {
+            panic!("the other host wins");
+        };
+        let mut due = draft("Pay invoice");
+        due.due_on = Some(Local::now().format("%Y-%m-%d").to_string());
+        actor.store.create_task(due, None).await.unwrap();
+        actor.config.reminders.enabled = true;
+        actor.config.reminders.digest_time = "00:00".to_string();
+        actor.spawn_background_sync();
+
+        // A client round reports health, and no reminder comes before it.
+        let health = reply_matching(&mut replies, |body| match body {
+            ReplyBody::Remind(_) => panic!("a client sent a reminder"),
+            ReplyBody::Sync(health) => Some(health),
+            _ => None,
+        })
+        .await;
+        assert_eq!(health, SyncHealth::NotSetUp);
+        assert_eq!(actor.store.database().host_status().await.unwrap(), None);
+        timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_older_process_on_the_wake_address_is_reported_once() {
+        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        let old_daemon = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        actor.config.daemon.wake_addr = Some(old_daemon.local_addr().unwrap().to_string());
+        actor.spawn_background_sync();
+
+        let notice = reply_matching(&mut replies, |body| match body {
+            ReplyBody::Notice(toast) => Some(toast),
+            _ => None,
+        })
+        .await;
+        assert_eq!(notice.title, "An older Aven background process is running");
+        assert!(!host::lock_is_held(&actor.database).unwrap());
+        assert_eq!(actor.store.database().host_status().await.unwrap(), None);
+        timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn another_database_is_never_hosted_here() {
+        let (directory, mut actor, mut replies) = actor("Keep").await;
+        let other = directory.path().join("other.sqlite");
+        actor.switch_database(other.clone()).await.unwrap();
+        reply_matching(&mut replies, |body| match body {
+            ReplyBody::Sync(_) => Some(()),
+            _ => None,
+        })
+        .await;
+        assert!(!host::lock_is_held(&other).unwrap());
+        timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
     }
 
     #[tokio::test]
@@ -2942,9 +3272,10 @@ mod tests {
             runtime.handle().clone(),
             Launch {
                 database: path,
-                config: AppConfig::default(),
+                config: aven_host::test_support::isolated_config(),
                 config_file: None,
                 storage: None,
+                version: "0.0.0".to_string(),
             },
             Some(SavedView {
                 view: "Done".to_string(),
@@ -3001,9 +3332,10 @@ mod tests {
                     handle,
                     Launch {
                         database: path,
-                        config: AppConfig::default(),
+                        config: aven_host::test_support::isolated_config(),
                         config_file: None,
                         storage: None,
+                        version: "0.0.0".to_string(),
                     },
                     None
                 ))
@@ -3037,13 +3369,14 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let launch = Launch {
             database: path.clone(),
-            config: AppConfig::default(),
+            config: aven_host::test_support::isolated_config(),
             config_file: None,
             storage: Some(Arc::new(
                 aven_core::sync::client::keys::FileProtectedStorage::new(
                     directory.path().join("keys"),
                 ),
             )),
+            version: "0.0.0".to_string(),
         };
         let (mut session, mut replies) = start(runtime.handle().clone(), launch).unwrap();
         assert_eq!(session.database_error.as_ref().unwrap().path, path);
@@ -3230,7 +3563,7 @@ mod tests {
         let actor = Actor::new(
             store,
             path,
-            AppConfig::default(),
+            aven_host::test_support::isolated_config(),
             replies,
             Arc::new(Notify::new()),
             Some(Arc::new(

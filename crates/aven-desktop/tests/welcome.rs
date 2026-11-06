@@ -17,11 +17,12 @@ use tempfile::TempDir;
 fn start(directory: &TempDir) -> (Session, Replies) {
     let launch = adapter::Launch {
         database: directory.path().join("db.sqlite"),
-        config: AppConfig::default(),
+        config: aven_host::test_support::isolated_config(),
         config_file: None,
         storage: Some(Arc::new(FileProtectedStorage::new(
             directory.path().join("keys"),
         ))),
+        version: "0.0.0".to_string(),
     };
     adapter::start(tokio::runtime::Handle::current(), launch).unwrap()
 }

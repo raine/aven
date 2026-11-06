@@ -204,6 +204,10 @@ pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
         config,
         config_file: config_file_path().ok(),
         storage: None,
+        version: updates.as_ref().map_or_else(
+            || env!("CARGO_PKG_VERSION").to_string(),
+            |updates| updates.version(),
+        ),
     };
     crate::startup::mark("runtime-ready");
     let saved = Prefs::load(&prefs);

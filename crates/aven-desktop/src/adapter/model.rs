@@ -9,6 +9,7 @@ use aven_core::recurrence::{RecurrenceSeriesId, RecurrenceSeriesState};
 use aven_core::sync::client::engine::LocalPhase;
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::config::{AppConfig, RemindersConfig};
+use aven_host::reminders::Notification;
 use aven_host::store::{ConflictTarget, TaskQuery};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -878,6 +879,8 @@ pub enum ReplyBody {
     Sync(SyncHealth),
     /// A background round brought changes in.
     SyncArrived(usize),
+    /// A reminder for the app to post, since it hosts this database.
+    Remind(Notification),
     SyncEvent(SyncEvent),
     Settings(Box<SettingsData>),
     /// Another database is open now, with how many tasks the last one held.
@@ -907,6 +910,8 @@ pub struct Launch {
     /// Replaces the installation's protected key storage. `None` keeps it, so
     /// each host mode decides on Keychain access itself.
     pub storage: Option<Arc<dyn ProtectedStorage>>,
+    /// The running version, which the background host status records.
+    pub version: String,
 }
 
 pub type Replies = mpsc::UnboundedReceiver<Reply>;
