@@ -174,71 +174,146 @@ async fn wait_for_update_launch(fingerprint: &Fingerprint) -> Result<bool> {
 
 /// The host inside another long-running process, such as `aven mcp --sync`.
 /// It runs reminders as the daemon would, and keeps running when the
-/// executable changes.
+/// executable changes. While another process hosts the database it is that
+/// host's client instead, and takes over once that process stops.
 pub(crate) struct EmbeddedSync {
-    host: Host,
-}
-
-/// What `aven mcp --sync` became.
-pub(crate) enum Embedded {
-    Host(Box<EmbeddedSync>),
-    /// Another process hosts the database; this one only wakes it after
-    /// writes. Formatted as a log line naming that host.
-    Client(String),
+    database: Database,
+    /// The owner's config, for waking another host.
+    config: AppConfig,
+    /// What a host started here follows.
+    host_config: watch::Receiver<AppConfig>,
+    blob_dir: PathBuf,
+    wake: Arc<Notify>,
+    seat: Option<Seat>,
+    /// Why another process hosts, as a log line naming it.
+    client: Option<String>,
+    retry: Duration,
 }
 
 impl EmbeddedSync {
-    /// Becomes the database's host, so a failure surfaces before the owner
-    /// starts serving. Requesting a worker enables sync for it regardless of
-    /// `sync.enabled`; `AVEN_SYNC_DISABLED` still refuses. When another process
-    /// already hosts the database, the owner becomes its client instead.
+    /// Tries to become the database's host, so a failure surfaces before the
+    /// owner starts serving. Requesting a worker enables sync for it regardless
+    /// of `sync.enabled`; `AVEN_SYNC_DISABLED` still refuses.
     pub(crate) async fn prepare(
         database: Database,
         config: &AppConfig,
         blob_dir: PathBuf,
-    ) -> Result<Embedded> {
+    ) -> Result<Self> {
         config.ensure_sync_allowed()?;
-        let wake_addr = config.wake_addr()?;
-        let seat = match host::elect(database.path(), wake_addr).await? {
-            Election::Won(seat) => seat,
-            Election::Taken => {
-                return Ok(Embedded::Client(format!(
-                    "sync-client reason=host-running host=\"{}\"",
-                    host::describe_host(&database).await
-                )));
-            }
-            Election::WakeAddressBusy(_) => {
-                return Ok(Embedded::Client(format!(
-                    "sync-client reason=wake-address-busy host=\"an older Aven daemon\" wake={wake_addr}"
-                )));
-            }
-        };
-        Ok(Embedded::Host(Box::new(Self {
-            host: Host {
-                database,
-                seat,
-                role: Role::Mcp,
-                version: crate::update::current_version().to_string(),
-                config: follow_config(config, |config| config.sync.enabled = true),
-                blob_dir,
-                sync: DaemonSync::default(),
-                reminders: Arc::new(SystemNotifications),
-                events: Box::new(|_| {}),
-                wake: Arc::new(Notify::new()),
-                debounce: Duration::ZERO,
-                executable: None,
-            },
-        })))
+        let host_config = follow_config(config, |config| config.sync.enabled = true);
+        Self::elect(database, config.clone(), host_config, blob_dir).await
     }
 
-    /// Notifying this requests a round. A notification sent during a round is
-    /// kept and starts the next one.
+    async fn elect(
+        database: Database,
+        config: AppConfig,
+        host_config: watch::Receiver<AppConfig>,
+        blob_dir: PathBuf,
+    ) -> Result<Self> {
+        let wake_addr = config.wake_addr()?;
+        let (seat, client) = match host::elect(database.path(), wake_addr).await? {
+            Election::Won(seat) => (Some(seat), None),
+            Election::Taken => {
+                let host = host::describe_host(&database).await;
+                (
+                    None,
+                    Some(format!("sync-client reason=host-running host=\"{host}\"")),
+                )
+            }
+            Election::WakeAddressBusy(_) => (
+                None,
+                Some(format!(
+                    "sync-client reason=wake-address-busy host=\"an older Aven daemon\" wake={wake_addr}"
+                )),
+            ),
+        };
+        Ok(Self {
+            database,
+            config,
+            host_config,
+            blob_dir,
+            wake: Arc::new(Notify::new()),
+            seat,
+            client,
+            retry: host::OLD_DAEMON_RETRY,
+        })
+    }
+
+    /// The log line naming the process that hosts instead of this one, if
+    /// another does.
+    pub(crate) fn client_line(&self) -> Option<&str> {
+        self.client.as_deref()
+    }
+
+    /// Notifying this requests a round, or wakes the host this is a client
+    /// of. A notification sent during a round is kept and starts the next one.
     pub(crate) fn wake(&self) -> Arc<Notify> {
-        self.host.wake.clone()
+        self.wake.clone()
     }
 
     pub(crate) async fn run(self, shutdown: impl Future<Output = ()>) -> Result<()> {
-        self.host.run(shutdown).await.map(drop)
+        let mut shutdown = std::pin::pin!(shutdown);
+        let seat = match self.seat {
+            Some(seat) => seat,
+            None => {
+                let Some(seat) = Self::wait_for_seat(
+                    &self.database,
+                    &self.config,
+                    &self.wake,
+                    self.retry,
+                    shutdown.as_mut(),
+                )
+                .await?
+                else {
+                    return Ok(());
+                };
+                println!(
+                    "sync-host reason=host-stopped lock={}",
+                    host::lock_path(self.database.path()).display()
+                );
+                seat
+            }
+        };
+        let host = Host {
+            database: self.database,
+            seat,
+            role: Role::Mcp,
+            version: crate::update::current_version().to_string(),
+            config: self.host_config,
+            blob_dir: self.blob_dir,
+            sync: DaemonSync::default(),
+            reminders: Arc::new(SystemNotifications),
+            events: Box::new(|_| {}),
+            wake: self.wake,
+            debounce: Duration::ZERO,
+            executable: None,
+        };
+        host.run(shutdown).await.map(drop)
+    }
+
+    /// Wakes the other host on every request and tries the election again
+    /// every `retry`. Returns `None` on shutdown.
+    async fn wait_for_seat(
+        database: &Database,
+        config: &AppConfig,
+        wake: &Notify,
+        retry: Duration,
+        mut shutdown: Pin<&mut impl Future<Output = ()>>,
+    ) -> Result<Option<Seat>> {
+        let wake_addr = config.wake_addr()?;
+        let mut next_election = Instant::now() + retry;
+        loop {
+            tokio::select! {
+                () = shutdown.as_mut() => return Ok(None),
+                () = wake.notified() => wake_if_enabled(config),
+                () = tokio::time::sleep_until(next_election) => {
+                    if let Election::Won(seat) = host::elect(database.path(), wake_addr).await? {
+                        return Ok(Some(seat));
+                    }
+                    next_election = Instant::now() + retry;
+                }
+            }
+        }
     }
 }
 
@@ -291,5 +366,54 @@ async fn move_service_into_bundle() -> bool {
             warn!(status = ?status, "daemon reload exited without stopping the daemon");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_client_hosts_once_the_other_host_releases_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        let (database, _pool) = crate::test_support::open_database(&db).await.unwrap();
+        let blob_dir = dir.path().join("blobs");
+        std::fs::create_dir_all(&blob_dir).unwrap();
+        let other_host = File::create(host::lock_path(&db)).unwrap();
+        other_host.try_lock().unwrap();
+
+        let config = aven_host::test_support::isolated_config();
+        let host_config = watch::channel(config.clone()).1;
+        let mut sync = EmbeddedSync::elect(database.clone(), config, host_config, blob_dir)
+            .await
+            .unwrap();
+        let client = sync.client_line().expect("another process hosts");
+        assert!(client.contains("reason=host-running"), "{client}");
+        sync.retry = Duration::from_millis(20);
+        let (stop, mut stopped) = watch::channel(false);
+        let worker = tokio::spawn(sync.run(async move {
+            let _ = stopped.wait_for(|stop| *stop).await;
+        }));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(database.host_status().await.unwrap(), None);
+        drop(other_host);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = database.host_status().await.unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "the client never took over");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(status.role, "mcp");
+        assert_eq!(status.pid, std::process::id());
+        assert!(host::lock_is_held(&db).unwrap());
+
+        stop.send_replace(true);
+        worker.await.unwrap().unwrap();
     }
 }

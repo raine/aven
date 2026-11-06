@@ -226,7 +226,9 @@ browser `Origin` header are refused, so web pages can't reach the server.
 One process runs sync and reminders for a database at a time. When
 `aven daemon` or Aven Desktop already does, the server still starts, logs a
 `sync-client` line naming that process, and wakes it after each change instead
-of syncing itself. A daemon started after the server waits until it stops.
+of syncing itself. Within 30 seconds of that process stopping, the server takes
+over sync and reminders and logs a `sync-host` line. A daemon started after the
+server waits until it stops.
 
 Keep these limits in mind:
 
