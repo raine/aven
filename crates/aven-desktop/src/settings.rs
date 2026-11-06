@@ -1497,10 +1497,17 @@ impl Root {
             ],
             t,
         ))
+        // The switch stays reachable while it's on, so a config that asks for
+        // background sync without a connection can still be turned off.
+        .when(
+            set_up || self.session.settings_data.background.sync_when_quit,
+            |tab| {
+                tab.child(section("While Aven is quit", t))
+                    .child(group(self.sync_when_quit_rows(cx, t), t))
+            },
+        )
         .when(set_up, |tab| {
-            tab.child(section("While Aven is quit", t))
-                .child(group(self.sync_when_quit_rows(cx, t), t))
-                .child(section("Devices", t))
+            tab.child(section("Devices", t))
                 .child(group(self.device_rows(cx, t), t))
                 .when(unfinished, |tab| {
                     tab.child(
