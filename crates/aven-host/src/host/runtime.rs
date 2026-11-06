@@ -235,7 +235,7 @@ impl Host {
                         warn!(%error, "could not record the host round");
                     }
                     let round = sync.round(&database, &config, ROUND_BUDGET).await;
-                    let report = handle_round(round, &database, &config, &mut scheduler, log).await;
+                    let report = handle_round(round, &database, &config, &mut scheduler, role).await;
                     if matches!(report, RoundReport::Completed(_)) && !scheduler.catching_up() {
                         next_reminder = Instant::now();
                     }
@@ -268,8 +268,9 @@ async fn handle_round(
     database: &Database,
     config: &AppConfig,
     scheduler: &mut SyncScheduler,
-    log: bool,
+    role: Role,
 ) -> RoundReport {
+    let log = role != Role::Desktop;
     let now = Instant::now();
     match round {
         Ok(DaemonRound::Completed(outcome)) => {
@@ -284,6 +285,13 @@ async fn handle_round(
                 .await
             {
                 warn!(%error, "could not persist daemon sync health");
+            }
+            if role == Role::Daemon
+                && let Err(error) = database
+                    .record_background_sync(chrono::Utc::now().timestamp())
+                    .await
+            {
+                warn!(%error, "could not record the background sync");
             }
             scheduler.completed(outcome.more_work_ready(), now);
             RoundReport::Completed(outcome)
