@@ -17,11 +17,13 @@ Aven sends desktop notifications for:
   <img src="/macos-reminder-digest-dark.webp" alt="Illustration of an Aven daily digest notification titled 2 due today, 1 overdue, listing three tasks by ref and title" width="440" height="184" />
 </div>
 
-Reminders come from the background daemon, so they arrive while the TUI and CLI are closed. Turn them on, then restart the daemon, or run `aven daemon install` if it isn't installed yet:
+In Aven Desktop, turn on **Settings › Reminders › Reminders on this Mac**. Aven asks macOS to allow notifications, and a background agent keeps sending reminders after you quit the app. The Reminders page shows whether that agent is running and whether notifications are allowed. See [Aven Desktop in the background](#aven-desktop-in-the-background).
+
+From the terminal, reminders come from the background daemon, so they arrive while the TUI and CLI are closed. Turn them on, and run `aven daemon install` if the daemon isn't installed yet. A running daemon picks up the change by itself:
 
 ```sh
 aven config set reminders.enabled true
-aven daemon restart
+aven daemon install
 ```
 
 Aven sends two kinds of reminder:
@@ -33,7 +35,7 @@ A task that became available more than 24 hours before the daemon noticed, for e
 
 Each device keeps its own record of sent reminders. If several devices run the daemon, each one notifies.
 
-Configure reminders in `config.yaml`, then run `aven daemon restart`:
+Configure reminders in `config.yaml`. A running daemon or app picks up changes to the file:
 
 ```yaml
 reminders:
@@ -42,6 +44,19 @@ reminders:
   due_digest: true      # daily digest of due and overdue tasks
   available: true       # deferred tasks becoming available
 ```
+
+## Aven Desktop in the background
+
+Aven Desktop sends reminders and syncs while it is open. To keep doing so after you quit it, it runs a background agent, listed as **Aven** under **System Settings → General → Login Items & Extensions**. The agent runs while either switch is on:
+
+- **Settings › Reminders › Reminders on this Mac**
+- **Settings › Sync and devices › Sync when Aven is quit**, offered on when you set up or join sync
+
+Turn both off and Aven removes the agent. The first time you quit with one on, Aven says that they continue in the background.
+
+If you turn Aven off in Login Items, Aven leaves the agent off and Settings says it was turned off there; turn it back on in Login Items to resume. `aven daemon uninstall` also turns the agent off for the app, and `aven daemon install` turns it on again. These choices are kept as `background: on` or `background: off` in `config.yaml`.
+
+Aven Desktop requires macOS 13 or later.
 
 ## macOS
 

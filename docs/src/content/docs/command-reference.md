@@ -1297,7 +1297,8 @@ Service management is available on macOS, as a LaunchAgent, and on Linux, as a
 systemd user service named `aven-daemon.service`:
 
 - `install` writes, enables, and starts the service. It refuses while `sync.enabled` and `reminders.enabled` are both off. It records the resolved database, config directory, and executable. On macOS it also records log paths, and an executable inside `Aven.app` is recorded by its bundle path so Login Items lists the daemon as Aven; on Linux output goes to the journal (`journalctl --user -u aven-daemon.service`). `--program` stores an explicit executable path instead of the running binary.
-- `uninstall` stops and removes the service file.
+- `uninstall` stops and removes the service file. With Aven Desktop it also records `background: off`, so the app doesn't install the agent again; `install` records `background: on`.
+- On macOS, a daemon turned off under System Settings › General › Login Items & Extensions stays off: `install`, `restart`, and `repair` refuse to start it, and `daemon status` reports it as blocked with `turned_off_in_login_items`.
 - `restart` restarts the service.
 - `repair` rewrites and restarts an installed service from active configuration. `--if-installed` succeeds without changes when the service is absent. `--program` selects the stored executable path.
 
