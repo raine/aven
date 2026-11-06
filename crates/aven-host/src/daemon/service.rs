@@ -67,6 +67,9 @@ pub struct ServiceStatus {
     /// The agent runs this executable through a path outside Aven.app, so
     /// Login Items does not attribute it to the app.
     pub bundle_migration_pending: Option<bool>,
+    /// The user turned Aven off in System Settings > General > Login Items &
+    /// Extensions, so launchd doesn't run the agent.
+    pub turned_off_in_login_items: Option<bool>,
     pub stdout_path: Option<PathBuf>,
     pub stderr_path: Option<PathBuf>,
 }
@@ -173,6 +176,89 @@ pub fn agent_plist_path(home: &Path) -> PathBuf {
         .join(format!("{LABEL}.plist"))
 }
 
+/// Whether System Settings > General > Login Items & Extensions lets the
+/// agent run. Turning Aven off there stops the agent and keeps launchd from
+/// loading it at login, but leaves its plist and launchd's own enablement as
+/// they were; a plain `launchctl bootstrap` would still start it.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginItem {
+    Allowed,
+    /// The user turned Aven off there. Only they can turn it on again.
+    TurnedOff,
+    /// The system can't say, as before macOS 13.
+    Unknown,
+}
+
+/// Why the agent was not started: the user turned Aven off in Login Items.
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub struct TurnedOffInLoginItems;
+
+#[cfg(target_os = "macos")]
+impl std::fmt::Display for TurnedOffInLoginItems {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "error daemon-turned-off-in-login-items hint=\"turn Aven on in System Settings > General > Login Items & Extensions\"",
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl std::error::Error for TurnedOffInLoginItems {}
+
+/// The agent as Aven Desktop shows and manages it.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentStatus {
+    /// The plist exists.
+    pub installed: bool,
+    /// The executable the plist runs, when it names one.
+    pub program: Option<PathBuf>,
+    pub loaded: bool,
+    pub running: bool,
+    pub login_item: LoginItem,
+}
+
+#[cfg(target_os = "macos")]
+pub fn agent_status() -> Result<AgentStatus> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    agent_status_with_runner(&SystemRunner, &spec)
+}
+
+/// What [`ensure_agent`] did.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ensured {
+    /// The agent was already installed as it should be and loaded.
+    Unchanged,
+    /// The agent was installed, rewritten or loaded.
+    Started,
+    /// The user turned Aven off in Login Items, so it was left off.
+    TurnedOff,
+}
+
+/// Installs the agent for the database at `db_path`, or brings an installed
+/// one up to date, leaving a current and loaded agent running. The
+/// environment of an installed plist for the same program and database is
+/// kept, so the app and `aven daemon install` from a shell don't rewrite each
+/// other's. Never starts an agent the user turned off in Login Items.
+#[cfg(target_os = "macos")]
+pub fn ensure_agent(db_path: PathBuf, config: &AppConfig) -> Result<Ensured> {
+    validate_install_config(config)?;
+    let spec = ServiceSpec::from_install_args(db_path, None)?;
+    ensure_with_runner(&SystemRunner, &SystemSleeper, &spec)
+}
+
+/// Stops the agent and removes its plist when it runs `program`. Leaves
+/// launchd's enablement alone, so a later install starts cleanly. Returns
+/// whether it removed one.
+#[cfg(target_os = "macos")]
+pub fn remove_agent(program: &Path) -> Result<bool> {
+    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    remove_with_runner(&SystemRunner, &SystemSleeper, &spec, program)
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn reload_service_definition() -> Result<()> {
     anyhow::bail!(
@@ -214,6 +300,10 @@ pub fn status_snapshot() -> Result<ServiceStatus> {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 trait LaunchctlRunner {
     fn run(&self, args: &[&str]) -> Result<Output>;
+
+    /// What Login Items says about the agent whose plist is at `plist`.
+    #[cfg(target_os = "macos")]
+    fn login_item(&self, plist: &Path) -> LoginItem;
 }
 
 #[cfg(target_os = "macos")]
@@ -240,6 +330,10 @@ impl LaunchctlRunner for SystemRunner {
             .args(args)
             .output()
             .with_context(|| format!("run launchctl {}", args.join(" ")))
+    }
+
+    fn login_item(&self, plist: &Path) -> LoginItem {
+        login_items::status(plist)
     }
 }
 
@@ -384,6 +478,8 @@ fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
             && paths_resolve_to_same_file(program, &current_executable)
     });
     let runtime = service_runtime(runner, &spec)?;
+    let turned_off_in_login_items = (runtime.loaded || spec.plist_path.exists())
+        .then(|| runner.login_item(&spec.plist_path) == LoginItem::TurnedOff);
     Ok(ServiceStatus {
         platform_supported: true,
         installed: spec.plist_path.exists(),
@@ -394,6 +490,7 @@ fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
         current_executable,
         program_matches_current,
         bundle_migration_pending,
+        turned_off_in_login_items,
         stdout_path: Some(spec.stdout_path),
         stderr_path: Some(spec.stderr_path),
     })
@@ -411,6 +508,7 @@ fn status_with_runner(_runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
         current_executable: std::env::current_exe().unwrap_or_default(),
         program_matches_current: None,
         bundle_migration_pending: None,
+        turned_off_in_login_items: None,
         stdout_path: None,
         stderr_path: None,
     })
@@ -785,10 +883,105 @@ fn reload_service(
     spec: &ServiceSpec,
     plist: &str,
 ) -> Result<()> {
+    if spec.plist_path.exists() {
+        ensure_login_item_allowed(runner, spec)?;
+    }
     let performed_bootout = stop_service(runner, sleeper, spec)?;
     write_plist(spec, plist)?;
     run_launchctl(runner, &["enable", &spec.service_target])?;
     bootstrap_service(runner, sleeper, spec, performed_bootout)
+}
+
+/// Fails with [`TurnedOffInLoginItems`] when the user turned Aven off in
+/// Login Items. Login Items remembers that for the label, also across a
+/// removed and rewritten plist.
+#[cfg(target_os = "macos")]
+fn ensure_login_item_allowed(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<()> {
+    if runner.login_item(&spec.plist_path) == LoginItem::TurnedOff {
+        return Err(TurnedOffInLoginItems.into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn agent_status_with_runner(
+    runner: &impl LaunchctlRunner,
+    spec: &ServiceSpec,
+) -> Result<AgentStatus> {
+    let runtime = service_runtime(runner, spec)?;
+    Ok(AgentStatus {
+        installed: spec.plist_path.exists(),
+        program: read_plist_program(&spec.plist_path)?,
+        loaded: runtime.loaded,
+        running: runtime.running == Some(true),
+        login_item: runner.login_item(&spec.plist_path),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_with_runner(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+) -> Result<Ensured> {
+    let existing = match std::fs::read_to_string(&spec.plist_path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).with_context(|| format!("read {}", spec.plist_path.display()));
+        }
+    };
+    let spec = existing
+        .as_deref()
+        .and_then(|text| spec.with_plist_settings(text))
+        .filter(|kept| {
+            paths_resolve_to_same_file(&kept.executable, &spec.executable)
+                && kept.db_path == spec.db_path
+        })
+        .map(|kept| ServiceSpec {
+            executable: spec.executable.clone(),
+            ..kept
+        })
+        .unwrap_or_else(|| spec.clone());
+    let plist = render_plist(&spec);
+    let result = if existing.as_deref() == Some(plist.as_str()) {
+        if service_is_loaded(runner, &spec)? {
+            return Ok(Ensured::Unchanged);
+        }
+        ensure_login_item_allowed(runner, &spec).and_then(|()| {
+            run_launchctl(runner, &["enable", &spec.service_target])?;
+            bootstrap_service(runner, sleeper, &spec, false)
+        })
+    } else {
+        reload_service(runner, sleeper, &spec, &plist)
+    };
+    match result {
+        Ok(()) => Ok(Ensured::Started),
+        Err(error) if error.is::<TurnedOffInLoginItems>() => Ok(Ensured::TurnedOff),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn remove_with_runner(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+    program: &Path,
+) -> Result<bool> {
+    let Some(installed) = read_plist_program(&spec.plist_path)? else {
+        return Ok(false);
+    };
+    if !paths_resolve_to_same_file(&installed, program) && installed != program {
+        return Ok(false);
+    }
+    stop_service(runner, sleeper, spec)?;
+    match std::fs::remove_file(&spec.plist_path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(error).with_context(|| format!("remove {}", spec.plist_path.display()))
+        }
+        _ => Ok(true),
+    }
 }
 
 /// Boots out a loaded service and waits until launchd releases it. Returns
@@ -836,6 +1029,7 @@ fn bootstrap_service(
     spec: &ServiceSpec,
     performed_bootout: bool,
 ) -> Result<()> {
+    ensure_login_item_allowed(runner, spec)?;
     let args = ["bootstrap", spec.domain.as_str(), spec.plist_path_str()?];
     for retry in 0..=BOOTSTRAP_RETRY_DELAYS.len() {
         let output = runner.run(&args)?;
@@ -997,6 +1191,83 @@ fn render_plist_with(spec: &ServiceSpec, keep_alive: KeepAlive) -> String {
 #[cfg(target_os = "macos")]
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap_or("")
+}
+
+/// `SMAppService`'s view of a hand-written LaunchAgent, which is what Login
+/// Items shows. Readable without privileges, unlike the BTM records.
+#[cfg(target_os = "macos")]
+mod login_items {
+    use std::ffi::{CString, c_char, c_void};
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::path::Path;
+
+    use super::LoginItem;
+
+    #[link(name = "ServiceManagement", kind = "framework")]
+    unsafe extern "C" {}
+    #[link(name = "Foundation", kind = "framework")]
+    unsafe extern "C" {}
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_msgSend();
+        fn objc_autoreleasePoolPush() -> *mut c_void;
+        fn objc_autoreleasePoolPop(pool: *mut c_void);
+    }
+
+    /// `SMAppServiceStatusRequiresApproval`. Login Items reports a legacy
+    /// agent the user turned off this way; never-seen, enabled and missing
+    /// plists report the other statuses.
+    const REQUIRES_APPROVAL: isize = 2;
+
+    pub(super) fn status(plist: &Path) -> LoginItem {
+        let Ok(path) = CString::new(plist.as_os_str().as_bytes()) else {
+            return LoginItem::Unknown;
+        };
+        // SAFETY: each class and selector exists from macOS 13, checked by
+        // `SMAppService` being present, and each `objc_msgSend` is cast to
+        // the signature of the method it sends. The pool releases the
+        // autoreleased string and URL.
+        unsafe {
+            let service = objc_getClass(c"SMAppService".as_ptr());
+            if service.is_null() {
+                return LoginItem::Unknown;
+            }
+            let pool = objc_autoreleasePoolPush();
+            let send_ptr: extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let send_object: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let send_status: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> isize =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let string = send_ptr(
+                objc_getClass(c"NSString".as_ptr()),
+                sel_registerName(c"stringWithUTF8String:".as_ptr()),
+                path.as_ptr(),
+            );
+            let url = send_object(
+                objc_getClass(c"NSURL".as_ptr()),
+                sel_registerName(c"fileURLWithPath:".as_ptr()),
+                string,
+            );
+            let status = if url.is_null() {
+                None
+            } else {
+                Some(send_status(
+                    service,
+                    sel_registerName(c"statusForLegacyURL:".as_ptr()),
+                    url,
+                ))
+            };
+            objc_autoreleasePoolPop(pool);
+            match status {
+                Some(REQUIRES_APPROVAL) => LoginItem::TurnedOff,
+                Some(_) => LoginItem::Allowed,
+                None => LoginItem::Unknown,
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1478,6 +1749,112 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ensure_installs_and_starts_a_missing_agent() {
+        let spec = test_spec();
+        let runner = FakeRunner::new(vec![absent(), success(), success()]);
+        let sleeper = RecordingSleeper::default();
+        assert_eq!(
+            ensure_with_runner(&runner, &sleeper, &spec).unwrap(),
+            Ensured::Started
+        );
+        assert_eq!(
+            std::fs::read_to_string(&spec.plist_path).unwrap(),
+            render_plist(&spec)
+        );
+        assert_eq!(
+            runner.commands(),
+            [
+                vec!["print", "gui/501/com.raine.aven.daemon"],
+                vec!["enable", "gui/501/com.raine.aven.daemon"],
+                vec!["bootstrap", "gui/501", spec.plist_path.to_str().unwrap()],
+            ]
+        );
+    }
+
+    #[test]
+    fn ensure_leaves_a_current_loaded_agent_and_keeps_its_environment() {
+        let mut spec = test_spec();
+        spec.executable = PathBuf::from("/bin/sh");
+        let mut installed = spec.clone();
+        installed.path_env = "/custom/bin:/usr/bin".to_string();
+        write_plist(&installed, &render_plist(&installed)).unwrap();
+        let runner = FakeRunner::new(vec![success()]);
+        assert_eq!(
+            ensure_with_runner(&runner, &RecordingSleeper::default(), &spec).unwrap(),
+            Ensured::Unchanged
+        );
+        assert_eq!(
+            std::fs::read_to_string(&spec.plist_path).unwrap(),
+            render_plist(&installed)
+        );
+        assert_eq!(
+            runner.commands(),
+            [["print", "gui/501/com.raine.aven.daemon"]]
+        );
+    }
+
+    #[test]
+    fn ensure_never_starts_an_agent_turned_off_in_login_items() {
+        let spec = test_spec();
+        write_plist(&spec, &render_plist(&spec)).unwrap();
+        let runner = FakeRunner::new(vec![absent()]).turned_off();
+        let sleeper = RecordingSleeper::default();
+        assert_eq!(
+            ensure_with_runner(&runner, &sleeper, &spec).unwrap(),
+            Ensured::TurnedOff
+        );
+        assert_eq!(
+            runner.commands(),
+            [["print", "gui/501/com.raine.aven.daemon"]]
+        );
+
+        let stale = "<plist/>";
+        std::fs::write(&spec.plist_path, stale).unwrap();
+        let runner = FakeRunner::new(vec![]).turned_off();
+        assert_eq!(
+            ensure_with_runner(&runner, &sleeper, &spec).unwrap(),
+            Ensured::TurnedOff
+        );
+        assert!(runner.commands().is_empty());
+        assert_eq!(std::fs::read_to_string(&spec.plist_path).unwrap(), stale);
+    }
+
+    #[test]
+    fn bootstrap_refuses_an_agent_turned_off_in_login_items() {
+        let spec = test_spec();
+        let runner = FakeRunner::new(vec![]).turned_off();
+        let error =
+            bootstrap_service(&runner, &RecordingSleeper::default(), &spec, true).unwrap_err();
+        assert!(error.is::<TurnedOffInLoginItems>(), "{error:#}");
+        assert!(error.to_string().contains("Login Items"));
+        assert!(runner.commands().is_empty());
+    }
+
+    #[test]
+    fn remove_takes_only_the_given_programs_agent_and_keeps_launchds_enablement() {
+        let spec = test_spec();
+        write_plist(&spec, &render_plist(&spec)).unwrap();
+        let sleeper = RecordingSleeper::default();
+        let runner = FakeRunner::new(vec![]);
+        assert!(!remove_with_runner(&runner, &sleeper, &spec, Path::new("/other/aven")).unwrap());
+        assert!(spec.plist_path.exists());
+        assert!(runner.commands().is_empty());
+
+        let runner = FakeRunner::new(vec![success(), success(), absent()]);
+        assert!(remove_with_runner(&runner, &sleeper, &spec, &spec.executable).unwrap());
+        assert!(!spec.plist_path.exists());
+        assert_eq!(
+            runner.commands(),
+            [
+                ["print", "gui/501/com.raine.aven.daemon"],
+                ["bootout", "gui/501/com.raine.aven.daemon"],
+                ["print", "gui/501/com.raine.aven.daemon"],
+            ]
+        );
+        assert!(!remove_with_runner(&runner, &sleeper, &spec, &spec.executable).unwrap());
+    }
+
     fn test_spec() -> ServiceSpec {
         let dir = tempfile::tempdir().unwrap().keep();
         ServiceSpec {
@@ -1499,6 +1876,7 @@ mod tests {
     struct FakeRunner {
         outputs: Mutex<Vec<Output>>,
         commands: Mutex<Vec<Vec<String>>>,
+        login_item: LoginItem,
     }
 
     #[derive(Default)]
@@ -1524,7 +1902,13 @@ mod tests {
             Self {
                 outputs: Mutex::new(outputs),
                 commands: Mutex::new(Vec::new()),
+                login_item: LoginItem::Allowed,
             }
+        }
+
+        fn turned_off(mut self) -> Self {
+            self.login_item = LoginItem::TurnedOff;
+            self
         }
 
         fn commands(&self) -> Vec<Vec<String>> {
@@ -1539,6 +1923,10 @@ mod tests {
                 .unwrap()
                 .push(args.iter().map(|arg| arg.to_string()).collect());
             Ok(self.outputs.lock().unwrap().pop().unwrap_or_else(success))
+        }
+
+        fn login_item(&self, _plist: &Path) -> LoginItem {
+            self.login_item
         }
     }
 
