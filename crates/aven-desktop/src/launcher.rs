@@ -287,15 +287,10 @@ pub fn receive(event: LaunchEvent, cx: &mut App) {
     }
 }
 
-/// The tag of a created task's notification, which a click hands back.
+/// The tag of a created task's notification, which a click hands back. A
+/// later one for the same task replaces it.
 fn created_tag(workspace: &str, task: &str) -> String {
-    format!("task:{workspace}:{task}")
-}
-
-/// The workspace key and task id a notification tag names.
-pub fn tagged_task(tag: &str) -> Option<(String, String)> {
-    let (workspace, task) = tag.strip_prefix("task:")?.rsplit_once(':')?;
-    Some((workspace.to_string(), task.to_string()))
+    aven_host::notify::task_tag(workspace, task, "created")
 }
 
 /// What a created task's notification says under its title.
@@ -1655,10 +1650,12 @@ mod tests {
     fn notification_tags_name_the_task_and_its_workspace() {
         let tag = created_tag("work", "01JABC");
         assert_eq!(
-            tagged_task(&tag),
-            Some(("work".to_string(), "01JABC".to_string()))
+            aven_host::notify::target(&tag),
+            Some(aven_host::notify::Target::Task {
+                workspace: "work".to_string(),
+                task: "01JABC".to_string(),
+            })
         );
-        assert_eq!(tagged_task("launch-failed:3"), None);
     }
 
     #[test]
