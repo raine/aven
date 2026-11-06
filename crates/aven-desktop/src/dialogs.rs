@@ -246,6 +246,8 @@ pub enum ConfirmAction {
     },
     /// Puts the draft Add Task kept for this agent job in Add Task.
     OpenKeptDraft(u64),
+    /// Quits after saying what keeps running. Cancel opens Settings instead.
+    Quit,
 }
 
 pub struct Layer {

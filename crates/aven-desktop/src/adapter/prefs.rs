@@ -31,6 +31,8 @@ pub struct Prefs {
     pub view: Option<SavedView>,
     pub row_fields: RowFields,
     pub launcher: LauncherPrefs,
+    /// The first Quit with a background feature on said they keep running.
+    pub quit_notice_shown: bool,
 }
 
 /// The quick-capture launcher's shortcut and where it last sent tasks. No
@@ -121,6 +123,7 @@ impl Default for Prefs {
             view: None,
             row_fields: RowFields::default(),
             launcher: LauncherPrefs::default(),
+            quit_notice_shown: false,
         }
     }
 }

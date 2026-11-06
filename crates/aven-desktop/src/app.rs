@@ -124,7 +124,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &actions::Quit, cx| {
         cx.defer(|cx| {
             if cx.has_global::<MainWindow>() {
-                with_root(cx, Root::quit);
+                with_root(cx, Root::ask_quit);
             } else {
                 cx.quit();
             }
