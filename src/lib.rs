@@ -366,6 +366,9 @@ async fn dispatch_standalone(
                 }
                 Some(DaemonSubcommand::Install(args)) => {
                     config.ensure_daemon_has_work()?;
+                    // Desktop keeps the agent in line with the intent.
+                    #[cfg(all(target_os = "macos", feature = "desktop"))]
+                    aven_host::background::set_intent(config::BackgroundIntent::On)?;
                     daemon::install(daemon::ServiceInstallArgs {
                         db_path,
                         config,
@@ -373,7 +376,12 @@ async fn dispatch_standalone(
                     })
                     .map(|service| service.print())
                 }
-                Some(DaemonSubcommand::Uninstall) => daemon::uninstall(),
+                Some(DaemonSubcommand::Uninstall) => {
+                    // Without it, Desktop would install the agent again.
+                    #[cfg(all(target_os = "macos", feature = "desktop"))]
+                    aven_host::background::set_intent(config::BackgroundIntent::Off)?;
+                    daemon::uninstall()
+                }
                 Some(DaemonSubcommand::Restart) => daemon::restart(),
                 Some(DaemonSubcommand::Repair(args)) => daemon::repair(daemon::ServiceRepairArgs {
                     db_path,
