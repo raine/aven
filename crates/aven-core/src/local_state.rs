@@ -266,6 +266,158 @@ impl Database {
     }
 }
 
+/// What the background host of this database says about itself. Only the
+/// holder of the host lock writes it, so it is current only while the lock is
+/// held.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct HostStatus {
+    pub pid: u32,
+    /// Which program hosts: `daemon`, `desktop` or `mcp`.
+    pub role: String,
+    pub version: String,
+    /// Background jobs the host runs, such as `sync` and `reminders`.
+    pub capabilities: Vec<String>,
+    /// Unix seconds.
+    pub started_at: i64,
+    /// Unix seconds of the host's last sign of life.
+    pub heartbeat_at: i64,
+    /// Generation of the last recorded round to start.
+    pub round_started: i64,
+    /// Generation of the last recorded round to finish.
+    pub round_finished: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct HostStatusRow {
+    pid: i64,
+    role: String,
+    version: String,
+    capabilities: String,
+    started_at: i64,
+    heartbeat_at: i64,
+    round_started: i64,
+    round_finished: i64,
+}
+
+impl From<HostStatusRow> for HostStatus {
+    fn from(row: HostStatusRow) -> Self {
+        Self {
+            pid: u32::try_from(row.pid).unwrap_or_default(),
+            role: row.role,
+            version: row.version,
+            capabilities: row
+                .capabilities
+                .split(',')
+                .filter(|capability| !capability.is_empty())
+                .map(str::to_string)
+                .collect(),
+            started_at: row.started_at,
+            heartbeat_at: row.heartbeat_at,
+            round_started: row.round_started,
+            round_finished: row.round_finished,
+        }
+    }
+}
+
+impl Database {
+    pub async fn host_status(&self) -> Result<Option<HostStatus>> {
+        let mut conn = self.acquire_reader().await?;
+        let row = sqlx::query_as::<_, HostStatusRow>(
+            "SELECT pid, role, version, capabilities, started_at, heartbeat_at,
+                    round_started, round_finished
+             FROM local_host_status WHERE id = 1",
+        )
+        .fetch_optional(&mut *conn)
+        .await?;
+        Ok(row.map(Into::into))
+    }
+
+    /// Takes over the status row for a host that just won the host lock. The
+    /// round generations of earlier hosts are kept; the returned status holds
+    /// them.
+    pub async fn record_host_start(
+        &self,
+        pid: u32,
+        role: &str,
+        version: &str,
+        capabilities: &[&str],
+        at: i64,
+    ) -> Result<HostStatus> {
+        let mut conn = self.acquire_writer().await?;
+        let row = sqlx::query_as::<_, HostStatusRow>(
+            "INSERT INTO local_host_status
+                 (id, pid, role, version, capabilities, started_at, heartbeat_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 pid = excluded.pid, role = excluded.role, version = excluded.version,
+                 capabilities = excluded.capabilities, started_at = excluded.started_at,
+                 heartbeat_at = excluded.heartbeat_at
+             RETURNING pid, role, version, capabilities, started_at, heartbeat_at,
+                       round_started, round_finished",
+        )
+        .bind(i64::from(pid))
+        .bind(role)
+        .bind(version)
+        .bind(capabilities.join(","))
+        .bind(at)
+        .bind(at)
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(row.into())
+    }
+
+    pub async fn record_host_capabilities(&self, pid: u32, capabilities: &[&str]) -> Result<()> {
+        self.update_host_status(
+            "UPDATE local_host_status SET capabilities = ? WHERE id = 1 AND pid = ?",
+            capabilities.join(","),
+            pid,
+        )
+        .await
+    }
+
+    pub async fn record_host_heartbeat(&self, pid: u32, at: i64) -> Result<()> {
+        self.update_host_status(
+            "UPDATE local_host_status SET heartbeat_at = ? WHERE id = 1 AND pid = ?",
+            at,
+            pid,
+        )
+        .await
+    }
+
+    pub async fn record_host_round_started(&self, pid: u32, generation: i64) -> Result<()> {
+        self.update_host_status(
+            "UPDATE local_host_status SET round_started = ? WHERE id = 1 AND pid = ?",
+            generation,
+            pid,
+        )
+        .await
+    }
+
+    pub async fn record_host_round_finished(&self, pid: u32, generation: i64) -> Result<()> {
+        self.update_host_status(
+            "UPDATE local_host_status SET round_finished = ? WHERE id = 1 AND pid = ?",
+            generation,
+            pid,
+        )
+        .await
+    }
+
+    /// Writes only while `pid` owns the row, so a host that lost it cannot
+    /// overwrite its successor.
+    async fn update_host_status<T>(&self, sql: &'static str, value: T, pid: u32) -> Result<()>
+    where
+        T: for<'q> sqlx::Encode<'q, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite> + Send,
+    {
+        let mut conn = self.acquire_writer().await?;
+        sqlx::query(sql)
+            .bind(value)
+            .bind(i64::from(pid))
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+}
+
 fn marker_version(value: Option<&str>) -> Option<u32> {
     value?.trim().parse().ok()
 }
@@ -614,5 +766,48 @@ mod tests {
             Some(now)
         );
         assert!(database.triage_reviews().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_status_keeps_generations_across_hosts_and_ignores_former_hosts() {
+        let database = Database::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        assert_eq!(database.host_status().await.unwrap(), None);
+
+        let first = database
+            .record_host_start(10, "daemon", "0.1.0", &["sync", "reminders"], 100)
+            .await
+            .unwrap();
+        assert_eq!(first.capabilities, ["sync", "reminders"]);
+        assert_eq!((first.round_started, first.round_finished), (0, 0));
+        database.record_host_round_started(10, 3).await.unwrap();
+        database.record_host_round_finished(10, 3).await.unwrap();
+        database.record_host_heartbeat(10, 160).await.unwrap();
+
+        let second = database
+            .record_host_start(20, "desktop", "0.2.0", &[], 200)
+            .await
+            .unwrap();
+        assert_eq!((second.pid, second.role.as_str()), (20, "desktop"));
+        assert!(second.capabilities.is_empty());
+        assert_eq!((second.round_started, second.round_finished), (3, 3));
+        assert_eq!(second.heartbeat_at, 200);
+
+        // The former host's late writes do not land on its successor's row.
+        database.record_host_heartbeat(10, 999).await.unwrap();
+        database.record_host_round_started(10, 9).await.unwrap();
+        database
+            .record_host_capabilities(10, &["sync"])
+            .await
+            .unwrap();
+        database
+            .record_host_capabilities(20, &["sync"])
+            .await
+            .unwrap();
+        let status = database.host_status().await.unwrap().unwrap();
+        assert_eq!(status.heartbeat_at, 200);
+        assert_eq!(status.round_started, 3);
+        assert_eq!(status.capabilities, ["sync"]);
     }
 }
