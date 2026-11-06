@@ -510,7 +510,7 @@ impl Setup {
                 changes = changes.child(item("icons/ic-done.svg", line.text.to_string(), t));
                 if line.settings {
                     changes = changes.child(
-                        div().pl(px(26.)).child(
+                        div().pl(px(26.)).flex().child(
                             line_btn(
                                 "setup-notification-settings",
                                 "Open Notification Settings",
