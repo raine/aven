@@ -68,6 +68,8 @@ pub struct HostReport {
 #[serde(rename_all = "snake_case")]
 pub enum HostReportState {
     Running,
+    /// The host lock was taken moments ago and its holder is starting up.
+    Starting,
     /// The host lock is held, but the host stopped recording heartbeats.
     Unresponsive,
     Stopped,
@@ -77,6 +79,7 @@ impl HostReportState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
+            Self::Starting => "starting",
             Self::Unresponsive => "not responding",
             Self::Stopped => "not running",
         }
@@ -188,11 +191,13 @@ impl DaemonStatusReport {
     }
 
     /// A host that holds the lock without a recent heartbeat is a fault. No
-    /// other process takes over from it, so the user has to restart it.
+    /// other process takes over from it, so the user has to restart it. One
+    /// that is still starting is not.
     pub fn with_host(mut self, state: crate::host::HostState) -> Self {
         use crate::host::HostState;
         let (report, status) = match state {
             HostState::Running(status) => (HostReportState::Running, Some(status)),
+            HostState::Starting => (HostReportState::Starting, None),
             HostState::Unresponsive(status) => (HostReportState::Unresponsive, status),
             HostState::Stopped(status) => (HostReportState::Stopped, status),
         };
@@ -390,6 +395,11 @@ mod tests {
             .with_host(crate::host::HostState::Running(status.clone()));
         assert_eq!(running.state, StatusState::Healthy);
         assert_eq!(running.host.unwrap().state, HostReportState::Running);
+
+        let starting = healthy.clone().with_host(crate::host::HostState::Starting);
+        assert_eq!(starting.state, StatusState::Healthy);
+        assert!(starting.guidance.is_empty());
+        assert_eq!(starting.host.unwrap().state, HostReportState::Starting);
 
         let stuck = healthy.with_host(crate::host::HostState::Unresponsive(Some(status)));
         assert_eq!(stuck.state, StatusState::Failed);

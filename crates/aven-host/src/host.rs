@@ -7,11 +7,13 @@
 //! address also keeps out a daemon from before the lock existed, which only
 //! knows the address. Only the lock holder writes the database's host status
 //! row, so a stale heartbeat while the lock is held means the host stopped
-//! responding, and is reported rather than taken over.
+//! responding, and is reported rather than taken over. The host stamps the
+//! lock file's modification time when it takes the lock, which tells a host
+//! that is still starting from one that never recorded its status.
 use std::fs::{File, OpenOptions, TryLockError};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use aven_core::db::Database;
@@ -27,7 +29,8 @@ pub use runtime::{Delivery, Exit, Host, HostEvent, RoundReport, watch_config_fil
 
 /// How often a host records that it is alive.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
-/// A heartbeat older than this, while the lock is held, is a fault.
+/// A heartbeat older than this, while the lock is held, is a fault, and so
+/// is a host that took the lock this long ago without recording its status.
 pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
 /// How often a process that wants to host tries again while an older daemon
 /// holds the wake address.
@@ -119,10 +122,15 @@ pub async fn elect(db: &Path, wake_addr: SocketAddr) -> Result<Election> {
         }
     }
     match UdpSocket::bind(wake_addr).await {
-        Ok(socket) => Ok(Election::Won(Seat {
-            _lock: lock,
-            socket,
-        })),
+        Ok(socket) => {
+            if let Err(error) = lock.set_modified(SystemTime::now()) {
+                warn!(%error, "could not stamp the host lock");
+            }
+            Ok(Election::Won(Seat {
+                _lock: lock,
+                socket,
+            }))
+        }
         Err(error) => Ok(Election::WakeAddressBusy(error)),
     }
 }
@@ -153,8 +161,12 @@ pub enum HostState {
     Stopped(Option<HostStatus>),
     /// The lock is held and the heartbeat is recent.
     Running(HostStatus),
+    /// The lock was taken recently and its holder has not recorded its
+    /// status yet.
+    Starting,
     /// The lock is held, but the host has not recorded a heartbeat lately,
-    /// or not yet written its status.
+    /// or did not record its status in time. The status is the newest row,
+    /// which may be an earlier host's.
     Unresponsive(Option<HostStatus>),
 }
 
@@ -189,15 +201,34 @@ pub async fn host_state(database: &Database) -> Result<HostState> {
     if !lock_is_held(database.path())? {
         return Ok(HostState::Stopped(status));
     }
-    Ok(classify(status, chrono::Utc::now().timestamp()))
+    let taken_at = lock_taken_at(database.path());
+    Ok(classify(status, taken_at, chrono::Utc::now().timestamp()))
 }
 
-fn classify(status: Option<HostStatus>, now: i64) -> HostState {
+/// When the current holder took the host lock of the database at `db`, in
+/// Unix seconds.
+fn lock_taken_at(db: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(lock_path(db)).ok()?.modified().ok()?;
+    let since_epoch = modified.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    i64::try_from(since_epoch.as_secs()).ok()
+}
+
+fn classify(status: Option<HostStatus>, taken_at: Option<i64>, now: i64) -> HostState {
+    let stale_after = HEARTBEAT_STALE_AFTER.as_secs() as i64;
+    // A row recorded before the lock was taken is an earlier host's.
+    let current = |status: &HostStatus| taken_at.is_none_or(|taken| status.started_at >= taken);
     match status {
-        Some(status) if now - status.heartbeat_at <= HEARTBEAT_STALE_AFTER.as_secs() as i64 => {
-            HostState::Running(status)
+        Some(status) if current(&status) => {
+            if now - status.heartbeat_at <= stale_after {
+                HostState::Running(status)
+            } else {
+                HostState::Unresponsive(Some(status))
+            }
         }
-        status => HostState::Unresponsive(status),
+        status => match taken_at {
+            Some(taken) if now - taken <= stale_after => HostState::Starting,
+            _ => HostState::Unresponsive(status),
+        },
     }
 }
 
@@ -338,14 +369,48 @@ mod tests {
     fn a_held_lock_with_a_stale_heartbeat_is_unresponsive() {
         let stale = HEARTBEAT_STALE_AFTER.as_secs() as i64;
         assert!(matches!(
-            classify(Some(status(1_000)), 1_000 + stale),
+            classify(Some(status(1_000)), Some(0), 1_000 + stale),
             HostState::Running(_)
         ));
         assert!(matches!(
-            classify(Some(status(1_000)), 1_001 + stale),
+            classify(Some(status(1_000)), Some(0), 1_001 + stale),
             HostState::Unresponsive(Some(_))
         ));
-        assert_eq!(classify(None, 0), HostState::Unresponsive(None));
+        assert!(matches!(
+            classify(Some(status(1_000)), None, 1_001 + stale),
+            HostState::Unresponsive(Some(_))
+        ));
+        assert_eq!(classify(None, None, 0), HostState::Unresponsive(None));
+    }
+
+    #[test]
+    fn a_host_that_has_not_recorded_its_status_is_starting_for_a_while() {
+        let stale = HEARTBEAT_STALE_AFTER.as_secs() as i64;
+        assert_eq!(classify(None, Some(1_000), 1_000), HostState::Starting);
+        assert_eq!(
+            classify(None, Some(1_000), 1_000 + stale),
+            HostState::Starting
+        );
+        assert_eq!(
+            classify(None, Some(1_000), 1_001 + stale),
+            HostState::Unresponsive(None)
+        );
+        // An earlier host's row, however fresh, does not speak for the new one.
+        let earlier = status(999);
+        assert_eq!(
+            classify(Some(earlier.clone()), Some(1_000), 1_000),
+            HostState::Starting
+        );
+        assert_eq!(
+            classify(Some(earlier.clone()), Some(1_000), 1_001 + stale),
+            HostState::Unresponsive(Some(earlier))
+        );
+        let mut current = status(1_000);
+        current.started_at = 1_000;
+        assert!(matches!(
+            classify(Some(current), Some(1_000), 1_000),
+            HostState::Running(_)
+        ));
     }
 
     #[tokio::test]
@@ -361,10 +426,7 @@ mod tests {
         let Election::Won(seat) = elect(&db, loopback()).await.unwrap() else {
             panic!("the host wins");
         };
-        assert_eq!(
-            host_state(&database).await.unwrap(),
-            HostState::Unresponsive(None)
-        );
+        assert_eq!(host_state(&database).await.unwrap(), HostState::Starting);
         let now = chrono::Utc::now().timestamp();
         database
             .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_SYNC], now)
