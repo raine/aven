@@ -5,13 +5,19 @@ set -euo pipefail
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 
-if [[ $# -ne 3 ]]; then
-  echo "usage: assemble-macos-app BINARY VERSION OUTPUT_DIR" >&2
+# CHANNEL is terminal (the default) or desktop. Aven Desktop needs macOS 13.
+if [[ $# -lt 3 || $# -gt 4 ]]; then
+  echo "usage: assemble-macos-app BINARY VERSION OUTPUT_DIR [terminal|desktop]" >&2
   exit 2
 fi
 binary=$1
 version=$2
 output_dir=$3
+channel=${4:-terminal}
+if [[ $channel != terminal && $channel != desktop ]]; then
+  echo "channel must be terminal or desktop: $channel" >&2
+  exit 2
+fi
 if [[ ! -f $binary ]]; then
   echo "binary not found: $binary" >&2
   exit 2
@@ -38,6 +44,9 @@ chmod 755 "$contents/MacOS/aven"
 cp "$source_dir/Info.plist" "$contents/Info.plist"
 plutil -insert CFBundleShortVersionString -string "$version" "$contents/Info.plist"
 plutil -insert CFBundleVersion -string "$version" "$contents/Info.plist"
+if [[ $channel == desktop ]]; then
+  plutil -insert LSMinimumSystemVersion -string 13.0 "$contents/Info.plist"
+fi
 plutil -lint "$contents/Info.plist" >/dev/null
 cp "$source_dir/Resources/Assets.car" "$source_dir/Resources/Aven.icns" "$contents/Resources/"
 # Codesign rejects bundles carrying Finder metadata or resource forks.

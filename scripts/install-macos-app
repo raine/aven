@@ -20,13 +20,15 @@ fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-env SQLX_OFFLINE=true cargo build --release --offline --locked --features desktop
+# Aven Desktop requires macOS 13.
+env SQLX_OFFLINE=true MACOSX_DEPLOYMENT_TARGET=13.0 \
+  cargo build --release --offline --locked --features desktop
 pkgid=$(cargo pkgid --offline)
 version=${pkgid##*[#@]}
 
 staging=$(mktemp -d "${TMPDIR:-/tmp}/aven-app.XXXXXX")
 trap 'rm -rf "$staging"' EXIT
-scripts/assemble-macos-app target/release/aven "$version" "$staging" >/dev/null
+scripts/assemble-macos-app target/release/aven "$version" "$staging" desktop >/dev/null
 app="$staging/Aven.app"
 
 # Keychain ACLs follow the designated requirement, so a Developer ID signature

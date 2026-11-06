@@ -31,7 +31,7 @@ app="$root/AvenDemo.app"
 
 if $debug; then
   (cd "$repo" && SQLX_OFFLINE=true cargo build --offline --features desktop)
-  "$repo/scripts/assemble-macos-app" "$repo/target/debug/aven" 0.0.0 "$root" >/dev/null
+  "$repo/scripts/assemble-macos-app" "$repo/target/debug/aven" 0.0.0 "$root" desktop >/dev/null
   mv "$root/Aven.app" "$app"
   name="Aven Demo (debug)"
 else

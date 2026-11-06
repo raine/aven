@@ -47,6 +47,7 @@ cask "aven" do
   homepage "https://github.com/raine/aven"
 
   auto_updates true
+  depends_on macos: ">= :ventura"
 
   app "Aven.app"
   binary "#{appdir}/Aven.app/Contents/MacOS/aven"
