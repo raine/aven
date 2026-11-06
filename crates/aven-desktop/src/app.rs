@@ -15,7 +15,7 @@ use gpui::{
 };
 use gpui_platform::application;
 
-use crate::adapter::{self, Command, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
+use crate::adapter::{self, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
 use crate::assets::{Assets, load_fonts};
 use crate::session::Session;
 use crate::setup::Setup;
@@ -264,14 +264,15 @@ impl Global for NotifiedTask {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Notified {
     Task(String, TaskId),
-    /// The due digest's tasks.
-    Due,
+    /// The due digest's tasks, in its workspace, or the current one for a
+    /// digest that names none.
+    Due(Option<String>),
 }
 
 fn notified(tag: &str) -> Option<Notified> {
     match notify::target(tag)? {
         Target::Task { workspace, task } => Some(Notified::Task(workspace, task.parse().ok()?)),
-        Target::Due { .. } => Some(Notified::Due),
+        Target::Due { workspace, .. } => Some(Notified::Due(workspace)),
     }
 }
 
@@ -295,7 +296,7 @@ fn follow_notifications(cx: &mut App) {
 fn open_notified(opens: Notified, cx: &mut App) {
     with_root(cx, |root, window, cx| match opens {
         Notified::Task(workspace, id) => root.open_launched(workspace, id, window, cx),
-        Notified::Due => root.switch_view(Command::ShowDue, window, cx),
+        Notified::Due(workspace) => root.open_due(workspace, window, cx),
     });
 }
 
@@ -462,8 +463,12 @@ mod tests {
     }
 
     #[test]
-    fn the_due_digest_opens_the_due_view() {
-        assert_eq!(notified("v1:digest:2026-11-06"), Some(Notified::Due));
+    fn the_due_digest_opens_the_due_view_of_its_workspace() {
+        assert_eq!(
+            notified("v1:digest:work:2026-11-06"),
+            Some(Notified::Due(Some("work".into())))
+        );
+        assert_eq!(notified("v1:digest:2026-11-06"), Some(Notified::Due(None)));
     }
 
     #[test]

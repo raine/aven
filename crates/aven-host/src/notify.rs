@@ -100,8 +100,10 @@ pub enum Target {
         workspace: String,
         task: String,
     },
-    /// The tasks due on and before this date.
+    /// The tasks due on and before this date, in this workspace or, for a
+    /// digest tagged before digests were per workspace, the current one.
     Due {
+        workspace: Option<String>,
         date: String,
     },
 }
@@ -112,9 +114,9 @@ pub fn task_tag(workspace: &str, task: &str, event: &str) -> String {
     format!("v1:task:{workspace}:{task}:{event}")
 }
 
-/// The tag of the due digest for a date (`YYYY-MM-DD`).
-pub fn digest_tag(date: &str) -> String {
-    format!("v1:digest:{date}")
+/// The tag of a workspace's due digest for a date (`YYYY-MM-DD`).
+pub fn digest_tag(workspace: &str, date: &str) -> String {
+    format!("v1:digest:{workspace}:{date}")
 }
 
 /// The tag of a notification with nothing to open but the app.
@@ -123,14 +125,20 @@ pub fn plain_tag(kind: &str, event: &str) -> String {
 }
 
 /// What a notification's tag opens. Accepts `task:{workspace}:{task}` from
-/// versions before the `v1` tags.
+/// versions before the `v1` tags, and `v1:digest:{date}` from before digests
+/// were per workspace.
 pub fn target(tag: &str) -> Option<Target> {
     if let Some(rest) = tag.strip_prefix("v1:task:") {
         let (rest, _event) = rest.rsplit_once(':')?;
         return task_target(rest);
     }
-    if let Some(date) = tag.strip_prefix("v1:digest:") {
-        return Some(Target::Due {
+    if let Some(rest) = tag.strip_prefix("v1:digest:") {
+        let (workspace, date) = match rest.rsplit_once(':') {
+            Some((workspace, date)) => (Some(workspace.to_string()), date),
+            None => (None, rest),
+        };
+        return (!date.is_empty() && workspace.as_deref() != Some("")).then(|| Target::Due {
+            workspace,
             date: date.to_string(),
         });
     }

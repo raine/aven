@@ -1006,6 +1006,24 @@ impl Root {
         cx.notify();
     }
 
+    /// Shows the tasks due today and earlier in `workspace`, or in the
+    /// current workspace when `None`.
+    pub(crate) fn open_due(
+        &mut self,
+        workspace: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match workspace {
+            Some(workspace) if self.active_workspace_key() != Some(workspace.as_str()) => {
+                self.switch_view(Command::SwitchWorkspace(workspace), window, cx);
+                self.session.switch_view(Command::ShowDue);
+            }
+            _ => self.switch_view(Command::ShowDue, window, cx),
+        }
+        cx.notify();
+    }
+
     /// Keeps a timer running for the toast's deadline. Every frame checks, so
     /// a toast shown from anywhere expires without its caller arming it.
     fn arm_toast(&mut self, cx: &mut Context<Self>) {

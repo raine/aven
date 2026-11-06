@@ -125,11 +125,27 @@ fn tags_name_what_a_click_opens() {
         })
     );
     assert_eq!(
-        target(&digest_tag("2026-11-06")),
+        target(&digest_tag("home", "2026-11-06")),
         Some(Target::Due {
+            workspace: Some("home".into()),
             date: "2026-11-06".into()
         })
     );
+    assert_eq!(
+        target(&digest_tag("a:b", "2026-11-06")),
+        Some(Target::Due {
+            workspace: Some("a:b".into()),
+            date: "2026-11-06".into()
+        })
+    );
+    assert_eq!(
+        target("v1:digest:2026-11-06"),
+        Some(Target::Due {
+            workspace: None,
+            date: "2026-11-06".into()
+        })
+    );
+    assert_eq!(target("v1:digest::2026-11-06"), None);
     assert_eq!(target(&plain_tag("available", "e1")), None);
     assert_eq!(target("launch-failed:3"), None);
     assert_eq!(target("v1:task:home:T"), None);
