@@ -37,6 +37,9 @@ fn print_daemon_status(report: &DaemonStatusReport) {
         optional_yes_no(report.loaded),
         optional_yes_no(report.running),
     );
+    if report.turned_off_in_login_items == Some(true) {
+        println!("Login Items: Aven is turned off");
+    }
     println!(
         "Configuration: {}, executable match {}",
         if report.configuration_valid {

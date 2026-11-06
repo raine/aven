@@ -169,6 +169,7 @@ pub(super) fn status_with_runner(
         current_executable,
         program_matches_current,
         bundle_migration_pending: None,
+        turned_off_in_login_items: None,
         stdout_path: None,
         stderr_path: None,
     })

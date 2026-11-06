@@ -41,6 +41,9 @@ pub struct DaemonStatusReport {
     pub loaded: Option<bool>,
     pub running: Option<bool>,
     pub executable_matches: Option<bool>,
+    /// Aven is turned off in System Settings > General > Login Items &
+    /// Extensions. `null` where there's no such setting.
+    pub turned_off_in_login_items: Option<bool>,
     pub configuration_valid: bool,
     pub sync_enabled: bool,
     pub wake_address_valid: bool,
@@ -93,7 +96,10 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
         StatusState::Unavailable
     } else if !service.installed {
         StatusState::Unconfigured
-    } else if !configuration_valid || service.program_matches_current == Some(false) {
+    } else if !configuration_valid
+        || service.program_matches_current == Some(false)
+        || service.turned_off_in_login_items == Some(true)
+    {
         StatusState::Blocked
     } else if service.loaded == Some(false) || service.running == Some(false) {
         StatusState::Failed
@@ -112,7 +118,13 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
     } else {
         if !configuration_valid {
             guidance.push(
-                "Enable sync or reminders with `aven config set sync.enabled true` or `aven config set reminders.enabled true`, then run `aven daemon repair`."
+                "Enable sync or reminders with `aven config set sync.enabled true` or `aven config set reminders.enabled true`. The daemon picks up the change itself."
+                    .to_string(),
+            );
+        }
+        if service.turned_off_in_login_items == Some(true) {
+            guidance.push(
+                "Aven is turned off in System Settings > General > Login Items & Extensions. Turn it on there to run the daemon."
                     .to_string(),
             );
         }
@@ -144,6 +156,7 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
         loaded: service.loaded,
         running: service.running,
         executable_matches: service.program_matches_current,
+        turned_off_in_login_items: service.turned_off_in_login_items,
         configuration_valid,
         sync_enabled: config.automatic_sync_is_enabled(),
         wake_address_valid,
@@ -249,6 +262,7 @@ mod tests {
             current_executable: PathBuf::from("/bin/aven"),
             program_matches_current: installed.then_some(true),
             bundle_migration_pending: installed.then_some(false),
+            turned_off_in_login_items: installed.then_some(false),
             stdout_path: Some(PathBuf::from("/logs/out")),
             stderr_path: Some(PathBuf::from("/logs/err")),
         }
@@ -322,6 +336,19 @@ mod tests {
             build_daemon_status(&AppConfig::default(), service(true)).state,
             StatusState::Blocked
         );
+    }
+
+    #[test]
+    fn turned_off_in_login_items_blocks_the_daemon_and_says_where() {
+        let mut turned_off = service(true);
+        turned_off.loaded = Some(false);
+        turned_off.running = Some(false);
+        turned_off.turned_off_in_login_items = Some(true);
+        let status = build_daemon_status(&configured(), turned_off);
+        assert_eq!(status.state, StatusState::Blocked);
+        assert_eq!(status.turned_off_in_login_items, Some(true));
+        assert_eq!(status.guidance.len(), 1, "{:?}", status.guidance);
+        assert!(status.guidance[0].contains("Login Items & Extensions"));
     }
 
     #[test]
