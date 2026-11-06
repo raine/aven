@@ -3,6 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Fix: Joining encrypted sync works on Linux filesystems that limit filenames to 143 bytes, such as eCryptfs, instead of failing with `protected-key-storage-unavailable`. ([#48](https://github.com/raine/aven/issues/48))
+- UX: Agents file "up next" and "top priority" requests as todo tasks with medium or high priority, and "someday" requests as backlog. Run `aven skill install` again to update installed skills.
+
 ## v0.1.54 (2026-11-03)
 
 - New: `aven mcp --http` serves MCP Streamable HTTP with a bearer token from `AVEN_MCP_TOKEN`, and `--sync` runs sync inside that process, so an agent in another container needs only a URL and token. See [HTTP and containers](https://aventasks.dev/mcp/#http-and-containers). ([#35](https://github.com/raine/aven/issues/35))
