@@ -60,8 +60,19 @@ impl Fingerprint {
         })
     }
 
+    /// Whether the executable was replaced or removed.
     pub fn changed(&self) -> Result<bool> {
-        Ok(Self::of(&self.launch_path)? != *self)
+        match Self::of(&self.launch_path) {
+            Ok(now) => Ok(now != *self),
+            Err(_) if self.missing() => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Whether nothing exists at the path the process was started through,
+    /// as when the app bundle was moved to the Trash.
+    pub fn missing(&self) -> bool {
+        matches!(self.launch_path.try_exists(), Ok(false))
     }
 }
 
@@ -84,6 +95,18 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         std::fs::write(&path, "two-two").unwrap();
         assert!(initial.changed().unwrap());
+    }
+
+    #[test]
+    fn a_removed_executable_counts_as_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aven");
+        std::fs::write(&path, "one").unwrap();
+        let initial = Fingerprint::of(&path).unwrap();
+        assert!(!initial.missing());
+        std::fs::remove_file(&path).unwrap();
+        assert!(initial.changed().unwrap());
+        assert!(initial.missing());
     }
 
     #[cfg(unix)]

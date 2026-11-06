@@ -57,10 +57,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
     let fingerprint = Fingerprint::current()?;
     #[cfg(target_os = "macos")]
     if !wait_for_update_launch(&fingerprint).await? {
-        println!(
-            "daemon-executable-changed path={}",
-            fingerprint.path.display()
-        );
+        log_executable_exit(&fingerprint);
         return Ok(());
     }
     let mut shutdown = std::pin::pin!(shutdown_signal());
@@ -89,12 +86,24 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         events: Box::new(|_| {}),
         wake: Arc::new(Notify::new()),
         debounce: Duration::ZERO,
-        executable: Some(fingerprint),
+        executable: Some(fingerprint.clone()),
     };
-    if let Exit::ExecutableChanged(path) = host.run(shutdown).await? {
-        println!("daemon-executable-changed path={}", path.display());
+    if let Exit::ExecutableChanged(_) = host.run(shutdown).await? {
+        log_executable_exit(&fingerprint);
     }
     Ok(())
+}
+
+/// Logs why the daemon stops for its executable. The service manager starts
+/// a replaced executable again; a removed one, as when Aven.app was moved to
+/// the Trash, leaves nothing to restart.
+fn log_executable_exit(fingerprint: &Fingerprint) {
+    let event = if fingerprint.missing() {
+        "daemon-executable-missing"
+    } else {
+        "daemon-executable-changed"
+    };
+    println!("{event} path={}", fingerprint.path.display());
 }
 
 /// Follows the config file `config` was loaded from.
@@ -141,10 +150,7 @@ async fn take_seat(
                 () = tokio::time::sleep(executable::CHECK_INTERVAL) => {}
             }
             if fingerprint.changed()? {
-                println!(
-                    "daemon-executable-changed path={}",
-                    fingerprint.path.display()
-                );
+                log_executable_exit(fingerprint);
                 return Ok(None);
             }
         }

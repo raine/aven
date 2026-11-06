@@ -801,12 +801,14 @@ fn retarget_agent(plist: &Path, executable: &Path) -> Result<()> {
     ));
     std::fs::copy(plist, &staged).with_context(|| format!("copy {}", plist.display()))?;
     let edited = (|| {
+        let previous = plist_program(&staged)?;
         let executable = executable.to_str().context("non-UTF-8 executable path")?;
         plutil(&["-remove", "ProgramArguments.0"], &staged)?;
         plutil(
             &["-insert", "ProgramArguments.0", "-string", executable],
             &staged,
         )?;
+        retarget_keep_alive(&staged, &previous, executable)?;
         // Login Items names the agent after the bundle it runs from.
         if plutil(
             &["-extract", "AssociatedBundleIdentifiers", "xml1", "-o", "-"],
@@ -844,6 +846,26 @@ fn retarget_agent(plist: &Path, executable: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Keeps the daemon alive while `executable` exists, as `aven daemon install`
+/// writes it, when the plist kept it alive unconditionally or while
+/// `previous` existed. Any other `KeepAlive` was set by hand and stays.
+fn retarget_keep_alive(plist: &Path, previous: &Path, executable: &str) -> Result<()> {
+    let path_state = |program: &str| serde_json::json!({ "PathState": { program: true } });
+    let always = plutil(&["-extract", "KeepAlive", "raw", "-o", "-"], plist)
+        .is_ok_and(|value| value.trim() == "true");
+    let while_previous_exists = || {
+        let previous = previous.to_str()?;
+        let current = plutil(&["-extract", "KeepAlive", "json", "-o", "-"], plist).ok()?;
+        let current: serde_json::Value = serde_json::from_str(&current).ok()?;
+        Some(current == path_state(previous))
+    };
+    if !always && while_previous_exists() != Some(true) {
+        return Ok(());
+    }
+    let keep_alive = path_state(executable).to_string();
+    plutil(&["-replace", "KeepAlive", "-json", &keep_alive], plist).map(drop)
 }
 
 /// The executable a LaunchAgent plist runs.

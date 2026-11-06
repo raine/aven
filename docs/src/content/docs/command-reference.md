@@ -1296,10 +1296,12 @@ service and log paths, and a recovery action. Its JSON states are
 Service management is available on macOS, as a LaunchAgent, and on Linux, as a
 systemd user service named `aven-daemon.service`:
 
-- `install` writes, enables, and starts the service. It records the resolved database, config directory, and executable. On macOS it also records log paths, and an executable inside `Aven.app` is recorded by its bundle path so Login Items lists the daemon as Aven; on Linux output goes to the journal (`journalctl --user -u aven-daemon.service`). `--program` stores an explicit executable path instead of the running binary.
+- `install` writes, enables, and starts the service. It refuses while `sync.enabled` and `reminders.enabled` are both off. It records the resolved database, config directory, and executable. On macOS it also records log paths, and an executable inside `Aven.app` is recorded by its bundle path so Login Items lists the daemon as Aven; on Linux output goes to the journal (`journalctl --user -u aven-daemon.service`). `--program` stores an explicit executable path instead of the running binary.
 - `uninstall` stops and removes the service file.
 - `restart` restarts the service.
 - `repair` rewrites and restarts an installed service from active configuration. `--if-installed` succeeds without changes when the service is absent. `--program` selects the stored executable path.
+
+On macOS, launchd restarts the daemon whenever it exits, as long as its recorded executable exists. If the executable is removed, for example when `Aven.app` is moved to the Trash or uninstalled with Homebrew, the daemon logs `daemon-executable-missing` and stops, and launchd starts it again once the executable is back. The LaunchAgent stays installed until `aven daemon uninstall` or `brew uninstall --zap aven`, which removes it only when it runs `Aven.app` from the Homebrew cask's install location. A LaunchAgent installed by an earlier version gets this behavior when `install` or `repair` rewrites it, or when it moves into `Aven.app`.
 
 On macOS, a daemon that runs `Aven.app`'s executable through a symlink, such as Homebrew's `bin/aven`, moves its LaunchAgent to the bundle path when it starts. It keeps the recorded database, environment, and log paths, and reloads the service from a separate process. It leaves a disabled service, or a plist edited outside aven, unchanged; `aven daemon status` then suggests `aven daemon repair`.
 
