@@ -31,7 +31,9 @@ Aven sends two kinds of reminder:
 - **Daily digest:** once a day at `digest_time`, a summary titled with the counts, such as “2 due today, 1 overdue”, that lists the first three tasks by ref and title. Blocked and deferred tasks count too. Overdue tasks appear every day until you complete, cancel, or re-date them. If your Mac is asleep or off at `digest_time`, the digest arrives when it wakes later that day. A missed day's digest is never sent. If nothing is due, no digest is sent that day.
 - **Available again:** when a deferred task reaches its available time, one notification for that task. A blocked task waits and notifies once its blockers are done. Deferring the task again to a new time notifies again at that time. When more than three tasks become available at once, you get a single summary listing the first three.
 
-A task that became available more than 24 hours before the daemon noticed, for example after a long time offline, does not notify. Clicking a reminder dismisses it.
+A task that became available more than 24 hours before the daemon noticed, for example after a long time offline, does not notify. With Aven Desktop installed, clicking a reminder about one task opens that task, and clicking the digest opens the Overdue view.
+
+A reminder that can't be shown within a day is dropped instead of arriving late, and an undelivered digest is dropped at the end of its day. While notifications are off for Aven, reminders aren't shown; **Settings › Reminders** in Aven Desktop says how many weren't shown in the last week.
 
 Each device keeps its own record of sent reminders. If several devices run the daemon, each one notifies.
 
@@ -69,7 +71,7 @@ On macOS, Homebrew and the install script include an `Aven.app` bundle so notifi
   <img src="/macos-notification-dark.webp" alt="Illustration of an Aven notification confirming the task Review the homepage copy was added" width="440" height="169" />
 </div>
 
-Choose **Allow** when macOS first asks. To change this later, open **System Settings → Notifications → Aven**.
+Aven Desktop asks macOS to allow notifications when you turn on reminders. Choose **Allow**. To change this later, open **System Settings → Notifications → Aven**.
 
 ### Allow notifications during Focus
 
