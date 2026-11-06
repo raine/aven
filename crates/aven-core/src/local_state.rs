@@ -259,27 +259,37 @@ impl Database {
         if entries.is_empty() {
             return Ok(());
         }
-        let recorded_at = crate::ids::now();
         let mut conn = self.acquire_writer().await?;
         let mut tx = begin_immediate(&mut conn).await?;
-        for entry in entries {
-            sqlx::query(
-                "INSERT INTO local_reminder_log(kind, task_id, trigger, outcome, recorded_at)
-                 VALUES (?, ?, ?, ?, ?)
-                 ON CONFLICT(kind, task_id, trigger)
-                 DO UPDATE SET outcome = excluded.outcome, recorded_at = excluded.recorded_at",
-            )
-            .bind(&entry.kind)
-            .bind(&entry.task_id)
-            .bind(&entry.trigger)
-            .bind(&entry.outcome)
-            .bind(&recorded_at)
-            .execute(&mut *tx)
-            .await?;
-        }
+        record_reminder_entries(&mut tx, entries).await?;
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// Records reminder log entries in `tx`, replacing the outcome of existing
+/// keys.
+pub(crate) async fn record_reminder_entries(
+    tx: &mut crate::db::WriterTransaction<'_>,
+    entries: &[ReminderLogEntry],
+) -> Result<()> {
+    let recorded_at = crate::ids::now();
+    for entry in entries {
+        sqlx::query(
+            "INSERT INTO local_reminder_log(kind, task_id, trigger, outcome, recorded_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(kind, task_id, trigger)
+             DO UPDATE SET outcome = excluded.outcome, recorded_at = excluded.recorded_at",
+        )
+        .bind(&entry.kind)
+        .bind(&entry.task_id)
+        .bind(&entry.trigger)
+        .bind(&entry.outcome)
+        .bind(&recorded_at)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 /// What the background host of this database says about itself. Only the
