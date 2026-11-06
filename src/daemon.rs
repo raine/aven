@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use aven_core::db::Database;
 use aven_host::host::executable::{self, Fingerprint};
 use aven_host::host::{self, Election, Exit, Host, Role, Seat};
@@ -179,25 +179,41 @@ pub(crate) struct EmbeddedSync {
     host: Host,
 }
 
+/// What `aven mcp --sync` became.
+pub(crate) enum Embedded {
+    Host(Box<EmbeddedSync>),
+    /// Another process hosts the database; this one only wakes it after
+    /// writes. Formatted as a log line naming that host.
+    Client(String),
+}
+
 impl EmbeddedSync {
     /// Becomes the database's host, so a failure surfaces before the owner
     /// starts serving. Requesting a worker enables sync for it regardless of
-    /// `sync.enabled`; `AVEN_SYNC_DISABLED` still refuses.
+    /// `sync.enabled`; `AVEN_SYNC_DISABLED` still refuses. When another process
+    /// already hosts the database, the owner becomes its client instead.
     pub(crate) async fn prepare(
         database: Database,
         config: &AppConfig,
         blob_dir: PathBuf,
-    ) -> Result<Self> {
+    ) -> Result<Embedded> {
         config.ensure_sync_allowed()?;
         let wake_addr = config.wake_addr()?;
         let seat = match host::elect(database.path(), wake_addr).await? {
             Election::Won(seat) => seat,
-            Election::Taken => bail!(host::host_running_message(&database).await),
-            Election::WakeAddressBusy(error) => {
-                return Err(error).context(host::wake_address_busy_message(wake_addr));
+            Election::Taken => {
+                return Ok(Embedded::Client(format!(
+                    "sync-client reason=host-running host=\"{}\"",
+                    host::describe_host(&database).await
+                )));
+            }
+            Election::WakeAddressBusy(_) => {
+                return Ok(Embedded::Client(format!(
+                    "sync-client reason=wake-address-busy host=\"an older Aven daemon\" wake={wake_addr}"
+                )));
             }
         };
-        Ok(Self {
+        Ok(Embedded::Host(Box::new(Self {
             host: Host {
                 database,
                 seat,
@@ -212,7 +228,7 @@ impl EmbeddedSync {
                 debounce: Duration::ZERO,
                 executable: None,
             },
-        })
+        })))
     }
 
     /// Notifying this requests a round. A notification sent during a round is

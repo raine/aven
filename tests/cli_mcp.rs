@@ -1092,10 +1092,7 @@ fn http_startup_refuses_unsafe_configurations() {
 fn http_without_sync_wakes_the_daemon_and_with_sync_owns_the_wake_address() {
     let env = TestEnv::new();
     let db = env.db("wake.sqlite");
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
-    socket
-        .set_read_timeout(Some(RESPONSE_TIMEOUT))
-        .expect("set read timeout");
+    let socket = wake_listener();
     let wake_addr = socket.local_addr().unwrap().to_string();
     env.write_daemon_config(&db, &wake_addr, 3600);
 
@@ -1108,32 +1105,52 @@ fn http_without_sync_wakes_the_daemon_and_with_sync_owns_the_wake_address() {
 
     let first = HttpServer::start(&env, &db, &["--sync"]);
     first.wait_for_output("daemon-sync-not-set-up");
-    let second = http_command(&env, &db, &["--bind", "127.0.0.1:0", "--sync"])
-        .output()
-        .expect("run aven mcp");
-    let refused = fail(second);
-    assert!(
-        refused.contains("`aven mcp --sync` (pid") && refused.contains("already runs"),
-        "{refused}"
-    );
-    assert_eq!(first.call("count_tasks", json!({}))["count"], 1);
+    let second = HttpServer::start(&env, &db, &["--sync"]);
+    second.wait_for_output("sync-client reason=host-running host=\"`aven mcp --sync` (pid");
+    second.call("create_task", json!({"title": "Served by the client"}));
+    assert_eq!(first.call("count_tasks", json!({}))["count"], 2);
+    let status: serde_json::Value =
+        serde_json::from_str(&ok(env.aven_config(["daemon", "status", "--json"]))).unwrap();
+    assert_eq!(status["host"]["status"]["pid"], first.child.id());
 }
 
 #[test]
-fn http_sync_refuses_an_old_daemon_on_the_wake_address_and_then_hosts_reminders_too() {
+fn http_sync_wakes_the_process_that_holds_the_host_lock() {
+    let env = TestEnv::new();
+    let db = env.db("held.sqlite");
+    // Stands in for Aven Desktop hosting the database.
+    let lock = std::fs::File::create(lock_path(&db)).expect("create host lock");
+    lock.try_lock().expect("take host lock");
+    let host = wake_listener();
+    env.write_daemon_config(&db, &host.local_addr().unwrap().to_string(), 3600);
+
+    let server = HttpServer::start(&env, &db, &["--sync"]);
+    server.wait_for_output("sync-client reason=host-running host=\"another Aven process\"");
+    server.call("create_task", json!({"title": "Wakes the host"}));
+    let mut buffer = [0; 16];
+    host.recv(&mut buffer).expect("host wake");
+    assert_eq!(server.call("count_tasks", json!({}))["count"], 1);
+}
+
+#[test]
+fn http_sync_serves_beside_an_old_daemon_and_then_hosts_reminders_too() {
     let env = TestEnv::new();
     let db = env.db("old-daemon.sqlite");
-    let old_daemon = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
+    let old_daemon = wake_listener();
     let wake_addr = old_daemon.local_addr().unwrap().to_string();
     env.write_config(&format!(
         "local:\n  db_path: \"{}\"\ndaemon:\n  wake_addr: \"{wake_addr}\"\nreminders:\n  enabled: true\n",
         db.display()
     ));
 
-    let refused = http_command(&env, &db, &["--bind", "127.0.0.1:0", "--sync"])
-        .output()
-        .expect("run aven mcp");
-    assert!(fail(refused).contains("is `aven daemon` or `aven mcp --sync` already using it?"));
+    let client = HttpServer::start(&env, &db, &["--sync"]);
+    client.wait_for_output(&format!(
+        "sync-client reason=wake-address-busy host=\"an older Aven daemon\" wake={wake_addr}"
+    ));
+    client.call("create_task", json!({"title": "Wakes the old daemon"}));
+    let mut buffer = [0; 16];
+    old_daemon.recv(&mut buffer).expect("old daemon wake");
+    drop(client);
     drop(old_daemon);
 
     let server = HttpServer::start(&env, &db, &["--sync"]);
@@ -1146,4 +1163,18 @@ fn http_sync_refuses_an_old_daemon_on_the_wake_address_and_then_hosts_reminders_
         status["host"]["status"]["capabilities"],
         json!(["sync", "reminders"])
     );
+}
+
+fn wake_listener() -> UdpSocket {
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
+    socket
+        .set_read_timeout(Some(RESPONSE_TIMEOUT))
+        .expect("set read timeout");
+    socket
+}
+
+fn lock_path(db: &Path) -> std::path::PathBuf {
+    let mut name = db.file_name().unwrap().to_os_string();
+    name.push(".host.lock");
+    db.with_file_name(name)
 }

@@ -1414,7 +1414,7 @@ AVEN_MCP_TOKEN=... aven mcp --http --bind 127.0.0.1:3747 --sync
 
 The stdio server runs until the client closes its input. `--workspace` sets the default workspace, and clients can still reach others. Logs go to standard error.
 
-`--http` serves MCP Streamable HTTP at `/mcp` until stopped and requires a bearer token of at least 32 visible ASCII characters in `AVEN_MCP_TOKEN`. `--bind` sets the listen address, `--unsafe-public-bind` allows a public or wildcard address, and `--sync` runs sync in the server process in place of the daemon. `--sync` needs `--http` and won't start if `AVEN_SYNC_DISABLED` turns sync off. See [HTTP and containers](/mcp/#http-and-containers).
+`--http` serves MCP Streamable HTTP at `/mcp` until stopped and requires a bearer token of at least 32 visible ASCII characters in `AVEN_MCP_TOKEN`. `--bind` sets the listen address, `--unsafe-public-bind` allows a public or wildcard address, and `--sync` runs sync in the server process in place of the daemon, or leaves it to the process that already does. `--sync` needs `--http` and won't start if `AVEN_SYNC_DISABLED` turns sync off. See [HTTP and containers](/mcp/#http-and-containers).
 
 ## Setup commands
 
