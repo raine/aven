@@ -288,6 +288,36 @@ pub(crate) fn sync_icon(t: &Theme, tone: SyncTone) -> Hsla {
 }
 
 impl Root {
+    /// Quits, saying the first time that reminders and sync keep running in
+    /// the background, as Quit from the menu or keyboard does.
+    pub(crate) fn ask_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let background = &self.session.settings_data.background;
+        let running = background.managed && background.wanted;
+        if !running || self.prefs.quit_notice_shown {
+            self.quit(window, cx);
+            return;
+        }
+        let (title, kept) = match (background.reminders, background.sync_when_quit) {
+            (true, true) => ("Reminders and sync keep running", "send reminders and sync"),
+            (true, false) => ("Reminders keep coming", "send reminders"),
+            _ => ("Sync keeps running", "sync"),
+        };
+        self.prefs.quit_notice_shown = true;
+        self.save_prefs();
+        self.open_confirm(
+            title.to_string(),
+            format!(
+                "After you quit, a background agent continues to {kept}. You can turn \
+                 this off in Settings."
+            ),
+            Some("This notice appears only once."),
+            "Quit",
+            ConfirmAction::Quit,
+            window,
+            cx,
+        );
+    }
+
     pub fn show_settings(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
         self.session.open_settings(tab);
         self.read_notifications(cx);
@@ -614,6 +644,7 @@ impl Root {
         let fields = buttons.to_vec();
         let cancel = match action {
             ConfirmAction::ReplaceDraft { .. } | ConfirmAction::OpenKeptDraft(_) => "Keep draft",
+            ConfirmAction::Quit => "Open Settings",
             _ => "Cancel",
         };
         let dialog = Dialog::Confirm {
@@ -647,6 +678,7 @@ impl Root {
                 self.take_launcher_draft(workspace, *task, window, cx);
             }
             ConfirmAction::OpenKeptDraft(job) => self.take_kept_draft(job, window, cx),
+            ConfirmAction::Quit => self.quit(window, cx),
         }
         cx.notify();
     }
@@ -670,6 +702,7 @@ impl Root {
         };
         let action = action.clone();
         let keeps_draft = matches!(action, ConfirmAction::ReplaceDraft { .. });
+        let opens_settings = matches!(action, ConfirmAction::Quit);
         vec![
             Self::heading(title.clone(), t).into_any_element(),
             div()
@@ -696,6 +729,14 @@ impl Root {
                         this.close_dialog(window, cx);
                         if keeps_draft {
                             cx.defer(crate::launcher::show);
+                        }
+                        if opens_settings {
+                            let tab = if this.session.settings_data.background.reminders {
+                                SettingsTab::Reminders
+                            } else {
+                                SettingsTab::Sync
+                            };
+                            this.show_settings(tab, cx);
                         }
                     },
                 ))
