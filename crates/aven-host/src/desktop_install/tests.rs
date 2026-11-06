@@ -13,6 +13,7 @@ struct Fake {
     agent: Mutex<AgentState>,
     fail_start: Mutex<bool>,
     calls: Mutex<Vec<String>>,
+    background: Mutex<Option<BackgroundIntent>>,
 }
 
 impl Fake {
@@ -66,6 +67,11 @@ impl System for Fake {
             .lock()
             .unwrap()
             .push(format!("unregister {}", bundle.display()));
+        Ok(())
+    }
+
+    fn set_background(&self, intent: BackgroundIntent) -> Result<()> {
+        *self.background.lock().unwrap() = Some(intent);
         Ok(())
     }
 }
@@ -324,6 +330,10 @@ fn script_install_moves_command_and_daemon_then_retires_its_bundle() {
     );
     assert!(!needs_setup(&mac.layout));
     assert_eq!(mac.plan(), Plan::Ready);
+    assert_eq!(
+        *mac.system.background.lock().unwrap(),
+        Some(BackgroundIntent::On)
+    );
 }
 
 #[test]
@@ -347,6 +357,10 @@ fn a_disabled_daemon_is_moved_but_stays_off() {
             .calls()
             .iter()
             .all(|call| call != "stop" && call != "start")
+    );
+    assert_eq!(
+        *mac.system.background.lock().unwrap(),
+        Some(BackgroundIntent::Off)
     );
 }
 

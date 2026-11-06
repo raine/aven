@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::app_bundle::{
     AVEN_BUNDLE_ID, BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle,
 };
+use crate::config::BackgroundIntent;
 use crate::daemon::service::{self, AgentState};
 
 /// What the user runs to remove the Homebrew formula. Setup never runs it.
@@ -148,6 +149,8 @@ pub trait System: Send + Sync {
     /// Drops a bundle from Launch Services, so it no longer competes for the
     /// bundle identifier.
     fn unregister(&self, bundle: &Path) -> Result<()>;
+    /// Records whether Desktop keeps the daemon running.
+    fn set_background(&self, intent: BackgroundIntent) -> Result<()>;
 }
 
 /// The running Mac.
@@ -190,6 +193,10 @@ impl System for MacSystem {
             bail!("lsregister -u {} failed: {status}", bundle.display());
         }
         Ok(())
+    }
+
+    fn set_background(&self, intent: BackgroundIntent) -> Result<()> {
+        crate::background::set_intent(intent)
     }
 }
 
@@ -587,13 +594,24 @@ pub fn plan(layout: &Layout, survey: &Survey) -> Plan {
 pub fn switch(layout: &Layout, system: &dyn System, switch: &Switch) -> Result<Outcome> {
     let state = match load_state(layout)? {
         Some(state) => state,
-        None => State {
-            version: STATE_VERSION,
-            restart_agent: switch
-                .agent
-                .as_ref()
-                .is_some_and(|agent| agent.loaded && !agent.disabled),
-        },
+        None => {
+            let state = State {
+                version: STATE_VERSION,
+                restart_agent: switch
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| agent.loaded && !agent.disabled),
+            };
+            // Desktop keeps the daemon running only if it was.
+            if switch.agent.is_some() {
+                system.set_background(if state.restart_agent {
+                    BackgroundIntent::On
+                } else {
+                    BackgroundIntent::Off
+                })?;
+            }
+            state
+        }
     };
     save_state(layout, state)?;
     let executable = layout.executable();

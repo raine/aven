@@ -52,6 +52,11 @@ pub struct AppConfig {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub reminders: RemindersConfig,
+    /// Whether Aven Desktop keeps the background agent installed, so sync and
+    /// reminders continue after the app quits. Unset until the user or a
+    /// command decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<BackgroundIntent>,
     #[serde(default)]
     pub workspace: WorkspaceConfig,
     #[serde(default)]
@@ -62,6 +67,26 @@ pub struct AppConfig {
     pub update: UpdateConfig,
     #[serde(default)]
     pub tui: TuiConfig,
+}
+
+/// The `background` setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundIntent {
+    /// Aven Desktop installs the agent while sync or reminders are on, and
+    /// removes it while both are off.
+    On,
+    /// Aven Desktop removes the agent and never installs it.
+    Off,
+}
+
+impl BackgroundIntent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

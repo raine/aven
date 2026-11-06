@@ -27,6 +27,47 @@ pub fn set_scalar(path: &Path, section: &str, key: &str, value: &str) -> Result<
     write_edited_config(path, text)
 }
 
+/// Sets the top-level `key` to a scalar, keeping comments and every other
+/// line.
+pub fn set_top_level_scalar(path: &Path, key: &str, value: &str) -> Result<()> {
+    crate::config::check_config_write(path)
+        .with_context(|| format!("Set `{key}` to {value} in your configuration source"))?;
+    let text = if path.exists() {
+        fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    if !text.trim().is_empty() {
+        serde_saphyr::from_str::<AppConfig>(&text)
+            .with_context(|| format!("could not parse {}", path.display()))?
+            .validate()
+            .with_context(|| format!("invalid config {}", path.display()))?;
+    }
+    write_edited_config(path, set_top_level_scalar_text(&text, key, value))
+}
+
+fn set_top_level_scalar_text(text: &str, key: &str, value: &str) -> String {
+    let mut lines = split_lines(text);
+    if let Some(line) = find_top_level_key(&lines, key) {
+        let end = find_section_end(&lines, line, 0);
+        let comment = trailing_yaml_comment(&lines[line]).map(str::to_string);
+        lines[line] = match comment {
+            Some(comment) => format!("{key}: {value} {comment}"),
+            None => format!("{key}: {value}"),
+        };
+        // A block value's lines go with it.
+        lines.drain(line + 1..end);
+    } else {
+        if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(format!("{key}: {value}"));
+    }
+    let mut output = lines.join("\n");
+    output.push('\n');
+    output
+}
+
 fn set_scalar_text(text: &str, section: &str, key: &str, value: &str) -> Result<String> {
     let mut lines = split_lines(text);
     if let Some(section_line) = find_top_level_key(&lines, section) {
@@ -806,6 +847,51 @@ mod tests {
             edited,
             "ai:\n  provider: openai # local\n  timeout_seconds: 30\n  model: \"gpt: mini\"\n\n# images\nattachments:\n  grace_days: 3\n"
         );
+    }
+
+    #[test]
+    fn top_level_scalar_edit_replaces_the_key_and_keeps_the_rest() {
+        let text = "# mine\nbackground: on # chosen in the app\nsync:\n  enabled: true\n";
+        assert_eq!(
+            set_top_level_scalar_text(text, "background", "off"),
+            "# mine\nbackground: off # chosen in the app\nsync:\n  enabled: true\n"
+        );
+        assert_eq!(
+            set_top_level_scalar_text("sync:\n  enabled: true\n", "background", "on"),
+            "sync:\n  enabled: true\n\nbackground: on\n"
+        );
+        assert_eq!(
+            set_top_level_scalar_text("", "background", "on"),
+            "background: on\n"
+        );
+        // A block value is replaced whole.
+        assert_eq!(
+            set_top_level_scalar_text(
+                "background:\n  nested: 1\nscope: workspace\n",
+                "background",
+                "on"
+            ),
+            "background: on\nscope: workspace\n"
+        );
+    }
+
+    #[test]
+    fn background_intent_round_trips_through_the_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        set_top_level_scalar(&path, "background", "on").unwrap();
+        let config = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(config.background, Some(crate::config::BackgroundIntent::On));
+        set_top_level_scalar(&path, "background", "off").unwrap();
+        let config = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(
+            config.background,
+            Some(crate::config::BackgroundIntent::Off)
+        );
+        fs::write(&path, "sync:\n  enabled: true\n").unwrap();
+        assert_eq!(AppConfig::load_from_path(&path).unwrap().background, None);
+        fs::write(&path, "background: maybe\n").unwrap();
+        assert!(AppConfig::load_from_path(&path).is_err());
     }
 
     #[test]

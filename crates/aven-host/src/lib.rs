@@ -5,6 +5,8 @@ use aven_core::{choices, ids, query, queue, types, undo};
 #[cfg(target_os = "macos")]
 pub mod app_bundle;
 pub mod attachments;
+#[cfg(target_os = "macos")]
+pub mod background;
 pub mod config;
 pub mod config_edit;
 pub mod daemon;
