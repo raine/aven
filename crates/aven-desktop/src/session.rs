@@ -1713,7 +1713,12 @@ impl Session {
             ReplyBody::SyncArrived(changes) => self.motion.arrived(changes),
             ReplyBody::Remind(notification) => applied.remind.push(notification),
             ReplyBody::SyncEvent(event) => self.sync_event(event),
-            ReplyBody::Settings(data) => self.settings_data = *data,
+            ReplyBody::Settings(data) => {
+                // The agent's state comes only from Background replies.
+                let agent = self.settings_data.background.agent;
+                self.settings_data = *data;
+                self.settings_data.background.agent = agent;
+            }
             ReplyBody::Background(background) => self.settings_data.background = background,
             ReplyBody::DatabaseOpened {
                 path,

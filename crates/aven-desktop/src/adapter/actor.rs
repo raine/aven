@@ -459,6 +459,7 @@ impl Actor {
                 .await
                 .expect("reconciling the agent panicked")
             };
+            let started = matches!(reconciled, Ok(background::Reconciled::Started));
             if let Err(error) = reconciled {
                 tracing::warn!(error = %format!("{error:#}"), "could not update the agent");
                 let _ = replies.send(Reply {
@@ -469,7 +470,15 @@ impl Actor {
                     )),
                 });
             }
-            let status = background_status(Some(app), &config, database).await;
+            let mut status = background_status(Some(app.clone()), &config, database.clone()).await;
+            // launchd starts the process a moment after bootstrap returns.
+            for _ in 0..AGENT_START_POLLS {
+                if !started || status.agent != AgentShown::NotRunning {
+                    break;
+                }
+                tokio::time::sleep(AGENT_START_POLL).await;
+                status = background_status(Some(app.clone()), &config, database.clone()).await;
+            }
             let _ = replies.send(Reply {
                 request: 0,
                 body: ReplyBody::Background(status),
@@ -614,8 +623,8 @@ impl Actor {
                 .collect(),
             reminders: (&self.config.reminders).into(),
             agent: launch::agent_setup(&self.config.agent.task_intake),
-            background: background_status(
-                self.agent_app.clone(),
+            background: background_settings(
+                self.agent_app.is_some(),
                 &self.launch_config,
                 self.agent_database(),
             )
@@ -2407,7 +2416,10 @@ impl Actor {
             },
             Command::PublishGist(id) => self.publish_gist(&id).await,
             Command::Sync(request) => self.sync_request(request).await,
-            Command::LoadSettings => self.send_settings().await,
+            Command::LoadSettings => {
+                self.reconcile_agent();
+                self.send_settings().await;
+            }
             Command::Backup => {
                 let message = match self.backup().await {
                     Ok(path) => Toast::done("Backup written").detail(path.display().to_string()),
@@ -2634,10 +2646,14 @@ impl Actor {
     }
 }
 
-/// The config a host in this app runs on. The daemon's enable flag is not
-/// read: a running app syncs on its own, and `NotSetUp` idles a local database.
+/// How long [`Actor::reconcile_agent`] waits for a started agent to run.
+const AGENT_START_POLLS: usize = 20;
+const AGENT_START_POLL: Duration = Duration::from_millis(250);
+
 /// What runs while Aven is quit. `app` is set when this app manages the
-/// agent; other copies don't ask launchd about it.
+/// agent; other copies don't ask launchd about it. Only
+/// [`Actor::reconcile_agent`] reads the agent, so its reads are ordered with
+/// its changes.
 async fn background_status(
     app: Option<PathBuf>,
     config: &AppConfig,
@@ -2654,16 +2670,28 @@ async fn background_status(
         },
         None => AgentShown::Unknown,
     };
+    BackgroundStatus {
+        agent,
+        ..background_settings(app.is_some(), config, database).await
+    }
+}
+
+/// [`background_status`] without the agent's state.
+async fn background_settings(
+    managed: bool,
+    config: &AppConfig,
+    database: Option<Database>,
+) -> BackgroundStatus {
     let last_sync = match database {
         Some(database) => database.background_sync_at().await.ok().flatten(),
         None => None,
     };
     BackgroundStatus {
-        managed: app.is_some(),
+        managed,
         sync_when_quit: config.sync.enabled,
         reminders: config.reminders.enabled,
         wanted: background::wants_agent(config),
-        agent,
+        agent: AgentShown::Unknown,
         last_sync,
     }
 }
@@ -2680,6 +2708,8 @@ fn agent_shown(status: &AgentStatus, wanted: bool) -> AgentShown {
     }
 }
 
+/// The config a host in this app runs on. The daemon's enable flag is not
+/// read: a running app syncs on its own, and `NotSetUp` idles a local database.
 fn hosted(config: &AppConfig) -> AppConfig {
     let mut config = config.clone();
     config.sync.enabled = true;
