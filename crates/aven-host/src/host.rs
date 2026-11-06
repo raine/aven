@@ -37,6 +37,10 @@ pub const LOCK_RETRY: Duration = Duration::from_secs(5);
 /// How long a caller waits for the round it asked a host for.
 pub const ROUND_WAIT: Duration = Duration::from_secs(5);
 const ROUND_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// How long an election keeps trying a lock that is held, so that a process
+/// briefly probing it with [`lock_is_held`] can't make it lose.
+const PROBE_GRACE: Duration = Duration::from_millis(250);
+const PROBE_GRACE_POLL: Duration = Duration::from_millis(10);
 
 pub const CAPABILITY_SYNC: &str = "sync";
 pub const CAPABILITY_REMINDERS: &str = "reminders";
@@ -101,11 +105,17 @@ pub async fn elect(db: &Path, wake_addr: SocketAddr) -> Result<Election> {
         .write(true)
         .open(&path)
         .with_context(|| format!("open host lock {}", path.display()))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => return Ok(Election::Taken),
-        Err(TryLockError::Error(error)) => {
-            return Err(error).with_context(|| format!("lock {}", path.display()));
+    let deadline = Instant::now() + PROBE_GRACE;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                tokio::time::sleep(PROBE_GRACE_POLL).await;
+            }
+            Err(TryLockError::WouldBlock) => return Ok(Election::Taken),
+            Err(TryLockError::Error(error)) => {
+                return Err(error).with_context(|| format!("lock {}", path.display()));
+            }
         }
     }
     match UdpSocket::bind(wake_addr).await {
@@ -280,6 +290,24 @@ mod tests {
             lock_path(Path::new("/data/aven.sqlite")),
             Path::new("/data/aven.sqlite.host.lock")
         );
+    }
+
+    #[tokio::test]
+    async fn a_brief_status_probe_does_not_make_a_starting_host_lose() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        std::fs::write(lock_path(&db), "").unwrap();
+        // The shared lock lock_is_held takes, held for longer than a probe.
+        let probe = File::open(lock_path(&db)).unwrap();
+        probe.try_lock_shared().unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(probe);
+        });
+
+        let election = elect(&db, loopback()).await.unwrap();
+        release.join().unwrap();
+        assert!(matches!(election, Election::Won(_)), "{election:?}");
     }
 
     #[tokio::test]
