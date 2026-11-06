@@ -353,12 +353,17 @@ mod tests {
     }
 
     #[test]
-    fn install_requires_enabled_sync() {
+    fn install_allows_an_idle_daemon_but_not_an_invalid_wake_address() {
+        let spec = test_spec();
+        let mut args = install_args();
+        args.config.sync.enabled = false;
+        install_with_runner(args, &spec, &FakeRunner::new(vec![])).unwrap();
+        assert!(spec.unit_path.exists());
+
         let spec = test_spec();
         let runner = FakeRunner::new(vec![]);
         let mut args = install_args();
-        args.config.sync.enabled = false;
-
+        args.config.daemon.wake_addr = Some("not-an-address".to_string());
         assert!(install_with_runner(args, &spec, &runner).is_err());
         assert!(!spec.unit_path.exists());
         assert!(runner.commands().is_empty());

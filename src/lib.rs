@@ -365,6 +365,7 @@ async fn dispatch_standalone(
                     cmd_daemon_status(&config, &db_path, args.json).await
                 }
                 Some(DaemonSubcommand::Install(args)) => {
+                    config.ensure_daemon_has_work()?;
                     daemon::install(daemon::ServiceInstallArgs {
                         db_path,
                         config,

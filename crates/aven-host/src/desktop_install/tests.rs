@@ -267,6 +267,15 @@ fn assert_settings_kept(plist: &Path) {
     assert_eq!(extract(plist, "Label"), "com.raine.aven.daemon");
 }
 
+fn keep_alive(plist: &Path) -> serde_json::Value {
+    let json = plutil(&["-extract", "KeepAlive", "json", "-o", "-"], plist).unwrap();
+    serde_json::from_str(&json).unwrap()
+}
+
+fn path_state(program: &Path) -> serde_json::Value {
+    serde_json::json!({ "PathState": { program.to_str().unwrap(): true } })
+}
+
 fn report(outcome: Outcome) -> Report {
     match outcome {
         Outcome::Done(report) => report,
@@ -300,6 +309,8 @@ fn script_install_moves_command_and_daemon_then_retires_its_bundle() {
         extract(&mac.layout.agent_plist, "AssociatedBundleIdentifiers.0"),
         AVEN_BUNDLE_ID
     );
+    // launchd stops respawning the daemon once Aven.app is gone.
+    assert_eq!(keep_alive(&mac.layout.agent_plist), path_state(&mac.exe()));
     assert_settings_kept(&mac.layout.agent_plist);
     assert!(!mac.layout.script_bundle().exists());
     assert!(!mac.layout.state_file.exists());
@@ -336,6 +347,27 @@ fn a_disabled_daemon_is_moved_but_stays_off() {
             .calls()
             .iter()
             .all(|call| call != "stop" && call != "start")
+    );
+}
+
+#[test]
+fn a_switch_follows_the_program_in_path_state_and_keeps_a_custom_keep_alive() {
+    let mac = Mac::new();
+    let old = mac.script_install();
+    mac.agent(&old, false, false);
+    let plist = &mac.layout.agent_plist;
+    let previous = path_state(&old).to_string();
+    plutil(&["-replace", "KeepAlive", "-json", &previous], plist).unwrap();
+    retarget_agent(plist, &mac.exe()).unwrap();
+    assert_eq!(keep_alive(plist), path_state(&mac.exe()));
+
+    let custom = r#"{"SuccessfulExit":false}"#;
+    plutil(&["-replace", "KeepAlive", "-json", custom], plist).unwrap();
+    retarget_agent(plist, &old).unwrap();
+    assert_eq!(plist_program(plist).unwrap(), old);
+    assert_eq!(
+        keep_alive(plist),
+        serde_json::json!({ "SuccessfulExit": false })
     );
 }
 

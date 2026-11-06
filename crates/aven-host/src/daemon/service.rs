@@ -466,7 +466,10 @@ fn bundle_migration_plist(
     if enclosing_bundle(&spec.executable).is_some() {
         return Ok(None);
     }
-    if render_plist(&spec) != existing {
+    if [KeepAlive::Always, KeepAlive::WhileProgramExists]
+        .into_iter()
+        .all(|keep_alive| render_plist_with(&spec, keep_alive) != existing)
+    {
         return Err("customized-plist");
     }
     if !paths_resolve_to_same_file(&spec.executable, program) {
@@ -505,9 +508,11 @@ fn reload_definition_with_runner(
     Ok(())
 }
 
+/// An installed daemon idles until the config gives it sync or reminders, so
+/// installing one without either is allowed; `aven daemon install` refuses it
+/// separately to point a terminal user at the setting they likely meant.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn validate_install_config(config: &AppConfig) -> Result<()> {
-    config.ensure_daemon_has_work()?;
     config.wake_addr()?;
     Ok(())
 }
@@ -893,8 +898,26 @@ fn write_plist(spec: &ServiceSpec, plist: &str) -> Result<()> {
     Ok(())
 }
 
+/// How launchd decides to keep the daemon running.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeepAlive {
+    /// Restart after every exit. Written by earlier versions; a removed
+    /// executable then fails to spawn every throttle interval.
+    Always,
+    /// Restart after every exit while the executable exists, and start again
+    /// when it reappears, so moving Aven.app to the Trash stops the daemon
+    /// and replacing it starts the new one.
+    WhileProgramExists,
+}
+
 #[cfg(target_os = "macos")]
 fn render_plist(spec: &ServiceSpec) -> String {
+    render_plist_with(spec, KeepAlive::WhileProgramExists)
+}
+
+#[cfg(target_os = "macos")]
+fn render_plist_with(spec: &ServiceSpec, keep_alive: KeepAlive) -> String {
     let mut env = vec![("PATH", spec.path_env.as_str())];
     if let Some(path) = &spec.config_dir {
         env.push(("AVEN_CONFIG_DIR", path_str(path)));
@@ -921,6 +944,13 @@ fn render_plist(spec: &ServiceSpec) -> String {
     } else {
         String::new()
     };
+    let keep_alive = match keep_alive {
+        KeepAlive::Always => "  <true/>\n".to_string(),
+        KeepAlive::WhileProgramExists => format!(
+            "  <dict>\n    <key>PathState</key>\n    <dict>\n      <key>{}</key>\n      <true/>\n    </dict>\n  </dict>\n",
+            escape_xml(path_str(&spec.executable))
+        ),
+    };
 
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -943,7 +973,7 @@ fn render_plist(spec: &ServiceSpec) -> String {
   <key>RunAtLoad</key>\n\
   <true/>\n\
   <key>KeepAlive</key>\n\
-  <true/>\n\
+{}\
   <key>ThrottleInterval</key>\n\
   <integer>30</integer>\n\
   <key>StandardOutPath</key>\n\
@@ -957,6 +987,7 @@ fn render_plist(spec: &ServiceSpec) -> String {
         escape_xml(path_str(&spec.executable)),
         escape_xml(path_str(&spec.db_path)),
         env_xml,
+        keep_alive,
         escape_xml(path_str(&spec.stdout_path)),
         escape_xml(path_str(&spec.stderr_path)),
         associated_bundle
@@ -1033,8 +1064,9 @@ mod tests {
         assert!(plist.contains("<string>/tmp/state</string>"));
         assert!(plist.contains("<key>StandardErrorPath</key>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
-        assert!(plist.contains("<key>KeepAlive</key>"));
-        assert!(plist.contains("<true/>"));
+        assert!(plist.contains(
+            "<key>KeepAlive</key>\n  <dict>\n    <key>PathState</key>\n    <dict>\n      <key>/bin/aven&amp;test</key>\n      <true/>\n    </dict>\n  </dict>\n"
+        ));
         assert!(!plist.contains("<key>SuccessfulExit</key>"));
         assert!(plist.contains("<key>ThrottleInterval</key>"));
         assert!(!plist.contains("AssociatedBundleIdentifiers"));
@@ -1087,6 +1119,17 @@ mod tests {
         assert_eq!(
             String::from_utf8_lossy(&output.stdout).trim(),
             "fi.zendit.Aven"
+        );
+        let output = Command::new("/usr/bin/plutil")
+            .args(["-extract", "KeepAlive", "json", "-o", "-"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let keep_alive: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            keep_alive,
+            serde_json::json!({ "PathState": { path_str(&spec.executable): true } })
         );
     }
 
@@ -1368,6 +1411,14 @@ mod tests {
         assert_eq!(migrated, render_plist(&expected));
         assert!(migrated.contains("AssociatedBundleIdentifiers"));
         assert_eq!(bundle_migration_plist(&base, &migrated, &program), Ok(None));
+
+        // Agents installed before KeepAlive followed the program move too.
+        let legacy = render_plist_with(&installed, KeepAlive::Always);
+        assert!(legacy.contains("<key>KeepAlive</key>\n  <true/>\n"));
+        assert_eq!(
+            bundle_migration_plist(&base, &legacy, &program),
+            Ok(Some(migrated))
+        );
     }
 
     #[test]
