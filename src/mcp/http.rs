@@ -24,7 +24,7 @@ use super::Server;
 use super::tools::Tools;
 use crate::cli::McpArgs;
 use crate::config::AppConfig;
-use crate::daemon::EmbeddedSync;
+use crate::daemon::{Embedded, EmbeddedSync};
 use crate::http_serve::{MAX_CONNECTIONS, public_bind, serve_connections};
 use crate::signals::shutdown_signal;
 
@@ -49,10 +49,13 @@ pub(super) async fn run(
             args.bind
         );
     }
-    let sync = if args.sync {
-        Some(EmbeddedSync::prepare(database.clone(), &config, blob_dir.clone()).await?)
+    let (sync, client) = if args.sync {
+        match EmbeddedSync::prepare(database.clone(), &config, blob_dir.clone()).await? {
+            Embedded::Host(sync) => (Some(*sync), None),
+            Embedded::Client(line) => (None, Some(line)),
+        }
     } else {
-        None
+        (None, None)
     };
     let sync_wake = sync.as_ref().map(EmbeddedSync::wake);
     let server = Server::new(Tools::new(database, config, workspace, blob_dir, sync_wake));
@@ -73,6 +76,9 @@ pub(super) async fn run(
         }
     });
     println!("listening url=http://{address}{ENDPOINT}");
+    if let Some(line) = client {
+        println!("{line}");
+    }
 
     let mut worker_exit = None;
     let shutdown = async {

@@ -127,13 +127,6 @@ pub async fn elect(db: &Path, wake_addr: SocketAddr) -> Result<Election> {
     }
 }
 
-/// Explains a busy wake address to someone who started a host.
-pub fn wake_address_busy_message(wake_addr: SocketAddr) -> String {
-    format!(
-        "could not bind daemon wake address {wake_addr}; is `aven daemon` or `aven mcp --sync` already using it?"
-    )
-}
-
 /// How a message names the program in a host status row's `role`.
 pub fn describe_role(role: &str) -> &str {
     match role {
@@ -144,16 +137,13 @@ pub fn describe_role(role: &str) -> &str {
     }
 }
 
-/// Explains to someone who started a host that another one already runs.
-pub async fn host_running_message(database: &Database) -> String {
-    let host = match database.host_status().await {
+/// Names the process that last recorded itself as the database's host, such
+/// as "Aven Desktop (pid 42)".
+pub async fn describe_host(database: &Database) -> String {
+    match database.host_status().await {
         Ok(Some(status)) => format!("{} (pid {})", describe_role(&status.role), status.pid),
         _ => "another Aven process".to_string(),
-    };
-    format!(
-        "error host-running hint=\"{host} already runs background sync and reminders for {}; stop it first\"",
-        database.path().display()
-    )
+    }
 }
 
 /// What a client can tell about the host of a database.
