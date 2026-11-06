@@ -28,7 +28,10 @@ checksum() {
 sha_arm=$(checksum Aven-Desktop-arm64)
 sha_intel=$(checksum Aven-Desktop-amd64)
 
-# The zap stanza removes only regenerable app state. Tasks, configuration
+# Uninstalling leaves the background agent's LaunchAgent in place: launchd
+# stops it while Aven.app is missing and starts it again when an upgrade or
+# reinstall puts the app back. The zap stanza removes that agent, only when
+# it runs this cask's app, and regenerable app state. Tasks, configuration
 # and sync credentials stay, so reinstalling resumes where the user left off.
 cat <<EOF
 cask "aven" do
@@ -48,13 +51,34 @@ cask "aven" do
   app "Aven.app"
   binary "#{appdir}/Aven.app/Contents/MacOS/aven"
 
-  uninstall launchctl: "com.raine.aven.daemon"
+  zap script: {
+        executable: "/bin/sh",
+        args:       ["-c", <<~SH],
+          plist="\$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
+          [ -f "\$plist" ] || exit 0
+          program=\$(/usr/bin/plutil -extract ProgramArguments.0 raw -o - "\$plist" 2>/dev/null) || exit 0
+          case \$program in
+            "#{appdir}/Aven.app/"*) ;;
+            *) exit 0 ;;
+          esac
+          /bin/launchctl bootout "gui/\$(/usr/bin/id -u)/com.raine.aven.daemon" 2>/dev/null
+          /bin/rm -f "\$plist"
+        SH
+      },
+      trash:  [
+        "~/.cache/aven",
+        "~/Library/Caches/fi.zendit.Aven",
+        "~/Library/Preferences/fi.zendit.Aven.plist",
+        "~/Library/Saved Application State/fi.zendit.Aven.savedState",
+      ]
 
-  zap trash: [
-    "~/.cache/aven",
-    "~/Library/Caches/fi.zendit.Aven",
-    "~/Library/Preferences/fi.zendit.Aven.plist",
-    "~/Library/Saved Application State/fi.zendit.Aven.savedState",
-  ]
+  caveats <<~EOS
+    Aven can keep sending reminders and syncing after you quit it, through a
+    background agent. Uninstalling leaves that agent in place, stopped while
+    Aven.app is gone, so reinstalling picks up where you left off. To remove
+    the agent too, run:
+      brew uninstall --zap aven
+    Your tasks, configuration and sync credentials stay either way.
+  EOS
 end
 EOF
