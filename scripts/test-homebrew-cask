@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Checks the generated Homebrew cask: Ruby syntax, per-architecture disk image
 # URL and checksums, the linked command, and what uninstall and zap remove.
+# The zap script runs against a temporary HOME with launchctl stubbed out.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -34,27 +35,112 @@ expect 'url "https://github.com/raine/aven/releases/download/v#{version}/Aven-De
 expect 'auto_updates true'
 expect 'app "Aven.app"'
 expect 'binary "#{appdir}/Aven.app/Contents/MacOS/aven"'
-expect 'uninstall launchctl: "com.raine.aven.daemon"'
+expect 'brew uninstall --zap aven'
+if grep -qE '^ *uninstall ' "$tmp/aven.rb"; then
+  fail "uninstall removes the background agent, so upgrades and reinstalls lose it"
+fi
 expect '"~/Library/Preferences/fi.zendit.Aven.plist",'
 expect '"~/Library/Saved Application State/fi.zendit.Aven.savedState",'
 if grep -qE 'aven-darwin-|-app\.tar\.gz' "$tmp/aven.rb"; then
   fail "cask uses a terminal-only archive"
 fi
 
+# Evaluates the cask with a stand-in DSL and writes the zap stanza's trash
+# paths, one per line, and its script.
+ruby -e '
+  class Cask
+    def appdir; "/Applications"; end
+    def zap(**directives); @zap = directives; end
+    def method_missing(*); end
+    def respond_to_missing?(*); true; end
+  end
+  def cask(_name, &block)
+    cask = Cask.new
+    cask.instance_eval(&block)
+    zap = cask.instance_variable_get(:@zap) or abort "cask has no zap stanza"
+    script = zap.fetch(:script)
+    abort "zap script runs #{script[:executable]}" unless script[:executable] == "/bin/sh"
+    abort "zap script is not sh -c" unless script[:args][0] == "-c"
+    File.write(ARGV[1], zap.fetch(:trash).join("\n") + "\n")
+    File.write(ARGV[2], script[:args][1])
+  end
+  load ARGV[0]
+' "$tmp/aven.rb" "$tmp/zap-trash" "$tmp/zap.sh" || fail "cannot read the zap stanza"
+
 # zap may remove only preferences, caches and saved state: never the task
 # database, configuration, logs or sync credentials.
-zap=$(sed -n '/zap trash: \[/,/\]/p' "$tmp/aven.rb" | grep -o '"[^"]*"')
-[[ -n $zap ]] || fail "cask has no zap stanza"
 while IFS= read -r path; do
+  # shellcheck disable=SC2088 # The cask lists paths with a literal tilde.
   case $path in
-    '"~/.cache/aven"' | '"~/Library/Caches/fi.zendit.Aven"' | \
-      '"~/Library/Preferences/fi.zendit.Aven.plist"' | \
-      '"~/Library/Saved Application State/fi.zendit.Aven.savedState"') ;;
+    '~/.cache/aven' | '~/Library/Caches/fi.zendit.Aven' | \
+      '~/Library/Preferences/fi.zendit.Aven.plist' | \
+      '~/Library/Saved Application State/fi.zendit.Aven.savedState') ;;
     *) fail "zap removes $path" ;;
   esac
-done <<<"$zap"
+done <"$tmp/zap-trash"
 if grep -qE '\.local/state|\.config/aven|\.local/share|Keychain|Application Support|rmdir|delete:' "$tmp/aven.rb"; then
   fail "cask removes user data"
+fi
+
+# The zap script unloads and removes the agent only when it runs Aven.app.
+# shellcheck disable=SC2016 # The script's own command substitution.
+grep -qF '/bin/launchctl bootout "gui/$(/usr/bin/id -u)/com.raine.aven.daemon"' "$tmp/zap.sh" ||
+  fail "zap script does not unload the agent"
+cat >"$tmp/launchctl" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"$LAUNCHCTL_LOG"
+SH
+chmod +x "$tmp/launchctl"
+sed "s|/bin/launchctl|$tmp/launchctl|" "$tmp/zap.sh" >"$tmp/zap-stubbed.sh"
+if grep -q '/bin/launchctl' "$tmp/zap-stubbed.sh"; then
+  fail "zap script still calls launchctl"
+fi
+agent_plist() {
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.raine.aven.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$1</string>
+    <string>daemon</string>
+  </array>
+</dict>
+</plist>
+PLIST
+}
+# Runs the zap script with a new HOME whose agent plist holds $1, or no plist
+# when $1 is empty. Sets $plist and logs launchctl's arguments to $home.log.
+zap_agent() {
+  home=$(mktemp -d "$tmp/home.XXXXXX")
+  plist="$home/Library/LaunchAgents/com.raine.aven.daemon.plist"
+  mkdir -p "$home/Library/LaunchAgents"
+  : >"$home.log"
+  if [[ -n $1 ]]; then
+    printf '%s\n' "$1" >"$plist"
+  fi
+  HOME="$home" LAUNCHCTL_LOG="$home.log" /bin/sh "$tmp/zap-stubbed.sh" 2>/dev/null ||
+    fail "zap script failed for ${1:-no plist}"
+}
+# The script reads the plist with plutil, which only macOS has.
+if [[ $(uname -s) == Darwin ]]; then
+  zap_agent ''
+  [[ ! -s $home.log ]] || fail "zap unloads a missing agent"
+  zap_agent "$(agent_plist /Applications/Aven.app/Contents/MacOS/aven)"
+  [[ $(<"$home.log") == "bootout gui/$(id -u)/com.raine.aven.daemon" ]] ||
+    fail "zap ran launchctl $(<"$home.log")"
+  [[ ! -e $plist ]] || fail "zap keeps the Aven.app agent"
+  for program in "$HOME/.local/bin/aven" /opt/homebrew/opt/aven/Aven.app/Contents/MacOS/aven \
+    /Applications/Aven.app.old/Contents/MacOS/aven; do
+    zap_agent "$(agent_plist "$program")"
+    [[ ! -s $home.log ]] || fail "zap unloads the agent for $program"
+    [[ -f $plist ]] || fail "zap removes the agent for $program"
+  done
+  zap_agent 'not a plist'
+  [[ ! -s $home.log && -f $plist ]] || fail "zap touches an unreadable plist"
 fi
 
 reject() {
@@ -70,4 +156,4 @@ reject 1.2.3 "$tmp"
 rm "$tmp/Aven-Desktop-amd64.sha256"
 reject 1.2.3 "$tmp"
 
-echo "ok: cask installs the Aven Desktop disk image per architecture, links aven, and zaps only preferences, caches and saved state; invalid versions and checksums rejected"
+echo "ok: cask installs the Aven Desktop disk image per architecture, links aven, keeps the background agent on uninstall, and zaps only that agent, preferences, caches and saved state; invalid versions and checksums rejected"
