@@ -97,7 +97,9 @@ jobs:
           if [ "${{ matrix.use_cross }}" == "true" ]; then
             cross build --release --locked --target "${{ matrix.target }}"
           elif [ -n "$FEATURES" ]; then
-            cargo build --release --locked --target "${{ matrix.target }}" --features "$FEATURES"
+            # Aven Desktop requires macOS 13; terminal-only keeps the default.
+            MACOSX_DEPLOYMENT_TARGET=13.0 \
+              cargo build --release --locked --target "${{ matrix.target }}" --features "$FEATURES"
           else
             cargo build --release --locked --target "${{ matrix.target }}"
           fi
@@ -170,7 +172,7 @@ jobs:
         run: |
           version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
           mkdir unsigned-app
-          scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app
+          scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app "${{ matrix.channel }}"
       # Desktop ships only the bundle; terminal-only also ships the bare binary.
       - name: Sign
         env:

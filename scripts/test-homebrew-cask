@@ -33,6 +33,7 @@ expect "sha256 arm:   \"$(printf '%064d' 1)\","
 expect "intel: \"$(printf '%064d' 2)\""
 expect 'url "https://github.com/raine/aven/releases/download/v#{version}/Aven-Desktop-#{arch}.dmg"'
 expect 'auto_updates true'
+expect 'depends_on macos: ">= :ventura"'
 expect 'app "Aven.app"'
 expect 'binary "#{appdir}/Aven.app/Contents/MacOS/aven"'
 expect 'brew uninstall --zap aven'

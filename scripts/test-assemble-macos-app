@@ -58,6 +58,13 @@ fi
 [[ $(plist_value LSUIElement) == true ]] || fail "LSUIElement"
 [[ $(plist_value CFBundleShortVersionString) == 1.2.3 ]] || fail "CFBundleShortVersionString"
 [[ $(plist_value CFBundleVersion) == 1.2.3 ]] || fail "CFBundleVersion"
+if /usr/bin/plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist" >/dev/null 2>&1; then
+  fail "terminal bundle sets LSMinimumSystemVersion"
+fi
+mkdir "$tmp/desktop"
+"$assemble" "$tmp/aven" 1.2.3 "$tmp/desktop" desktop >/dev/null
+[[ $(/usr/bin/plutil -extract LSMinimumSystemVersion raw "$tmp/desktop/Aven.app/Contents/Info.plist") == 13.0 ]] ||
+  fail "desktop bundle LSMinimumSystemVersion"
 
 # The assembled layout must be signable as a bundle and runnable through a PATH symlink.
 /usr/bin/codesign --force --sign - --identifier fi.zendit.Aven "$app" 2>/dev/null
@@ -73,5 +80,6 @@ mkdir "$tmp/out2"
 reject "$tmp/aven" 1.2.3-signtest.1 "$tmp/out2"
 reject "$tmp/aven" 1.2 "$tmp/out2"
 reject "$tmp/aven" 1.2.3
+reject "$tmp/aven" 1.2.3 "$tmp/out2" laptop
 [[ ! -e $tmp/out2/Aven.app ]] || fail "rejected assembly left a bundle"
-echo "ok: bundle assembled with committed resources and release Info.plist; existing bundle, missing input, missing output and invalid versions rejected"
+echo "ok: bundle assembled with committed resources and release Info.plist, desktop requiring macOS 13; existing bundle, missing input, missing output and invalid versions rejected"

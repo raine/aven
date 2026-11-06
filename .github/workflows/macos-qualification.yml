@@ -73,8 +73,13 @@ jobs:
           SQLX_OFFLINE: 'true'
         run: |
           # The baseline revision predates the `desktop` feature.
-          features="${{ matrix.revision == 'candidate' && '--features desktop' || '' }}"
-          cargo build --release --locked --target "${{ matrix.target }}" $features
+          if [[ "${{ matrix.revision }}" == candidate ]]; then
+            # Aven Desktop requires macOS 13.
+            MACOSX_DEPLOYMENT_TARGET=13.0 \
+              cargo build --release --locked --target "${{ matrix.target }}" --features desktop
+          else
+            cargo build --release --locked --target "${{ matrix.target }}"
+          fi
           mkdir unsigned
           cp "target/${{ matrix.target }}/release/${BIN_NAME}" "unsigned/${BIN_NAME}"
           git rev-parse HEAD > unsigned/commit-sha
@@ -117,7 +122,8 @@ jobs:
         run: |
           version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
           mkdir unsigned-app
-          scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app
+          scripts/assemble-macos-app "unsigned/${BIN_NAME}" "$version" unsigned-app \
+            "${{ matrix.revision == 'candidate' && 'desktop' || 'terminal' }}"
       - name: Sign
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
