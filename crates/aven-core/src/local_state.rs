@@ -48,6 +48,8 @@ pub enum OnboardingStatus {
     Established,
 }
 
+const BACKGROUND_SYNC_AT_META_KEY: &str = "sync_background_at";
+
 impl Database {
     pub async fn daemon_sync_state(&self) -> Result<DaemonSyncState> {
         self.meta("sync_daemon_health")
@@ -92,6 +94,20 @@ impl Database {
             .await?;
         }
         Ok(())
+    }
+
+    /// Unix seconds of the last sync round `aven daemon` completed, which syncs
+    /// while Aven Desktop is quit.
+    pub async fn background_sync_at(&self) -> Result<Option<i64>> {
+        Ok(self
+            .meta(BACKGROUND_SYNC_AT_META_KEY)
+            .await?
+            .and_then(|at| at.parse().ok()))
+    }
+
+    pub async fn record_background_sync(&self, at: i64) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        set_meta(&mut conn, BACKGROUND_SYNC_AT_META_KEY, &at.to_string()).await
     }
 
     /// Returns the last time this installation's sync credentials were refused.
@@ -563,6 +579,9 @@ mod tests {
         assert_eq!(state.last_success_at, Some(100));
         assert_eq!(state.error.as_ref().unwrap().since, 110);
         assert_eq!(state.next_retry_at, Some(122));
+        assert_eq!(database.background_sync_at().await.unwrap(), None);
+        database.record_background_sync(105).await.unwrap();
+        assert_eq!(database.background_sync_at().await.unwrap(), Some(105));
         sqlx::raw_sql(
             "CREATE TRIGGER reject_health_write BEFORE UPDATE ON meta
             WHEN NEW.key = 'sync_daemon_health'
