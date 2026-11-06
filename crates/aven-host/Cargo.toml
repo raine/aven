@@ -43,6 +43,10 @@ chacha20poly1305.workspace = true
 core-foundation = "0.10"
 security-framework = { version = "3.7", default-features = false }
 security-framework-sys = { version = "2.15", default-features = false }
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSBundle", "NSError", "NSString"] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [dev-dependencies]
 axum = "0.8"
