@@ -14,8 +14,8 @@ use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle,
     Focusable, FontFeatures, FontWeight, KeyContext, ListAlignment, ListOffset, ListState,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Stateful,
-    Subscription, SystemNotification, Window, WindowBounds, div, ease_in_out, linear_color_stop,
-    linear_gradient, list, point, prelude::*, relative, svg,
+    Subscription, Window, WindowBounds, div, ease_in_out, linear_color_stop, linear_gradient, list,
+    point, prelude::*, relative, svg,
 };
 
 use crate::actions::*;
@@ -932,14 +932,6 @@ impl Root {
         }
         if let Some(text) = applied.copy {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
-        }
-        for reminder in applied.remind {
-            cx.show_system_notification(SystemNotification {
-                tag: reminder.tag.into(),
-                title: reminder.title.into(),
-                body: reminder.message.into(),
-                actions: Vec::new(),
-            });
         }
         if let Some(catalog) = applied.launcher {
             cx.defer(move |cx| crate::launcher::set_catalog(*catalog, cx));

@@ -1,21 +1,66 @@
-pub(crate) fn notify_intake_task_added_if_tui_exited(tui_pid: u32, task_ref: &str, title: &str) {
-    notify_intake_task_added_with(
-        process_is_running(tui_pid),
-        task_ref,
-        title,
-        show_notification,
-    );
-}
+//! Notifications from the command line and the daemon: which way they reach
+//! the platform, and the CLI's own "Added" message.
+use std::sync::Arc;
 
-fn notify_intake_task_added_with(
-    tui_running: bool,
+use anyhow::Result;
+use aven_core::db::Database;
+use aven_core::notification_outbox::QueuedNotification;
+use aven_host::notify::{self, Authorization, Deliver, Report, Request};
+
+/// How long the "Added" message may wait for delivery before it is dropped.
+const ADDED_EXPIRY_SECONDS: i64 = 10 * 60;
+
+/// Queues "Added …" for a task the TUI's background add created, unless the
+/// TUI that asked for it still runs and shows it itself, then delivers it.
+pub(crate) async fn notify_intake_task_added_if_tui_exited(
+    database: &Database,
+    tui_pid: u32,
+    workspace_key: &str,
+    task_id: &str,
     task_ref: &str,
     title: &str,
-    notify: impl FnOnce(&str),
 ) {
-    if !tui_running {
-        notify(&format!("Added {task_ref}: {title}"));
+    let Some(notification) = intake_task_added(
+        process_is_running(tui_pid),
+        workspace_key,
+        task_id,
+        task_ref,
+        title,
+    ) else {
+        return;
+    };
+    if let Err(error) = queue_and_deliver(database, notification).await {
+        tracing::debug!(error = %format!("{error:#}"), "failed to send notification");
     }
+}
+
+fn intake_task_added(
+    tui_running: bool,
+    workspace_key: &str,
+    task_id: &str,
+    task_ref: &str,
+    title: &str,
+) -> Option<QueuedNotification> {
+    if tui_running {
+        return None;
+    }
+    let event = notify::new_event();
+    Some(QueuedNotification {
+        tag: notify::task_tag(workspace_key, task_id, &event),
+        event,
+        kind: "added".to_string(),
+        title: format!("Added {task_ref}"),
+        body: title.to_string(),
+        expires_at: notify::unix_now() + ADDED_EXPIRY_SECONDS,
+    })
+}
+
+async fn queue_and_deliver(database: &Database, notification: QueuedNotification) -> Result<()> {
+    database
+        .queue_notifications(&[], &[notification], notify::unix_now())
+        .await?;
+    notify::deliver_pending(database, &delivery()).await?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -58,22 +103,52 @@ fn process_is_running(pid: u32) -> bool {
     }
 }
 
-fn show_notification(message: &str) {
-    if let Err(error) = send_notification("aven", message) {
-        tracing::debug!(error = %format!("{error:#}"), "failed to send notification");
+/// How this process reaches the platform's notification service.
+///
+/// On macOS, an executable in Aven's bundle delivers through a short-lived
+/// child of itself, so no long-lived process takes clicks from the app.
+/// Anything else posts with the older notification API under Terminal's
+/// identity, which a bundle can't use once Aven has used the newer one.
+pub(crate) fn delivery() -> Arc<dyn Deliver> {
+    #[cfg(target_os = "macos")]
+    if let Some(executable) = macos::bundle_executable() {
+        return Arc::new(notify::child::ChildProcess { executable });
+    }
+    Arc::new(Unbundled)
+}
+
+/// Posts each notification in this process. Nothing here can tell whether
+/// notifications are allowed or what is shown.
+struct Unbundled;
+
+impl Deliver for Unbundled {
+    fn deliver(&self, request: &Request) -> Result<Report> {
+        Ok(Report {
+            authorization: Authorization::Allowed,
+            errors: request
+                .posts
+                .iter()
+                .map(|post| {
+                    send_notification(&post.title, &post.body)
+                        .err()
+                        .map(|error| format!("{error:#}"))
+                })
+                .collect(),
+            delivered: None,
+        })
     }
 }
 
 /// Hands the notification to the platform service. Success means it was
 /// accepted, not that it was displayed.
-pub(crate) fn send_notification(title: &str, message: &str) -> anyhow::Result<()> {
+fn send_notification(title: &str, message: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         use mac_notification_sys::{Notification, set_application};
 
         // mac-notification-sys opens a "Choose Application" dialog when sending
         // without an application, and accepts only the first one per process.
-        if let Err(error) = set_application(macos::notification_application()) {
+        if let Err(error) = set_application(macos::FALLBACK_BUNDLE_ID) {
             tracing::debug!(%error, "failed to set notification application");
         }
         Notification::default()
@@ -92,12 +167,27 @@ pub(crate) fn send_notification(title: &str, message: &str) -> anyhow::Result<()
     Ok(())
 }
 
+/// `aven internal notify`: the child side of [`notify::child`], in its own
+/// short-lived process.
+pub(crate) fn serve_child() -> Result<()> {
+    use std::io::{Read, Write};
+
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    #[cfg(target_os = "macos")]
+    let output = notify::child::serve(&input, &notify::un::InProcess)?;
+    #[cfg(not(target_os = "macos"))]
+    let output = notify::child::serve(&input, &Unbundled)?;
+    std::io::stdout().write_all(&output)?;
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) use macos::bundle_identifier;
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
 
     use core_foundation::array::{CFArray, CFArrayRef};
@@ -118,27 +208,28 @@ mod macos {
         ) -> CFArrayRef;
     }
 
-    /// Notifications appear as Aven when this process runs from a registered
-    /// Aven.app, and as Terminal otherwise.
-    pub(super) fn notification_application() -> &'static str {
-        static APPLICATION: OnceLock<&'static str> = OnceLock::new();
-        APPLICATION.get_or_init(|| {
-            let executable = std::env::current_exe().and_then(std::fs::canonicalize);
-            choose_application(
-                executable.ok().as_deref(),
-                bundle_identifier,
-                register_bundle,
-            )
-        })
+    /// This process's executable when it is the main executable of a
+    /// registered Aven bundle.
+    pub(super) fn bundle_executable() -> Option<PathBuf> {
+        static EXECUTABLE: OnceLock<Option<PathBuf>> = OnceLock::new();
+        EXECUTABLE
+            .get_or_init(|| {
+                let executable = std::env::current_exe()
+                    .and_then(std::fs::canonicalize)
+                    .ok()?;
+                in_aven_bundle(&executable, bundle_identifier, register_bundle)
+                    .then_some(executable)
+            })
+            .clone()
     }
 
-    pub(super) fn choose_application(
-        executable: Option<&Path>,
+    pub(super) fn in_aven_bundle(
+        executable: &Path,
         identifier: impl FnOnce(&Path) -> Option<String>,
         register: impl FnOnce(&Path) -> Result<(), String>,
-    ) -> &'static str {
-        let Some(bundle) = executable.and_then(enclosing_bundle) else {
-            return FALLBACK_BUNDLE_ID;
+    ) -> bool {
+        let Some(bundle) = enclosing_bundle(executable) else {
+            return false;
         };
         let found = identifier(&bundle);
         if found.as_deref() != Some(AVEN_BUNDLE_ID) {
@@ -147,17 +238,17 @@ mod macos {
                 identifier = ?found,
                 "executable bundle is not Aven; notifying as Terminal"
             );
-            return FALLBACK_BUNDLE_ID;
+            return false;
         }
         match register(&bundle) {
-            Ok(()) => AVEN_BUNDLE_ID,
+            Ok(()) => true,
             Err(error) => {
                 tracing::debug!(
                     bundle = %bundle.display(),
                     %error,
                     "failed to register Aven bundle; notifying as Terminal"
                 );
-                FALLBACK_BUNDLE_ID
+                false
             }
         }
     }
@@ -199,24 +290,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exited_tui_sends_task_notification() {
-        let mut message = None;
+    fn exited_tui_queues_task_notification() {
+        let notification =
+            intake_task_added(false, "home", "T1", "APP-7KQ9", "Fix slack dispatch").unwrap();
 
-        notify_intake_task_added_with(false, "APP-7KQ9", "Fix slack dispatch", |value| {
-            message = Some(value.to_string());
-        });
-
+        assert_eq!(notification.title, "Added APP-7KQ9");
+        assert_eq!(notification.body, "Fix slack dispatch");
         assert_eq!(
-            message.as_deref(),
-            Some("Added APP-7KQ9: Fix slack dispatch")
+            notify::target(&notification.tag),
+            Some(notify::Target::Task {
+                workspace: "home".into(),
+                task: "T1".into(),
+            })
         );
+        assert!(notification.expires_at > notify::unix_now());
     }
 
     #[test]
     fn running_tui_suppresses_task_notification() {
-        notify_intake_task_added_with(true, "APP-7KQ9", "Fix slack dispatch", |_| {
-            panic!("running TUI should suppress the notification");
-        });
+        assert_eq!(
+            intake_task_added(true, "home", "T1", "APP-7KQ9", "Fix slack dispatch"),
+            None
+        );
     }
 
     #[test]
@@ -256,58 +351,41 @@ mod tests {
         }
 
         #[test]
-        fn registered_aven_bundle_notifies_as_aven() {
+        fn registered_aven_bundle_delivers_as_aven() {
             let executable = Path::new("/x/Aven.app/Contents/MacOS/aven");
-            let application = choose_application(
-                Some(executable),
+            assert!(in_aven_bundle(
+                executable,
                 |bundle| {
                     assert_eq!(bundle, Path::new("/x/Aven.app"));
                     Some(AVEN_BUNDLE_ID.into())
                 },
                 |_| Ok(()),
-            );
-            assert_eq!(application, AVEN_BUNDLE_ID);
+            ));
         }
 
         #[test]
         fn non_aven_or_unregistered_bundle_falls_back_to_terminal() {
             let executable = Path::new("/x/Aven.app/Contents/MacOS/aven");
-            assert_eq!(
-                choose_application(
-                    Some(executable),
-                    |_| Some("com.example.Other".into()),
-                    |_| panic!("only Aven bundles are registered"),
-                ),
-                FALLBACK_BUNDLE_ID
-            );
-            assert_eq!(
-                choose_application(Some(executable), |_| None, |_| unreachable!()),
-                FALLBACK_BUNDLE_ID
-            );
-            assert_eq!(
-                choose_application(
-                    Some(executable),
-                    |_| Some(AVEN_BUNDLE_ID.into()),
-                    |_| Err("not registered".into()),
-                ),
-                FALLBACK_BUNDLE_ID
-            );
+            assert!(!in_aven_bundle(
+                executable,
+                |_| Some("com.example.Other".into()),
+                |_| panic!("only Aven bundles are registered"),
+            ));
+            assert!(!in_aven_bundle(executable, |_| None, |_| unreachable!()));
+            assert!(!in_aven_bundle(
+                executable,
+                |_| Some(AVEN_BUNDLE_ID.into()),
+                |_| Err("not registered".into()),
+            ));
         }
 
         #[test]
         fn bare_executable_falls_back_to_terminal_without_bundle_lookup() {
-            assert_eq!(
-                choose_application(
-                    Some(Path::new("/usr/local/bin/aven")),
-                    |_| unreachable!(),
-                    |_| unreachable!(),
-                ),
-                FALLBACK_BUNDLE_ID
-            );
-            assert_eq!(
-                choose_application(None, |_| unreachable!(), |_| unreachable!()),
-                FALLBACK_BUNDLE_ID
-            );
+            assert!(!in_aven_bundle(
+                Path::new("/usr/local/bin/aven"),
+                |_| unreachable!(),
+                |_| unreachable!(),
+            ));
         }
 
         #[test]

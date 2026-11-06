@@ -34,8 +34,10 @@ use aven_host::config::{
 use aven_host::config_edit;
 use aven_host::daemon::service::{self as agent_service, AgentStatus, LoginItem};
 use aven_host::gist::create_secret_gist;
-use aven_host::host::{self, Election, Host, HostEvent, HostState, Role, RoundReport, Seat};
-use aven_host::reminders::{Notification, ReminderSender};
+use aven_host::host::{
+    self, Delivery, Election, Host, HostEvent, HostState, Role, RoundReport, Seat,
+};
+use aven_host::notify::{self, Deliver, DeliveryLock};
 use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
 use aven_host::store::{
@@ -71,6 +73,12 @@ const SYNC_BUSY: &str = "Sync is busy. Try again when it finishes";
 const JOIN_PAUSE: &str = "Joining sync: local changes wait until synced tasks are downloaded";
 /// How often outside writes are looked for.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// How far back settings count notifications that weren't shown because
+/// notifications were off.
+const NOTIFICATIONS_OFF_WINDOW: i64 = 7 * 24 * 60 * 60;
+/// How often the app looks for notifications another process queued, such
+/// as the daemon's reminders and the CLI's.
+const DELIVERY_POLL: Duration = Duration::from_secs(2);
 /// Dates and availability change with the clock, with no write to notice.
 const CLOCK_INTERVAL: Duration = Duration::from_secs(60);
 /// Coalesces a burst of local changes into one sync round.
@@ -320,6 +328,8 @@ struct Actor {
     /// The running version, which a host started here records.
     version: String,
     background_sync: Option<JoinHandle<()>>,
+    /// Posts the open database's queued notifications from this process.
+    notifications: Arc<dyn Deliver>,
     /// Set while user-started work holds the sync slot.
     sync_busy: Arc<AtomicBool>,
     invitation: Option<JoinHandle<()>>,
@@ -416,6 +426,7 @@ impl Actor {
             sync_stop: Arc::new(Notify::new()),
             storage,
             background_sync: None,
+            notifications: Arc::new(notify::un::InProcess),
             sync_busy: Arc::new(AtomicBool::new(false)),
             invitation: None,
             handled: 0,
@@ -520,6 +531,8 @@ impl Actor {
             wake: self.sync_wake.clone(),
             stop: self.sync_stop.clone(),
             replies: self.replies.clone(),
+            notifications: self.notifications.clone(),
+            deliver: Arc::new(Notify::new()),
         })));
     }
 
@@ -2682,9 +2695,18 @@ async fn background_settings(
     config: &AppConfig,
     database: Option<Database>,
 ) -> BackgroundStatus {
-    let last_sync = match database {
-        Some(database) => database.background_sync_at().await.ok().flatten(),
-        None => None,
+    let (last_sync, notifications_off) = match database {
+        Some(database) => {
+            let since = notify::unix_now() - NOTIFICATIONS_OFF_WINDOW;
+            (
+                database.background_sync_at().await.ok().flatten(),
+                database
+                    .failed_notifications_since(notify::NOTIFICATIONS_OFF, since)
+                    .await
+                    .unwrap_or_default(),
+            )
+        }
+        None => (None, 0),
     };
     BackgroundStatus {
         managed,
@@ -2693,6 +2715,7 @@ async fn background_settings(
         wanted: background::wants_agent(config),
         agent: AgentShown::Unknown,
         last_sync,
+        notifications_off,
     }
 }
 
@@ -2730,6 +2753,9 @@ struct Background {
     wake: Arc<Notify>,
     stop: Arc<Notify>,
     replies: mpsc::UnboundedSender<Reply>,
+    notifications: Arc<dyn Deliver>,
+    /// Asks for queued notifications to be delivered now.
+    deliver: Arc<Notify>,
 }
 
 impl Background {
@@ -2748,6 +2774,11 @@ impl Background {
 /// lock it syncs as a client and tries again now and then, so it takes over
 /// once another host stops.
 async fn run_background(mut background: Background) {
+    let _delivery = AbortOnDrop(tokio::spawn(deliver_here(
+        background.database.clone(),
+        background.notifications.clone(),
+        background.deliver.clone(),
+    )));
     let mut told = None;
     loop {
         if background.hostable
@@ -2842,17 +2873,43 @@ fn unresponsive_host(status: Option<&aven_core::local_state::HostStatus>) -> Toa
     Toast::error("Aven\u{2019}s background process stopped responding").detail(detail)
 }
 
-/// Posts reminders through the app's own notifications.
-struct AppNotifications(mpsc::UnboundedSender<Reply>);
+struct AbortOnDrop(JoinHandle<()>);
 
-impl ReminderSender for AppNotifications {
-    fn send(&self, notification: &Notification) -> Result<()> {
-        self.0
-            .send(Reply {
-                request: 0,
-                body: ReplyBody::Remind(notification.clone()),
-            })
-            .map_err(|_| anyhow!("the app is closing"))
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Delivers the database's queued notifications from this process for as
+/// long as the app runs, once it holds the delivery lock. Clicks on Aven's
+/// notifications go to whichever process last talked to the notification
+/// service, which is then this app.
+async fn deliver_here(database: Database, service: Arc<dyn Deliver>, asked: Arc<Notify>) {
+    let mut lock = None;
+    loop {
+        if lock.is_none() {
+            lock = match DeliveryLock::try_take(database.path()) {
+                Ok(lock) => lock,
+                Err(error) => {
+                    tracing::warn!(error = %format!("{error:#}"), "could not take the delivery lock");
+                    None
+                }
+            };
+        }
+        if lock.is_some()
+            && database
+                .outbox_has_work(notify::unix_now())
+                .await
+                .unwrap_or(false)
+            && let Err(error) = notify::drain(&database, &service).await
+        {
+            tracing::warn!(error = %format!("{error:#}"), "notification delivery failed");
+        }
+        tokio::select! {
+            () = asked.notified() => {}
+            () = sleep(DELIVERY_POLL) => {}
+        }
     }
 }
 
@@ -2870,11 +2927,9 @@ async fn host_here(background: Background, seat: Seat) {
         config: background.config.clone(),
         blob_dir: background.blob_dir.clone(),
         sync: background.sync(),
-        reminders: Arc::new(AppNotifications(background.replies.clone())),
+        delivery: Delivery::Elsewhere(background.deliver.clone()),
         events: Box::new(move |event| {
-            let HostEvent::Round(round) = event else {
-                return;
-            };
+            let HostEvent::Round(round) = event;
             report(ReplyBody::Sync(match round {
                 RoundReport::Completed(outcome) => {
                     if outcome.received_changes > 0 {
@@ -3223,9 +3278,43 @@ mod tests {
         .expect("the expected reply arrived")
     }
 
+    /// A notification service that records what it was asked to post.
+    #[derive(Default)]
+    struct Posted(std::sync::Mutex<Vec<String>>);
+
+    impl Posted {
+        fn titles(&self) -> Vec<String> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    impl Deliver for Posted {
+        fn deliver(&self, request: &notify::Request) -> Result<notify::Report> {
+            let mut posted = self.0.lock().unwrap();
+            posted.extend(request.posts.iter().map(|post| post.title.clone()));
+            Ok(notify::Report {
+                authorization: notify::Authorization::Allowed,
+                errors: vec![None; request.posts.len()],
+                delivered: Some(Vec::new()),
+            })
+        }
+    }
+
+    async fn posted_soon(posted: &Posted, title: &str) {
+        timeout(Duration::from_secs(10), async {
+            while !posted.titles().iter().any(|posted| posted == title) {
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{title:?} was posted; got {:?}", posted.titles()));
+    }
+
     #[tokio::test]
     async fn the_app_hosts_its_database_and_posts_reminders_itself() {
-        let (_directory, mut actor, mut replies) = actor("Keep").await;
+        let (_directory, mut actor, _replies) = actor("Keep").await;
+        let posted = Arc::new(Posted::default());
+        actor.notifications = posted.clone();
         let mut due = draft("Pay invoice");
         due.due_on = Some(Local::now().format("%Y-%m-%d").to_string());
         actor.store.create_task(due, None).await.unwrap();
@@ -3233,12 +3322,8 @@ mod tests {
         actor.config.reminders.digest_time = "00:00".to_string();
         actor.spawn_background_sync();
 
-        let reminder = reply_matching(&mut replies, |body| match body {
-            ReplyBody::Remind(notification) => Some(notification),
-            _ => None,
-        })
-        .await;
-        assert_eq!(reminder.title, "1 due today");
+        posted_soon(&posted, "1 due today").await;
+        assert!(DeliveryLock::try_take(&actor.database).unwrap().is_none());
         let status = actor.store.database().host_status().await.unwrap().unwrap();
         assert_eq!(status.role, "desktop");
         assert_eq!(status.version, env!("CARGO_PKG_VERSION"));
@@ -3247,6 +3332,38 @@ mod tests {
 
         timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
         assert!(!host::lock_is_held(&actor.database).unwrap());
+    }
+
+    #[tokio::test]
+    async fn the_app_posts_what_another_host_queued() {
+        let (_directory, mut actor, _replies) = actor("Keep").await;
+        let posted = Arc::new(Posted::default());
+        actor.notifications = posted.clone();
+        let Election::Won(_daemon) = host::elect(&actor.database, "127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap()
+        else {
+            panic!("the other host wins");
+        };
+        actor.spawn_background_sync();
+        let event = notify::new_event();
+        let queued = aven_core::notification_outbox::QueuedNotification {
+            tag: notify::task_tag("default", "T", &event),
+            event,
+            kind: "available".into(),
+            title: "Available APP-1".into(),
+            body: "Pay invoice".into(),
+            expires_at: notify::unix_now() + 60,
+        };
+        actor
+            .store
+            .database()
+            .queue_notifications(&[], &[queued], notify::unix_now())
+            .await
+            .unwrap();
+
+        posted_soon(&posted, "Available APP-1").await;
+        timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
     }
 
     #[tokio::test]
@@ -3265,14 +3382,21 @@ mod tests {
         actor.config.reminders.digest_time = "00:00".to_string();
         actor.spawn_background_sync();
 
-        // A client round reports health, and no reminder comes before it.
+        // A client round reports health, and the client queues no reminder.
         let health = reply_matching(&mut replies, |body| match body {
-            ReplyBody::Remind(_) => panic!("a client sent a reminder"),
             ReplyBody::Sync(health) => Some(health),
             _ => None,
         })
         .await;
         assert_eq!(health, SyncHealth::NotSetUp);
+        assert!(
+            !actor
+                .store
+                .database()
+                .outbox_has_work(notify::unix_now())
+                .await
+                .unwrap()
+        );
         assert_eq!(actor.store.database().host_status().await.unwrap(), None);
         timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
     }

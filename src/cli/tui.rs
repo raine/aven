@@ -115,6 +115,10 @@ pub(crate) enum InternalSubcommand {
     /// restores that version if the new one does not start.
     #[command(name = "finish-desktop-update", hide = true)]
     FinishDesktopUpdate(InternalFinishDesktopUpdateArgs),
+    /// Delivers notifications given as JSON on stdin and exits, so the
+    /// process that asked never connects to the notification service.
+    #[command(name = "notify", hide = true)]
+    Notify,
 }
 
 #[derive(Args)]

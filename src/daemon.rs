@@ -9,8 +9,7 @@ use std::time::Duration;
 use anyhow::Result;
 use aven_core::db::Database;
 use aven_host::host::executable::{self, Fingerprint};
-use aven_host::host::{self, Election, Exit, Host, Role, Seat};
-use aven_host::reminders::{Notification, ReminderSender};
+use aven_host::host::{self, Delivery, Election, Exit, Host, Role, Seat};
 use aven_host::sync::encrypted::DaemonSync;
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
@@ -35,15 +34,6 @@ const UPDATE_LAUNCH_WAIT: Duration = Duration::from_secs(150);
 pub struct DaemonRunArgs {
     pub db_path: PathBuf,
     pub config: AppConfig,
-}
-
-/// Posts reminders through the platform's notification service.
-struct SystemNotifications;
-
-impl ReminderSender for SystemNotifications {
-    fn send(&self, notification: &Notification) -> Result<()> {
-        crate::notification::send_notification(&notification.title, &notification.message)
-    }
 }
 
 /// Runs until stopped, idle while the config gives it nothing to do, so that a
@@ -82,7 +72,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         config: follow_config(&args.config, |_| {}),
         blob_dir,
         sync: DaemonSync::default(),
-        reminders: Arc::new(SystemNotifications),
+        delivery: Delivery::Here(crate::notification::delivery()),
         events: Box::new(|_| {}),
         wake: Arc::new(Notify::new()),
         debounce: Duration::ZERO,
@@ -288,7 +278,7 @@ impl EmbeddedSync {
             config: self.host_config,
             blob_dir: self.blob_dir,
             sync: DaemonSync::default(),
-            reminders: Arc::new(SystemNotifications),
+            delivery: Delivery::Here(crate::notification::delivery()),
             events: Box::new(|_| {}),
             wake: self.wake,
             debounce: Duration::ZERO,

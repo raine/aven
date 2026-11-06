@@ -9,7 +9,6 @@ use aven_core::recurrence::{RecurrenceSeriesId, RecurrenceSeriesState};
 use aven_core::sync::client::engine::LocalPhase;
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::config::{AppConfig, RemindersConfig};
-use aven_host::reminders::Notification;
 use aven_host::store::{ConflictTarget, TaskQuery};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -451,6 +450,9 @@ pub struct BackgroundStatus {
     pub agent: AgentShown,
     /// Unix seconds of the agent's last completed sync.
     pub last_sync: Option<i64>,
+    /// Notifications from the last week that weren't shown because
+    /// notifications were off.
+    pub notifications_off: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -915,8 +917,6 @@ pub enum ReplyBody {
     Sync(SyncHealth),
     /// A background round brought changes in.
     SyncArrived(usize),
-    /// A reminder for the app to post, since it hosts this database.
-    Remind(Notification),
     SyncEvent(SyncEvent),
     Settings(Box<SettingsData>),
     /// The agent changed after settings were sent.
