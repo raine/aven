@@ -12,6 +12,7 @@ pub mod local_state;
 pub mod matching;
 pub mod metadata;
 mod mutation;
+pub mod notification_outbox;
 pub mod operations;
 pub mod private_fs;
 pub mod projects;
