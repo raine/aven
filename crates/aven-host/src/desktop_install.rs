@@ -611,12 +611,13 @@ pub fn switch(layout: &Layout, system: &dyn System, switch: &Switch) -> Result<O
                     .as_ref()
                     .is_some_and(|agent| agent.loaded && !agent.disabled),
             };
-            // Desktop keeps the daemon running only if it was.
-            if switch.agent.is_some() {
-                system.set_background(if state.restart_agent {
-                    BackgroundIntent::On
-                } else {
+            // Desktop keeps running a daemon launchd may run, and leaves a
+            // disabled one off.
+            if let Some(agent) = &switch.agent {
+                system.set_background(if agent.disabled {
                     BackgroundIntent::Off
+                } else {
+                    BackgroundIntent::On
                 })?;
             }
             state

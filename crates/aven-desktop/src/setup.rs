@@ -49,6 +49,8 @@ pub(crate) struct Setup {
     /// The command last copied, so its button can say so.
     copied: Option<SharedString>,
     focus: FocusHandle,
+    /// The config turns reminders on, so the agent sends them too.
+    reminders: bool,
 }
 
 impl Setup {
@@ -68,6 +70,8 @@ impl Setup {
             on_done: Some(on_done),
             copied: None,
             focus,
+            reminders: aven_host::config::AppConfig::load()
+                .is_ok_and(|config| config.reminders.enabled),
         };
         setup.check(window, cx);
         setup
@@ -97,6 +101,14 @@ impl Setup {
             return;
         };
         let switch = switch.clone();
+        // The daemon keeps sending reminders from this app, which only it can
+        // ask macOS to allow.
+        if self.reminders && switch.agent.as_ref().is_some_and(|agent| !agent.disabled) {
+            cx.spawn(async move |_, _| {
+                crate::notifications::request().await;
+            })
+            .detach();
+        }
         self.stage = Stage::Working;
         cx.notify();
         let layout = self.layout.clone();
@@ -422,14 +434,26 @@ impl Setup {
         };
         changes = changes.child(item("icons/ic-return.svg", commands, t));
         if let Some(agent) = &switch.agent {
-            let state = if agent.disabled {
-                "Background sync moves to this app and stays off"
-            } else if agent.loaded {
-                "Background sync restarts from this app"
+            let work = if self.reminders {
+                "Background sync and reminders"
             } else {
-                "Background sync moves to this app"
+                "Background sync"
             };
-            changes = changes.child(item("icons/cloud.svg", state.to_string(), t));
+            let state = if agent.disabled {
+                format!("{work} move to this app and stay off")
+            } else if agent.loaded {
+                format!("{work} restart from this app and continue while it is quit")
+            } else {
+                format!("{work} move to this app and continue while it is quit")
+            };
+            changes = changes.child(item("icons/cloud.svg", state, t));
+            if self.reminders && !agent.disabled {
+                changes = changes.child(item(
+                    "icons/ic-done.svg",
+                    "macOS asks you to allow notifications from Aven".to_string(),
+                    t,
+                ));
+            }
         }
         if let Some(bundle) = &switch.retire {
             changes = changes.child(item(
@@ -599,7 +623,7 @@ impl Setup {
             let state = match (agent.running, agent.disabled) {
                 (true, _) => "Running from this app",
                 (false, true) => "Off, as before",
-                (false, false) => "Starts at next login",
+                (false, false) => "Starts with this app",
             };
             facts = facts.child(row("Background sync", state.to_string(), false, t));
         }

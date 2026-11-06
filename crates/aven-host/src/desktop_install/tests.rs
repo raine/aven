@@ -365,6 +365,20 @@ fn a_disabled_daemon_is_moved_but_stays_off() {
 }
 
 #[test]
+fn a_stopped_but_enabled_daemon_keeps_the_background_on() {
+    let mac = Mac::new();
+    let old = mac.script_install();
+    mac.agent(&old, false, false);
+
+    report(mac.switch().unwrap());
+    assert_eq!(
+        *mac.system.background.lock().unwrap(),
+        Some(BackgroundIntent::On)
+    );
+    assert!(mac.system.calls().iter().all(|call| call != "start"));
+}
+
+#[test]
 fn a_switch_follows_the_program_in_path_state_and_keeps_a_custom_keep_alive() {
     let mac = Mac::new();
     let old = mac.script_install();
