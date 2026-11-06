@@ -245,18 +245,18 @@ pub async fn run_to_completion_and_await_daemon(
     config: &AppConfig,
 ) -> Result<Outcome> {
     let host = DesktopHost::foreground(config);
-    let (outcome, recorded) = run_and_retry_daemon(database, &host).await?;
-    if let Some(recorded) = recorded {
-        crate::daemon::await_daemon_retry(database, &recorded).await;
+    let (outcome, requested) = run_and_retry_daemon(database, &host).await?;
+    if let Some(request) = requested {
+        crate::daemon::await_daemon_retry(database, request).await;
     }
     Ok(outcome)
 }
 
-/// Also returns the daemon health that a requested retry will replace.
+/// Also returns the host round requested to replace a recorded failure.
 async fn run_and_retry_daemon(
     database: &Database,
     host: &DesktopHost,
-) -> Result<(Outcome, Option<aven_core::local_state::DaemonSyncState>)> {
+) -> Result<(Outcome, Option<crate::host::RoundRequest>)> {
     let outcome = driver()?
         .run(|link| engine::run_to_completion(link, database, host))
         .await?;

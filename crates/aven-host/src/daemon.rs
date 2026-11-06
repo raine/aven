@@ -1,37 +1,37 @@
 //! The parts of the daemon other processes reach: its service definition and
 //! the wake it listens for.
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use aven_core::db::Database;
-use aven_core::local_state::DaemonSyncState;
-use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::config::AppConfig;
+use crate::host::{self, ROUND_WAIT, RoundRequest};
 
 pub mod service;
 
 pub use service::{ServiceStatus, status_snapshot};
 
-/// How long a foreground sync waits for the daemon retry it requested.
-const DAEMON_RETRY_WAIT: Duration = Duration::from_secs(5);
-const DAEMON_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-/// A successful foreground sync can repair prompt-less key access. The `r` wake
+/// A successful foreground sync can repair prompt-less key access, so after
+/// one it asks a host that recorded a failure for a round now. The `r` wake
 /// bypasses backoff; ordinary mutation wakes retain the legacy `1` payload.
-/// Returns the daemon health that the requested retry will replace.
+/// Returns the round to wait for, when a host can report it.
 pub async fn retry_after_foreground_sync(
     database: &Database,
     config: &AppConfig,
-) -> Option<DaemonSyncState> {
-    if !config.automatic_sync_is_enabled() {
+) -> Option<RoundRequest> {
+    if !config.sync_is_allowed() {
         return None;
     }
     match database.daemon_sync_state().await {
         Ok(state) if state.error.is_some() => {
-            send_wake(config.wake_addr().ok()?, b"r");
-            Some(state)
+            let addr = config.wake_addr().ok()?;
+            let request = host::request_round(database, addr).await;
+            if request.is_none() {
+                // A daemon from before the host lock still takes the wake.
+                send_wake(addr, b"r");
+            }
+            request
         }
         Err(error) => {
             warn!(%error, "could not read daemon sync health");
@@ -41,33 +41,17 @@ pub async fn retry_after_foreground_sync(
     }
 }
 
-/// Waits briefly for the requested retry to record a result, so a caller that
-/// shows daemon health doesn't report the failure the retry just replaced.
-pub async fn await_daemon_retry(database: &Database, recorded: &DaemonSyncState) {
-    await_daemon_health_change(database, recorded, DAEMON_RETRY_WAIT).await;
+/// Waits briefly for the requested round to finish, so a caller that shows
+/// daemon health doesn't report the failure the round just replaced.
+pub async fn await_daemon_retry(database: &Database, request: RoundRequest) {
+    host::await_round(database, request, ROUND_WAIT).await;
 }
 
-async fn await_daemon_health_change(
-    database: &Database,
-    recorded: &DaemonSyncState,
-    wait: Duration,
-) {
-    let deadline = Instant::now() + wait;
-    while Instant::now() < deadline {
-        tokio::time::sleep(DAEMON_RETRY_POLL_INTERVAL).await;
-        match database.daemon_sync_state().await {
-            Ok(state) if state != *recorded => return,
-            Ok(_) => {}
-            Err(error) => {
-                warn!(%error, "could not read daemon sync health");
-                return;
-            }
-        }
-    }
-}
-
+/// Tells the host about a local change. A host may sync while `sync.enabled`
+/// is off, as Aven Desktop does, so only `AVEN_SYNC_DISABLED` without
+/// reminders keeps the wake back.
 pub fn wake_if_enabled(config: &AppConfig) {
-    if !config.daemon_has_work() {
+    if !config.sync_is_allowed() && !config.reminders.enabled {
         return;
     }
     let Ok(addr) = config.wake_addr() else {
@@ -81,7 +65,7 @@ fn wake(addr: SocketAddr) {
     send_wake(addr, b"1");
 }
 
-fn send_wake(addr: SocketAddr, payload: &[u8]) {
+pub(crate) fn send_wake(addr: SocketAddr, payload: &[u8]) {
     let bind_addr = SocketAddr::new(addr.ip(), 0);
     match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(payload, addr)) {
         Ok(_) => debug!(wake_addr = %addr, "daemon wake sent"),
@@ -97,14 +81,13 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn foreground_recovery_wakes_only_when_enabled_and_error_recorded() {
+    async fn foreground_recovery_wakes_only_when_allowed_and_error_recorded() {
         let database = Database::open(Path::new(":memory:")).await.unwrap();
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         socket
             .set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         let mut config = AppConfig::default();
-        config.sync.enabled = true;
         config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
         let mut buf = [0; 16];
         assert!(
@@ -127,11 +110,15 @@ mod tests {
                 .is_none()
         );
         assert!(socket.recv(&mut buf).is_err());
+        // With no host holding the lock, the wake still reaches an old daemon.
         config.sync.disable_override = false;
-        let recorded = retry_after_foreground_sync(&database, &config).await;
+        assert!(
+            retry_after_foreground_sync(&database, &config)
+                .await
+                .is_none()
+        );
         assert_eq!(socket.recv(&mut buf).unwrap(), 1);
         assert_eq!(buf[0], b'r');
-        assert_eq!(recorded.unwrap().next_retry_at, Some(400));
         // Foreground success cannot claim that the daemon recovered.
         assert!(database.daemon_sync_state().await.unwrap().error.is_some());
         database.record_daemon_sync_round(200, None).await.unwrap();
@@ -144,48 +131,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_retry_wait_ends_when_the_retry_records_a_result() {
+    async fn foreground_recovery_returns_the_round_a_syncing_host_will_run() {
         let dir = tempfile::tempdir().unwrap();
-        let database = Database::open(&dir.path().join("db.sqlite")).await.unwrap();
-        let failure = ("protected-key-storage-unavailable", "unlock", 400);
-
-        for retry in [
-            None,
-            Some(("protected-key-storage-unavailable", "unlock", 500)),
-        ] {
-            database
-                .record_daemon_sync_round(100, Some(failure))
-                .await
-                .unwrap();
-            let recorded = database.daemon_sync_state().await.unwrap();
-            let daemon = {
-                let database = database.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(150)).await;
-                    database.record_daemon_sync_round(200, retry).await.unwrap();
-                })
-            };
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                await_daemon_retry(&database, &recorded),
-            )
+        let db = dir.path().join("db.sqlite");
+        let database = Database::open(&db).await.unwrap();
+        let host::Election::Won(seat) = host::elect(&db, "127.0.0.1:0".parse().unwrap())
             .await
-            .expect("the recorded retry ends the wait");
-            daemon.await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn daemon_retry_wait_is_bounded_when_no_result_arrives() {
-        let database = Database::open(Path::new(":memory:")).await.unwrap();
+            .unwrap()
+        else {
+            panic!("the host wins");
+        };
+        let mut config = AppConfig::default();
+        config.daemon.wake_addr = Some(seat.wake_addr().unwrap().to_string());
+        database
+            .record_host_start(7, "desktop", "0.1.0", &[host::CAPABILITY_SYNC], now())
+            .await
+            .unwrap();
         database
             .record_daemon_sync_round(100, Some(("network", "retry", 400)))
             .await
             .unwrap();
-        let recorded = database.daemon_sync_state().await.unwrap();
-        let started = Instant::now();
-        await_daemon_health_change(&database, &recorded, Duration::from_millis(250)).await;
-        assert!(started.elapsed() >= Duration::from_millis(250));
+
+        let request = retry_after_foreground_sync(&database, &config)
+            .await
+            .expect("the host reports its rounds");
+        database.record_host_round_started(7, 1).await.unwrap();
+        database.record_host_round_finished(7, 1).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            await_daemon_retry(&database, request),
+        )
+        .await
+        .expect("the finished round ends the wait");
+    }
+
+    fn now() -> i64 {
+        chrono::Utc::now().timestamp()
     }
 
     #[test]
@@ -203,6 +184,21 @@ mod tests {
         let mut buf = [0_u8; 1];
         assert_eq!(socket.recv(&mut buf).unwrap(), 1);
         assert_eq!(buf, [b'1']);
+    }
+
+    #[test]
+    fn wake_if_enabled_wakes_a_host_that_syncs_without_sync_enabled() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut config = AppConfig::default();
+        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+
+        wake_if_enabled(&config);
+
+        let mut buf = [0_u8; 1];
+        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
     }
 
     #[test]

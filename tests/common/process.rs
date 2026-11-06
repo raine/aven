@@ -57,10 +57,25 @@ impl TestProcess {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
+        let process = Self::spawn_daemon(env, envs);
+        process.wait_for_log("daemon db=", Duration::from_secs(10));
+        process
+    }
+
+    /// Starts `aven daemon` without waiting for it to open the database. Its
+    /// home is inside `env`, and nothing marks it as started by launchd.
+    pub fn spawn_daemon<I, K, V>(env: &TestEnv, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
         let mut command = command();
         env.configure_command(&mut command);
         command
             .env("AVEN_CONFIG_DIR", env.config_dir().join("aven"))
+            .env("HOME", env.path("home"))
+            .env_remove("XPC_SERVICE_NAME")
             .env_remove("AVEN_DB");
         for (key, value) in envs {
             command.env(key, value);
@@ -71,9 +86,11 @@ impl TestProcess {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn aven daemon");
-        let process = Self::capture(child);
-        process.wait_for_log("daemon db=", Duration::from_secs(10));
-        process
+        Self::capture(child)
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        self.child.try_wait().expect("check process").is_none()
     }
 
     pub fn output(&self) -> String {
