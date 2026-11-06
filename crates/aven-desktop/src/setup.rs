@@ -14,6 +14,7 @@ use gpui::{
 };
 
 use crate::kit::*;
+use crate::notifications::{self, Permission};
 use crate::theme::{Theme, theme};
 
 const COLUMN: f32 = 500.;
@@ -51,6 +52,9 @@ pub(crate) struct Setup {
     focus: FocusHandle,
     /// The config turns reminders on, so the agent sends them too.
     reminders: bool,
+    /// Whether macOS lets Aven show notifications, read before the switch
+    /// screen shows.
+    permission: Permission,
 }
 
 impl Setup {
@@ -72,6 +76,7 @@ impl Setup {
             focus,
             reminders: aven_host::config::AppConfig::load()
                 .is_ok_and(|config| config.reminders.enabled),
+            permission: Permission::Unavailable,
         };
         setup.check(window, cx);
         setup
@@ -90,8 +95,18 @@ impl Setup {
             let stage = cx
                 .background_spawn(async move { checked(layout, system.as_ref(), was_waiting) })
                 .await;
-            this.update_in(cx, |this, window, cx| this.arrive(stage, window, cx))
-                .ok();
+            let permission = if matches!(stage, Some(Stage::Confirm(_))) {
+                Some(notifications::permission().await)
+            } else {
+                None
+            };
+            this.update_in(cx, |this, window, cx| {
+                if let Some(permission) = permission {
+                    this.permission = permission;
+                }
+                this.arrive(stage, window, cx)
+            })
+            .ok();
         })
         .detach();
     }
@@ -102,10 +117,13 @@ impl Setup {
         };
         let switch = switch.clone();
         // The daemon keeps sending reminders from this app, which only it can
-        // ask macOS to allow.
-        if self.reminders && switch.agent.as_ref().is_some_and(|agent| !agent.disabled) {
+        // ask macOS to allow. macOS asks only while the choice is undecided.
+        if self.reminders
+            && switch.agent.as_ref().is_some_and(|agent| !agent.disabled)
+            && !matches!(self.permission, Permission::Allowed | Permission::Denied)
+        {
             cx.spawn(async move |_, _| {
-                crate::notifications::request().await;
+                notifications::request().await;
             })
             .detach();
         }
@@ -146,11 +164,25 @@ impl Setup {
         }
     }
 
+    /// Back to the switch screen, with the permission read again since the
+    /// user may have changed it meanwhile.
     fn review(&mut self, cx: &mut Context<Self>) {
-        if let Stage::Declined(switch) = &self.stage {
-            self.stage = Stage::Confirm(switch.clone());
-            cx.notify();
-        }
+        let Stage::Declined(switch) = &self.stage else {
+            return;
+        };
+        let switch = switch.clone();
+        cx.spawn(async move |this, cx| {
+            let permission = notifications::permission().await;
+            this.update(cx, |this, cx| {
+                if matches!(this.stage, Stage::Declined(_)) {
+                    this.permission = permission;
+                    this.stage = Stage::Confirm(switch);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -217,6 +249,30 @@ fn switched(outcome: anyhow::Result<Outcome>, was_waiting: bool) -> Option<Stage
         Ok(Outcome::Done(report)) => Stage::Done(report),
         Err(error) => Stage::Failed(format!("{error:#}")),
     })
+}
+
+/// What the switch screen says about notifications, for reminders the
+/// daemon goes on sending from this app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NotificationLine {
+    text: &'static str,
+    /// Whether the line offers System Settings, where a denied permission is
+    /// changed: macOS doesn't ask again.
+    settings: bool,
+}
+
+fn notification_line(permission: Permission) -> Option<NotificationLine> {
+    let (text, settings) = match permission {
+        Permission::Allowed => ("Notifications from Aven are on", false),
+        Permission::NotAsked => ("macOS asks you to allow notifications from Aven", false),
+        Permission::Denied => (
+            "Notifications are off for Aven, so reminders don\u{2019}t appear until you \
+             allow them in System Settings",
+            true,
+        ),
+        Permission::Unavailable => return None,
+    };
+    Some(NotificationLine { text, settings })
 }
 
 /// `path` with the home directory as `~`.
@@ -447,12 +503,25 @@ impl Setup {
                 format!("{work} move to this app and continue while it is quit")
             };
             changes = changes.child(item("icons/cloud.svg", state, t));
-            if self.reminders && !agent.disabled {
-                changes = changes.child(item(
-                    "icons/ic-done.svg",
-                    "macOS asks you to allow notifications from Aven".to_string(),
-                    t,
-                ));
+            if self.reminders
+                && !agent.disabled
+                && let Some(line) = notification_line(self.permission)
+            {
+                changes = changes.child(item("icons/ic-done.svg", line.text.to_string(), t));
+                if line.settings {
+                    changes = changes.child(
+                        div().pl(px(26.)).child(
+                            line_btn(
+                                "setup-notification-settings",
+                                "Open Notification Settings",
+                                t,
+                            )
+                            .h(px(28.))
+                            .px(px(12.))
+                            .on_click(|_, _, cx| cx.open_url(notifications::SETTINGS_URL)),
+                        ),
+                    );
+                }
             }
         }
         if let Some(bundle) = &switch.retire {
@@ -949,5 +1018,16 @@ mod tests {
             "/Applications/Aven.app/Contents/MacOS/aven"
         );
         assert_eq!(quoted(Path::new("/Users/a b/aven")), "\"/Users/a b/aven\"");
+    }
+
+    #[test]
+    fn the_notification_line_follows_the_permission() {
+        let allowed = notification_line(Permission::Allowed).unwrap();
+        assert!(!allowed.text.contains("asks") && !allowed.settings);
+        let not_asked = notification_line(Permission::NotAsked).unwrap();
+        assert!(not_asked.text.starts_with("macOS asks") && !not_asked.settings);
+        let denied = notification_line(Permission::Denied).unwrap();
+        assert!(denied.text.contains("off for Aven") && denied.settings);
+        assert_eq!(notification_line(Permission::Unavailable), None);
     }
 }
