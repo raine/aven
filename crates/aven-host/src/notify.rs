@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use aven_core::db::Database;
@@ -29,6 +30,9 @@ pub const NOTIFICATIONS_OFF: &str = "notifications-off";
 /// Why rows failed in a process with no notification settings, such as an
 /// app run outside its bundle.
 pub const UNAVAILABLE: &str = "notifications-unavailable";
+/// How long a process asking the user to allow notifications waits for the
+/// answer.
+pub const ASK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// What the user allowed for Aven's notifications.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +59,12 @@ pub struct Post {
 pub struct Request {
     pub posts: Vec<Post>,
     pub list_delivered: bool,
+    /// Ask the user to allow notifications when they haven't been asked,
+    /// and wait for the answer. A process that exits before the user answers
+    /// withdraws the question and leaves notifications denied, so only a
+    /// process the user is waiting on asks.
+    #[serde(default)]
+    pub ask: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +158,22 @@ pub fn new_event() -> String {
     hex::encode(bytes)
 }
 
+/// What the user allowed, read through `deliver` without posting.
+pub fn authorization(deliver: &dyn Deliver) -> Result<Authorization> {
+    Ok(deliver.deliver(&Request::default())?.authorization)
+}
+
+/// Asks the user to allow notifications unless they already answered, and
+/// waits for the answer. Returns what they allowed.
+pub fn ask(deliver: &dyn Deliver) -> Result<Authorization> {
+    Ok(deliver
+        .deliver(&Request {
+            ask: true,
+            ..Request::default()
+        })?
+        .authorization)
+}
+
 pub fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -228,8 +254,8 @@ pub async fn drain(database: &Database, deliver: &Arc<dyn Deliver>) -> Result<Dr
         let report = call(
             deliver,
             Request {
-                posts: Vec::new(),
                 list_delivered: true,
+                ..Request::default()
             },
         )
         .await?;
@@ -267,7 +293,7 @@ pub async fn drain(database: &Database, deliver: &Arc<dyn Deliver>) -> Result<Dr
                     body: row.notification.body.clone(),
                 })
                 .collect(),
-            list_delivered: false,
+            ..Request::default()
         },
     )
     .await?;

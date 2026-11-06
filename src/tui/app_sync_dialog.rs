@@ -267,6 +267,7 @@ impl App {
             }
         }
         let install = target.install;
+        let reminders = config.reminders.enabled;
         let installed = tokio::task::spawn_blocking(move || {
             install(crate::daemon::ServiceInstallArgs {
                 db_path,
@@ -276,6 +277,17 @@ impl App {
         })
         .await?;
         match installed {
+            Ok(_)
+                if reminders
+                    && tokio::task::spawn_blocking(crate::notification::not_asked).await? =>
+            {
+                self.set_success(
+                    "automatic sync is on; choose Allow when macOS asks about notifications",
+                );
+                // The question stays open only while its asker waits, so
+                // it waits on its own while the TUI goes on.
+                tokio::task::spawn_blocking(crate::notification::ask);
+            }
             Ok(_) => self.set_success("automatic sync is on"),
             Err(error) => self.set_error(format!(
                 "automatic sync is on, but the background service didn't start: {error:#}"

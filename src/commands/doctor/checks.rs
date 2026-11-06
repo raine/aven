@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use aven_host::notify::Authorization;
+
 use crate::config::{self as app_config, AppConfig};
 use crate::workspaces::resolve_active_workspace_with_database;
 
@@ -610,6 +612,36 @@ pub(super) async fn add_daemon_section(
             false,
             "daemon status is unavailable; inspect the service manager directly",
         ),
+    }
+    let read = tokio::task::spawn_blocking(crate::notification::authorization)
+        .await
+        .ok()
+        .flatten();
+    match read {
+        Some(Ok(authorization)) => {
+            let (state, remedy) = crate::notification::describe(authorization);
+            let detail = match remedy {
+                Some(remedy) => format!("{state}; {remedy}"),
+                None => state.to_string(),
+            };
+            match authorization {
+                Authorization::Allowed => {
+                    daemon_section.check("daemon.notifications", "notifications", true, detail)
+                }
+                Authorization::Denied | Authorization::NotAsked => {
+                    daemon_section.warning("daemon.notifications", "notifications", detail)
+                }
+                Authorization::Unavailable => {
+                    daemon_section.info("daemon.notifications", "notifications", detail)
+                }
+            }
+        }
+        Some(Err(error)) => daemon_section.warning(
+            "daemon.notifications",
+            "notifications",
+            format!("couldn't read: {error:#}"),
+        ),
+        None => {}
     }
 }
 

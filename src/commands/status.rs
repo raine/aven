@@ -16,6 +16,14 @@ pub(crate) async fn cmd_daemon_status(
             .with_sync(database.daemon_sync_state().await?)
             .with_host(aven_host::host::host_state(&database).await?);
     }
+    report.notifications = tokio::task::spawn_blocking(crate::notification::authorization)
+        .await?
+        .and_then(|read| {
+            read.inspect_err(
+                |error| tracing::debug!(error = %format!("{error:#}"), "notification status"),
+            )
+            .ok()
+        });
     if json {
         print_json_pretty(&report)
     } else {
@@ -51,6 +59,15 @@ fn print_daemon_status(report: &DaemonStatusReport) {
     );
     if let Some(host) = &report.host {
         print_host(host);
+    }
+    if let Some(authorization) = report.notifications {
+        match crate::notification::describe(authorization) {
+            (state, Some(remedy)) => println!(
+                "Notifications: {state}; {}",
+                crate::render::stdout_inline_code(remedy)
+            ),
+            (state, None) => println!("Notifications: {state}"),
+        }
     }
     if let Some(path) = &report.paths.service {
         println!("Service file: {}", path.display());

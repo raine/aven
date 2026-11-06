@@ -10,13 +10,14 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use block2::RcBlock;
 use objc2::rc::Retained;
+use objc2::runtime::Bool;
 use objc2_foundation::{NSArray, NSBundle, NSError, NSString};
 use objc2_user_notifications::{
-    UNAuthorizationStatus, UNMutableNotificationContent, UNNotification, UNNotificationRequest,
-    UNNotificationSettings, UNUserNotificationCenter,
+    UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
+    UNNotificationRequest, UNNotificationSettings, UNUserNotificationCenter,
 };
 
-use super::{Authorization, Deliver, Report, Request};
+use super::{ASK_TIMEOUT, Authorization, Deliver, Report, Request};
 
 /// How long one call waits for the notification service to answer.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -29,7 +30,10 @@ impl Deliver for InProcess {
         let Some(center) = center() else {
             return Ok(Report::not_allowed(Authorization::Unavailable));
         };
-        let authorization = authorization_of(&center)?;
+        let mut authorization = authorization_of(&center)?;
+        if request.ask && authorization == Authorization::NotAsked {
+            authorization = ask(&center)?;
+        }
         if authorization != Authorization::Allowed {
             return Ok(Report::not_allowed(authorization));
         }
@@ -79,6 +83,27 @@ fn authorization_of(center: &UNUserNotificationCenter) -> Result<Authorization> 
         UNAuthorizationStatus::Denied => Authorization::Denied,
         _ => Authorization::Allowed,
     })
+}
+
+/// Asks the user to allow notifications and waits for the answer.
+fn ask(center: &UNUserNotificationCenter) -> Result<Authorization> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let completion = RcBlock::new(move |_granted: Bool, error: *mut NSError| {
+        // SAFETY: when non-null, `error` is valid for the duration of the call.
+        let error = unsafe { error.as_ref() }.map(|error| error.localizedDescription().to_string());
+        let _ = sender.try_send(error);
+    });
+    center.requestAuthorizationWithOptions_completionHandler(
+        UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+        &completion,
+    );
+    let error = receiver
+        .recv_timeout(ASK_TIMEOUT)
+        .map_err(|_| anyhow!("no answer to the notification question"))?;
+    if let Some(error) = error {
+        tracing::debug!(%error, "notification permission");
+    }
+    authorization_of(center)
 }
 
 fn delivered(center: &UNUserNotificationCenter) -> Result<Vec<String>> {

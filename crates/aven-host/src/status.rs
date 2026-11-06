@@ -52,6 +52,9 @@ pub struct DaemonStatusReport {
     pub sync: aven_core::local_state::DaemonSyncState,
     /// The database's background host, when the database exists.
     pub host: Option<HostReport>,
+    /// What the user allowed for Aven's notifications, where it can be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<crate::notify::Authorization>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -149,6 +152,7 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
         version: 1,
         sync: Default::default(),
         host: None,
+        notifications: None,
         state,
         platform_supported: service.platform_supported,
         platform: std::env::consts::OS.to_string(),

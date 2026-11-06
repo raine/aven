@@ -26,6 +26,8 @@ aven config set reminders.enabled true
 aven daemon install
 ```
 
+On macOS, if Aven hasn't asked to send notifications yet, these commands ask and wait for your answer: choose **Allow** in the notification that appears. Turning on automatic sync in the TUI asks too when reminders are on. `aven daemon status` and `aven doctor` say whether notifications are allowed, denied, or not asked yet, and what to do.
+
 Aven sends two kinds of reminder:
 
 - **Daily digest:** once a day at `digest_time`, a summary titled with the counts, such as “2 due today, 1 overdue”, that lists the first three tasks by ref and title. Blocked and deferred tasks count too. Overdue tasks appear every day until you complete, cancel, or re-date them. If your Mac is asleep or off at `digest_time`, the digest arrives when it wakes later that day. A missed day's digest is never sent. If nothing is due, no digest is sent that day.
@@ -71,7 +73,7 @@ On macOS, Homebrew and the install script include an `Aven.app` bundle so notifi
   <img src="/macos-notification-dark.webp" alt="Illustration of an Aven notification confirming the task Review the homepage copy was added" width="440" height="169" />
 </div>
 
-Aven Desktop asks macOS to allow notifications when you turn on reminders. Choose **Allow**. To change this later, open **System Settings → Notifications → Aven**.
+Aven Desktop asks macOS to allow notifications when you turn on reminders, and the terminal commands above ask when you run them in a terminal. Choose **Allow**. To change this later, open **System Settings → Notifications → Aven**.
 
 ### Allow notifications during Focus
 
