@@ -15,6 +15,7 @@ pub mod desktop_install;
 pub mod due;
 pub mod gist;
 pub mod host;
+pub mod notify;
 pub mod operations;
 pub mod projects;
 pub mod protected_local_keys;
