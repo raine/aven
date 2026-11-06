@@ -27,8 +27,12 @@ use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceProjectionState, Recu
 use aven_core::sync::client::engine::{LocalPhase, local_phase};
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
-use aven_host::config::{AppConfig, RemindersConfig, config_file_path, resolve_blob_dir};
+use aven_host::background;
+use aven_host::config::{
+    AppConfig, BackgroundIntent, RemindersConfig, config_file_path, resolve_blob_dir,
+};
 use aven_host::config_edit;
+use aven_host::daemon::service::{self as agent_service, AgentStatus, LoginItem};
 use aven_host::gist::create_secret_gist;
 use aven_host::host::{self, Election, Host, HostEvent, HostState, Role, RoundReport, Seat};
 use aven_host::reminders::{Notification, ReminderSender};
@@ -338,6 +342,11 @@ struct Actor {
     fills: HashMap<u64, String>,
     /// Whether the open database still waits for the welcome.
     welcome: bool,
+    /// Desktop's executable, when this app keeps the agent in line with the
+    /// switches.
+    agent_app: Option<PathBuf>,
+    /// Held while the agent changes, so changes run one at a time.
+    agent_turn: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// What a write reports once the list has caught up.
@@ -419,7 +428,63 @@ impl Actor {
             launch_reviews: HashMap::new(),
             fills: HashMap::new(),
             welcome: false,
+            agent_app: None,
+            agent_turn: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    /// The database the agent hosts, when it is the open one.
+    fn agent_database(&self) -> Option<Database> {
+        (self.database == self.launch_path).then(|| self.store.database())
+    }
+
+    /// Installs, repairs or removes the agent as the launch config asks, then
+    /// sends what runs. Off the actor's task: launchd can take seconds.
+    fn reconcile_agent(&self) {
+        let Some(app) = self.agent_app.clone() else {
+            return;
+        };
+        let config = self.launch_config.clone();
+        let db_path = self.launch_path.clone();
+        let database = self.agent_database();
+        let replies = self.replies.clone();
+        let turn = self.agent_turn.clone();
+        tokio::spawn(async move {
+            let _turn = turn.lock().await;
+            let (reconciled, app) = {
+                let config = config.clone();
+                tokio::task::spawn_blocking(move || {
+                    (background::reconcile(&config, db_path, &app), app)
+                })
+                .await
+                .expect("reconciling the agent panicked")
+            };
+            if let Err(error) = reconciled {
+                tracing::warn!(error = %format!("{error:#}"), "could not update the agent");
+                let _ = replies.send(Reply {
+                    request: 0,
+                    body: ReplyBody::Notice(failed(
+                        "Could not update the background agent",
+                        &error,
+                    )),
+                });
+            }
+            let status = background_status(Some(app), &config, database).await;
+            let _ = replies.send(Reply {
+                request: 0,
+                body: ReplyBody::Background(status),
+            });
+        });
+    }
+
+    /// Records `intent` in the config file and the launch config.
+    fn set_background(&mut self, intent: BackgroundIntent) -> Result<()> {
+        if self.launch_config.background != Some(intent) {
+            background::set_intent(intent)?;
+        }
+        self.launch_config.background = Some(intent);
+        self.config.background = Some(intent);
+        Ok(())
     }
 
     fn send(&self, body: ReplyBody) {
@@ -549,6 +614,12 @@ impl Actor {
                 .collect(),
             reminders: (&self.config.reminders).into(),
             agent: launch::agent_setup(&self.config.agent.task_intake),
+            background: background_status(
+                self.agent_app.clone(),
+                &self.launch_config,
+                self.agent_database(),
+            )
+            .await,
         })
     }
 
@@ -628,10 +699,39 @@ impl Actor {
                     let quoted = format!("\"{}\"", reminders.digest_time);
                     config_edit::set_scalar(&path, "reminders", "digest_time", &quoted)?;
                 }
+                let turned_on = reminders.enabled && !current.enabled;
+                let switched = reminders.enabled != current.enabled;
                 self.config.reminders = config.clone();
                 self.launch_config.reminders = config;
                 self.host_config.send_replace(hosted(&self.config));
+                if turned_on && self.agent_app.is_some() {
+                    self.set_background(BackgroundIntent::On)?;
+                }
+                if switched {
+                    self.reconcile_agent();
+                }
                 "Reminders saved".to_string()
+            }
+            SettingsEdit::SyncWhenQuit(on) => {
+                let path = config_file_path()?;
+                let value = if on { "true" } else { "false" };
+                config_edit::set_scalar(&path, "sync", "enabled", value)?;
+                self.launch_config.sync.enabled = on;
+                self.config.sync.enabled = on;
+                if on && self.agent_app.is_some() {
+                    self.set_background(BackgroundIntent::On)?;
+                }
+                self.reconcile_agent();
+                if on {
+                    "Sync continues while Aven is quit".to_string()
+                } else {
+                    "Sync runs only while Aven is open".to_string()
+                }
+            }
+            SettingsEdit::TurnOnBackground => {
+                self.set_background(BackgroundIntent::On)?;
+                self.reconcile_agent();
+                "Background agent turned on".to_string()
             }
         })
     }
@@ -670,6 +770,7 @@ impl Actor {
         if !self.reread_config() {
             return;
         }
+        self.reconcile_agent();
         self.send_settings().await;
         if let Ok(catalog) = self.launcher_catalog().await {
             self.send(ReplyBody::Launcher(Box::new(catalog)));
@@ -2535,6 +2636,50 @@ impl Actor {
 
 /// The config a host in this app runs on. The daemon's enable flag is not
 /// read: a running app syncs on its own, and `NotSetUp` idles a local database.
+/// What runs while Aven is quit. `app` is set when this app manages the
+/// agent; other copies don't ask launchd about it.
+async fn background_status(
+    app: Option<PathBuf>,
+    config: &AppConfig,
+    database: Option<Database>,
+) -> BackgroundStatus {
+    let agent = match &app {
+        Some(_) => match tokio::task::spawn_blocking(agent_service::agent_status).await {
+            Ok(Ok(status)) => agent_shown(&status, background::wants_agent(config)),
+            Ok(Err(error)) => {
+                tracing::warn!(error = %format!("{error:#}"), "could not read the agent");
+                AgentShown::Unknown
+            }
+            Err(_) => AgentShown::Unknown,
+        },
+        None => AgentShown::Unknown,
+    };
+    let last_sync = match database {
+        Some(database) => database.background_sync_at().await.ok().flatten(),
+        None => None,
+    };
+    BackgroundStatus {
+        managed: app.is_some(),
+        sync_when_quit: config.sync.enabled,
+        reminders: config.reminders.enabled,
+        wanted: background::wants_agent(config),
+        agent,
+        last_sync,
+    }
+}
+
+fn agent_shown(status: &AgentStatus, wanted: bool) -> AgentShown {
+    if status.login_item == LoginItem::TurnedOff && (wanted || status.installed) {
+        AgentShown::TurnedOff
+    } else if status.running {
+        AgentShown::Running
+    } else if wanted {
+        AgentShown::NotRunning
+    } else {
+        AgentShown::Off
+    }
+}
+
 fn hosted(config: &AppConfig) -> AppConfig {
     let mut config = config.clone();
     config.sync.enabled = true;
@@ -2905,7 +3050,12 @@ pub(crate) fn prepare(
                 });
                 actor.welcome = welcome;
                 actor.version = launch_version;
+                actor.agent_app = aven_host::desktop_install::Layout::current()
+                    .ok()
+                    .filter(|layout| layout.manages_agent())
+                    .map(|layout| layout.executable());
                 actor.spawn_background_sync();
+                actor.reconcile_agent();
                 actor.send_list().await;
                 actor.run(requests_rx).await;
             });
@@ -3404,6 +3554,41 @@ mod tests {
                 .any(|body| matches!(body, ReplyBody::Notice(_)))
         );
         assert_ne!(actor.config.reminders.digest_time, "25:00");
+    }
+
+    #[test]
+    fn the_agent_shows_login_items_first_then_what_runs() {
+        let status = |installed, running, login_item| AgentStatus {
+            installed,
+            program: None,
+            loaded: running,
+            running,
+            login_item,
+        };
+        assert_eq!(
+            agent_shown(&status(true, false, LoginItem::TurnedOff), false),
+            AgentShown::TurnedOff
+        );
+        assert_eq!(
+            agent_shown(&status(false, false, LoginItem::TurnedOff), true),
+            AgentShown::TurnedOff
+        );
+        assert_eq!(
+            agent_shown(&status(false, false, LoginItem::TurnedOff), false),
+            AgentShown::Off
+        );
+        assert_eq!(
+            agent_shown(&status(true, true, LoginItem::Allowed), false),
+            AgentShown::Running
+        );
+        assert_eq!(
+            agent_shown(&status(true, false, LoginItem::Unknown), true),
+            AgentShown::NotRunning
+        );
+        assert_eq!(
+            agent_shown(&status(false, false, LoginItem::Allowed), false),
+            AgentShown::Off
+        );
     }
 
     #[tokio::test]

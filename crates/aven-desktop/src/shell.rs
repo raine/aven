@@ -614,6 +614,11 @@ impl Root {
         self.subscriptions
             .push(cx.observe_window_activation(window, |this, window, cx| {
                 this.sync_system(window, cx);
+                // Back from System Settings, perhaps with Login Items or
+                // notifications changed.
+                if window.is_window_active() {
+                    this.refresh_settings(cx);
+                }
             }));
     }
 

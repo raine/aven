@@ -433,6 +433,38 @@ pub struct SettingsData {
     pub reminders: Reminders,
     /// The agent command configured for task intake, if any.
     pub agent: Option<AgentSetup>,
+    pub background: BackgroundStatus,
+}
+
+/// What runs while Aven is quit: the LaunchAgent that hosts sync and
+/// reminders then.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackgroundStatus {
+    /// This app is the installed one in `/Applications`, which keeps the agent
+    /// in line with the switches. Other copies only show what runs.
+    pub managed: bool,
+    /// `sync.enabled`, which only the agent reads: the app always syncs.
+    pub sync_when_quit: bool,
+    pub reminders: bool,
+    /// The intent and switches ask for the agent.
+    pub wanted: bool,
+    pub agent: AgentShown,
+    /// Unix seconds of the agent's last completed sync.
+    pub last_sync: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AgentShown {
+    /// Not checked: this copy of the app doesn't manage the agent.
+    #[default]
+    Unknown,
+    Running,
+    Off,
+    /// The switches want it, but it isn't running.
+    NotRunning,
+    /// The user turned Aven off in System Settings > General > Login Items &
+    /// Extensions.
+    TurnedOff,
 }
 
 /// The agent command task intake runs, as the config sets it.
@@ -492,6 +524,10 @@ pub enum SettingsEdit {
     RenameLabel(String, String),
     RenameField(String, String),
     Reminders(Reminders),
+    /// Sync while Aven is quit, or not.
+    SyncWhenQuit(bool),
+    /// Run the agent for the switches that are on.
+    TurnOnBackground,
 }
 
 impl Snapshot {
@@ -883,6 +919,8 @@ pub enum ReplyBody {
     Remind(Notification),
     SyncEvent(SyncEvent),
     Settings(Box<SettingsData>),
+    /// The agent changed after settings were sent.
+    Background(BackgroundStatus),
     /// Another database is open now, with how many tasks the last one held.
     DatabaseOpened {
         path: PathBuf,
