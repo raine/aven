@@ -480,6 +480,7 @@ pub(super) fn view_info(store: &TuiStore, arrange: &Arrange) -> ViewInfo {
         },
         lifecycle: state.recurring.lifecycle,
         closed: filters.closed == ClosedTaskVisibility::Included,
+        due_today: state.query == TaskQuery::Overdue && filters.due_today,
     }
 }
 

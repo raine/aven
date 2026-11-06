@@ -219,6 +219,12 @@ fn describe(snapshot: &Snapshot) -> Empty {
             &[TaskQuery::Done, TaskQuery::Backlog, TaskQuery::Todo],
             Vec::new(),
         ),
+        TaskQuery::Overdue if view.due_today => cleared(
+            "Nothing due",
+            Line::plain(format!("Nothing open{within} is due today or overdue.")),
+            &[TaskQuery::Done, TaskQuery::Upcoming],
+            Vec::new(),
+        ),
         TaskQuery::Overdue => cleared(
             "Nothing overdue",
             Line::plain("Deferred work with a passed deadline stays in Upcoming."),

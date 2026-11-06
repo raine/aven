@@ -278,6 +278,9 @@ pub struct TaskFilterModifiers {
     pub closed: ClosedTaskVisibility,
     pub include_deleted: bool,
     pub deleted_only: bool,
+    /// Overdue also lists tasks due today, and deferred ones, as the due
+    /// digest counts them.
+    pub due_today: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -412,6 +415,10 @@ impl TaskViewState {
             TaskQuery::Blocked => {
                 filters.blocked_only = true;
                 filters.availability = TaskAvailabilityFilter::Available;
+            }
+            TaskQuery::Overdue if self.filter_modifiers.due_today => {
+                filters.overdue_only = true;
+                filters.today = chrono::Local::now().date_naive().succ_opt();
             }
             TaskQuery::Overdue => {
                 filters.overdue_only = true;

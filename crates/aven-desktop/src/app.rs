@@ -9,15 +9,13 @@ use aven_host::app_bundle::enclosing_bundle;
 use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
 use aven_host::desktop_install::{self, Layout, MacSystem};
 use aven_host::notify::{self, Target};
-use aven_host::store::TaskQuery;
 use gpui::{
     App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 
-use crate::actions::ShowView;
-use crate::adapter::{self, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
+use crate::adapter::{self, Command, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
 use crate::assets::{Assets, load_fonts};
 use crate::session::Session;
 use crate::setup::Setup;
@@ -297,7 +295,7 @@ fn follow_notifications(cx: &mut App) {
 fn open_notified(opens: Notified, cx: &mut App) {
     with_root(cx, |root, window, cx| match opens {
         Notified::Task(workspace, id) => root.open_launched(workspace, id, window, cx),
-        Notified::Due => root.show_view(&ShowView(TaskQuery::Overdue), window, cx),
+        Notified::Due => root.switch_view(Command::ShowDue, window, cx),
     });
 }
 

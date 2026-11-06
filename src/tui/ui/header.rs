@@ -674,6 +674,7 @@ mod tests {
                 closed: crate::tui::store::ClosedTaskVisibility::Included,
                 include_deleted: true,
                 deleted_only: false,
+                due_today: false,
             },
             order: TaskOrder::Priority,
             direction: crate::query::SortDirection::Desc,

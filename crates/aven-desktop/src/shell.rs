@@ -90,6 +90,8 @@ const LEAVE_DURATION: Duration = Duration::from_millis(640);
 
 /// How many of the views the sidebar shows before More views.
 const PRIMARY_VIEWS: usize = 9;
+/// What Overdue says it lists when the due digest opened it.
+const DUE_TODAY_SUBTITLE: &str = "Due today or earlier, as in the daily digest";
 
 /// The name a view's count goes by in the snapshot.
 fn count_key(query: TaskQuery) -> &'static str {
@@ -2166,10 +2168,14 @@ impl Root {
         } else {
             view_name(query)
         };
-        let subtitle = VIEWS
-            .iter()
-            .find(|entry| entry.0 == query)
-            .map_or("", |entry| entry.4);
+        let subtitle = if view.due_today {
+            DUE_TODAY_SUBTITLE
+        } else {
+            VIEWS
+                .iter()
+                .find(|entry| entry.0 == query)
+                .map_or("", |entry| entry.4)
+        };
         let scope_name = view
             .project
             .as_ref()

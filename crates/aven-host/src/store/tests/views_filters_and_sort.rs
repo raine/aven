@@ -737,3 +737,50 @@ async fn query_anchor_uses_clamped_flat_position_when_task_is_hidden() {
     assert_eq!(selected, selected_index.min(1));
     assert!(store.tasks[selected].task.priority == TaskPriority::Urgent);
 }
+
+#[tokio::test]
+async fn overdue_lists_what_the_due_digest_counts_only_when_it_opened_it() {
+    let mut store = test_store().await;
+    let today = chrono::Local::now().date_naive();
+    let day = |offset: i64| (today + chrono::Duration::days(offset)).to_string();
+    for (title, due_on, available_at) in [
+        ("past", day(-2), None),
+        ("today", day(0), None),
+        ("deferred today", day(0), Some("2999-03-08T05:00:00Z")),
+        ("tomorrow", day(1), None),
+    ] {
+        store
+            .create_task(
+                TaskDraft {
+                    metadata: Vec::new(),
+                    title: title.to_string(),
+                    due_on: Some(due_on),
+                    available_at: available_at.map(str::to_string),
+                    ..task_draft("")
+                },
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    let titles = |store: &TuiStore| {
+        let mut titles = store
+            .tasks
+            .iter()
+            .map(|item| item.task.title.clone())
+            .collect::<Vec<_>>();
+        titles.sort_unstable();
+        titles
+    };
+
+    store.show_view(TaskQuery::Overdue).await.unwrap();
+    let mut state = store.view_state.clone();
+    state.filter_modifiers.due_today = true;
+    store.restore_view_state(state, None).await.unwrap();
+    assert_eq!(titles(&store), ["deferred today", "past", "today"]);
+
+    store.show_view(TaskQuery::Queue).await.unwrap();
+    store.show_view(TaskQuery::Overdue).await.unwrap();
+    assert!(!store.view_state.filter_modifiers.due_today);
+    assert_eq!(titles(&store), ["past"]);
+}
