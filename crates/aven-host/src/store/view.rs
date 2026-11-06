@@ -83,6 +83,8 @@ impl TuiStore {
         if !query.supports_closed_filter() {
             view_state.filter_modifiers.closed = ClosedTaskVisibility::Default;
         }
+        // Only the due digest lists today's tasks in Overdue.
+        view_state.filter_modifiers.due_today = false;
         if matches!(query, TaskQuery::Upcoming | TaskQuery::Overdue) {
             view_state.direction = SortDirection::Asc;
         }

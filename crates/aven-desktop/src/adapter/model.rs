@@ -228,6 +228,8 @@ pub struct ViewInfo {
     pub lifecycle: RecurrenceSeriesLifecycleFilter,
     /// Whether closed rows are listed where the view can include them.
     pub closed: bool,
+    /// Whether Overdue also lists tasks due today, as the due digest does.
+    pub due_today: bool,
 }
 
 impl Default for ViewInfo {
@@ -246,6 +248,7 @@ impl Default for ViewInfo {
             search: None,
             lifecycle: RecurrenceSeriesLifecycleFilter::default(),
             closed: false,
+            due_today: false,
         }
     }
 }
@@ -715,6 +718,8 @@ pub enum Command {
     CancelLaunch(u64),
     CopyReport(TaskId),
     ShowView(TaskQuery),
+    /// Overdue with today's tasks, which the due digest opens.
+    ShowDue,
     ShowProject(Option<String>),
     SwitchWorkspace(String),
     FilterLabel(Option<String>),
@@ -816,6 +821,7 @@ impl Command {
         matches!(
             self,
             Self::ShowView(_)
+                | Self::ShowDue
                 | Self::ShowProject(_)
                 | Self::SwitchWorkspace(_)
                 | Self::FilterLabel(_)

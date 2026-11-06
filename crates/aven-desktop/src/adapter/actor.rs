@@ -1584,6 +1584,11 @@ impl Actor {
     async fn navigate(&mut self, command: &Command) -> Result<()> {
         match command {
             Command::ShowView(query) => self.show_view(*query).await,
+            Command::ShowDue => {
+                self.show_view(TaskQuery::Overdue).await?;
+                self.set_filters(|state| state.filter_modifiers.due_today = true)
+                    .await
+            }
             Command::SetClosed(closed) => {
                 let closed = if *closed {
                     ClosedTaskVisibility::Included
@@ -4717,6 +4722,46 @@ mod tests {
             .map(|row| list.tasks[row].title.as_str())
             .collect();
         assert_eq!(titles, ["Labelled", "Stored"]);
+    }
+
+    #[tokio::test]
+    async fn the_due_view_lists_tasks_due_today_with_overdue_ones() {
+        let (_directory, mut actor, mut replies) = actor("Not due").await;
+        let today = chrono::Local::now().date_naive();
+        for (title, due_on) in [("Due today", today), ("Overdue", today.pred_opt().unwrap())] {
+            actor
+                .store
+                .create_task(
+                    TaskDraft {
+                        due_on: Some(due_on.to_string()),
+                        ..draft(title)
+                    },
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+        let titles = |list: &Snapshot| {
+            let mut titles: Vec<_> = list
+                .ordered()
+                .map(|row| list.tasks[row].title.clone())
+                .collect();
+            titles.sort_unstable();
+            titles
+        };
+
+        run(&mut actor, Command::ShowDue).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen).pop().unwrap();
+        assert_eq!(list.view.query, TaskQuery::Overdue);
+        assert!(list.view.due_today);
+        assert_eq!(titles(list), ["Due today", "Overdue"]);
+
+        run(&mut actor, Command::ShowView(TaskQuery::Overdue)).await;
+        let bodies_seen = bodies(&mut replies);
+        let list = lists(&bodies_seen).pop().unwrap();
+        assert!(!list.view.due_today);
+        assert_eq!(titles(list), ["Overdue"]);
     }
 
     #[tokio::test]
