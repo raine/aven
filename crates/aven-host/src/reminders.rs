@@ -11,6 +11,7 @@ use aven_core::notification_outbox::QueuedNotification;
 use aven_core::query::{SortDirection, TaskFilters, TaskQueryMode, TaskSort};
 use aven_core::queue::{available_since_defer, unix_seconds};
 use aven_core::types::Task;
+use aven_core::workspaces::Workspace;
 use chrono::{DateTime, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use tracing::warn;
 
@@ -59,8 +60,11 @@ pub(crate) enum Opens {
         workspace: String,
         task: String,
     },
-    /// The due tasks of this date.
-    Due(String),
+    /// The due tasks of this date in this workspace.
+    Due {
+        workspace: String,
+        date: String,
+    },
     App,
 }
 
@@ -72,7 +76,9 @@ impl Notification {
                 notify::task_tag(workspace, task, &event),
                 now.timestamp() + CATCH_UP_WINDOW_SECONDS,
             ),
-            Opens::Due(date) => (notify::digest_tag(date), end_of_day(now, local)),
+            Opens::Due { workspace, date } => {
+                (notify::digest_tag(workspace, date), end_of_day(now, local))
+            }
             Opens::App => (
                 notify::plain_tag(self.kind, &event),
                 now.timestamp() + CATCH_UP_WINDOW_SECONDS,
@@ -112,6 +118,7 @@ pub(crate) struct Plan {
 /// `local`.
 pub(crate) fn plan(
     tasks: &[ReminderTask],
+    workspaces: &[Workspace],
     log: &[ReminderLogEntry],
     now: DateTime<Utc>,
     local: NaiveDateTime,
@@ -133,7 +140,7 @@ pub(crate) fn plan(
         .collect();
     let mut plan = Plan::default();
     if config.due_digest && local.time() >= digest_time {
-        plan_digest(tasks, &outcomes, local, &mut plan);
+        plan_digest(tasks, workspaces, &outcomes, local, &mut plan);
     }
     if config.available {
         plan_available(tasks, &outcomes, now, &mut plan);
@@ -141,34 +148,70 @@ pub(crate) fn plan(
     plan
 }
 
+/// One digest per workspace with due or overdue tasks. Each workspace's day
+/// is recorded under the trigger `{workspace id}:{date}`, so a workspace is
+/// sent at most one digest a day; a day recorded under the bare date covered
+/// every workspace.
 fn plan_digest(
     tasks: &[ReminderTask],
+    workspaces: &[Workspace],
     outcomes: &HashMap<(&str, &str, &str), &str>,
     local: NaiveDateTime,
     plan: &mut Plan,
 ) {
     let today = local.date();
-    let trigger = today.format("%Y-%m-%d").to_string();
-    if outcomes.contains_key(&(DIGEST, "", trigger.as_str())) {
+    let date = today.format("%Y-%m-%d").to_string();
+    if outcomes.contains_key(&(DIGEST, "", date.as_str())) {
         return;
     }
-    let mut due: Vec<(DueState, &ReminderTask)> = tasks
-        .iter()
-        .filter_map(|item| {
-            let state = due_state(item.task.due_on.as_deref()?, today);
-            state.needs_action().then_some((state, item))
-        })
-        .collect();
-    let entry = |outcome: &str| ReminderLogEntry {
-        kind: DIGEST.into(),
-        task_id: String::new(),
-        trigger: trigger.clone(),
-        outcome: outcome.into(),
-    };
-    if due.is_empty() {
-        plan.record.push(entry(EMPTY));
-        return;
+    let mut digests = Vec::new();
+    for workspace in workspaces {
+        let trigger = format!("{}:{date}", workspace.id);
+        if outcomes.contains_key(&(DIGEST, "", trigger.as_str())) {
+            continue;
+        }
+        let entry = |outcome: &str| ReminderLogEntry {
+            kind: DIGEST.into(),
+            task_id: String::new(),
+            trigger: trigger.clone(),
+            outcome: outcome.into(),
+        };
+        let due: Vec<(DueState, &ReminderTask)> = tasks
+            .iter()
+            .filter(|item| item.task.workspace_id == workspace.id)
+            .filter_map(|item| {
+                let state = due_state(item.task.due_on.as_deref()?, today);
+                state.needs_action().then_some((state, item))
+            })
+            .collect();
+        if due.is_empty() {
+            plan.record.push(entry(EMPTY));
+        } else {
+            digests.push((workspace, due, entry(SENT)));
+        }
     }
+    let named = digests.len() > 1;
+    for (workspace, due, sent) in digests {
+        let (counts, list) = digest_counts(due);
+        plan.notifications.push(Notification {
+            kind: DIGEST,
+            opens: Opens::Due {
+                workspace: workspace.key.clone(),
+                date: date.clone(),
+            },
+            title: if named {
+                format!("{}: {counts}", workspace.name)
+            } else {
+                counts
+            },
+            message: list,
+            sent: vec![sent],
+        });
+    }
+}
+
+/// The digest's counts, such as "1 due today, 2 overdue", and its preview.
+fn digest_counts(mut due: Vec<(DueState, &ReminderTask)>) -> (String, String) {
     // Most overdue first, then due today.
     due.sort_by(|(left_state, left), (right_state, right)| {
         days_overdue(*right_state)
@@ -188,13 +231,7 @@ fn plan_digest(
         counts.push(format!("{overdue_count} overdue"));
     }
     let list = preview(due.iter().map(|(_, item)| *item));
-    plan.notifications.push(Notification {
-        kind: DIGEST,
-        opens: Opens::Due(trigger.clone()),
-        title: counts.join(", "),
-        message: list,
-        sent: vec![entry(SENT)],
-    });
+    (counts.join(", "), list)
 }
 
 fn days_overdue(state: DueState) -> i64 {
@@ -362,11 +399,12 @@ pub async fn remind(database: &Database, config: &RemindersConfig) -> Check {
 
 async fn remind_once(database: &Database, config: &RemindersConfig) -> Result<Check> {
     let digest_time = config.digest_time()?;
-    let tasks = load_tasks(database).await?;
+    let workspaces = database.list_workspaces().await?;
+    let tasks = load_tasks(database, &workspaces).await?;
     let now = Utc::now();
     let local = now.with_timezone(&Local).naive_local();
     let log = database.reminder_log().await?;
-    let plan = plan(&tasks, &log, now, local, config, digest_time);
+    let plan = plan(&tasks, &workspaces, &log, now, local, config, digest_time);
     let mut record = plan.record;
     let mut queued = Vec::new();
     for notification in plan.notifications {
@@ -383,9 +421,9 @@ async fn remind_once(database: &Database, config: &RemindersConfig) -> Result<Ch
 }
 
 /// Open tasks across every workspace in the database.
-async fn load_tasks(database: &Database) -> Result<Vec<ReminderTask>> {
+async fn load_tasks(database: &Database, workspaces: &[Workspace]) -> Result<Vec<ReminderTask>> {
     let mut tasks = Vec::new();
-    for workspace in database.list_workspaces().await? {
+    for workspace in workspaces {
         let items = database
             .list_task_summary_items(
                 &workspace.id,
@@ -469,10 +507,43 @@ mod tests {
         (now, now.naive_utc())
     }
 
+    fn workspace(id: &str, key: &str, name: &str) -> Workspace {
+        Workspace {
+            id: id.parse().unwrap(),
+            key: key.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    fn personal() -> Workspace {
+        workspace("0000000000000001", "personal", "Personal")
+    }
+
+    fn work() -> Workspace {
+        workspace("0000000000000002", "work", "Work")
+    }
+
+    /// `item` moved to `workspace`.
+    fn in_workspace(mut item: ReminderTask, workspace: &Workspace) -> ReminderTask {
+        item.task.workspace_id = workspace.id.clone();
+        item.workspace_key = workspace.key.clone();
+        item
+    }
+
     fn run(tasks: &[ReminderTask], log: &[ReminderLogEntry], utc: &str) -> Plan {
+        run_in(&[personal()], tasks, log, utc)
+    }
+
+    fn run_in(
+        workspaces: &[Workspace],
+        tasks: &[ReminderTask],
+        log: &[ReminderLogEntry],
+        utc: &str,
+    ) -> Plan {
         let (now, local) = at(utc);
         plan(
             tasks,
+            workspaces,
             log,
             now,
             local,
@@ -538,6 +609,87 @@ mod tests {
         // A missed day is not sent late; the next day has its own digest.
         let plan = run(&tasks, &log, "2026-10-16T09:00:00Z");
         assert_eq!(messages(&plan), ["2 overdue\nAPP-Pay Pay\nAPP-Ship Ship"]);
+    }
+
+    #[test]
+    fn each_workspace_gets_its_own_digest_named_when_there_are_several() {
+        let tasks = [
+            due("Ship", "2026-10-14"),
+            in_workspace(due("Pay", "2026-10-12"), &work()),
+            in_workspace(due("File", "2026-10-14"), &work()),
+        ];
+        let workspaces = [personal(), work()];
+        let mut log = Vec::new();
+
+        let plan = run_in(&workspaces, &tasks, &log, "2026-10-14T09:00:00Z");
+        assert_eq!(
+            messages(&plan),
+            [
+                "Personal: 1 due today\nAPP-Ship Ship",
+                "Work: 1 due today, 1 overdue\nAPP-Pay Pay\nAPP-File File",
+            ]
+        );
+        assert_eq!(
+            plan.notifications[1].opens,
+            Opens::Due {
+                workspace: "work".into(),
+                date: "2026-10-14".into(),
+            }
+        );
+        apply(&mut log, plan);
+        assert!(messages(&run_in(&workspaces, &tasks, &log, "2026-10-14T18:00:00Z")).is_empty());
+
+        // One workspace with due tasks isn't named.
+        let plan = run_in(&workspaces, &tasks[..1], &[], "2026-10-14T09:00:00Z");
+        assert_eq!(messages(&plan), ["1 due today\nAPP-Ship Ship"]);
+    }
+
+    #[test]
+    fn a_digest_sent_is_recorded_per_workspace() {
+        let workspaces = [personal(), work()];
+        let mut log = Vec::new();
+        let plan = run_in(
+            &workspaces,
+            &[due("Ship", "2026-10-14")],
+            &log,
+            "2026-10-14T09:00:00Z",
+        );
+        assert_eq!(plan.notifications.len(), 1);
+        apply(&mut log, plan);
+
+        // Work's day was consumed while it had nothing due.
+        let tasks = [
+            due("Ship", "2026-10-14"),
+            in_workspace(due("Pay", "2026-10-14"), &work()),
+        ];
+        assert!(messages(&run_in(&workspaces, &tasks, &log, "2026-10-14T12:00:00Z")).is_empty());
+
+        // A workspace first seen later that day gets its digest.
+        let late = workspace("0000000000000003", "late", "Late");
+        let tasks = [in_workspace(due("New", "2026-10-14"), &late)];
+        let plan = run_in(
+            &[personal(), work(), late],
+            &tasks,
+            &log,
+            "2026-10-14T12:00:00Z",
+        );
+        assert_eq!(messages(&plan), ["1 due today\nAPP-New New"]);
+    }
+
+    #[test]
+    fn a_digest_recorded_for_the_whole_day_covers_every_workspace() {
+        let log = [ReminderLogEntry {
+            kind: DIGEST.into(),
+            task_id: String::new(),
+            trigger: "2026-10-14".into(),
+            outcome: SENT.into(),
+        }];
+        let tasks = [
+            due("Ship", "2026-10-14"),
+            in_workspace(due("Pay", "2026-10-14"), &work()),
+        ];
+        let plan = run_in(&[personal(), work()], &tasks, &log, "2026-10-14T12:00:00Z");
+        assert!(plan.notifications.is_empty() && plan.record.is_empty());
     }
 
     #[test]
@@ -666,7 +818,7 @@ mod tests {
 
         let digest = &queued[0];
         assert_eq!(digest.kind, DIGEST);
-        assert_eq!(digest.tag, "v1:digest:2026-10-14");
+        assert_eq!(digest.tag, "v1:digest:personal:2026-10-14");
         assert!(digest.expires_at > now.timestamp());
         // Tests read the digest's date as UTC, the expiry in the host's zone.
         assert!(digest.expires_at <= now.timestamp() + 2 * CATCH_UP_WINDOW_SECONDS);
