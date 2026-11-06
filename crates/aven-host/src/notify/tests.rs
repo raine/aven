@@ -323,6 +323,7 @@ fn the_child_protocol_round_trips() {
             body: "Write".into(),
         }],
         list_delivered: true,
+        ask: false,
     };
 
     let output = child::serve(&serde_json::to_vec(&request).unwrap(), &service).unwrap();
@@ -332,4 +333,10 @@ fn the_child_protocol_round_trips() {
     assert_eq!(report.errors, [None]);
     assert_eq!(report.delivered, Some(Vec::new()));
     assert_eq!(service.requests(), [request]);
+}
+
+#[test]
+fn a_request_without_ask_does_not_ask() {
+    let request: Request = serde_json::from_str(r#"{"posts":[],"list_delivered":false}"#).unwrap();
+    assert!(!request.ask);
 }

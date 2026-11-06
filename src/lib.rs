@@ -370,12 +370,17 @@ async fn dispatch_standalone(
                     // Desktop keeps the agent in line with the intent.
                     #[cfg(all(target_os = "macos", feature = "desktop"))]
                     aven_host::background::set_intent(config::BackgroundIntent::On)?;
+                    let reminders = config.reminders.enabled;
                     daemon::install(daemon::ServiceInstallArgs {
                         db_path,
                         config,
                         program: args.program,
-                    })
-                    .map(|service| service.print())
+                    })?
+                    .print();
+                    if reminders {
+                        tokio::task::spawn_blocking(notification::ask_in_terminal).await?;
+                    }
+                    Ok(())
                 }
                 Some(DaemonSubcommand::Uninstall) => {
                     // Without it, Desktop would install the agent again.

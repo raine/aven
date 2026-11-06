@@ -29,6 +29,9 @@ pub(crate) async fn cmd_config(args: ConfigCommand) -> Result<()> {
             let (section, key) = args.key.path();
             set_scalar(&config_file_path()?, section, key, &value)?;
             println!("updated-config key={}", args.key.name());
+            if matches!(args.key, ConfigKey::RemindersEnabled) && value == "true" {
+                tokio::task::spawn_blocking(crate::notification::ask_in_terminal).await?;
+            }
         }
     }
     Ok(())

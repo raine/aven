@@ -117,6 +117,79 @@ pub(crate) fn delivery() -> Arc<dyn Deliver> {
     Arc::new(Unbundled)
 }
 
+/// The short-lived child that reads and asks for notification permission,
+/// when this executable is in Aven's bundle. Elsewhere Aven posts as
+/// Terminal, whose permission this can't read.
+fn permission_child() -> Option<Arc<dyn Deliver>> {
+    #[cfg(target_os = "macos")]
+    if let Some(executable) = macos::bundle_executable() {
+        return Some(Arc::new(notify::child::ChildProcess { executable }));
+    }
+    None
+}
+
+/// What the user allowed for Aven's notifications, or `None` where this
+/// can't read it.
+pub(crate) fn authorization() -> Option<Result<Authorization>> {
+    permission_child().map(|child| notify::authorization(child.as_ref()))
+}
+
+/// What `aven daemon status` and `aven doctor` say about notifications, and
+/// what to do about it.
+pub(crate) fn describe(authorization: Authorization) -> (&'static str, Option<&'static str>) {
+    match authorization {
+        Authorization::Allowed => ("allowed", None),
+        Authorization::Denied => (
+            "denied",
+            Some("turn on Allow notifications in System Settings > Notifications > Aven"),
+        ),
+        Authorization::NotAsked => (
+            "not asked",
+            Some("run `aven config set reminders.enabled true` in a terminal and choose Allow"),
+        ),
+        Authorization::Unavailable => ("unavailable", None),
+    }
+}
+
+/// Whether macOS hasn't asked the user about Aven's notifications yet.
+pub(crate) fn not_asked() -> bool {
+    matches!(authorization(), Some(Ok(Authorization::NotAsked)))
+}
+
+/// Asks the user to allow notifications and waits for the answer. The
+/// question shows as a notification and stays open only while the asking
+/// process runs, so only a process the user is waiting on calls this.
+pub(crate) fn ask() -> Option<Authorization> {
+    let child = permission_child()?;
+    // Without an answer in time, macOS records the question as declined.
+    notify::ask(child.as_ref())
+        .or_else(|error| {
+            tracing::debug!(error = %format!("{error:#}"), "notification question");
+            notify::authorization(child.as_ref())
+        })
+        .ok()
+}
+
+/// Asks the user to allow notifications from a command they run in a
+/// terminal, when macOS hasn't asked them yet, and says what came of it.
+/// Does nothing without a terminal on stdin.
+pub(crate) fn ask_in_terminal() {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !not_asked() {
+        return;
+    }
+    println!(
+        "macOS will ask whether Aven may send notifications. Choose Allow to get reminders; waiting for your answer..."
+    );
+    match ask() {
+        Some(Authorization::Allowed) => println!("Notifications are allowed."),
+        Some(Authorization::Denied) => println!(
+            "Notifications are off. Turn them on in System Settings > Notifications > Aven to get reminders."
+        ),
+        _ => println!("No answer came. Run this again to be asked."),
+    }
+}
+
 /// Posts each notification in this process. Nothing here can tell whether
 /// notifications are allowed or what is shown.
 struct Unbundled;

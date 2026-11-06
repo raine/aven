@@ -15,6 +15,9 @@ pub const ARGS: [&str; 2] = ["internal", "notify"];
 /// How long a child may take before it is stopped. Its posts stay
 /// `submitting`, for the next delivery to check.
 const TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a child that asks the user may wait for their answer, a little
+/// longer than [`super::ASK_TIMEOUT`] so it can report a missing answer.
+const ASK_CHILD_TIMEOUT: Duration = Duration::from_secs(super::ASK_TIMEOUT.as_secs() + 15);
 const POLL: Duration = Duration::from_millis(20);
 
 pub struct ChildProcess {
@@ -44,7 +47,12 @@ impl Deliver for ChildProcess {
             let mut output = Vec::new();
             stdout.read_to_end(&mut output).map(|_| output)
         });
-        let deadline = Instant::now() + TIMEOUT;
+        let timeout = if request.ask {
+            ASK_CHILD_TIMEOUT
+        } else {
+            TIMEOUT
+        };
+        let deadline = Instant::now() + timeout;
         let status = loop {
             if let Some(status) = child.try_wait()? {
                 break status;
@@ -52,7 +60,7 @@ impl Deliver for ChildProcess {
             if Instant::now() >= deadline {
                 let _ = child.kill();
                 let _ = child.wait();
-                bail!("the notify child did not finish in {} s", TIMEOUT.as_secs());
+                bail!("the notify child did not finish in {} s", timeout.as_secs());
             }
             std::thread::sleep(POLL);
         };
