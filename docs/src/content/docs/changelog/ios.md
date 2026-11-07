@@ -5,6 +5,10 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
+## 1.0.7 — draft
+
+- Updated encryption compliance for distribution in France.
+
 ## 1.0.6 (2026-11-03)
 
 - Swiping down in Tell Aven now hides the keyboard smoothly. Swipe again to close the chat.
