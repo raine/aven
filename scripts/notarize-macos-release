@@ -4,6 +4,7 @@ set -euo pipefail
 # Only system tools may handle the App Store Connect API key.
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 if [[ $# -lt 1 ]]; then
   echo "usage: notarize-macos-release DMG | BINARY_OR_APP..." >&2
@@ -77,7 +78,7 @@ fi
 # Bare binaries cannot hold a ticket; Gatekeeper finds theirs online.
 for target in "$@"; do
   if [[ $target == *.app || $target == *.dmg ]]; then
-    xcrun stapler staple "$target"
-    xcrun stapler validate "$target"
+    "$script_dir/stapler" staple "$target"
+    "$script_dir/stapler" validate "$target"
   fi
 done
