@@ -678,6 +678,7 @@ impl Root {
             ConfirmAction::Quit { .. } => "Open Settings",
             _ => "Cancel",
         };
+        let first = action.first_button();
         let dialog = Dialog::Confirm {
             title,
             body,
@@ -687,8 +688,7 @@ impl Root {
             action,
             buttons,
         };
-        // Cancel takes focus, so Enter alone never confirms.
-        self.open_dialog_at(dialog, Vec::new(), fields, 0, window, cx);
+        self.open_dialog_at(dialog, Vec::new(), fields, first, window, cx);
     }
 
     fn confirmed(&mut self, action: ConfirmAction, window: &mut Window, cx: &mut Context<Self>) {
@@ -3477,6 +3477,32 @@ mod tests {
             let notice = quit_notice(false, true, permission).unwrap();
             assert_eq!(notice.title, "Sync keeps running");
             assert!(!notice.body.contains("Reminders") && !notice.notification_settings);
+        }
+    }
+
+    #[test]
+    fn return_quits_from_the_quit_notice_but_never_confirms_a_loss() {
+        use crate::dialogs::ConfirmAction;
+        for notification_settings in [false, true] {
+            let quit = ConfirmAction::Quit {
+                notification_settings,
+            };
+            assert_eq!(quit.first_button(), 1);
+        }
+        let losses = [
+            ConfirmAction::DeleteProject("app".into()),
+            ConfirmAction::RemoveDevice {
+                id: [0; 32],
+                label: "Phone".into(),
+            },
+            ConfirmAction::Restore("backup.aven".into()),
+            ConfirmAction::Reset {
+                unfinished_setup: false,
+            },
+            ConfirmAction::OpenKeptDraft(1),
+        ];
+        for action in losses {
+            assert_eq!(action.first_button(), 0);
         }
     }
 
