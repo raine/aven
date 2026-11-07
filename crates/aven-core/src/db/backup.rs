@@ -16,13 +16,22 @@ pub(super) async fn backup_before_pending_migrations(
     existed_before_open: bool,
     pool: &SqlitePool,
 ) -> Result<()> {
-    if !migration_backups_enabled() || !existed_before_open || !has_pending_migrations(pool).await?
-    {
+    if !migration_backups_enabled() || !existed_before_open {
+        return Ok(());
+    }
+    backup_pending_migrations(path, pool).await
+}
+
+/// Copies the database aside when migrations are about to change it. The
+/// copy is local-only like any backup, so a database that takes part in
+/// encrypted sync can still be copied before it migrates.
+async fn backup_pending_migrations(path: &Path, pool: &SqlitePool) -> Result<()> {
+    if !has_pending_migrations(pool).await? {
         return Ok(());
     }
     let backup_path = migration_backup_path(path)?;
     let mut conn = pool.acquire().await?;
-    backup_database_exact_with_connection(&mut conn, &backup_path).await?;
+    backup_database_with_connection(&mut conn, &backup_path).await?;
     prune_migration_backups(path)?;
     Ok(())
 }
@@ -190,22 +199,6 @@ pub(crate) async fn backup_database_with_connection(
     conn: &mut SqliteConnection,
     backup: &Path,
 ) -> Result<()> {
-    backup_database_with_connection_mode(conn, backup, true).await
-}
-
-async fn backup_database_exact_with_connection(
-    conn: &mut SqliteConnection,
-    backup: &Path,
-) -> Result<()> {
-    ensure_connection_has_no_active_local_shared_capture(conn, "backup source").await?;
-    backup_database_with_connection_mode(conn, backup, false).await
-}
-
-async fn backup_database_with_connection_mode(
-    conn: &mut SqliteConnection,
-    backup: &Path,
-    detach_sync: bool,
-) -> Result<()> {
     wait_at_backup_precheck_boundary(backup).await;
     let parent = backup
         .parent()
@@ -224,11 +217,7 @@ async fn backup_database_with_connection_mode(
         .execute(&mut *conn)
         .await
         .with_context(|| format!("could not back up database to {}", backup.display()))?;
-    if detach_sync {
-        detach_backup_snapshot(&staging).await?;
-    } else {
-        ensure_file_has_no_active_local_shared_capture(&staging, "backup-snapshot").await?;
-    }
+    detach_backup_snapshot(&staging).await?;
     fs::rename(&staging, backup)
         .with_context(|| format!("could not replace {}", backup.display()))?;
     Ok(())
@@ -509,6 +498,86 @@ mod tests {
                 .as_deref(),
             Some("second")
         );
+    }
+
+    #[tokio::test]
+    async fn synced_database_backs_up_before_pending_migrations() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("synced.sqlite");
+        let pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+        let versions = MIGRATOR.iter().map(|m| m.version).collect::<Vec<_>>();
+        MIGRATOR
+            .run_to(versions[versions.len() - 2], &pool)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO meta(key, value) VALUES ('backup-test', 'kept');
+             INSERT INTO local_seed_source(singleton, authority, client_id)
+                 VALUES (1, x'01', 'C1');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            crate::sync::shared_state::adoption::ensure_unbound(&mut conn)
+                .await
+                .is_err()
+        );
+        drop(conn);
+
+        backup_pending_migrations(&path, &pool).await.unwrap();
+        MIGRATOR.run(&pool).await.unwrap();
+        pool.close().await;
+
+        let backup_dir = temp.path().join("backups");
+        let backups = fs::read_dir(&backup_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("synced.sqlite.before-migrate-"))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1, "{backups:?}");
+        let mut backup = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(backup_dir.join(&backups[0]))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_meta(&mut backup, "backup-test")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("kept")
+        );
+        let sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_seed_source")
+            .fetch_one(&mut backup)
+            .await
+            .unwrap();
+        assert_eq!(sources, 0);
+        let pending: bool =
+            sqlx::query_scalar("SELECT ? NOT IN (SELECT version FROM _sqlx_migrations)")
+                .bind(versions[versions.len() - 1])
+                .fetch_one(&mut backup)
+                .await
+                .unwrap();
+        assert!(pending);
+
+        let database = Database::open(&path).await.unwrap();
+        let mut conn = database.acquire_reader().await.unwrap();
+        let sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_seed_source")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(sources, 1);
     }
 
     #[cfg(unix)]
