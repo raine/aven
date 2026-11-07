@@ -413,6 +413,61 @@ fn surveying_and_planning_change_nothing() {
 }
 
 #[test]
+fn the_switch_knows_every_executable_of_the_terminal_installation() {
+    let mac = Mac::new();
+    let old = mac.script_install();
+    let keg = mac.formula_install();
+    mac.agent(&old, true, false);
+    let bare = mac.root.join("brew/Cellar/aven/0.1.30/bin/aven");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    std::fs::write(&bare, "#!/bin/sh\n").unwrap();
+    let mut expected: Vec<PathBuf> = [old, keg, bare]
+        .iter()
+        .map(|path| path.canonicalize().unwrap())
+        .collect();
+    expected.sort();
+    let mut found = mac.switch_plan().executables;
+    found.sort();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn the_switch_waits_for_the_terminal_installations_processes() {
+    let mac = Mac::new();
+    let old = mac.script_install();
+    mac.agent(&old, true, false);
+    // A real executable, so the process is found by the path it runs.
+    std::fs::copy("/bin/sleep", &old).unwrap();
+    let mut tui = Command::new(&old).arg("30").spawn().unwrap();
+    let plan = mac.switch_plan();
+    let before = mac.tree();
+    let running = (0..50)
+        .find_map(|_| match switch(&mac.layout, &mac.system, &plan).unwrap() {
+            Outcome::Waiting(running) => Some(running),
+            _ => {
+                std::thread::sleep(Duration::from_millis(20));
+                None
+            }
+        })
+        .unwrap_or_default();
+    tui.kill().unwrap();
+    tui.wait().unwrap();
+    assert_eq!(
+        running
+            .iter()
+            .map(|process| process.pid)
+            .collect::<Vec<_>>(),
+        vec![tui.id()]
+    );
+    assert_eq!(mac.tree(), before, "nothing changes while it runs");
+    assert!(mac.system.calls().is_empty());
+
+    let report = report(switch(&mac.layout, &mac.system, &plan).unwrap());
+    assert!(report.switched);
+    assert!(!mac.layout.script_bundle().exists());
+}
+
+#[test]
 fn formula_waits_for_its_removal_and_resumes_after_a_restart() {
     let mac = Mac::new();
     let program = mac.formula_install();

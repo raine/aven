@@ -4,10 +4,12 @@
 //! stays on this screen, so two versions never share the database.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use aven_host::desktop_install::{
     self, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, Outcome, Plan, Report, Switch, System,
 };
+use aven_host::running_processes::RunningProcess;
 use gpui::{
     App, ClipboardItem, Context, Div, FocusHandle, FontWeight, KeyDownEvent, SharedString, Window,
     div, img, prelude::*,
@@ -19,6 +21,7 @@ use crate::theme::{Theme, theme};
 
 const COLUMN: f32 = 500.;
 const LOGO: f32 = 48.;
+const WAIT_POLL: Duration = Duration::from_secs(1);
 
 /// Where setup is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +33,11 @@ pub(crate) enum Stage {
     Confirm(Switch),
     Declined(Switch),
     Working,
+    /// The switch waits for these processes of the terminal installation.
+    Waiting {
+        switch: Switch,
+        running: Vec<RunningProcess>,
+    },
     RemoveFormula {
         cask: bool,
         sync_paused: bool,
@@ -55,6 +63,8 @@ pub(crate) struct Setup {
     /// Whether macOS lets Aven show notifications, read before the switch
     /// screen shows.
     permission: Permission,
+    /// Counts waits, so only the latest one runs the switch.
+    waits: usize,
 }
 
 impl Setup {
@@ -77,6 +87,7 @@ impl Setup {
             reminders: aven_host::config::AppConfig::load()
                 .is_ok_and(|config| config.reminders.enabled),
             permission: Permission::Unavailable,
+            waits: 0,
         };
         setup.check(window, cx);
         setup
@@ -92,9 +103,19 @@ impl Setup {
         let layout = self.layout.clone();
         let system = self.system.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let stage = cx
-                .background_spawn(async move { checked(layout, system.as_ref(), was_waiting) })
+            let checked = cx
+                .background_spawn(async move { checked(layout, system.as_ref()) })
                 .await;
+            let stage = match checked {
+                Checked::Stage(stage) => stage,
+                Checked::Resume(switch) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.run(switch, was_waiting, window, cx)
+                    })
+                    .ok();
+                    return;
+                }
+            };
             let permission = if matches!(stage, Some(Stage::Confirm(_))) {
                 Some(notifications::permission().await)
             } else {
@@ -127,6 +148,18 @@ impl Setup {
             })
             .detach();
         }
+        self.run(switch, false, window, cx);
+    }
+
+    /// Runs the switch, or a resumed one. `was_waiting` says the user was
+    /// told to remove the formula.
+    fn run(
+        &mut self,
+        switch: Switch,
+        was_waiting: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.stage = Stage::Working;
         cx.notify();
         let layout = self.layout.clone();
@@ -135,10 +168,8 @@ impl Setup {
             let stage = cx
                 .background_spawn(async move {
                     let layout = desktop_install::with_shell_path(layout);
-                    switched(
-                        desktop_install::switch(&layout, system.as_ref(), &switch),
-                        false,
-                    )
+                    let outcome = desktop_install::switch(&layout, system.as_ref(), &switch);
+                    switched(outcome, switch, was_waiting)
                 })
                 .await;
             this.update_in(cx, |this, window, cx| this.arrive(stage, window, cx))
@@ -150,18 +181,71 @@ impl Setup {
     fn arrive(&mut self, stage: Option<Stage>, window: &mut Window, cx: &mut Context<Self>) {
         match stage {
             Some(stage) => {
+                let waiting = matches!(stage, Stage::Waiting { .. });
                 self.stage = stage;
                 cx.notify();
+                if waiting {
+                    self.wait(window, cx);
+                }
             }
             None => self.open(window, cx),
         }
     }
 
+    /// Follows the processes the switch waits for, and runs it again once
+    /// they are gone. Ends when the screen moves on.
+    fn wait(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.waits += 1;
+        let wait = self.waits;
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(WAIT_POLL).await;
+                let current = this.update(cx, |this, _| match &this.stage {
+                    Stage::Waiting { switch, .. } if this.waits == wait => Some(switch.clone()),
+                    _ => None,
+                });
+                let Ok(Some(switch)) = current else {
+                    return;
+                };
+                let running = cx
+                    .background_spawn({
+                        let switch = switch.clone();
+                        async move { desktop_install::running_old(&switch) }
+                    })
+                    .await;
+                let done = running.is_empty();
+                this.update_in(cx, |this, window, cx| {
+                    let Stage::Waiting { running: shown, .. } = &mut this.stage else {
+                        return;
+                    };
+                    if this.waits != wait {
+                        return;
+                    }
+                    if done {
+                        this.run(switch, false, window, cx);
+                    } else if *shown != running {
+                        *shown = running;
+                        cx.notify();
+                    }
+                })
+                .ok();
+                if done {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
     fn decline(&mut self, cx: &mut Context<Self>) {
-        if let Stage::Confirm(switch) = &self.stage {
-            self.stage = Stage::Declined(switch.clone());
-            cx.notify();
+        match &self.stage {
+            Stage::Confirm(switch) => self.stage = Stage::Declined(switch.clone()),
+            Stage::Waiting { switch, .. } if !switch.resuming => {
+                self.stage = Stage::Declined(switch.clone())
+            }
+            _ => return,
         }
+        cx.notify();
     }
 
     /// Back to the switch screen, with the permission read again since the
@@ -210,20 +294,27 @@ impl Setup {
             }
             Stage::Done(_) => self.open(window, cx),
             Stage::MoveToApplications { .. } => cx.quit(),
-            Stage::Checking | Stage::Working => return,
+            Stage::Checking | Stage::Working | Stage::Waiting { .. } => return,
         }
         cx.stop_propagation();
     }
 }
 
-/// The stage a survey leads to, or `None` to open the app straight away.
-fn checked(layout: Layout, system: &dyn System, was_waiting: bool) -> Option<Stage> {
+/// Where a survey leads.
+enum Checked {
+    /// The stage to show, or `None` to open the app straight away.
+    Stage(Option<Stage>),
+    /// A switch the user already agreed to, which carries on.
+    Resume(Switch),
+}
+
+fn checked(layout: Layout, system: &dyn System) -> Checked {
     let layout = desktop_install::with_shell_path(layout);
     let survey = match desktop_install::survey(&layout, system) {
         Ok(survey) => survey,
-        Err(error) => return Some(Stage::Failed(format!("{error:#}"))),
+        Err(error) => return Checked::Stage(Some(Stage::Failed(format!("{error:#}")))),
     };
-    match desktop_install::plan(&layout, &survey) {
+    Checked::Stage(match desktop_install::plan(&layout, &survey) {
         Plan::Ready => match desktop_install::complete(&layout, system) {
             Ok(report) if report.needs_attention() => Some(Stage::Done(report)),
             Ok(_) => None,
@@ -231,16 +322,16 @@ fn checked(layout: Layout, system: &dyn System, was_waiting: bool) -> Option<Sta
         },
         Plan::MoveToApplications { running } => Some(Stage::MoveToApplications { running }),
         Plan::Blocked(blocked) => Some(Stage::Blocked(blocked)),
-        Plan::Switch(switch) if switch.resuming => switched(
-            desktop_install::switch(&layout, system, &switch),
-            was_waiting,
-        ),
+        Plan::Switch(switch) if switch.resuming => {
+            return Checked::Resume(switch);
+        }
         Plan::Switch(switch) => Some(Stage::Confirm(switch)),
-    }
+    })
 }
 
-fn switched(outcome: anyhow::Result<Outcome>, was_waiting: bool) -> Option<Stage> {
+fn switched(outcome: anyhow::Result<Outcome>, switch: Switch, was_waiting: bool) -> Option<Stage> {
     Some(match outcome {
+        Ok(Outcome::Waiting(running)) => Stage::Waiting { switch, running },
         Ok(Outcome::AwaitFormula { cask, sync_paused }) => Stage::RemoveFormula {
             cask,
             sync_paused,
@@ -341,6 +432,30 @@ impl Setup {
                 primary: None,
                 secondary: None,
                 note: None,
+            },
+            Stage::Waiting { switch, running } => Screen {
+                title: "Quit Aven in the terminal",
+                body: vec![
+                    lead(
+                        "These still run the version of Aven installed for the terminal. \
+                         Desktop can upgrade your tasks database, and a version that is \
+                         already running keeps writing to it, so the switch continues once \
+                         they exit. Quit them yourself; Aven won\u{2019}t stop them.",
+                        t,
+                    ),
+                    processes(running, t),
+                ],
+                primary: None,
+                secondary: Some(if switch.resuming {
+                    ("Quit Aven", Button::Quit)
+                } else {
+                    ("Not now", Button::Decline)
+                }),
+                note: Some(if switch.resuming {
+                    "The switch continues by itself once they exit.".into()
+                } else {
+                    "Nothing has been changed yet.".into()
+                }),
             },
             Stage::MoveToApplications { running } => Screen {
                 title: "Move Aven to Applications",
@@ -969,6 +1084,36 @@ fn row(label: &'static str, value: String, path: bool, t: &Theme) -> Div {
                 .when(path, |value| value.font_family(MONO).text(Text::Secondary))
                 .child(value),
         )
+}
+
+/// Running processes, one per row with its pid.
+fn processes(running: &[RunningProcess], t: &Theme) -> Div {
+    running.iter().fold(card(t).gap(px(6.)), |card, process| {
+        card.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(div().flex_none().size(px(6.)).rounded(px(3.)).bg(t.warn))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_family(MONO)
+                        .text(Text::Secondary)
+                        .text_color(t.ink)
+                        .child(process.command.clone()),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text(Text::Secondary)
+                        .text_color(t.faint)
+                        .child(format!("pid {}", process.pid)),
+                ),
+        )
+    })
 }
 
 fn mono(text: String, t: &Theme) -> Div {

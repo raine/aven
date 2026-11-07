@@ -18,6 +18,7 @@ use crate::app_bundle::{
 };
 use crate::config::BackgroundIntent;
 use crate::daemon::service::{self, AgentState};
+use crate::running_processes::{RunningProcess, blocking_processes};
 
 /// What the user runs to remove the Homebrew formula. Setup never runs it.
 pub const FORMULA_UNINSTALL: &str = "brew uninstall raine/aven/aven";
@@ -312,6 +313,9 @@ pub struct Switch {
     pub agent: Option<Agent>,
     /// The script's bundle, removed once everything runs from Desktop.
     pub retire: Option<PathBuf>,
+    /// The terminal installation's executables, as real paths. The switch
+    /// waits until nothing but its daemon runs them.
+    pub executables: Vec<PathBuf>,
 }
 
 /// Why Setup stops without changing anything.
@@ -341,6 +345,11 @@ struct State {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
+    /// Nothing changed: these processes still run the terminal installation.
+    /// An `aven` that is already running keeps its old code and could write
+    /// to the database after Desktop upgrades it, so the user quits them and
+    /// the switch runs again. Setup never stops them.
+    Waiting(Vec<RunningProcess>),
     /// The formula is still installed; the user removes it with
     /// `FORMULA_UNINSTALL`, then Setup checks again. `sync_paused` says the
     /// daemon was stopped and starts from Desktop once the switch completes.
@@ -579,6 +588,7 @@ pub fn plan(layout: &Layout, survey: &Survey) -> Plan {
     if !unwritable.is_empty() {
         return Plan::Blocked(Blocked::Unwritable { paths: unwritable });
     }
+    let executables = old_executables(layout, survey, retire.as_deref());
     Plan::Switch(Switch {
         resuming: state.is_some(),
         script: survey.script_bundle.is_some()
@@ -594,13 +604,71 @@ pub fn plan(layout: &Layout, survey: &Survey) -> Plan {
         repoint,
         agent,
         retire,
+        executables,
     })
+}
+
+/// The real paths of what the terminal installation runs: its commands, its
+/// daemon, the script's bundle and every version of the formula.
+fn old_executables(layout: &Layout, survey: &Survey, retire: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = survey
+        .commands
+        .iter()
+        .filter(|found| found.owner.is_terminal_install())
+        .map(|found| found.path.clone())
+        .collect();
+    candidates.extend(
+        survey
+            .agent
+            .iter()
+            .filter(|agent| agent.owner.is_terminal_install())
+            .map(|agent| agent.program.clone()),
+    );
+    candidates.extend(retire.map(|bundle| bundle.join(BUNDLE_EXECUTABLE)));
+    for prefix in &layout.brew_prefixes {
+        if let Ok(versions) = std::fs::read_dir(prefix.join("Cellar/aven")) {
+            for version in versions.flatten() {
+                candidates.push(version.path().join("bin/aven"));
+                candidates.push(version.path().join(BUNDLE_NAME).join(BUNDLE_EXECUTABLE));
+            }
+        }
+    }
+    let desktop = layout.executable().canonicalize().ok();
+    let mut executables = Vec::new();
+    for path in candidates
+        .iter()
+        .filter_map(|path| path.canonicalize().ok())
+    {
+        if Some(&path) != desktop.as_ref() && !executables.contains(&path) {
+            executables.push(path);
+        }
+    }
+    executables
+}
+
+/// Processes other than the daemon that still run the terminal installation,
+/// ordered by pid. The switch stops the daemon itself.
+pub fn running_old(switch: &Switch) -> Vec<RunningProcess> {
+    let mut running: Vec<RunningProcess> = switch
+        .executables
+        .iter()
+        .flat_map(|executable| blocking_processes(executable))
+        .collect();
+    running.sort_by_key(|process| process.pid);
+    running.dedup_by_key(|process| process.pid);
+    running
 }
 
 /// Moves the command and the daemon onto Desktop. The user agreed to `switch`,
 /// or agreed earlier and it is resuming. Each step is repeatable, so a switch
 /// interrupted anywhere continues from what the next survey finds.
 pub fn switch(layout: &Layout, system: &dyn System, switch: &Switch) -> Result<Outcome> {
+    // Checked before every change, since a replaced or removed executable
+    // can no longer be matched to the processes still running it.
+    let running = running_old(switch);
+    if !running.is_empty() {
+        return Ok(Outcome::Waiting(running));
+    }
     let state = match load_state(layout)? {
         Some(state) => state,
         None => {
