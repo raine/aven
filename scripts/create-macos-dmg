@@ -28,14 +28,39 @@ if [[ ! -d $(dirname "$dmg") ]]; then
   exit 2
 fi
 
+layout_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/macos/dmg"
 runner_temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 work_dir=$(mktemp -d "$runner_temp/aven-dmg.XXXXXX")
-trap 'rm -rf "$work_dir"' EXIT
+attached=0
+cleanup() {
+  local status=$?
+  if [[ $attached == 1 ]]; then
+    hdiutil detach -quiet "$work_dir/mount" || hdiutil detach -quiet -force "$work_dir/mount" || status=1
+  fi
+  rm -rf "$work_dir"
+  exit "$status"
+}
+trap cleanup EXIT
 
-# The window shows the app beside a link to drag it onto.
+# The window shows the app beside a link to drag it onto, laid out by the
+# committed DS_Store and background from scripts/generate-macos-dmg-layout.
 volume="$work_dir/Aven"
-mkdir "$volume"
+mkdir "$volume" "$volume/.background" "$work_dir/mount"
 ditto "$app" "$volume/Aven.app"
 ln -s /Applications "$volume/Applications"
-hdiutil create -quiet -volname Aven -srcfolder "$volume" -fs HFS+ -format UDZO "$dmg"
+cp "$layout_dir/DS_Store" "$volume/.DS_Store"
+cp "$layout_dir/background.tiff" "$volume/.background/background.tiff"
+cp "$app/Contents/Resources/Aven.icns" "$volume/.VolumeIcon.icns"
+hdiutil create -quiet -volname Aven -srcfolder "$volume" -fs HFS+ -format UDRW "$work_dir/layout.dmg"
+
+# Finder shows .VolumeIcon.icns once the volume root has the kHasCustomIcon
+# flag. Aven.app gets no Finder flags: strict signature checks reject them,
+# and Finder already hides the .app extension of bundles.
+hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$work_dir/mount" "$work_dir/layout.dmg"
+attached=1
+xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000000000000000000 "$work_dir/mount"
+rm -rf "$work_dir/mount/.fseventsd" "$work_dir/mount/.Trashes"
+hdiutil detach -quiet "$work_dir/mount"
+attached=0
+hdiutil convert -quiet "$work_dir/layout.dmg" -format UDZO -o "$dmg"
 echo "$dmg"

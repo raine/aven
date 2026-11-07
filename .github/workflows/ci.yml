@@ -72,7 +72,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install bash jq ruby shellcheck
       - name: Check public shell scripts
-        run: shellcheck scripts/process-lock scripts/test-process-lock scripts/test-pre-commit scripts/test-workmux-environment scripts/test-container-image hooks/pre-commit scripts/assemble-macos-app scripts/test-assemble-macos-app scripts/package-macos-binary scripts/test-package-macos-binary scripts/sign-macos-release scripts/verify-macos-release scripts/test-verify-macos-release scripts/install scripts/test-install scripts/homebrew-formula scripts/test-homebrew-formula scripts/homebrew-cask scripts/test-homebrew-cask scripts/notarize-macos-release scripts/create-macos-dmg scripts/check-macos-dmg scripts/test-create-macos-dmg
+        run: shellcheck scripts/process-lock scripts/test-process-lock scripts/test-pre-commit scripts/test-workmux-environment scripts/test-container-image hooks/pre-commit scripts/assemble-macos-app scripts/test-assemble-macos-app scripts/package-macos-binary scripts/test-package-macos-binary scripts/sign-macos-release scripts/verify-macos-release scripts/test-verify-macos-release scripts/install scripts/test-install scripts/homebrew-formula scripts/test-homebrew-formula scripts/homebrew-cask scripts/test-homebrew-cask scripts/notarize-macos-release scripts/create-macos-dmg scripts/check-macos-dmg scripts/test-create-macos-dmg scripts/generate-macos-dmg-layout
       - name: Run public shell fixtures
         run: |
           scripts/test-process-lock

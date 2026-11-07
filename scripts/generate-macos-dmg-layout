@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Regenerates the committed disk image window layout in macos/dmg: the
+# background TIFF (rendered from background.svg at 1x and 2x) and the DS_Store
+# Finder reads for window size, icon positions and the background. Release
+# builds copy these files as they are, so they need no Finder session or
+# Python. Run this after changing background.svg or the layout below, then
+# commit the outputs. Needs rsvg-convert and uv.
+
+if [[ $(uname -s) != Darwin ]]; then
+  echo "generating the disk image layout requires macOS" >&2
+  exit 2
+fi
+for tool in rsvg-convert uv; do
+  if ! command -v "$tool" >/dev/null; then
+    echo "$tool not found" >&2
+    exit 2
+  fi
+done
+dmg_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/macos/dmg"
+tmp=$(mktemp -d)
+attached=0
+cleanup() {
+  local status=$?
+  if [[ $attached == 1 ]]; then
+    /usr/bin/hdiutil detach -quiet "$tmp/mount" || /usr/bin/hdiutil detach -quiet -force "$tmp/mount" || status=1
+  fi
+  rm -rf "$tmp"
+  exit "$status"
+}
+trap cleanup EXIT
+
+rsvg-convert --zoom 1 "$dmg_dir/background.svg" -o "$tmp/background.png"
+rsvg-convert --zoom 2 "$dmg_dir/background.svg" -o "$tmp/background@2x.png"
+/usr/bin/tiffutil -cathidpicheck "$tmp/background.png" "$tmp/background@2x.png" -out "$tmp/background.tiff" 2>/dev/null
+
+# Finder finds the background through an alias naming the volume, so the
+# layout is recorded on a scratch volume with the release volume's name.
+mkdir "$tmp/volume" "$tmp/volume/.background" "$tmp/mount"
+cp "$tmp/background.tiff" "$tmp/volume/.background/background.tiff"
+/usr/bin/hdiutil create -quiet -volname Aven -srcfolder "$tmp/volume" -fs HFS+ -format UDRW "$tmp/layout.dmg"
+/usr/bin/hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$tmp/mount" "$tmp/layout.dmg"
+attached=1
+
+uv run --quiet --no-project --with ds_store==1.3.1 --with mac_alias==2.2.2 \
+  python -I - "$tmp/mount" <<'EOF'
+import sys
+from ds_store import DSStore
+from mac_alias import ALIAS_EJECTABLE_DISK, Alias
+
+mount = sys.argv[1]
+alias = Alias.for_file(f"{mount}/.background/background.tiff")
+# Finder only looks for the image on a volume of the recorded disk type, and
+# the disk image opens as an ejectable disk wherever it is mounted.
+alias.volume.disk_type = ALIAS_EJECTABLE_DISK
+alias.volume.posix_path = "/Volumes/Aven"
+
+# Window size in points; icons are centered on the background's arrow.
+width, height = 640, 400
+with DSStore.open(f"{mount}/.DS_Store", "w+") as store:
+    store["."]["bwsp"] = {
+        "ContainerShowSidebar": False,
+        "PreviewPaneVisibility": False,
+        "ShowPathbar": False,
+        "ShowSidebar": False,
+        "ShowStatusBar": False,
+        "ShowTabView": False,
+        "ShowToolbar": False,
+        "SidebarWidth": 0,
+        "WindowBounds": f"{{{{200, 160}}, {{{width}, {height + 28}}}}}",
+    }
+    store["."]["icvp"] = {
+        "arrangeBy": "none",
+        "backgroundColorBlue": 1.0,
+        "backgroundColorGreen": 1.0,
+        "backgroundColorRed": 1.0,
+        "backgroundImageAlias": alias.to_bytes(),
+        "backgroundType": 2,
+        "gridOffsetX": 0.0,
+        "gridOffsetY": 0.0,
+        "gridSpacing": 100.0,
+        "iconSize": 128.0,
+        "labelOnBottom": True,
+        "showIconPreview": False,
+        "showItemInfo": False,
+        "textSize": 13.0,
+        "viewOptionsVersion": 1,
+    }
+    store["."]["icvl"] = (b"type", b"icnv")
+    store["."]["vSrn"] = ("long", 1)
+    store["Aven.app"]["Iloc"] = (160, 170)
+    store["Applications"]["Iloc"] = (480, 170)
+EOF
+
+cp "$tmp/mount/.DS_Store" "$tmp/DS_Store"
+cp "$tmp/background.tiff" "$tmp/DS_Store" "$dmg_dir/"
+echo "$dmg_dir"

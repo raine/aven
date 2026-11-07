@@ -9,7 +9,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 create="$script_dir/create-macos-dmg"
 check="$script_dir/check-macos-dmg"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap '/usr/bin/hdiutil detach -quiet "$tmp/mount" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -20,7 +20,12 @@ reject() {
     fail "accepted invalid input: $*"
   fi
 }
+# Fixture images carry the window layout so each is rejected for its own flaw.
 image_from() {
+  mkdir -p "$1/.background"
+  cp "$script_dir/../macos/dmg/DS_Store" "$1/.DS_Store"
+  cp "$script_dir/../macos/dmg/background.tiff" "$1/.background/background.tiff"
+  cp "$app/Contents/Resources/Aven.icns" "$1/.VolumeIcon.icns"
   /usr/bin/hdiutil create -quiet -volname Aven -srcfolder "$1" -fs HFS+ -format UDZO "$2"
 }
 
@@ -33,6 +38,11 @@ app="$tmp/app/Aven.app"
 [[ $("$create" "$app" "$tmp/Aven.dmg") == "$tmp/Aven.dmg" ]] || fail "unexpected image path"
 "$check" "$tmp/Aven.dmg" "$app" >/dev/null || fail "created image did not pass its check"
 /usr/bin/hdiutil imageinfo "$tmp/Aven.dmg" | grep -q 'Format: UDZO' || fail "image is not compressed"
+/usr/bin/hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$tmp/mount" "$tmp/Aven.dmg"
+[[ $(/usr/bin/xattr -px com.apple.FinderInfo "$tmp/mount" | tr -d ' \n') == 00000000000000000400* ]] ||
+  fail "volume icon flag is not set"
+[[ $(/usr/bin/xattr "$tmp/mount/Aven.app") != *com.apple.FinderInfo* ]] || fail "Aven.app carries Finder metadata"
+/usr/bin/hdiutil detach -quiet "$tmp/mount"
 
 reject "$create" "$app" "$tmp/Aven.dmg"
 reject "$create" "$app" "$tmp/Aven.img"
@@ -53,6 +63,21 @@ touch "$tmp/extra/README"
 image_from "$tmp/extra" "$tmp/extra.dmg"
 reject "$check" "$tmp/extra.dmg" "$app"
 
+# A plain image without the window layout is rejected.
+mkdir -p "$tmp/plain"
+cp -R "$app" "$tmp/plain/Aven.app"
+ln -s /Applications "$tmp/plain/Applications"
+/usr/bin/hdiutil create -quiet -volname Aven -srcfolder "$tmp/plain" -fs HFS+ -format UDZO "$tmp/plain.dmg"
+reject "$check" "$tmp/plain.dmg" "$app"
+
+# Finder metadata on the bundle breaks its strict signature check.
+mkdir -p "$tmp/flagged"
+cp -R "$app" "$tmp/flagged/Aven.app"
+/usr/bin/xattr -wx com.apple.FinderInfo 0000000000000000001000000000000000000000000000000000000000000000 "$tmp/flagged/Aven.app"
+ln -s /Applications "$tmp/flagged/Applications"
+image_from "$tmp/flagged" "$tmp/flagged.dmg"
+reject "$check" "$tmp/flagged.dmg" "$app"
+
 mkdir -p "$tmp/link"
 cp -R "$app" "$tmp/link/Aven.app"
 ln -s /tmp "$tmp/link/Applications"
@@ -64,4 +89,4 @@ cp -R "$app" "$tmp/nolink/Aven.app"
 image_from "$tmp/nolink" "$tmp/nolink.dmg"
 reject "$check" "$tmp/nolink.dmg" "$app"
 
-echo "ok: disk image holds the exact Aven.app and an Applications link; existing, misnamed and incomplete images rejected"
+echo "ok: disk image holds the exact Aven.app, an Applications link and the window layout; existing, misnamed, unstyled and incomplete images rejected"

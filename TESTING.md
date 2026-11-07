@@ -133,6 +133,15 @@ ticket up online. Notarization uses an App Store Connect API key from the
 `macos-signing` environment: `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8`,
 which holds the `.p8` file contents.
 
+The disk image window layout lives in `macos/dmg`: `background.svg`, the
+`background.tiff` rendered from it at 1x and 2x, and the `DS_Store` that sets
+the window size, icon positions and background. `scripts/create-macos-dmg`
+copies them as they are, so release builds need neither Finder nor Python.
+After changing the background or the layout, run
+`scripts/generate-macos-dmg-layout` (needs `rsvg-convert` and `uv`) and commit
+its outputs. Finder finds the background by the volume name `Aven`, so another
+mounted volume named `Aven` hides it.
+
 Stable tags publish the assets and push `Formula/aven.rb` and `Casks/aven.rb`
 to `raine/homebrew-aven`. Hyphenated tags such as `v1.2.3-signtest.1` build,
 sign and notarize without publishing or updating the tap.
