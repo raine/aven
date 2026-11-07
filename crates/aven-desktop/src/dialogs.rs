@@ -254,6 +254,23 @@ pub enum ConfirmAction {
     },
 }
 
+impl ConfirmAction {
+    /// The button that takes focus, so Return presses it: the secondary for
+    /// actions that lose data or settings, so Return alone never takes them,
+    /// and the primary for Quit, which only finishes what the user asked for.
+    pub(crate) fn first_button(&self) -> usize {
+        match self {
+            Self::Quit { .. } => 1,
+            Self::DeleteProject(_)
+            | Self::RemoveDevice { .. }
+            | Self::Restore(_)
+            | Self::Reset { .. }
+            | Self::ReplaceDraft { .. }
+            | Self::OpenKeptDraft(_) => 0,
+        }
+    }
+}
+
 pub struct Layer {
     pub dialog: Dialog,
     prior: Option<FocusHandle>,
