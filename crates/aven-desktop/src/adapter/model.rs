@@ -458,6 +458,18 @@ pub struct BackgroundStatus {
     pub notifications_off: u64,
 }
 
+impl BackgroundStatus {
+    /// Whether sync goes on after Aven quits: `sync.enabled` and, for an app
+    /// that manages the agent, an agent that is meant to run or runs and that
+    /// Login Items hasn't turned off.
+    pub fn keeps_syncing(&self) -> bool {
+        self.sync_when_quit
+            && (!self.managed
+                || (self.wanted || self.agent == AgentShown::Running)
+                    && self.agent != AgentShown::TurnedOff)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AgentShown {
     /// Not checked: this copy of the app doesn't manage the agent.

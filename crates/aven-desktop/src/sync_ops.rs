@@ -131,6 +131,17 @@ pub struct DeviceRow {
     pub current: bool,
 }
 
+impl DeviceRow {
+    /// The icon for the kind of device. Sync records only a label, and the
+    /// iPhone and Android apps publish their platform's name as theirs.
+    pub fn icon(&self) -> &'static str {
+        match self.label.as_str() {
+            "iPhone" | "Android" => "icons/phone.svg",
+            _ => "icons/device.svg",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceList {
     pub devices: Vec<DeviceRow>,
@@ -731,6 +742,19 @@ mod tests {
     use super::*;
 
     const INVITATION: &str = "AVEN:not-a-real-invitation";
+
+    #[test]
+    fn phones_show_a_phone_and_others_a_computer() {
+        let row = |label: &str| DeviceRow {
+            id: [0; 32],
+            label: label.to_string(),
+            current: false,
+        };
+        assert_eq!(row("iPhone").icon(), "icons/phone.svg");
+        assert_eq!(row("Android").icon(), "icons/phone.svg");
+        assert_eq!(row("Office Mac").icon(), "icons/device.svg");
+        assert_eq!(row("Unnamed device").icon(), "icons/device.svg");
+    }
 
     async fn work(path: &Path) -> (SyncWork, mpsc::UnboundedReceiver<Reply>, Database) {
         let database = Database::open(path).await.unwrap();

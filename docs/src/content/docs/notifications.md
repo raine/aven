@@ -54,7 +54,7 @@ reminders:
 Aven Desktop sends reminders and syncs while it is open. To keep doing so after you quit it, it runs a background agent, listed as **Aven** under **System Settings → General → Login Items & Extensions**. The agent runs while either switch is on:
 
 - **Settings › Reminders › Reminders on this Mac**
-- **Settings › Sync and devices › Sync when Aven is quit**, offered on when you set up or join sync
+- **Settings › Sync and devices › Keep syncing after Aven quits**, offered on when you set up or join sync
 
 Turn both off and Aven removes the agent. The first time you quit with one on, Aven says that they continue in the background.
 
