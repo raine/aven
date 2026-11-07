@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FBF9FF"/>
+      <stop offset="1" stop-color="#EFE8FB"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="320" cy="170" r="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="arrow" x1="252" y1="0" x2="388" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BE85FB" stop-opacity="0.35"/>
+      <stop offset="0.48" stop-color="#9E5AFB"/>
+      <stop offset="1" stop-color="#7628FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="400" fill="url(#base)"/>
+  <rect width="640" height="400" fill="url(#glow)"/>
+  <path d="M 252 180 Q 320 150 380 176" fill="none" stroke="url(#arrow)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 366 162 L 386 179 L 361 186" fill="none" stroke="#7628FF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="320" y="338" text-anchor="middle" font-family="SF Pro Text, SF Pro, Helvetica Neue, sans-serif" font-size="15" font-weight="500" fill="#5B4A78">Drag Aven to Applications</text>
+</svg>

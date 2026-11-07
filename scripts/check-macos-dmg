@@ -20,6 +20,7 @@ if [[ ! -d $expected_app ]]; then
   exit 2
 fi
 
+layout_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/macos/dmg"
 runner_temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 mountpoint=$(mktemp -d "$runner_temp/aven-dmg-mount.XXXXXX")
 attached=0
@@ -50,4 +51,15 @@ if [[ -L $mountpoint/Aven.app ]] || ! diff -r "$expected_app" "$mountpoint/Aven.
   echo "disk image Aven.app differs from $expected_app" >&2
   exit 1
 fi
-echo "ok: $dmg contains Aven.app and an Applications link"
+# Finder metadata on the bundle would fail strict signature checks.
+if ! codesign --verify --strict "$mountpoint/Aven.app"; then
+  echo "disk image Aven.app fails strict signature verification: $dmg" >&2
+  exit 1
+fi
+if ! cmp -s "$layout_dir/DS_Store" "$mountpoint/.DS_Store" ||
+  ! cmp -s "$layout_dir/background.tiff" "$mountpoint/.background/background.tiff" ||
+  ! cmp -s "$expected_app/Contents/Resources/Aven.icns" "$mountpoint/.VolumeIcon.icns"; then
+  echo "disk image window layout differs from macos/dmg: $dmg" >&2
+  exit 1
+fi
+echo "ok: $dmg contains Aven.app, an Applications link and the window layout"
