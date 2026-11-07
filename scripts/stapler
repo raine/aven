@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Runs `xcrun stapler ACTION TARGET`, retrying when stapler fails with exit
+# status 68, which it reports when Apple's ticket service can't be reached.
+# Any other failure is final.
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 2 || ! $1 =~ ^(staple|validate)$ ]]; then
+  echo "usage: stapler staple|validate TARGET" >&2
+  exit 2
+fi
+
+attempts=5
+for ((attempt = 1; ; attempt++)); do
+  status=0
+  xcrun stapler "$1" "$2" || status=$?
+  if [[ $status -ne 68 || $attempt -eq $attempts ]]; then
+    exit "$status"
+  fi
+  delay=$((attempt * 15))
+  echo "stapler $1 could not reach Apple (attempt $attempt of $attempts); retrying in ${delay}s" >&2
+  sleep "$delay"
+done
