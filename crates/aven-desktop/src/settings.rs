@@ -2130,6 +2130,28 @@ impl Root {
             return div().into_any_element();
         };
         let path = error.path.clone();
+        // Restore leads only when it is the likely way out.
+        let (restore, retry) = if error.restore_helps {
+            (
+                fill_btn("gate-restore", "Restore backup", &t),
+                line_btn("gate-retry", "Try again", &t),
+            )
+        } else {
+            (
+                line_btn("gate-restore", "Restore backup", &t),
+                fill_btn("gate-retry", "Try again", &t),
+            )
+        };
+        let restore = restore.on_click(cx.listener(|this, _, _, cx| this.pick_archive(cx)));
+        let retry = retry.on_click(cx.listener(move |this, _, _, cx| {
+            this.session.write(Command::OpenDatabase(path.clone()));
+            cx.notify();
+        }));
+        let (first, second) = if error.restore_helps {
+            (restore, retry)
+        } else {
+            (retry, restore)
+        };
         div()
             .flex_1()
             .min_w_0()
@@ -2149,37 +2171,29 @@ impl Root {
                             .text_color(t.ink)
                             .child("Aven can't open this database"),
                     )
-                    .child(div().mb(px(18.)).text_color(t.muted).child(
-                        "Aven hasn't changed this file. Restoring creates a new database and \
-                         leaves this file in place.",
-                    ))
-                    .child(div().mb(px(18.)).text_color(t.faint).child(format!(
-                        "{} · {}",
-                        error.path.display(),
-                        error.message
-                    )))
                     .child(
                         div()
-                            .flex()
-                            .gap(px(6.))
-                            .child(
-                                fill_btn("gate-restore", "Restore backup", &t)
-                                    .on_click(cx.listener(|this, _, _, cx| this.pick_archive(cx))),
-                            )
-                            .child(
-                                line_btn("gate-retry", "Try again", &t).on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.session.write(Command::OpenDatabase(path.clone()));
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .child(line_btn("gate-open", "Open another database", &t).on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.open_other_database(window, cx);
-                                }),
-                            )),
-                    ),
+                            .mb(px(10.))
+                            .text_color(t.ink)
+                            .child(error.message.clone()),
+                    )
+                    .child(div().mb(px(18.)).text_color(t.muted).child(
+                        "Aven hasn't changed this file. Restoring a backup creates a new \
+                         database and leaves this file in place.",
+                    ))
+                    .child(
+                        div()
+                            .mb(px(18.))
+                            .text_color(t.faint)
+                            .child(error.path.display().to_string()),
+                    )
+                    .child(div().flex().gap(px(6.)).child(first).child(second).child(
+                        line_btn("gate-open", "Open another database", &t).on_click(cx.listener(
+                            |this, _, window, cx| {
+                                this.open_other_database(window, cx);
+                            },
+                        )),
+                    )),
             )
             .into_any_element()
     }

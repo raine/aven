@@ -844,7 +844,7 @@ impl Actor {
                 true
             }
             Err(error) => {
-                self.send(ReplyBody::DatabaseFailed(path, error.to_string()));
+                self.send(ReplyBody::DatabaseFailed(DatabaseError::new(path, &error)));
                 false
             }
         }
@@ -3085,7 +3085,7 @@ pub(crate) fn prepare(
                         Ok(store) => break store,
                         Err(error) => error,
                     };
-                    let failure = (path.clone(), format!("{error:#}"));
+                    let failure = DatabaseError::new(path.clone(), &error);
                     match opened.take() {
                         Some(opened) => {
                             let _ = opened.send(Err(failure));
@@ -3093,7 +3093,7 @@ pub(crate) fn prepare(
                         None => {
                             let _ = replies_tx.send(Reply {
                                 request: 0,
-                                body: ReplyBody::DatabaseFailed(failure.0, failure.1),
+                                body: ReplyBody::DatabaseFailed(failure),
                             });
                         }
                     }
@@ -3157,9 +3157,9 @@ pub(crate) fn prepare(
                 session.database = database;
                 Ok((session, replies_rx))
             }
-            Err((path, message)) => {
+            Err(failure) => {
                 let mut session = Session::new(Snapshot::default(), requests_tx);
-                session.database_failed(path, message);
+                session.database_failed(failure);
                 Ok((session, replies_rx))
             }
         },
@@ -3180,7 +3180,7 @@ async fn recovery_target(
                 Err(error) => {
                     let _ = replies.send(Reply {
                         request: request.id,
-                        body: ReplyBody::DatabaseFailed(path, error.to_string()),
+                        body: ReplyBody::DatabaseFailed(DatabaseError::new(path, &error)),
                     });
                 }
             },
@@ -3688,11 +3688,29 @@ mod tests {
             version: "0.0.0".to_string(),
         };
         let (mut session, mut replies) = start(runtime.handle().clone(), launch).unwrap();
-        assert_eq!(session.database_error.as_ref().unwrap().path, path);
+        let error = session.database_error.as_ref().unwrap();
+        assert_eq!(error.path, path);
+        assert!(error.restore_helps);
         assert_eq!(std::fs::read(&path).unwrap(), before);
         session.quit();
         let reply = runtime.block_on(replies.recv()).unwrap();
         assert!(matches!(reply.body, ReplyBody::Stopped));
+    }
+
+    #[test]
+    fn a_known_open_failure_reads_plainly_and_does_not_lead_with_restore() {
+        let error = anyhow::anyhow!(
+            "error e2ee-installation-fenced encrypted-tail-and-replacement-unavailable"
+        )
+        .context("could not open the database");
+        let failure = DatabaseError::new(PathBuf::from("/db.sqlite"), &error);
+        assert!(!failure.restore_helps);
+        assert!(
+            failure.message.contains("encrypted sync"),
+            "{}",
+            failure.message
+        );
+        assert!(!failure.message.contains("e2ee-installation-fenced"));
     }
 
     #[tokio::test]
