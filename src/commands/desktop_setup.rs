@@ -17,6 +17,14 @@ pub(crate) fn run() -> Result<()> {
         Plan::Ready => desktop_install::complete(&layout, &system)?,
         Plan::Switch(switch) => match desktop_install::switch(&layout, &system, &switch)? {
             Outcome::Done(report) => report,
+            Outcome::Waiting(running) => bail!(
+                "error terminal-aven-running processes=\"{}\" hint=\"quit them, then run this again\"",
+                running
+                    .iter()
+                    .map(|process| format!("{} (pid {})", process.command, process.pid))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Outcome::AwaitFormula { cask, .. } => {
                 let relink = if cask {
                     format!(", then {CASK_RELINK}")
