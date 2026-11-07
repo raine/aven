@@ -121,7 +121,8 @@ fn all_pids() -> Vec<libc::pid_t> {
 /// Whether the process has a controlling terminal, as `aven` decides between
 /// the TUI and the app.
 fn has_terminal(pid: libc::pid_t) -> bool {
-    const PROC_FLAG_CONTROLT: u32 = 0x2;
+    // `PROC_FLAG_CONTROLT` in `<sys/proc_info.h>`; libc doesn't export it.
+    const PROC_FLAG_CONTROLT: u32 = 0x80;
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     let filled = unsafe {
@@ -201,6 +202,8 @@ fn parse_procargs(buffer: &[u8]) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::process::CommandExt;
     use std::time::Duration;
 
     use super::*;
@@ -245,6 +248,63 @@ mod tests {
         buffer.extend_from_slice(b"aven\0tui\0--all\0HOME=/Users/me\0");
         assert_eq!(parse_procargs(&buffer), Some(words("aven tui --all")));
         assert_eq!(parse_procargs(&buffer[..2]), None);
+    }
+
+    /// How `child`, running `/bin/cat`, is described once it shows up.
+    fn described(child: &std::process::Child) -> Option<(ProcessKind, String)> {
+        (0..50).find_map(|_| {
+            let found = running_processes(Path::new("/bin/cat"))
+                .into_iter()
+                .find(|process| process.pid == child.id());
+            if found.is_none() {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            found.map(|process| (process.kind, process.command))
+        })
+    }
+
+    #[test]
+    fn a_bare_launch_is_the_tui_only_in_a_terminal() {
+        // `cat` waits on its input, as the TUI and the app wait on the user.
+        let mut app = std::process::Command::new("/bin/cat")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let without = described(&app);
+        app.kill().unwrap();
+        app.wait().unwrap();
+        assert_eq!(without, Some((ProcessKind::App, "Aven".to_string())));
+
+        // On a new pseudo-terminal that becomes its controlling terminal.
+        let (mut leader, mut follower) = (0, 0);
+        let opened = unsafe {
+            libc::openpty(
+                &mut leader,
+                &mut follower,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(opened, 0);
+        let (leader, follower) =
+            unsafe { (OwnedFd::from_raw_fd(leader), OwnedFd::from_raw_fd(follower)) };
+        let mut command = std::process::Command::new("/bin/cat");
+        command.stdin(follower);
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut tui = command.spawn().unwrap();
+        let with = described(&tui);
+        tui.kill().unwrap();
+        tui.wait().unwrap();
+        drop(leader);
+        assert_eq!(with, Some((ProcessKind::Command, "aven".to_string())));
     }
 
     #[test]
