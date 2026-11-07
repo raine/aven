@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_bundle::{
     AVEN_BUNDLE_ID, BUNDLE_EXECUTABLE, BUNDLE_NAME, direct_install_bundle, enclosing_bundle,
+    translocated_original,
 };
 use crate::config::BackgroundIntent;
 use crate::daemon::service::{self, AgentState};
@@ -38,6 +39,9 @@ pub struct Layout {
     pub app: PathBuf,
     /// The executable of the running app.
     pub running: PathBuf,
+    /// Where the running app's bundle really is when macOS runs it through
+    /// App Translocation, from a temporary location.
+    pub translocated_from: Option<PathBuf>,
     /// The login shell's `PATH` in order, when known.
     pub path: Option<Vec<PathBuf>>,
     pub brew_prefixes: Vec<PathBuf>,
@@ -59,9 +63,12 @@ fn applications() -> PathBuf {
 impl Layout {
     pub fn current() -> Result<Self> {
         let home = dirs::home_dir().context("could not find home directory")?;
+        let running = std::env::current_exe().context("resolve current executable")?;
         Ok(Self {
             app: applications().join(BUNDLE_NAME),
-            running: std::env::current_exe().context("resolve current executable")?,
+            translocated_from: enclosing_bundle(&running)
+                .and_then(|bundle| translocated_original(&bundle)),
+            running,
             path: None,
             brew_prefixes: vec!["/opt/homebrew".into(), "/usr/local".into()],
             agent_plist: service::agent_plist_path(&home),
@@ -90,6 +97,27 @@ impl Layout {
     /// Downloads or on a disk image.
     pub fn in_place(&self) -> bool {
         same_file(&self.running, &self.executable())
+    }
+
+    /// Why the running app is not the one in `/Applications`, for a copy
+    /// that is not [`in_place`](Self::in_place).
+    pub fn misplaced(&self) -> Misplaced {
+        match &self.translocated_from {
+            Some(original)
+                if original == &self.app
+                    || same_file(&original.join(BUNDLE_EXECUTABLE), &self.executable()) =>
+            {
+                Misplaced::Translocated {
+                    bundle: original.clone(),
+                }
+            }
+            Some(original) => Misplaced::Elsewhere {
+                bundle: original.clone(),
+            },
+            None => Misplaced::Elsewhere {
+                bundle: enclosing_bundle(&self.running).unwrap_or_else(|| self.running.clone()),
+            },
+        }
     }
 
     /// Whether the running app keeps the LaunchAgent in line with the
@@ -286,6 +314,19 @@ impl Survey {
     }
 }
 
+/// Why the running app is not `/Applications/Aven.app`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Misplaced {
+    /// A copy somewhere else, such as Downloads or a disk image. `bundle` is
+    /// where it really is, also when macOS runs it from a temporary location.
+    Elsewhere { bundle: PathBuf },
+    /// The app in `/Applications` at `bundle`, which macOS runs from a
+    /// temporary location because it is still quarantined and wasn't moved
+    /// there by Finder. Moving it out and back in with Finder lets it run in
+    /// place.
+    Translocated { bundle: PathBuf },
+}
+
 /// What Setup does with what it found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
@@ -294,6 +335,7 @@ pub enum Plan {
     /// This copy is not `/Applications/Aven.app`, so nothing is changed.
     MoveToApplications {
         running: PathBuf,
+        misplaced: Misplaced,
     },
     Switch(Switch),
     Blocked(Blocked),
@@ -530,6 +572,7 @@ pub fn plan(layout: &Layout, survey: &Survey) -> Plan {
     if !layout.in_place() {
         return Plan::MoveToApplications {
             running: layout.running.clone(),
+            misplaced: layout.misplaced(),
         };
     }
     if survey.unreadable_agent {

@@ -92,6 +92,7 @@ impl Mac {
         bundle(&app, AVEN_BUNDLE_ID);
         let layout = Layout {
             running: app.join(BUNDLE_EXECUTABLE),
+            translocated_from: None,
             app,
             path: Some(vec![
                 home.join(".local/bin"),
@@ -653,7 +654,8 @@ fn a_copy_outside_applications_changes_nothing() {
     assert_eq!(
         plan(&layout, &survey(&layout, &mac.system).unwrap()),
         Plan::MoveToApplications {
-            running: layout.running.clone()
+            running: layout.running.clone(),
+            misplaced: Misplaced::Elsewhere { bundle: downloads },
         }
     );
     assert_eq!(mac.tree(), before);
@@ -662,6 +664,78 @@ fn a_copy_outside_applications_changes_nothing() {
     std::fs::remove_dir_all(mac.root.join("Applications")).unwrap();
     std::fs::remove_dir_all(mac.layout.script_bundle()).unwrap();
     assert!(!needs_setup(&layout));
+}
+
+/// The running app as macOS translocates `original`: a mirror of it under a
+/// temporary directory.
+fn translocated(mac: &Mac, original: &Path) -> Layout {
+    let mirror = mac
+        .root
+        .join("private/var/folders/xy/T/AppTranslocation/0A1B/d")
+        .join(BUNDLE_NAME);
+    bundle(&mirror, AVEN_BUNDLE_ID);
+    let mut layout = mac.layout.clone();
+    layout.running = mirror.join(BUNDLE_EXECUTABLE);
+    layout.translocated_from = Some(original.to_path_buf());
+    layout
+}
+
+#[test]
+fn the_app_in_applications_run_translocated_is_told_apart() {
+    let mac = Mac::new();
+    mac.script_install();
+    let layout = translocated(&mac, &mac.layout.app);
+    let before = mac.tree();
+    assert!(needs_setup(&layout));
+    assert_eq!(
+        plan(&layout, &survey(&layout, &mac.system).unwrap()),
+        Plan::MoveToApplications {
+            running: layout.running.clone(),
+            misplaced: Misplaced::Translocated {
+                bundle: mac.layout.app.clone()
+            },
+        }
+    );
+    assert_eq!(mac.tree(), before);
+
+    // Through another spelling of the same directory.
+    let spelled = mac.root.join("Applications/../Applications/Aven.app");
+    assert_eq!(
+        translocated(&mac, &spelled).misplaced(),
+        Misplaced::Translocated { bundle: spelled }
+    );
+}
+
+#[test]
+fn a_translocated_copy_elsewhere_shows_where_it_really_is() {
+    let mac = Mac::new();
+    let downloads = mac.root.join("Downloads/Aven.app");
+    bundle(&downloads, AVEN_BUNDLE_ID);
+    assert_eq!(
+        translocated(&mac, &downloads).misplaced(),
+        Misplaced::Elsewhere { bundle: downloads }
+    );
+
+    // A copy named like the app in Applications but somewhere else.
+    let other = mac.root.join("Other/Applications/Aven.app");
+    bundle(&other, AVEN_BUNDLE_ID);
+    assert_eq!(
+        translocated(&mac, &other).misplaced(),
+        Misplaced::Elsewhere { bundle: other }
+    );
+}
+
+#[test]
+fn a_copy_outside_a_bundle_shows_its_executable() {
+    let mac = Mac::new();
+    let mut layout = mac.layout.clone();
+    layout.running = mac.root.join("target/debug/aven-desktop");
+    assert_eq!(
+        layout.misplaced(),
+        Misplaced::Elsewhere {
+            bundle: layout.running.clone()
+        }
+    );
 }
 
 #[test]
