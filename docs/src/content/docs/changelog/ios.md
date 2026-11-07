@@ -5,7 +5,7 @@ description: Release notes for Aven for iPhone.
 
 ## Unreleased
 
-## 1.0.7 — draft
+## 1.0.7 — in review
 
 - Updated encryption compliance for distribution in France.
 
