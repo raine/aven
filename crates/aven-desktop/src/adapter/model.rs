@@ -10,6 +10,7 @@ use aven_core::sync::client::engine::LocalPhase;
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::config::{AppConfig, RemindersConfig};
 use aven_host::store::{ConflictTarget, TaskQuery};
+use aven_host::sync::error_explanations::{self, ErrorAction, ErrorSurface};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -946,9 +947,37 @@ pub enum ReplyBody {
         previous: Option<(PathBuf, usize)>,
     },
     /// The database did not open. The one before it, if any, stays open.
-    DatabaseFailed(PathBuf, String),
+    DatabaseFailed(DatabaseError),
     /// The published gist's URL, or why there is none.
     Gist(Result<String, String>),
+}
+
+/// A database that did not open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseError {
+    pub path: PathBuf,
+    /// Why, in plain language when the cause is a known one.
+    pub message: String,
+    /// Whether restoring a backup is the likely way out. Known causes, such as
+    /// a database bound to encrypted sync, aren't damage a restore repairs.
+    pub restore_helps: bool,
+}
+
+impl DatabaseError {
+    pub fn new(path: PathBuf, error: &anyhow::Error) -> Self {
+        match error_explanations::explain(ErrorAction::General, ErrorSurface::Tui, error) {
+            Some(explanation) => Self {
+                path,
+                message: explanation.combined(),
+                restore_helps: false,
+            },
+            None => Self {
+                path,
+                message: format!("{error:#}"),
+                restore_helps: true,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]

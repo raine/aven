@@ -14,10 +14,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::actions::VIEWS;
 use crate::adapter::{
-    AgentTest, Bulk, CatalogTask, Command, Detail, Group, KnownDatabase, LedgerLine, LedgerRun,
-    NewTask, Reply, ReplyBody, Request, ReviewCard, SavedView, SearchInput, SearchResults,
-    SeriesDetail, SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow, capitalised, done_group,
-    failed, first_project_name,
+    AgentTest, Bulk, CatalogTask, Command, DatabaseError, Detail, Group, KnownDatabase, LedgerLine,
+    LedgerRun, NewTask, Reply, ReplyBody, Request, ReviewCard, SavedView, SearchInput,
+    SearchResults, SeriesDetail, SettingsData, Snapshot, SyncHealth, SyncPhase, TaskRow,
+    capitalised, done_group, failed, first_project_name,
 };
 use crate::draft::Kept;
 use crate::launch::{Catalog, LaunchEvent, LaunchJob};
@@ -374,13 +374,6 @@ pub enum SyncTone {
 pub struct OpenInvitation {
     pub text: Secret,
     pub expires_at: u64,
-}
-
-/// A database that did not open, while no other is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DatabaseError {
-    pub path: PathBuf,
-    pub message: String,
 }
 
 /// Age of a Unix timestamp for sync status, in elapsed whole minutes, hours or days.
@@ -1221,8 +1214,8 @@ impl Session {
         self.toasts.set_paused(pause, on, Instant::now());
     }
 
-    pub fn database_failed(&mut self, path: PathBuf, message: String) {
-        self.database_error = Some(DatabaseError { path, message });
+    pub fn database_failed(&mut self, error: DatabaseError) {
+        self.database_error = Some(error);
     }
 
     /// Task scope strips belong below the list header, not Settings or expanded detail.
@@ -1728,14 +1721,14 @@ impl Session {
                 self.first_project = None;
                 self.database_opened(path, tasks, previous, &mut applied);
             }
-            ReplyBody::DatabaseFailed(path, message) => {
+            ReplyBody::DatabaseFailed(error) => {
                 if self.database_error.is_some() {
-                    self.database_failed(path, message);
+                    self.database_failed(error);
                 } else {
-                    let name = path.file_name().unwrap_or(path.as_os_str());
+                    let name = error.path.file_name().unwrap_or(error.path.as_os_str());
                     self.show_toast(failed(
                         &format!("Could not open {}", name.to_string_lossy()),
-                        &message,
+                        &error.message,
                     ));
                 }
             }
