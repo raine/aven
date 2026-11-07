@@ -196,6 +196,7 @@ pub(crate) enum ReleaseChannel {
     /// CLI, TUI and daemon without the desktop app.
     Terminal,
     /// The desktop app, which also provides the CLI, TUI and daemon.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Desktop,
 }
 

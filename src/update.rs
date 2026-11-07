@@ -123,9 +123,10 @@ impl InstallPlan {
                 reason.clone(),
                 format!("Build from source: cargo install --git https://github.com/{REPOSITORY}"),
             ],
+            #[cfg(target_os = "macos")]
             InstallMethod::Unwritable { target } if self.channel == ReleaseChannel::Desktop => {
-                let bundle =
-                    crate::app_bundle::enclosing_bundle(target).unwrap_or_else(|| target.clone());
+                let bundle = aven_host::app_bundle::enclosing_bundle(target)
+                    .unwrap_or_else(|| target.clone());
                 vec![
                     format!("{current} can update to {latest}."),
                     format!("Aven cannot replace {} here.", bundle.display()),
@@ -144,6 +145,7 @@ impl InstallPlan {
 }
 
 /// What to do about an `Aven.app` at `bundle` that this user cannot replace.
+#[cfg(target_os = "macos")]
 fn unwritable_bundle_remedy(bundle: &std::path::Path) -> &'static str {
     if bundle.starts_with("/Applications") {
         "Download the new version and replace it."
@@ -165,6 +167,7 @@ pub(crate) enum UpdatePhase {
     Extracting,
     Staging,
     /// Other processes still run this installation's executable.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Waiting,
     Installing,
 }
@@ -274,6 +277,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn an_unwritable_app_is_named_with_a_remedy_for_its_location() {
         let release = Release {
