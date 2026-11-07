@@ -1118,7 +1118,10 @@ impl Session {
 
     /// Syncs while Aven is quit, through the background agent, or not.
     pub fn set_sync_when_quit(&mut self, on: bool) {
-        self.settings_data.background.sync_when_quit = on;
+        let background = &mut self.settings_data.background;
+        background.sync_when_quit = on;
+        // Turning it on asks for the agent, which the next status confirms.
+        background.wanted |= on && background.managed;
         self.write(Command::Settings(
             crate::adapter::SettingsEdit::SyncWhenQuit(on),
         ));

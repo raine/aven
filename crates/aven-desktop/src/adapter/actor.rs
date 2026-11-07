@@ -745,7 +745,7 @@ impl Actor {
                 }
                 self.reconcile_agent();
                 if on {
-                    "Sync continues while Aven is quit".to_string()
+                    "Sync continues after Aven quits".to_string()
                 } else {
                     "Sync runs only while Aven is open".to_string()
                 }
@@ -3713,6 +3713,29 @@ mod tests {
                 .any(|body| matches!(body, ReplyBody::Notice(_)))
         );
         assert_ne!(actor.config.reminders.digest_time, "25:00");
+    }
+
+    #[test]
+    fn the_sync_switch_follows_the_agent() {
+        let status = |sync_when_quit, wanted, agent| BackgroundStatus {
+            managed: true,
+            sync_when_quit,
+            wanted,
+            agent,
+            ..BackgroundStatus::default()
+        };
+        // An unset intent with sync enabled and no agent: nothing syncs.
+        assert!(!status(true, false, AgentShown::Off).keeps_syncing());
+        assert!(status(true, true, AgentShown::Running).keeps_syncing());
+        assert!(status(true, true, AgentShown::NotRunning).keeps_syncing());
+        assert!(status(true, false, AgentShown::Running).keeps_syncing());
+        assert!(!status(true, true, AgentShown::TurnedOff).keeps_syncing());
+        assert!(!status(false, true, AgentShown::Running).keeps_syncing());
+        let unmanaged = BackgroundStatus {
+            managed: false,
+            ..status(true, false, AgentShown::Unknown)
+        };
+        assert!(unmanaged.keeps_syncing());
     }
 
     #[test]

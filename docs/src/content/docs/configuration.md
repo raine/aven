@@ -275,10 +275,12 @@ daemon:
 ```
 
 `sync.enabled` is the daemon's switch; Aven Desktop syncs whenever it is open,
-and shows `sync.enabled` as **Sync when Aven is quit**. The top-level
-`background` key records whether Aven Desktop runs the background agent, set by
-its Settings and by `aven daemon install` (`on`) or `aven daemon uninstall`
-(`off`). Without it, Aven Desktop leaves any installed daemon as it is. See
+and shows **Keep syncing after Aven quits** on when `sync.enabled` is set and
+its background agent runs. The top-level `background` key records whether Aven
+Desktop runs the background agent, set by its Settings and by
+`aven daemon install` (`on`) or `aven daemon uninstall` (`off`). Without it,
+Aven Desktop records `on` for a daemon that already runs Aven Desktop and
+leaves any other daemon as it is. See
 [Aven Desktop in the background](/notifications/#aven-desktop-in-the-background).
 
 :::note[Loopback wake address]

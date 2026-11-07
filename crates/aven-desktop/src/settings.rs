@@ -148,6 +148,9 @@ fn page(title: &'static str, lead: Option<&'static str>, t: &Theme) -> Div {
         })
 }
 
+/// The switch that keeps the agent syncing after Aven quits.
+const KEEP_SYNCING: &str = "Keep syncing after Aven quits";
+
 /// A page's lead when it depends on state.
 fn lead(text: impl Into<SharedString>, t: &Theme) -> Div {
     div().mb(px(20.)).text_color(t.muted).child(text.into())
@@ -1477,7 +1480,7 @@ impl Root {
                     let (id, label) = (device.id, device.label.clone());
                     let note = device.current.then(|| "This device".to_string());
                     row(t)
-                        .child(icon("icons/device.svg", t.faint))
+                        .child(icon(device.icon(), t.faint))
                         .child(row_title(device.label.clone(), note, t))
                         .when(!device.current, |row| {
                             row.child(
@@ -1743,31 +1746,53 @@ impl Root {
         )
     }
 
-    /// The Sync tab's switch for syncing while Aven is quit, with the agent's
-    /// last round.
+    /// The Sync tab's switch for syncing after Aven quits, with the agent's
+    /// last round. It shows whether the agent syncs; Aven turned off in Login
+    /// Items takes its place, since the switch can't start the agent then.
     fn sync_when_quit_rows(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<Div> {
         let background = &self.session.settings_data.background;
-        let on = background.sync_when_quit;
+        if background.managed && background.agent == AgentShown::TurnedOff {
+            return vec![
+                row(t)
+                    .child(row_title(
+                        KEEP_SYNCING,
+                        Some(
+                            "Turned off in System Settings > General > Login Items & Extensions"
+                                .to_string(),
+                        ),
+                        t,
+                    ))
+                    .child(status_pill("Turned off", Some(t.warn), t))
+                    .child(
+                        line_btn("sync-login-items", "Open Login Items", t)
+                            .on_click(|_, _, cx| cx.open_url(LOGIN_ITEMS_URL)),
+                    ),
+            ];
+        }
+        let on = background.keeps_syncing();
+        let stalled = on && background.managed && background.agent == AgentShown::NotRunning;
         let note = match background.last_sync {
+            _ if stalled => "The background agent isn't running".to_string(),
             Some(at) => format!("Last background sync {}", ago(at, Local::now().timestamp())),
             None => "Keeps this Mac up to date in the background".to_string(),
         };
         let track = div()
-            .id("Sync when Aven is quit")
+            .id(KEEP_SYNCING)
             .role(Role::Switch)
-            .aria_label("Sync when Aven is quit")
+            .aria_label(KEEP_SYNCING)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.session.set_sync_when_quit(!on);
-                this.mark_switched("Sync when Aven is quit");
+                this.mark_switched(KEEP_SYNCING);
                 cx.notify();
             }));
-        let mut rows = vec![
+        vec![
             row(t)
-                .child(row_title("Sync when Aven is quit", Some(note), t))
-                .child(self.switch_track(track, "Sync when Aven is quit", on, 1., cx, t)),
-        ];
-        rows.extend(self.background_agent_row(cx, t).filter(|_| on));
-        rows
+                .child(row_title(KEEP_SYNCING, Some(note), t))
+                .when(stalled, |row| {
+                    row.child(status_pill("Not running", Some(t.warn), t))
+                })
+                .child(self.switch_track(track, KEEP_SYNCING, on, 1., cx, t)),
+        ]
     }
 
     fn workspaces_tab(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
@@ -2548,7 +2573,7 @@ impl Root {
                         .gap(px(10.))
                         .h(px(34.))
                         .text_color(t.body)
-                        .child(icon("icons/device.svg", t.faint))
+                        .child(icon(device.icon(), t.faint))
                         .child(device.label.clone())
                         .when(device.current, |line| {
                             line.child(
@@ -3121,11 +3146,11 @@ impl Root {
 
     /// The switch sync setup and join end on, on by default.
     fn sync_when_quit_choice(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
-        let on = self.session.settings_data.background.sync_when_quit;
+        let on = self.session.settings_data.background.keeps_syncing();
         let track = div()
             .id("sync-done-when-quit")
             .role(Role::Switch)
-            .aria_label("Sync when Aven is quit")
+            .aria_label(KEEP_SYNCING)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.session.set_sync_when_quit(!on);
                 this.mark_switched("sync-done-when-quit");
@@ -3137,7 +3162,7 @@ impl Root {
             .items_center()
             .gap(px(12.))
             .child(row_title(
-                "Sync when Aven is quit",
+                KEEP_SYNCING,
                 Some(
                     "A background agent keeps this Mac up to date while Aven is closed."
                         .to_string(),
