@@ -60,10 +60,8 @@ where
         let date = parse_iso_date(input)?;
         return local_datetime_to_utc(now.timezone(), date.and_time(NaiveTime::MIN));
     }
-    if is_iso_timestamp(input) {
-        let value = normalize_timestamp(input);
-        validate_available_at_value(&value)?;
-        return Ok(value);
+    if let Some(value) = parse_iso_timestamp(input, now.timezone()) {
+        return value;
     }
 
     let normalized = input
@@ -102,7 +100,7 @@ where
             )
         } else {
             format!(
-                "error invalid-available-at value={input:?} hint=\"use today, tomorrow, 2d, 2w, in N months, next week, next monday, an ISO date, or add 'at 9am'\""
+                "error invalid-available-at value={input:?} hint=\"use today, tomorrow, 2d, 2w, in N months, next week, next monday at 9am, YYYY-MM-DD, or YYYY-MM-DDTHH:MM\""
             )
         }
     })?;
@@ -116,7 +114,7 @@ pub fn available_at_error_message(error: &anyhow::Error) -> String {
         .and_then(|(_, hint)| hint.split_once('"'))
         .map(|(hint, _)| hint.to_string())
         .unwrap_or_else(|| {
-            "try tomorrow, 2d, 2w, in 2 months, next week, next monday at 9am, or YYYY-MM-DD"
+            "try tomorrow, 2d, 2w, in 2 months, next week, next monday at 9am, YYYY-MM-DD, or YYYY-MM-DDTHH:MM"
                 .to_string()
         })
 }
@@ -286,31 +284,39 @@ fn is_iso_date(value: &str) -> bool {
             .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
 }
 
-fn is_iso_timestamp(value: &str) -> bool {
-    let value = value.strip_suffix('Z').unwrap_or(value);
-    let Some((date, time)) = value.split_once('T') else {
-        return false;
-    };
-    is_iso_date(date) && is_hms(time)
-}
-
-fn is_hms(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 8
-        && bytes[2] == b':'
-        && bytes[5] == b':'
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| matches!(index, 2 | 5) || byte.is_ascii_digit())
-}
-
-fn normalize_timestamp(value: &str) -> String {
-    if value.ends_with('Z') {
-        value.to_string()
-    } else {
-        format!("{value}Z")
+/// Reads `YYYY-MM-DDTHH:MM[:SS]` as local wall-clock time, and the same form
+/// with `Z` or a numeric offset as that exact instant. Returns `None` when the
+/// input does not start with an ISO date followed by `T`.
+fn parse_iso_timestamp<Tz>(input: &str, timezone: Tz) -> Option<Result<String>>
+where
+    Tz: TimeZone,
+{
+    let (date, _) = input.split_once(['T', 't'])?;
+    if !is_iso_date(date) {
+        return None;
     }
+    let input_upper = input.to_ascii_uppercase();
+    let with_offset = match input_upper.strip_suffix('Z') {
+        Some(rest) => format!("{rest}+00:00"),
+        None => input_upper.clone(),
+    };
+    let instant = DateTime::parse_from_rfc3339(&with_offset).ok().or_else(|| {
+        ["%Y-%m-%dT%H:%M:%S%:z", "%Y-%m-%dT%H:%M%:z"]
+            .into_iter()
+            .find_map(|format| DateTime::parse_from_str(&with_offset, format).ok())
+    });
+    if let Some(instant) = instant {
+        return Some(utc_timestamp(instant.with_timezone(&Utc)));
+    }
+    let local = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"]
+        .into_iter()
+        .find_map(|format| NaiveDateTime::parse_from_str(&input_upper, format).ok());
+    Some(match local {
+        Some(local) => local_datetime_to_utc(timezone, local),
+        None => Err(anyhow::anyhow!(
+            "error invalid-available-at value={input:?} hint=\"use YYYY-MM-DDTHH:MM for local time, or add Z or an offset such as +02:00\""
+        )),
+    })
 }
 
 fn local_datetime_to_utc<Tz>(timezone: Tz, value: NaiveDateTime) -> Result<String>
@@ -319,23 +325,19 @@ where
 {
     let local = timezone.from_local_datetime(&value).single().with_context(|| {
         format!(
-            "error ambiguous-or-unavailable-local-time value={} hint=\"choose another local time or use an explicit UTC timestamp\"",
+            "error ambiguous-or-unavailable-local-time value={} hint=\"choose another local time or add Z or an offset such as +02:00\"",
             value.format("%Y-%m-%dT%H:%M:%S")
         )
     })?;
-    let value = local
-        .with_timezone(&Utc)
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
-    validate_available_at_value(&value)?;
-    Ok(value)
+    utc_timestamp(local.with_timezone(&Utc))
 }
 
 fn epoch_seconds_to_utc(seconds: i64) -> Result<String> {
-    let value = DateTime::from_timestamp(seconds, 0)
-        .context("epoch timestamp is out of range")?
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+    utc_timestamp(DateTime::from_timestamp(seconds, 0).context("epoch timestamp is out of range")?)
+}
+
+fn utc_timestamp(instant: DateTime<Utc>) -> Result<String> {
+    let value = instant.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     validate_available_at_value(&value)?;
     Ok(value)
 }
@@ -495,11 +497,62 @@ mod tests {
     }
 
     #[test]
-    fn parses_timestamp_without_z_as_utc() {
+    fn parses_timestamp_without_offset_as_local_time() {
         assert_eq!(
             parse_fixed("2026-06-25T10:11:12").unwrap(),
+            "2026-06-25T15:11:12Z"
+        );
+        assert_eq!(
+            parse_fixed("2026-06-25T10:11").unwrap(),
+            "2026-06-25T15:11:00Z"
+        );
+    }
+
+    #[test]
+    fn parses_timestamp_with_utc_marker_or_offset_as_that_instant() {
+        assert_eq!(
+            parse_fixed("2026-06-25T10:11:12Z").unwrap(),
             "2026-06-25T10:11:12Z"
         );
+        assert_eq!(
+            parse_fixed("2026-11-07T23:02:00+02:00").unwrap(),
+            "2026-11-07T21:02:00Z"
+        );
+        assert_eq!(
+            parse_fixed("2026-11-07T23:02+02:00").unwrap(),
+            "2026-11-07T21:02:00Z"
+        );
+        assert_eq!(
+            parse_fixed("2026-11-07T08:30Z").unwrap(),
+            "2026-11-07T08:30:00Z"
+        );
+        assert_eq!(
+            parse_fixed("2026-11-07T23:02:00-0500").unwrap(),
+            "2026-11-08T04:02:00Z"
+        );
+        assert_eq!(
+            parse_fixed("2026-11-07T23:02:00.750-05:00").unwrap(),
+            "2026-11-08T04:02:00Z"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_timestamps_with_timestamp_guidance() {
+        for input in ["2026-11-07T25:00", "2026-11-07T23", "2026-11-07T23:02+2"] {
+            let error = parse_fixed(input).unwrap_err();
+            assert!(
+                available_at_error_message(&error).contains("YYYY-MM-DDTHH:MM"),
+                "{input}: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_expression_hint_shows_a_time_example() {
+        let error = parse_fixed("someday").unwrap_err();
+        let hint = available_at_error_message(&error);
+        assert!(hint.contains("next monday at 9am"), "{hint}");
+        assert!(hint.contains("YYYY-MM-DDTHH:MM"), "{hint}");
     }
 
     #[test]

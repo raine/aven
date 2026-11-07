@@ -16,7 +16,8 @@ Defaults:
   Recurrence uses the local time zone, today's start date, and a same-day due date.
 
 Scheduling inputs:
-  --available-at accepts tomorrow, 2d, next monday at 9am, an ISO date or timestamp.
+  --available-at accepts tomorrow, 2d, next monday at 9am, an ISO date, or an ISO
+  timestamp. A timestamp without Z or an offset is local time.
   --due accepts tomorrow, 2w, next monday, an ISO date, none, or clear.
 
 Recurrence rules:
@@ -29,7 +30,8 @@ pub(super) const EDIT_EXAMPLES: &str = r#"Examples:
   aven edit APP-7KQ9 --available-at tomorrow --due "next monday"
   aven edit APP-7KQ9 --description-file description.md
 
---available-at accepts natural expressions, ISO dates, and ISO timestamps.
+--available-at accepts natural expressions, ISO dates, and ISO timestamps. A
+timestamp without Z or an offset such as +02:00 is local time.
 --due accepts natural date expressions, ISO dates, none, or clear. Each scheduling
 value conflicts with its corresponding --clear option. Supply at most one
 description source: --description, --description-file, or --description-stdin."#;

@@ -73,11 +73,12 @@ Availability controls when a task becomes eligible for attention and enters norm
 | `next monday` | The named weekday strictly after today at local midnight. Full names and common abbreviations such as `mon`, `tues`, and `thurs` are accepted. If today is that weekday, this means seven days later. |
 | `<date expression> at <time>` | The expression's local date at `HH:MM`, `9am`, `9:30pm`, `noon`, or `midnight`. |
 | `YYYY-MM-DD` | Local midnight on that date. |
-| `YYYY-MM-DDTHH:MM:SSZ` | The exact UTC timestamp. The same form without `Z` is also interpreted as UTC. |
+| `YYYY-MM-DDTHH:MM` | That local wall-clock time. Seconds are optional, as in `YYYY-MM-DDTHH:MM:SS`. |
+| `YYYY-MM-DDTHH:MM:SSZ` | The exact instant, with `Z` for UTC or a numeric offset such as `+02:00`. Seconds are optional. |
 | Unix timestamp | The exact whole number of seconds since the Unix epoch. |
 | `now` | Immediate availability. On `aven edit`, `--clear-available-at` is clearer. |
 
-Relative expressions add calendar units to the current local date rather than fixed durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or an explicit UTC timestamp.
+Relative expressions add calendar units to the current local date rather than fixed durations. Local expressions use the machine's local timezone and convert to a canonical UTC timestamp for storage. This preserves the requested local wall-clock time across daylight-saving offsets. A local time that is skipped or repeated by a timezone transition is rejected, so use another local time or a timestamp with `Z` or an offset.
 
 Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and rejected with a suggested explicit form. Informal periods such as `morning`, recurrence, year arithmetic, and notifications are outside the accepted grammar.
 
@@ -85,6 +86,8 @@ Bare weekdays such as `monday` and bare times such as `9am` are ambiguous and re
 aven add "Prepare demo" --available-at "in 2 weeks"
 aven add "Call supplier" --available-at "next monday at 9am"
 aven edit APP-7KQ9 --available-at "tomorrow at 14:30"
+aven edit APP-7KQ9 --available-at 2026-11-07T23:00
+aven edit APP-7KQ9 --available-at 2026-11-07T23:00:00+02:00
 ```
 
 ### Due date input
