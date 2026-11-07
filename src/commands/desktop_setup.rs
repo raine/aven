@@ -6,7 +6,7 @@ use anyhow::Result;
 pub(crate) fn run() -> Result<()> {
     use anyhow::bail;
     use aven_host::desktop_install::{
-        self, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, MacSystem, Outcome, Plan,
+        self, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, MacSystem, Misplaced, Outcome, Plan,
     };
 
     let mut layout = Layout::current()?;
@@ -36,7 +36,15 @@ pub(crate) fn run() -> Result<()> {
                 );
             }
         },
-        Plan::MoveToApplications { running } => bail!(
+        Plan::MoveToApplications {
+            misplaced: Misplaced::Translocated { bundle },
+            ..
+        } => bail!(
+            "error translocated app={} hint=\"macOS runs it from a temporary location; move it \
+             out of Applications and back in with Finder, then open it\"",
+            bundle.display()
+        ),
+        Plan::MoveToApplications { running, .. } => bail!(
             "error not-in-applications running={} expected={}",
             running.display(),
             layout.executable().display()

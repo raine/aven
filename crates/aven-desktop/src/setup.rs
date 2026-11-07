@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aven_host::desktop_install::{
-    self, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, Outcome, Plan, Report, Switch, System,
+    self, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, Misplaced, Outcome, Plan, Report,
+    Switch, System,
 };
 use aven_host::running_processes::RunningProcess;
 use gpui::{
@@ -27,9 +28,7 @@ const WAIT_POLL: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Stage {
     Checking,
-    MoveToApplications {
-        running: PathBuf,
-    },
+    MoveToApplications(Misplaced),
     Confirm(Switch),
     Declined(Switch),
     Working,
@@ -293,7 +292,7 @@ impl Setup {
                 self.check(window, cx)
             }
             Stage::Done(_) => self.open(window, cx),
-            Stage::MoveToApplications { .. } => cx.quit(),
+            Stage::MoveToApplications(_) => cx.quit(),
             Stage::Checking | Stage::Working | Stage::Waiting { .. } => return,
         }
         cx.stop_propagation();
@@ -320,7 +319,7 @@ fn checked(layout: Layout, system: &dyn System) -> Checked {
             Ok(_) => None,
             Err(error) => Some(Stage::Failed(format!("{error:#}"))),
         },
-        Plan::MoveToApplications { running } => Some(Stage::MoveToApplications { running }),
+        Plan::MoveToApplications { misplaced, .. } => Some(Stage::MoveToApplications(misplaced)),
         Plan::Blocked(blocked) => Some(Stage::Blocked(blocked)),
         Plan::Switch(switch) if switch.resuming => {
             return Checked::Resume(switch);
@@ -364,6 +363,36 @@ fn notification_line(permission: Permission) -> Option<NotificationLine> {
         Permission::Unavailable => return None,
     };
     Some(NotificationLine { text, settings })
+}
+
+/// What the screen for a copy outside `/Applications` says.
+#[derive(Debug, PartialEq, Eq)]
+struct Moving<'a> {
+    title: &'static str,
+    text: &'static str,
+    /// Where the copy really is, not the temporary location macOS may run it
+    /// from.
+    bundle: &'a Path,
+}
+
+fn moving(misplaced: &Misplaced) -> Moving<'_> {
+    match misplaced {
+        Misplaced::Elsewhere { bundle } => Moving {
+            title: "Move Aven to Applications",
+            text: "Aven runs the aven command and background sync from the copy in \
+                   Applications. Quit, drag Aven into the Applications folder, and open it \
+                   from there.",
+            bundle,
+        },
+        Misplaced::Translocated { bundle } => Moving {
+            title: "Move Aven again in Finder",
+            text: "Aven is in Applications, but macOS runs it from a temporary location \
+                   because it was copied there outside Finder. Quit, then in Finder drag \
+                   Aven out of the Applications folder and back in, and open it from \
+                   there.",
+            bundle,
+        },
+    }
 }
 
 /// `path` with the home directory as `~`.
@@ -457,30 +486,19 @@ impl Setup {
                     "Nothing has been changed yet.".into()
                 }),
             },
-            Stage::MoveToApplications { running } => Screen {
-                title: "Move Aven to Applications",
-                body: vec![
-                    lead(
-                        "Aven runs the aven command and background sync from the copy in \
-                         Applications. Quit, drag Aven into the Applications folder, and open \
-                         it from there.",
-                        t,
-                    ),
-                    card(t).child(row(
-                        "This copy",
-                        at(running
-                            .parent()
-                            .and_then(Path::parent)
-                            .and_then(Path::parent)
-                            .unwrap_or(running)),
-                        true,
-                        t,
-                    )),
-                ],
-                primary: Some(("Quit Aven", Button::Quit)),
-                secondary: None,
-                note: Some("Nothing has been changed.".into()),
-            },
+            Stage::MoveToApplications(misplaced) => {
+                let moving = moving(misplaced);
+                Screen {
+                    title: moving.title,
+                    body: vec![
+                        lead(moving.text, t),
+                        card(t).child(row("This copy", at(moving.bundle), true, t)),
+                    ],
+                    primary: Some(("Quit Aven", Button::Quit)),
+                    secondary: None,
+                    note: Some("Nothing has been changed.".into()),
+                }
+            }
             Stage::Confirm(switch) => Screen {
                 title: "Switch to Aven Desktop",
                 body: self.confirm_body(switch, t),
@@ -1163,6 +1181,32 @@ mod tests {
             "/Applications/Aven.app/Contents/MacOS/aven"
         );
         assert_eq!(quoted(Path::new("/Users/a b/aven")), "\"/Users/a b/aven\"");
+    }
+
+    #[test]
+    fn a_translocated_app_in_applications_is_not_told_to_move_there() {
+        let app = Path::new("/Applications/Aven.app");
+        let misplaced = Misplaced::Translocated {
+            bundle: app.to_path_buf(),
+        };
+        let translocated = moving(&misplaced);
+        assert_eq!(translocated.bundle, app);
+        assert!(translocated.text.contains("temporary location"));
+        assert!(
+            translocated
+                .text
+                .contains("out of the Applications folder and back in")
+        );
+        assert!(!translocated.title.contains("to Applications"));
+
+        let downloads = Path::new("/Users/me/Downloads/Aven.app");
+        let misplaced = Misplaced::Elsewhere {
+            bundle: downloads.to_path_buf(),
+        };
+        let elsewhere = moving(&misplaced);
+        assert_eq!(elsewhere.title, "Move Aven to Applications");
+        assert_eq!(elsewhere.bundle, downloads);
+        assert!(!elsewhere.text.contains("temporary"));
     }
 
     #[test]
