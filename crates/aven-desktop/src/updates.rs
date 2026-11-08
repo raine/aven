@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use accesskit::Role;
 use gpui::{
-    AnyElement, App, Context, FocusHandle, FontWeight, Global, Stateful, Window, div, prelude::*,
-    relative,
+    AnyElement, App, Context, FocusHandle, FontWeight, FutureExt as _, Global, Stateful, Window,
+    div, prelude::*, relative,
 };
 
 use crate::dialogs::Dialog;
@@ -26,6 +26,9 @@ const FIRST_CHECK: Duration = Duration::from_secs(5);
 const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const PROGRESS_POLL: Duration = Duration::from_millis(150);
 const BLOCKER_POLL: Duration = Duration::from_secs(1);
+/// How long a check may take before the app gives up on it, so the owner can
+/// check again. The service's own requests time out well before this.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A newer release on this installation's channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,8 +165,9 @@ fn set_phase(phase: Phase, cx: &mut App) {
         && updater.phase != phase
     {
         cx.global_mut::<Updater>().phase = phase;
-        // The root view redraws only when told to, and a global is not an entity.
-        crate::app::with_root(cx, |_, _, cx| cx.notify());
+        // The root view redraws only when told to, and a global is not an
+        // entity. Many phases start from the root view's own listeners.
+        crate::app::redraw_root(cx);
     }
 }
 
@@ -232,36 +236,60 @@ pub(crate) fn check(force: bool, cx: &mut App) {
     let Some(updater) = updater(cx) else {
         return;
     };
-    if !updater.phase.settled() || updater.phase == Phase::Checking {
+    if !may_check(&updater.phase) {
+        if force {
+            tracing::info!(phase = ?updater.phase, "update check not started");
+        }
         return;
     }
     let service = updater.service.clone();
     let before = updater.phase.clone();
+    tracing::info!(force, "checking for updates");
     if force {
         set_phase(Phase::Checking, cx);
     }
     cx.spawn(async move |cx| {
-        let checked = cx
-            .background_executor()
+        let executor = cx.background_executor().clone();
+        let checked = executor
             .spawn(async move { service.check(force) })
-            .await;
+            .with_timeout(CHECK_TIMEOUT, &executor)
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("the check didn\u{2019}t finish in time")));
         cx.update(|cx| {
             if !phase(cx).settled() {
                 return;
             }
-            let next = match checked {
-                Ok(Some(available)) => Phase::Available(available),
-                Ok(None) => Phase::Current,
-                Err(error) if force => Phase::CheckFailed(format!("{error:#}")),
-                Err(error) => {
-                    tracing::debug!(error = %format_args!("{error:#}"), "update check failed");
-                    before
-                }
-            };
-            set_phase(next, cx);
+            set_phase(after_check(checked, force, before), cx);
         });
     })
     .detach();
+}
+
+/// Whether a check may start: nothing is under way, a check included.
+fn may_check(phase: &Phase) -> bool {
+    phase.settled() && *phase != Phase::Checking
+}
+
+/// The phase a check ends in. A forced check always leaves `Checking`.
+fn after_check(checked: anyhow::Result<Option<Available>>, force: bool, before: Phase) -> Phase {
+    match checked {
+        Ok(Some(available)) => {
+            tracing::info!(version = %available.version, "an update is available");
+            Phase::Available(available)
+        }
+        Ok(None) => {
+            tracing::info!("aven is up to date");
+            Phase::Current
+        }
+        Err(error) if force => {
+            tracing::warn!(error = %format_args!("{error:#}"), "update check failed");
+            Phase::CheckFailed(format!("{error:#}"))
+        }
+        Err(error) => {
+            tracing::debug!(error = %format_args!("{error:#}"), "update check failed");
+            before
+        }
+    }
 }
 
 /// Downloads the available update. It installs only on a restart.
@@ -982,6 +1010,48 @@ fn paragraph(text: String, t: &Theme) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn available() -> Available {
+        Available {
+            version: "9.9.9".into(),
+            notes_url: String::new(),
+            blocked: None,
+        }
+    }
+
+    #[test]
+    fn a_forced_check_always_leaves_checking() {
+        let results = [
+            Ok(Some(available())),
+            Ok(None),
+            Err(anyhow::anyhow!("offline")),
+        ];
+        for checked in results {
+            let next = after_check(checked, true, Phase::Idle);
+            assert_ne!(next, Phase::Checking);
+            assert!(may_check(&next), "{next:?} lets the owner check again");
+        }
+    }
+
+    #[test]
+    fn a_failed_forced_check_says_why_and_a_quiet_one_keeps_its_phase() {
+        let failed = || Err(anyhow::anyhow!("offline"));
+        assert_eq!(
+            after_check(failed(), true, Phase::Current),
+            Phase::CheckFailed("offline".into())
+        );
+        assert_eq!(
+            after_check(failed(), false, Phase::Available(available())),
+            Phase::Available(available())
+        );
+    }
+
+    #[test]
+    fn a_check_waits_for_one_under_way_and_for_an_update() {
+        assert!(!may_check(&Phase::Checking));
+        assert!(!may_check(&Phase::Ready(available())));
+        assert!(may_check(&Phase::CheckFailed("offline".into())));
+    }
 
     #[test]
     fn progress_reports_a_percentage_only_with_a_known_size() {

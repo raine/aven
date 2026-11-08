@@ -10,8 +10,8 @@ use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
 use aven_host::desktop_install::{self, Layout, MacSystem};
 use aven_host::notify::{self, Target};
 use gpui::{
-    App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, point, prelude::*, px, size,
+    App, Bounds, DisplayId, EntityId, Global, Pixels, Size, TitlebarOptions, WindowBounds,
+    WindowHandle, WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 
@@ -101,20 +101,48 @@ fn relaunch_after_update(cx: &mut App) {
 
 /// The app's one window. It stays open for the life of the app, and closing it
 /// only takes it off screen.
-struct MainWindow(WindowHandle<Root>);
+struct MainWindow {
+    window: WindowHandle<Root>,
+    root: EntityId,
+}
 
 impl Global for MainWindow {}
 
+/// Runs `f` on the main window's root view. While that window is in its own
+/// update, as in a click's listener, nothing else can update it, so `f` waits
+/// until that update ends.
 pub(crate) fn with_root(
+    cx: &mut App,
+    f: impl FnOnce(&mut Root, &mut gpui::Window, &mut gpui::Context<Root>) + 'static,
+) {
+    // Setup shows before the main window exists.
+    let Some(window) = cx.try_global::<MainWindow>().map(|main| main.window) else {
+        return;
+    };
+    // A window in its own update reads as missing, the same as a closed one.
+    if WindowHandle::read(&window, cx).is_err() {
+        cx.defer(move |cx| update_root(window, cx, f));
+    } else {
+        update_root(window, cx, f);
+    }
+}
+
+fn update_root(
+    window: WindowHandle<Root>,
     cx: &mut App,
     f: impl FnOnce(&mut Root, &mut gpui::Window, &mut gpui::Context<Root>),
 ) {
-    // Setup shows before the main window exists.
-    let Some(window) = cx.try_global::<MainWindow>().map(|main| main.0) else {
-        return;
-    };
     if let Err(error) = window.update(cx, f) {
         tracing::error!(%error, "the window could not be reached");
+    }
+}
+
+/// Redraws the main window. Unlike [`with_root`] it works while the window or
+/// its root view is in an update, so state the root view reads from outside
+/// it, such as a global, shows in the next frame.
+pub(crate) fn redraw_root(cx: &mut App) {
+    if let Some(root) = cx.try_global::<MainWindow>().map(|main| main.root) {
+        cx.notify(root);
     }
 }
 
@@ -509,7 +537,11 @@ fn open_main(
         )
         .expect("the window opens");
     crate::startup::mark("window-ready");
-    cx.set_global(MainWindow(window));
+    let root = window
+        .entity(cx)
+        .expect("the window just opened")
+        .entity_id();
+    cx.set_global(MainWindow { window, root });
     if let Some(error) = launcher::init(&launcher_prefs, cx) {
         with_root(cx, |root, _, cx| {
             let toast = Toast::error("The launcher shortcut isn\u{2019}t set").detail(error);
@@ -524,8 +556,12 @@ fn open_main(
     // main thread after this, so the store gets a moment without a reply.
     cx.on_app_quit(|cx| {
         crate::updates::discard(cx);
-        let mut started = false;
-        with_root(cx, |root, window, cx| started = root.begin_quit(window, cx));
+        // Nothing runs after this, so the root view is needed now.
+        let window = cx.global::<MainWindow>().window;
+        let started = window
+            .update(cx, |root, window, cx| root.begin_quit(window, cx))
+            .inspect_err(|error| tracing::error!(%error, "the window could not be reached"))
+            .unwrap_or(false);
         let timer = cx.background_executor().timer(STORE_GRACE);
         async move {
             if started {

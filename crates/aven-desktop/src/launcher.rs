@@ -620,7 +620,7 @@ impl Launcher {
     /// dropped, so its answer never arrives.
     fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.drafting() {
-            cx.defer(move |cx| with_root(cx, |root, _, _| root.session.cancel_launch(id)));
+            cx.defer(move |cx| with_root(cx, move |root, _, _| root.session.cancel_launch(id)));
             self.settle(cx);
         }
         self.shown = false;
