@@ -20,7 +20,6 @@ use crate::app_bundle::{
 };
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::config;
-use crate::config::AppConfig;
 
 #[cfg(any(target_os = "linux", test))]
 mod systemd;
@@ -43,13 +42,11 @@ const BOOTSTRAP_RETRY_DELAYS: [Duration; 4] = [
 
 pub struct ServiceInstallArgs {
     pub db_path: PathBuf,
-    pub config: AppConfig,
     pub program: Option<PathBuf>,
 }
 
 pub struct ServiceRepairArgs {
     pub db_path: PathBuf,
-    pub config: AppConfig,
     pub program: Option<PathBuf>,
     pub if_installed: bool,
 }
@@ -364,12 +361,7 @@ fn install_with_runner(
     _runner: &impl LaunchctlRunner,
     _sleeper: &SystemSleeper,
 ) -> Result<InstalledService> {
-    let ServiceInstallArgs {
-        db_path,
-        config,
-        program,
-    } = args;
-    drop((db_path, config, program));
+    drop(args);
     bail!(
         "error unsupported-platform command=daemon-install platform={}",
         std::env::consts::OS
@@ -447,13 +439,7 @@ fn repair_with_runner(
     _runner: &impl LaunchctlRunner,
     _sleeper: &SystemSleeper,
 ) -> Result<()> {
-    let ServiceRepairArgs {
-        db_path,
-        config,
-        program,
-        if_installed,
-    } = args;
-    drop((db_path, config, program, if_installed));
+    drop(args);
     bail!(
         "error unsupported-platform command=daemon-repair platform={}",
         std::env::consts::OS
