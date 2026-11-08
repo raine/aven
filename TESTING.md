@@ -153,6 +153,7 @@ scripts/test-homebrew-formula
 scripts/test-homebrew-cask
 scripts/test-assemble-macos-app
 scripts/test-create-macos-dmg
+scripts/test-package-macos-binary
 ```
 
 ### Desktop updates

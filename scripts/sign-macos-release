@@ -114,6 +114,5 @@ for target in "$@"; do
     codesign --force --options runtime --timestamp --identifier "$identifier" \
       --keychain "$keychain" --sign "$identity_hash" "$target"
   fi
-  codesign --verify --strict --verbose=2 "$target"
   "$script_dir/verify-macos-release" "$target"
 done
