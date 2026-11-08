@@ -439,6 +439,7 @@ mod tests {
             capabilities: vec!["sync".to_string()],
             started_at: 0,
             heartbeat_at: 0,
+            heartbeat_awake: None,
             round_started: 0,
             round_finished: 0,
         }
@@ -523,6 +524,7 @@ mod tests {
             capabilities: vec!["sync".to_string()],
             started_at: 0,
             heartbeat_at: 0,
+            heartbeat_awake: None,
             round_started: 0,
             round_finished: 0,
         };

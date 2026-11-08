@@ -108,7 +108,10 @@ impl Heartbeat {
             loop {
                 tokio::time::sleep(HEARTBEAT_INTERVAL).await;
                 let now = chrono::Utc::now().timestamp();
-                if let Err(error) = database.record_host_heartbeat(pid, now).await {
+                if let Err(error) = database
+                    .record_host_heartbeat(pid, now, super::awake_now())
+                    .await
+                {
                     warn!(%error, "could not record the host heartbeat");
                 }
             }
@@ -149,6 +152,7 @@ impl Host {
                 &version,
                 &capabilities(&config),
                 chrono::Utc::now().timestamp(),
+                super::awake_now(),
             )
             .await?;
         let _heartbeat = Heartbeat::start(database.clone(), pid);

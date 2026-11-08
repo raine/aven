@@ -307,6 +307,9 @@ pub struct HostStatus {
     pub started_at: i64,
     /// Unix seconds of the host's last sign of life.
     pub heartbeat_at: i64,
+    /// The system's awake time, in seconds since boot without sleep, at the
+    /// last sign of life, where the platform has such a clock.
+    pub heartbeat_awake: Option<i64>,
     /// Generation of the last recorded round to start.
     pub round_started: i64,
     /// Generation of the last recorded round to finish.
@@ -321,6 +324,7 @@ struct HostStatusRow {
     capabilities: String,
     started_at: i64,
     heartbeat_at: i64,
+    heartbeat_awake: Option<i64>,
     round_started: i64,
     round_finished: i64,
 }
@@ -339,6 +343,7 @@ impl From<HostStatusRow> for HostStatus {
                 .collect(),
             started_at: row.started_at,
             heartbeat_at: row.heartbeat_at,
+            heartbeat_awake: row.heartbeat_awake,
             round_started: row.round_started,
             round_finished: row.round_finished,
         }
@@ -350,7 +355,7 @@ impl Database {
         let mut conn = self.acquire_reader().await?;
         let row = sqlx::query_as::<_, HostStatusRow>(
             "SELECT pid, role, version, capabilities, started_at, heartbeat_at,
-                    round_started, round_finished
+                    heartbeat_awake, round_started, round_finished
              FROM local_host_status WHERE id = 1",
         )
         .fetch_optional(&mut *conn)
@@ -360,7 +365,8 @@ impl Database {
 
     /// Takes over the status row for a host that just won the host lock. The
     /// round generations of earlier hosts are kept; the returned status holds
-    /// them.
+    /// them. `at` is Unix seconds and `awake` the system's awake time, as in
+    /// [`HostStatus::heartbeat_awake`].
     pub async fn record_host_start(
         &self,
         pid: u32,
@@ -368,18 +374,21 @@ impl Database {
         version: &str,
         capabilities: &[&str],
         at: i64,
+        awake: Option<i64>,
     ) -> Result<HostStatus> {
         let mut conn = self.acquire_writer().await?;
         let row = sqlx::query_as::<_, HostStatusRow>(
             "INSERT INTO local_host_status
-                 (id, pid, role, version, capabilities, started_at, heartbeat_at)
-             VALUES (1, ?, ?, ?, ?, ?, ?)
+                 (id, pid, role, version, capabilities, started_at, heartbeat_at,
+                  heartbeat_awake)
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                  pid = excluded.pid, role = excluded.role, version = excluded.version,
                  capabilities = excluded.capabilities, started_at = excluded.started_at,
-                 heartbeat_at = excluded.heartbeat_at
+                 heartbeat_at = excluded.heartbeat_at,
+                 heartbeat_awake = excluded.heartbeat_awake
              RETURNING pid, role, version, capabilities, started_at, heartbeat_at,
-                       round_started, round_finished",
+                       heartbeat_awake, round_started, round_finished",
         )
         .bind(i64::from(pid))
         .bind(role)
@@ -387,6 +396,7 @@ impl Database {
         .bind(capabilities.join(","))
         .bind(at)
         .bind(at)
+        .bind(awake)
         .fetch_one(&mut *conn)
         .await?;
         Ok(row.into())
@@ -401,13 +411,20 @@ impl Database {
         .await
     }
 
-    pub async fn record_host_heartbeat(&self, pid: u32, at: i64) -> Result<()> {
-        self.update_host_status(
-            "UPDATE local_host_status SET heartbeat_at = ? WHERE id = 1 AND pid = ?",
-            at,
-            pid,
+    /// Records a sign of life of host `pid`, with times as in
+    /// [`Database::record_host_start`].
+    pub async fn record_host_heartbeat(&self, pid: u32, at: i64, awake: Option<i64>) -> Result<()> {
+        let mut conn = self.acquire_writer().await?;
+        sqlx::query(
+            "UPDATE local_host_status SET heartbeat_at = ?, heartbeat_awake = ?
+             WHERE id = 1 AND pid = ?",
         )
-        .await
+        .bind(at)
+        .bind(awake)
+        .bind(i64::from(pid))
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
     }
 
     pub async fn record_host_round_started(&self, pid: u32, generation: i64) -> Result<()> {
@@ -805,26 +822,38 @@ mod tests {
         assert_eq!(database.host_status().await.unwrap(), None);
 
         let first = database
-            .record_host_start(10, "daemon", "0.1.0", &["sync", "reminders"], 100)
+            .record_host_start(10, "daemon", "0.1.0", &["sync", "reminders"], 100, Some(5))
             .await
             .unwrap();
         assert_eq!(first.capabilities, ["sync", "reminders"]);
         assert_eq!((first.round_started, first.round_finished), (0, 0));
         database.record_host_round_started(10, 3).await.unwrap();
         database.record_host_round_finished(10, 3).await.unwrap();
-        database.record_host_heartbeat(10, 160).await.unwrap();
+        database
+            .record_host_heartbeat(10, 160, Some(65))
+            .await
+            .unwrap();
+        let status = database.host_status().await.unwrap().unwrap();
+        assert_eq!(
+            (status.heartbeat_at, status.heartbeat_awake),
+            (160, Some(65))
+        );
 
         let second = database
-            .record_host_start(20, "desktop", "0.2.0", &[], 200)
+            .record_host_start(20, "desktop", "0.2.0", &[], 200, None)
             .await
             .unwrap();
         assert_eq!((second.pid, second.role.as_str()), (20, "desktop"));
         assert!(second.capabilities.is_empty());
         assert_eq!((second.round_started, second.round_finished), (3, 3));
         assert_eq!(second.heartbeat_at, 200);
+        assert_eq!(second.heartbeat_awake, None);
 
         // The former host's late writes do not land on its successor's row.
-        database.record_host_heartbeat(10, 999).await.unwrap();
+        database
+            .record_host_heartbeat(10, 999, Some(900))
+            .await
+            .unwrap();
         database.record_host_round_started(10, 9).await.unwrap();
         database
             .record_host_capabilities(10, &["sync"])
@@ -836,6 +865,7 @@ mod tests {
             .unwrap();
         let status = database.host_status().await.unwrap().unwrap();
         assert_eq!(status.heartbeat_at, 200);
+        assert_eq!(status.heartbeat_awake, None);
         assert_eq!(status.round_started, 3);
         assert_eq!(status.capabilities, ["sync"]);
     }
