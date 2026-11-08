@@ -3,9 +3,15 @@
 pub use aven_host::app_bundle::enclosing_bundle;
 pub use aven_host::background;
 pub use aven_host::daemon::service as agent_service;
-pub use aven_host::desktop_install;
 /// Posts the app's notifications.
 pub use aven_host::notify::un::InProcess as Notifier;
+
+/// The executable the background agent runs while this app's installation
+/// manages it.
+pub fn agent_app() -> Option<std::path::PathBuf> {
+    let layout = aven_host::desktop_install::Layout::current().ok()?;
+    layout.manages_agent().then(|| layout.executable())
+}
 
 /// `NSWorkspace.accessibilityDisplayShouldReduceMotion`.
 pub fn reduce_motion() -> bool {

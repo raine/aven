@@ -1,7 +1,7 @@
 use crate::launch;
 use crate::launch::{Catalog, LaunchEnv, LaunchEvent, LaunchJob, LaunchMode, Place};
 use crate::platform::agent_service::{self, AgentStatus, LoginItem};
-use crate::platform::{Notifier, background, desktop_install};
+use crate::platform::{self, Notifier, background};
 use crate::session::Session;
 use crate::sync_ops;
 use crate::sync_ops::{SyncOp, SyncRequest, SyncWork};
@@ -3166,10 +3166,7 @@ pub(crate) fn prepare(
                 });
                 actor.welcome = welcome;
                 actor.version = launch_version;
-                actor.agent_app = desktop_install::Layout::current()
-                    .ok()
-                    .filter(|layout| layout.manages_agent())
-                    .map(|layout| layout.executable());
+                actor.agent_app = platform::agent_app();
                 actor.spawn_background_sync();
                 actor.reconcile_agent();
                 actor.send_list().await;
