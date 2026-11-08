@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "aven"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "anyhow",
  "aven-ai-contract",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "aven-core"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "anyhow",
  "aven-core",

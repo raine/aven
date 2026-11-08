@@ -35,7 +35,7 @@ zstd = "0.14.3"
 
 [package]
 name = "aven"
-version = "0.1.54"
+version = "0.1.55"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Raine"]
@@ -52,7 +52,7 @@ desktop = ["dep:aven-desktop"]
 [dependencies]
 aven-ai-contract = { path = "crates/aven-ai-contract", version = "=0.1.0" }
 aven-protocol = { path = "crates/aven-protocol", version = "=0.1.0" }
-aven-core = { path = "crates/aven-core", version = "=0.1.38" }
+aven-core = { path = "crates/aven-core", version = "=0.1.39" }
 aven-host = { path = "crates/aven-host", version = "=0.1.0" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
@@ -112,7 +112,7 @@ notify-rust = "4"
 [dev-dependencies]
 aven-conformance = { path = "crates/aven-conformance" }
 tokio = { workspace = true, features = ["test-util"] }
-aven-core = { path = "crates/aven-core", version = "=0.1.38", features = ["test-support"] }
+aven-core = { path = "crates/aven-core", version = "=0.1.39", features = ["test-support"] }
 aven-host = { path = "crates/aven-host", version = "=0.1.0", features = ["test-support"] }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 zstd.workspace = true

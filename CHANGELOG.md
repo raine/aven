@@ -18,6 +18,11 @@ description: Release notes for aven.
 - Fix: Choosing an order now starts from that order's natural direction, so Title after Recently updated no longer sorts Z to A.
 - UX: Desktop messages show an icon for what happened and the task they are about. Errors and gist publishing stay until resolved, a message pauses while the pointer is over it, and `⌘↩` runs its Retry, Refresh, Restore, Open, or Go action. Undo appears only while it would take back that change.
 
+## v0.1.55 (2026-11-06)
+
+- Fix: Joining encrypted sync works on Linux filesystems that limit filenames to 143 bytes, such as eCryptfs, instead of failing with `protected-key-storage-unavailable`. ([#48](https://github.com/raine/aven/issues/48))
+- UX: Agents file "up next" and "top priority" requests as todo tasks with medium or high priority, and "someday" requests as backlog. Run `aven skill install` again to update installed skills.
+
 ## v0.1.54 (2026-11-03)
 
 - New: `aven mcp --http` serves MCP Streamable HTTP with a bearer token from `AVEN_MCP_TOKEN`, and `--sync` runs sync inside that process, so an agent in another container needs only a URL and token. See [HTTP and containers](https://aventasks.dev/mcp/#http-and-containers). ([#35](https://github.com/raine/aven/issues/35))

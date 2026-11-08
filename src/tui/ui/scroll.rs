@@ -2,9 +2,45 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::tui::theme::Theme;
+
+/// Thumb glyph for list scrollbars: a right-aligned half block, wide enough to
+/// read at a glance while staying clear of row text.
+pub(in crate::tui::ui) const LIST_SCROLLBAR_THUMB: &str = "▐";
+/// Track glyph for list scrollbars: a right-aligned eighth block that lines up
+/// with the thumb's right edge.
+pub(in crate::tui::ui) const LIST_SCROLLBAR_TRACK: &str = "▕";
+
+/// Builds the right-edge scrollbar shared by selectable lists.
+///
+/// The scrollbar draws over the rightmost cell of each row, so it clears the
+/// dim modifier that blocked or inactive rows apply to their full width.
+pub(in crate::tui::ui) fn list_scrollbar(
+    thumb: Color,
+    track: Color,
+    background: Color,
+) -> Scrollbar<'static> {
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .thumb_symbol(LIST_SCROLLBAR_THUMB)
+        .track_symbol(Some(LIST_SCROLLBAR_TRACK))
+        .thumb_style(
+            Style::new()
+                .fg(thumb)
+                .bg(background)
+                .remove_modifier(Modifier::DIM),
+        )
+        .track_style(
+            Style::new()
+                .fg(track)
+                .bg(background)
+                .remove_modifier(Modifier::DIM),
+        )
+}
 
 /// Clamp `scroll` (a raw u16 offset) so it does not exceed the last valid
 /// start position, i.e. `content_height - visible_rows`.

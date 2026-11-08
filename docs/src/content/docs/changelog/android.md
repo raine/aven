@@ -5,6 +5,10 @@ description: Release notes for Aven for Android.
 
 ## Unreleased
 
+## 0.3.1 — in review
+
+- New: Share readable diagnostics when pairing fails to help troubleshoot the connection. Reports stay on your phone until you choose to share them.
+
 ## 0.3.0 (2026-10-31)
 
 - **Tell Aven** turns a typed or spoken request into task drafts you review before anything changes. It can search and answer questions about your tasks, use a photo as context, and open from task detail with that task attached. Chats stay on your phone.
