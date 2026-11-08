@@ -20,6 +20,12 @@ fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# The app opened from Finder never sees the shell's environment, so the
+# command and daemon set up here must not either.
+while IFS= read -r name; do
+  unset "$name"
+done < <(compgen -e | grep '^AVEN_' || true)
+
 # Aven Desktop requires macOS 13.
 env SQLX_OFFLINE=true MACOSX_DEPLOYMENT_TARGET=13.0 \
   cargo build --release --offline --locked --features desktop
