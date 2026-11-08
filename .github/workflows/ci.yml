@@ -57,6 +57,28 @@ jobs:
       - name: Check the shipped build
         run: cargo check --locked -p aven --features desktop
 
+  desktop-linux:
+    name: Desktop app (Linux)
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install GPUI build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev libfreetype-dev libwayland-dev \
+            libx11-xcb-dev libxkbcommon-x11-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Lint
+        run: cargo clippy --locked -p aven -p aven-desktop --features aven/desktop --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked -p aven-desktop
+
   shell-fixtures:
     name: Public shell fixtures (${{ matrix.os }})
     strategy:
