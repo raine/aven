@@ -73,7 +73,7 @@ On macOS, Homebrew and the install script include an `Aven.app` bundle so notifi
   <img src="/macos-notification-dark.webp" alt="Illustration of an Aven notification confirming the task Review the homepage copy was added" width="440" height="169" />
 </div>
 
-Aven Desktop asks macOS to allow notifications when you turn on reminders, and the terminal commands above ask when you run them in a terminal. Choose **Allow**. To change this later, open **System Settings → Notifications → Aven**.
+To change whether Aven may notify you, open **System Settings → Notifications → Aven**.
 
 ### Allow notifications during Focus
 
