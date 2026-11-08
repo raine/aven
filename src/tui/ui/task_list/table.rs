@@ -442,16 +442,16 @@ pub(super) fn render_group_row(
 ) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" ▸ ", Style::new().fg(theme.accent).bg(theme.bg)),
+            Span::styled(" ▸ ", Style::new().fg(theme.accent).bg(theme.bg_row_group)),
             Span::styled(
                 format!("{} ({count})", label.to_uppercase()),
                 Style::new()
                     .fg(theme.accent)
-                    .bg(theme.bg)
+                    .bg(theme.bg_row_group)
                     .add_modifier(Modifier::BOLD),
             ),
         ]))
-        .style(Style::new().bg(theme.bg)),
+        .style(Style::new().bg(theme.bg_row_group)),
         area,
     );
 }
