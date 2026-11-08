@@ -150,6 +150,12 @@ fn page(title: &'static str, lead: Option<&'static str>, t: &Theme) -> Div {
 
 /// The switch that keeps the agent syncing after Aven quits.
 const KEEP_SYNCING: &str = "Keep syncing after Aven quits";
+/// The switch that turns on reminders.
+const REMINDERS: &str = "Reminders on this Mac";
+/// The switch that has the launcher's agent write tasks.
+const LAUNCHER_AI: &str = "Create tasks with AI";
+/// Where Settings sends the user to allow the background agent again.
+const LOGIN_ITEMS_OFF: &str = "Turned off in System Settings > General > Login Items & Extensions";
 
 /// A page's lead when it depends on state.
 fn lead(text: impl Into<SharedString>, t: &Theme) -> Div {
@@ -1353,7 +1359,6 @@ impl Root {
     /// Whether the launcher's Return has the agent write the task. Off and
     /// fixed while no agent is configured.
     fn launcher_ai_row(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
-        const NAME: &str = "Create tasks with AI";
         let agent = self.session.settings_data.agent.is_some();
         let on = agent && self.prefs.launcher.ai;
         let note = if agent {
@@ -1362,16 +1367,16 @@ impl Root {
             "Set up an agent below to have it write your tasks."
         };
         let track = div()
-            .id(NAME)
+            .id(LAUNCHER_AI)
             .role(Role::Switch)
-            .aria_label(NAME)
+            .aria_label(LAUNCHER_AI)
             .when(agent, |track| {
                 track.on_click(cx.listener(|this, _, _, cx| this.toggle_launcher_ai(cx)))
             })
             .when(!agent, |track| track.opacity(0.5));
         row(t)
             .child(
-                div().flex_1().min_w_0().child(NAME).child(
+                div().flex_1().min_w_0().child(LAUNCHER_AI).child(
                     small(Text::Secondary)
                         .mt(px(1.))
                         .flex()
@@ -1389,7 +1394,7 @@ impl Root {
                         ),
                 ),
             )
-            .child(self.switch_track(track, NAME, on, 1., cx, t))
+            .child(self.switch_track(track, LAUNCHER_AI, on, 1., cx, t))
     }
 
     fn toggle_launcher_ai(&mut self, cx: &mut Context<Self>) {
@@ -1397,7 +1402,7 @@ impl Root {
         self.prefs.launcher.ai = ai;
         self.save_prefs();
         crate::launcher::set_ai(ai, cx);
-        self.mark_switched("Create tasks with AI");
+        self.mark_switched(LAUNCHER_AI);
         cx.notify();
     }
 
@@ -1589,12 +1594,12 @@ impl Root {
         let digest = reminders.digest_time.clone();
         let on = reminders.enabled;
         let track = div()
-            .id("Reminders on this Mac")
+            .id(REMINDERS)
             .role(Role::Switch)
-            .aria_label("Reminders on this Mac")
+            .aria_label(REMINDERS)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.edit_reminders(|value| value.enabled = !value.enabled);
-                this.mark_switched("Reminders on this Mac");
+                this.mark_switched(REMINDERS);
                 if !on {
                     this.ask_notifications(cx);
                 }
@@ -1612,8 +1617,8 @@ impl Root {
             .child(group(
                 vec![
                     row(t)
-                        .child(row_title("Reminders on this Mac", None, t))
-                        .child(self.switch_track(track, "Reminders on this Mac", on, 1., cx, t)),
+                        .child(row_title(REMINDERS, None, t))
+                        .child(self.switch_track(track, REMINDERS, on, 1., cx, t)),
                     row(t)
                         .child(row_title(
                             "Daily digest",
@@ -1696,11 +1701,7 @@ impl Root {
                 Some(t.warn),
                 "Reminders and sync stop when Aven quits",
             ),
-            AgentShown::TurnedOff => (
-                "Turned off",
-                Some(t.warn),
-                "Turned off in System Settings > General > Login Items & Extensions",
-            ),
+            AgentShown::TurnedOff => ("Turned off", Some(t.warn), LOGIN_ITEMS_OFF),
         };
         let button = match background.agent {
             AgentShown::TurnedOff => Some(
@@ -1764,10 +1765,7 @@ impl Root {
                 row(t)
                     .child(row_title(
                         KEEP_SYNCING,
-                        Some(
-                            "Turned off in System Settings > General > Login Items & Extensions"
-                                .to_string(),
-                        ),
+                        Some(LOGIN_ITEMS_OFF.to_string()),
                         t,
                     ))
                     .child(status_pill("Turned off", Some(t.warn), t))
