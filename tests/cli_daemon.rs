@@ -134,7 +134,12 @@ fn daemon_status_says_a_turned_off_daemon_is_off_and_how_to_turn_it_on() {
     let human = status(&["daemon", "status"]);
     if !human.contains("platform unsupported") {
         assert!(human.contains("Daemon: off"), "{human}");
-        assert!(human.contains("Keep syncing after Aven quits"), "{human}");
+        // Only the macOS app runs a background agent to turn on.
+        assert_eq!(
+            human.contains("Keep syncing after Aven quits"),
+            cfg!(target_os = "macos"),
+            "{human}"
+        );
         assert!(
             human.contains("aven config set sync.enabled true"),
             "{human}"
