@@ -368,6 +368,8 @@ fn keycap(keys: &'static str, t: &Theme) -> impl IntoElement + use<> {
 /// The line, with its shortcut as a key cap. Punctuation stays on the cap.
 fn line_element(line: Line, t: &Theme) -> impl IntoElement + use<> {
     let row = div()
+        .max_w(px(300.))
+        .text_center()
         .flex()
         .flex_wrap()
         .justify_center()
@@ -490,11 +492,10 @@ impl Root {
                             .text_color(t.ink)
                             .child(title),
                     )
-                    .child(
-                        div()
-                            .mt(px(5.))
-                            .child("Every view fills in once you add a task."),
-                    )
+                    .child(div().mt(px(5.)).child(line_element(
+                        Line::plain("Every view fills in once you add a task."),
+                        &t,
+                    )))
                     .child(div().mt(px(16.)).child(buttons(actions, cx)));
                 self.empty_enter(query, body)
             }
@@ -510,6 +511,7 @@ impl Root {
                 .child(
                     div()
                         .max_w(px(360.))
+                        .text_center()
                         .flex()
                         .flex_col()
                         .items_center()
@@ -540,6 +542,7 @@ impl Root {
         };
         div()
             .max_w(px(380.))
+            .text_center()
             .flex()
             .flex_col()
             .items_center()
