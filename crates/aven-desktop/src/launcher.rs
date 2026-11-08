@@ -1634,7 +1634,7 @@ impl Render for Launcher {
             .id("launcher-layer")
             .key_context("Launcher")
             .size_full()
-            .font_family(".SystemUIFont")
+            .font_family(platform::ui_font())
             .on_action(cx.listener(Self::launch_review))
             .on_action(cx.listener(Self::launch_other))
             .on_action(cx.listener(Self::suggest_next))

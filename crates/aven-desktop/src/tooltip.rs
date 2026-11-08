@@ -95,7 +95,7 @@ impl Hint {
         };
         let run = TextRun {
             len: self.label.len(),
-            font: font(".SystemUIFont"),
+            font: font(crate::platform::ui_font()),
             color: gpui::black(),
             background_color: None,
             underline: None,
