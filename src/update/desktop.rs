@@ -222,7 +222,7 @@ impl Updates for DesktopUpdater {
         let bundle = running_bundle()?;
         let outcome = relaunch::confirm_launch(&bundle, &super::current_version())?;
         Ok(outcome.map(|outcome| match outcome {
-            LaunchOutcome::Updated { to, .. } => Relaunched::Updated {
+            LaunchOutcome::Updated { to } => Relaunched::Updated {
                 version: to.to_string(),
             },
             LaunchOutcome::Restored { failed, restored } => Relaunched::Restored {

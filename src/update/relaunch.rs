@@ -58,7 +58,7 @@ pub(super) enum UpdateState {
 /// What a launch finds of an update that just finished.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LaunchOutcome {
-    Updated { from: Version, to: Version },
+    Updated { to: Version },
     Restored { failed: Version, restored: Version },
 }
 
@@ -385,10 +385,7 @@ pub(crate) fn confirm_launch(bundle: &Path, current: &Version) -> Result<Option<
     };
     let outcome = match update.state {
         UpdateState::Pending | UpdateState::Kept if update.to == *current => {
-            LaunchOutcome::Updated {
-                from: update.from,
-                to: update.to,
-            }
+            LaunchOutcome::Updated { to: update.to }
         }
         UpdateState::Restored if update.from == *current => LaunchOutcome::Restored {
             failed: update.to,
@@ -438,7 +435,6 @@ mod tests {
         assert_eq!(
             confirm_launch(&bundle, &Version::new(1, 3, 0)).unwrap(),
             Some(LaunchOutcome::Updated {
-                from: Version::new(1, 2, 0),
                 to: Version::new(1, 3, 0),
             })
         );
