@@ -14,10 +14,11 @@ pub fn enclosing_bundle(_executable: &Path) -> Option<PathBuf> {
 /// The background intent and the agent that follows it. This app manages no
 /// agent on Linux, so only the intent is real.
 pub mod background {
-    use anyhow::{Context, Result};
-    use aven_host::config::{self, AppConfig, BackgroundIntent};
-    use aven_host::config_edit;
+    use anyhow::Result;
+    use aven_host::config::AppConfig;
     use std::path::{Path, PathBuf};
+
+    pub use aven_host::background::{set_intent, wants_agent};
 
     #[allow(dead_code, reason = "nothing reconciles an agent on Linux")]
     pub enum Reconciled {
@@ -27,18 +28,6 @@ pub mod background {
 
     pub fn reconcile(_config: &AppConfig, _db_path: PathBuf, _app: &Path) -> Result<Reconciled> {
         Ok(Reconciled::Unchanged)
-    }
-
-    /// Whether `config` asks for a running agent.
-    pub fn wants_agent(config: &AppConfig) -> bool {
-        config.background == Some(BackgroundIntent::On) && config.daemon_has_work()
-    }
-
-    /// Records `intent` in the config file at the default location.
-    pub fn set_intent(intent: BackgroundIntent) -> Result<()> {
-        let path = config::config_file_path()?;
-        config_edit::set_top_level_scalar(&path, "background", intent.as_str())
-            .with_context(|| format!("set background in {}", path.display()))
     }
 }
 
