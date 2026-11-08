@@ -288,7 +288,6 @@ jobs:
         run: |
           dmg="dist/${{ matrix.dmg }}.dmg"
           (cd dist && shasum -a 256 -c "${{ matrix.dmg }}.sha256")
-          scripts/verify-macos-release "$dmg"
           scripts/test-verify-macos-release "$dmg"
           scripts/stapler validate "$dmg"
           if ! spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg" >spctl.log 2>&1; then
