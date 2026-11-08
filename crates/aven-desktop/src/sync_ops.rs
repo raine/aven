@@ -347,6 +347,11 @@ impl SyncWork {
                 engine::run_join(link, database, host, || Ok(invitation), replace, &progress)
             })
             .await?;
+        // A joined device already uses Aven, even when the workspace it joined
+        // has no tasks yet, so it opens on the Queue rather than the welcome.
+        if let Err(error) = database.complete_onboarding().await {
+            tracing::warn!(%error, "could not record the welcome as done");
+        }
         Ok("Joined sync".to_string())
     }
 
@@ -737,6 +742,7 @@ pub fn steps(kind: SyncKind) -> &'static [(Stage, &'static str, &'static str)] {
 mod tests {
     use std::sync::Arc;
 
+    use aven_core::local_state::OnboardingStatus;
     use aven_core::sync::client::keys::FileProtectedStorage;
 
     use super::*;
@@ -811,6 +817,26 @@ mod tests {
         );
         assert_eq!(local_phase(&database).await.unwrap(), LocalPhase::NotSetUp);
         assert_eq!(database.daemon_sync_state().await.unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn a_refused_join_keeps_the_welcome_due() {
+        let directory = tempfile::tempdir().unwrap();
+        let (work, _replies, database) = work(&directory.path().join("db.sqlite")).await;
+        let SyncEvent::Finished(finished) = work
+            .run(SyncOp::Join {
+                invitation: Some(Secret::new(INVITATION)),
+                new_database: false,
+            })
+            .await
+        else {
+            panic!("the operation finished");
+        };
+        assert!(finished.result.is_err());
+        assert_eq!(
+            database.onboarding_status().await.unwrap(),
+            OnboardingStatus::Due
+        );
     }
 
     #[tokio::test]
