@@ -58,26 +58,10 @@ pub mod agent_service {
     }
 }
 
-/// Where Aven Desktop is installed. Linux has no such layout.
-pub mod desktop_install {
-    use anyhow::{Result, bail};
-    use std::path::PathBuf;
-
-    pub enum Layout {}
-
-    impl Layout {
-        pub fn current() -> Result<Self> {
-            bail!("Aven Desktop has no installation layout on Linux")
-        }
-
-        pub fn manages_agent(&self) -> bool {
-            match *self {}
-        }
-
-        pub fn executable(&self) -> PathBuf {
-            match *self {}
-        }
-    }
+/// The app has no installation layout on Linux and leaves the daemon to
+/// `aven daemon install`.
+pub fn agent_app() -> Option<PathBuf> {
+    None
 }
 
 /// Posts the app's notifications through the freedesktop notification
