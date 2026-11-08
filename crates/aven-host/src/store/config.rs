@@ -47,9 +47,12 @@ pub(super) async fn load_sync_status(
     previous: &TuiSyncStatus,
 ) -> Result<TuiSyncStatus> {
     let persistence = database.sync_persistence_status().await?;
-    let daemon_wake = match config.wake_addr() {
-        Ok(addr) => SyncStatusCheck::new(true, addr.to_string()),
-        Err(error) => SyncStatusCheck::new(false, format!("{error:#}")),
+    let daemon_wake = match crate::host::wake::paths(database.path()).first() {
+        Some(path) => SyncStatusCheck::new(true, path.display().to_string()),
+        None => SyncStatusCheck::new(
+            false,
+            "no socket path fits; local changes sync on the interval",
+        ),
     };
     let phase = crate::sync::encrypted::local_phase(database).await?;
     // A sync operation holds the association while it runs; keep the last

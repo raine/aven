@@ -21,10 +21,9 @@ fn server_logging_does_not_require_writable_state() {
 fn daemon_logging_does_not_require_writable_state() {
     let env = TestEnv::new();
     let db = env.db("client.sqlite");
-    let wake_addr = env.free_loopback_addr();
     let unusable_state = env.path("state-file");
     std::fs::write(&unusable_state, "not a directory").expect("write state file");
-    env.write_daemon_config(&db, &wake_addr, 3600);
+    env.write_daemon_config(&db, 3600);
 
     let daemon = TestProcess::start_daemon_with_env(
         &env,

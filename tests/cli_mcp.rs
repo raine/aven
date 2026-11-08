@@ -1,7 +1,8 @@
 mod common;
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, UdpSocket};
+use std::net::TcpStream;
+use std::os::unix::net::UnixDatagram;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
@@ -720,18 +721,14 @@ fn ambiguous_refs_list_candidates_without_touching_stdout() {
 fn every_write_wakes_the_daemon_and_nothing_else_does() {
     let env = TestEnv::new();
     let db = env.db("wake.sqlite");
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
-    socket
-        .set_read_timeout(Some(RESPONSE_TIMEOUT))
-        .expect("set read timeout");
-    let addr = socket.local_addr().expect("wake addr").to_string();
-    env.write_daemon_config(&db, &addr, 3600);
+    let socket = wake_listener(&db);
+    env.write_daemon_config(&db, 3600);
 
     let mut client = Client::started(&env, &db);
     let expect_wake = |label: &str| {
         let mut buffer = [0; 8];
-        let (size, _) = socket
-            .recv_from(&mut buffer)
+        let size = socket
+            .recv(&mut buffer)
             .unwrap_or_else(|error| panic!("no wake after {label}: {error}"));
         assert_eq!(&buffer[..size], b"1", "{label}");
     };
@@ -740,7 +737,7 @@ fn every_write_wakes_the_daemon_and_nothing_else_does() {
             .set_read_timeout(Some(NO_WAKE_WINDOW))
             .expect("set quiet timeout");
         let mut buffer = [0; 8];
-        assert!(socket.recv_from(&mut buffer).is_err(), "wake after {label}");
+        assert!(socket.recv(&mut buffer).is_err(), "wake after {label}");
         socket
             .set_read_timeout(Some(RESPONSE_TIMEOUT))
             .expect("restore timeout");
@@ -1089,12 +1086,11 @@ fn http_startup_refuses_unsafe_configurations() {
 }
 
 #[test]
-fn http_without_sync_wakes_the_daemon_and_with_sync_owns_the_wake_address() {
+fn http_without_sync_wakes_the_daemon_and_with_sync_owns_the_wake_socket() {
     let env = TestEnv::new();
     let db = env.db("wake.sqlite");
-    let socket = wake_listener();
-    let wake_addr = socket.local_addr().unwrap().to_string();
-    env.write_daemon_config(&db, &wake_addr, 3600);
+    let socket = wake_listener(&db);
+    env.write_daemon_config(&db, 3600);
 
     let server = HttpServer::start(&env, &db, &[]);
     server.call("create_task", json!({"title": "Wakes the daemon"}));
@@ -1121,8 +1117,8 @@ fn http_sync_wakes_the_process_that_holds_the_host_lock() {
     // Stands in for Aven Desktop hosting the database.
     let lock = std::fs::File::create(lock_path(&db)).expect("create host lock");
     lock.try_lock().expect("take host lock");
-    let host = wake_listener();
-    env.write_daemon_config(&db, &host.local_addr().unwrap().to_string(), 3600);
+    let host = wake_listener(&db);
+    env.write_daemon_config(&db, 3600);
 
     let server = HttpServer::start(&env, &db, &["--sync"]);
     server.wait_for_output("sync-client reason=host-running host=\"another Aven process\"");
@@ -1133,25 +1129,13 @@ fn http_sync_wakes_the_process_that_holds_the_host_lock() {
 }
 
 #[test]
-fn http_sync_serves_beside_an_old_daemon_and_then_hosts_reminders_too() {
+fn http_sync_hosts_reminders_too_with_the_old_wake_address_in_the_config() {
     let env = TestEnv::new();
-    let db = env.db("old-daemon.sqlite");
-    let old_daemon = wake_listener();
-    let wake_addr = old_daemon.local_addr().unwrap().to_string();
+    let db = env.db("old-config.sqlite");
     env.write_config(&format!(
-        "local:\n  db_path: \"{}\"\ndaemon:\n  wake_addr: \"{wake_addr}\"\nreminders:\n  enabled: true\n",
+        "local:\n  db_path: \"{}\"\ndaemon:\n  wake_addr: \"127.0.0.1:47631\"\nreminders:\n  enabled: true\n",
         db.display()
     ));
-
-    let client = HttpServer::start(&env, &db, &["--sync"]);
-    client.wait_for_output(&format!(
-        "sync-client reason=wake-address-busy host=\"an older Aven daemon\" wake={wake_addr}"
-    ));
-    client.call("create_task", json!({"title": "Wakes the old daemon"}));
-    let mut buffer = [0; 16];
-    old_daemon.recv(&mut buffer).expect("old daemon wake");
-    drop(client);
-    drop(old_daemon);
 
     let server = HttpServer::start(&env, &db, &["--sync"]);
     server.wait_for_output("daemon-sync-not-set-up");
@@ -1165,12 +1149,8 @@ fn http_sync_serves_beside_an_old_daemon_and_then_hosts_reminders_too() {
     );
 }
 
-fn wake_listener() -> UdpSocket {
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind wake socket");
-    socket
-        .set_read_timeout(Some(RESPONSE_TIMEOUT))
-        .expect("set read timeout");
-    socket
+fn wake_listener(db: &Path) -> UnixDatagram {
+    common::wake_listener(db, RESPONSE_TIMEOUT)
 }
 
 fn lock_path(db: &Path) -> std::path::PathBuf {

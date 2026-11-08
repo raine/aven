@@ -4,10 +4,7 @@ use std::process::Output;
 
 use anyhow::{Context, Result, bail};
 
-use super::{
-    InstalledService, ServiceInstallArgs, ServiceRepairArgs, ServiceStatus,
-    paths_resolve_to_same_file, validate_install_config,
-};
+use super::{InstalledService, ServiceRepairArgs, ServiceStatus, paths_resolve_to_same_file};
 #[cfg(target_os = "linux")]
 use super::{absolute_path, stable_program_path_from_candidates};
 
@@ -80,11 +77,9 @@ fn stable_program_path(current_exe: &Path) -> PathBuf {
 }
 
 pub(super) fn install_with_runner(
-    args: ServiceInstallArgs,
     spec: &UnitSpec,
     runner: &impl SystemctlRunner,
 ) -> Result<InstalledService> {
-    validate_install_config(&args.config)?;
     reload_service(runner, spec)?;
     Ok(InstalledService {
         path: spec.unit_path.clone(),
@@ -124,7 +119,6 @@ pub(super) fn repair_with_runner(
             spec.unit_path.display()
         );
     }
-    validate_install_config(&args.config)?;
     reload_service(runner, spec)?;
     println!(
         "daemon repair installed=yes restarted=yes path={}",
@@ -340,7 +334,7 @@ mod tests {
         let spec = test_spec();
         let runner = FakeRunner::new(vec![]);
 
-        install_with_runner(install_args(), &spec, &runner).unwrap();
+        install_with_runner(&spec, &runner).unwrap();
 
         assert!(spec.unit_path.exists());
         assert_eq!(
@@ -351,23 +345,6 @@ mod tests {
                 vec!["restart", UNIT],
             ]
         );
-    }
-
-    #[test]
-    fn install_allows_an_idle_daemon_but_not_an_invalid_wake_address() {
-        let spec = test_spec();
-        let mut args = install_args();
-        args.config.sync.enabled = false;
-        install_with_runner(args, &spec, &FakeRunner::new(vec![])).unwrap();
-        assert!(spec.unit_path.exists());
-
-        let spec = test_spec();
-        let runner = FakeRunner::new(vec![]);
-        let mut args = install_args();
-        args.config.daemon.wake_addr = Some("not-an-address".to_string());
-        assert!(install_with_runner(args, &spec, &runner).is_err());
-        assert!(!spec.unit_path.exists());
-        assert!(runner.commands().is_empty());
     }
 
     #[test]
@@ -389,7 +366,7 @@ mod tests {
     #[test]
     fn uninstall_disables_and_removes_unit() {
         let spec = test_spec();
-        install_with_runner(install_args(), &spec, &FakeRunner::new(vec![])).unwrap();
+        install_with_runner(&spec, &FakeRunner::new(vec![])).unwrap();
         let runner = FakeRunner::new(vec![]);
 
         uninstall_with_runner(&spec, &runner).unwrap();
@@ -404,7 +381,7 @@ mod tests {
     #[test]
     fn status_reads_load_and_active_state() {
         let spec = test_spec();
-        install_with_runner(install_args(), &spec, &FakeRunner::new(vec![])).unwrap();
+        install_with_runner(&spec, &FakeRunner::new(vec![])).unwrap();
         let runner = FakeRunner::new(vec![success_with_stdout(
             "LoadState=loaded\nActiveState=active\n",
         )]);
@@ -437,7 +414,7 @@ mod tests {
         let spec = test_spec();
         let runner = FakeRunner::new(vec![success(), failure()]);
 
-        let error = install_with_runner(install_args(), &spec, &runner).unwrap_err();
+        let error = install_with_runner(&spec, &runner).unwrap_err();
 
         assert!(
             error
@@ -462,14 +439,6 @@ mod tests {
         let mut config = AppConfig::default();
         config.sync.enabled = true;
         config
-    }
-
-    fn install_args() -> ServiceInstallArgs {
-        ServiceInstallArgs {
-            db_path: PathBuf::from("/tmp/db.sqlite"),
-            config: enabled_config(),
-            program: None,
-        }
     }
 
     struct FakeRunner {

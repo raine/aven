@@ -178,15 +178,25 @@ pub(super) async fn add_runtime_database_sections(
             "interval",
             format!("{} seconds", config.sync_interval_seconds()),
         );
-        match config.wake_addr() {
-            Ok(addr) => {
-                sync_section.check("sync.daemon_wake", "daemon wake", true, addr.to_string())
-            }
-            Err(_) => sync_section.check(
-                "sync.daemon_wake",
+        match db_path.map(aven_host::host::wake::paths) {
+            Some(paths) => match paths.first() {
+                Some(path) => sync_section.check(
+                    "sync.daemon_wake",
+                    "daemon wake",
+                    true,
+                    path.display().to_string(),
+                ),
+                None => sync_section.check(
+                    "sync.daemon_wake",
+                    "daemon wake",
+                    false,
+                    "no wake socket path fits; local changes sync on the interval",
+                ),
+            },
+            None => sync_section.skipped(
+                "sync.daemon_wake_skipped",
                 "daemon wake",
-                false,
-                "invalid daemon wake address; configure a loopback socket address",
+                "database path is unavailable",
             ),
         }
     } else {

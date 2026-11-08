@@ -49,12 +49,9 @@ fn print_daemon_status(report: &DaemonStatusReport) {
         println!("Login Items: Aven is turned off");
     }
     println!(
-        "Configuration: {}, executable match {}",
-        if report.configuration_valid {
-            "valid"
-        } else {
-            "invalid"
-        },
+        "Configuration: sync {}, reminders {}, executable match {}",
+        on_off(report.sync_enabled),
+        on_off(report.reminders_enabled),
         optional_yes_no(report.executable_matches),
     );
     if let Some(host) = &report.host {
@@ -104,6 +101,10 @@ fn print_daemon_status(report: &DaemonStatusReport) {
     for guidance in &report.guidance {
         println!("Next: {}", crate::render::stdout_inline_code(guidance));
     }
+}
+
+fn on_off(value: bool) -> &'static str {
+    if value { "on" } else { "off" }
 }
 
 fn yes_no(value: bool) -> &'static str {

@@ -96,7 +96,7 @@ pub(super) fn sync_status_summary(status: &TuiSyncStatus) -> SyncStatusSummary {
     let mut issues = Vec::new();
     if status.set_up && status.enabled && !status.daemon_wake.ok {
         issues.push(SyncIssue {
-            label: "Wake address",
+            label: "Wake socket",
             value: status.daemon_wake.value.clone(),
         });
     }
@@ -348,7 +348,7 @@ mod tests {
     fn automatic_sync_wake_failures_are_visible_attention() {
         let status = TuiSyncStatus {
             enabled: true,
-            daemon_wake: SyncStatusCheck::new(false, "invalid"),
+            daemon_wake: SyncStatusCheck::new(false, "no socket path fits"),
             ..set_up()
         };
 

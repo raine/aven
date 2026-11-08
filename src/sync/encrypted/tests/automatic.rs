@@ -1,28 +1,18 @@
 //! The daemon drives the encrypted engine after a local mutation wakes it.
 use super::*;
 
-fn write_sync_config(node: &Installation, enabled: bool, interval_seconds: u64, wake: &str) {
+fn write_sync_config(node: &Installation, enabled: bool, interval_seconds: u64) {
     let dir = node.root.join(node.name).join("config");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("config.yaml"),
-        format!(
-            "sync:\n  enabled: {enabled}\n  interval_seconds: {interval_seconds}\ndaemon:\n  wake_addr: \"{wake}\"\n"
-        ),
+        format!("sync:\n  enabled: {enabled}\n  interval_seconds: {interval_seconds}\n"),
     )
     .unwrap();
 }
 
-fn enable_automatic_sync(node: &Installation, wake: &str) {
-    write_sync_config(node, true, 3600, wake);
-}
-
-fn free_wake_addr() -> String {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .to_string()
+fn enable_automatic_sync(node: &Installation) {
+    write_sync_config(node, true, 3600);
 }
 
 type DaemonLog = std::sync::Arc<std::sync::Mutex<String>>;
@@ -78,7 +68,7 @@ async fn daemon_waits_for_setup_then_syncs_encrypted_rounds_on_wake() {
 
     // An unconfigured database is reported once and never contacts a server.
     let local = Installation::new(root, "local");
-    enable_automatic_sync(&local, &free_wake_addr());
+    enable_automatic_sync(&local);
     local.ok(&["add", "Local only"]).await;
     let (mut daemon, mut lines, _) = start_daemon(&local).await;
     wait_for_line(&mut lines, "daemon db=").await;
@@ -87,7 +77,7 @@ async fn daemon_waits_for_setup_then_syncs_encrypted_rounds_on_wake() {
     daemon.kill().await.unwrap();
 
     let pair = pair(root).await;
-    enable_automatic_sync(&pair.a, &free_wake_addr());
+    enable_automatic_sync(&pair.a);
     let (_daemon, mut lines, log) = start_daemon(&pair.a).await;
     wait_for_line(&mut lines, "daemon db=").await;
     let line = wait_for_line(&mut lines, "daemon-synced").await;
@@ -117,7 +107,7 @@ const MCP_TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
 /// Leaves `sync.enabled` off, since `--sync` is what requests the worker.
 fn configure_mcp_sync(node: &Installation, interval_seconds: u64) {
-    write_sync_config(node, false, interval_seconds, &free_wake_addr());
+    write_sync_config(node, false, interval_seconds);
 }
 
 struct McpServer {
@@ -230,9 +220,24 @@ async fn mcp_sync_worker_brings_in_remote_changes_without_a_local_write() {
 async fn foreground_sync_success_sends_retry_wake_for_recorded_daemon_failure() {
     let temp = tempfile::tempdir().unwrap();
     let pair = pair(temp.path()).await;
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    enable_automatic_sync(&pair.a, &socket.local_addr().unwrap().to_string());
-    let database = aven_core::db::Database::open(&pair.a.db()).await.unwrap();
+    enable_automatic_sync(&pair.a);
+    let db = pair.a.db();
+    let database = aven_core::db::Database::open(&db).await.unwrap();
+    // Stands in for a host that syncs: it holds the lock, has recorded its
+    // status and listens on the database's wake socket.
+    let lock = std::fs::File::create(aven_host::host::lock_path(&db)).unwrap();
+    lock.try_lock().unwrap();
+    database
+        .record_host_start(
+            7,
+            "daemon",
+            "0.1.0",
+            &[aven_host::host::CAPABILITY_SYNC],
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+        .unwrap();
+    let socket = tokio::net::UnixDatagram::bind(&aven_host::host::wake::paths(&db)[0]).unwrap();
     database
         .record_daemon_sync_round(
             100,
@@ -242,7 +247,7 @@ async fn foreground_sync_success_sends_retry_wake_for_recorded_daemon_failure() 
         .unwrap();
     pair.a.ok(&["sync"]).await;
     let mut buf = [0; 16];
-    let (len, _) = tokio::time::timeout(Duration::from_secs(1), socket.recv_from(&mut buf))
+    let len = tokio::time::timeout(Duration::from_secs(1), socket.recv(&mut buf))
         .await
         .unwrap()
         .unwrap();

@@ -1,8 +1,6 @@
 use std::env;
 use std::fs;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -37,7 +35,6 @@ pub enum DefaultScope {
     Workspace,
 }
 
-const DEFAULT_WAKE_ADDR: &str = "127.0.0.1:47631";
 const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -48,8 +45,6 @@ pub struct AppConfig {
     pub scope: DefaultScope,
     #[serde(default)]
     pub sync: SyncConfig,
-    #[serde(default)]
-    pub daemon: DaemonConfig,
     #[serde(default)]
     pub reminders: RemindersConfig,
     /// Whether Aven Desktop keeps the background agent installed, so sync and
@@ -305,19 +300,6 @@ impl Default for SyncConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DaemonConfig {
-    pub wake_addr: Option<String>,
-}
-
-impl Default for DaemonConfig {
-    fn default() -> Self {
-        Self {
-            wake_addr: Some(DEFAULT_WAKE_ADDR.to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemindersConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -463,20 +445,6 @@ impl AppConfig {
             ));
         }
         Ok(())
-    }
-
-    pub fn wake_addr(&self) -> Result<SocketAddr> {
-        let value = self
-            .daemon
-            .wake_addr
-            .as_deref()
-            .unwrap_or(DEFAULT_WAKE_ADDR);
-        let addr = SocketAddr::from_str(value)
-            .with_context(|| format!("invalid daemon wake address {value}"))?;
-        if !addr.ip().is_loopback() {
-            bail!("error daemon-wake-requires-loopback addr={addr}");
-        }
-        Ok(addr)
     }
 }
 

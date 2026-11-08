@@ -9,13 +9,13 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use aven_core::db::Database;
 use aven_core::sync::client::errors::is_access_refusal;
-use tokio::net::UdpSocket;
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep_until};
 use tracing::{debug, info, warn};
 
 use super::executable::{self, Fingerprint};
+use super::wake::{self, Listener};
 use super::{CAPABILITY_REMINDERS, CAPABILITY_SYNC, HEARTBEAT_INTERVAL, Role, Seat};
 use crate::config::AppConfig;
 use crate::notify::{self, Deliver};
@@ -29,6 +29,8 @@ const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How often a host that delivers looks for notifications left waiting, such
 /// as those queued by a command or while another process delivered.
 const DELIVERY_INTERVAL: Duration = Duration::from_secs(30);
+/// How often a host checks that its wake socket file is still in place.
+const WAKE_SOCKET_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Why a host stopped.
 #[derive(Debug, PartialEq, Eq)]
@@ -124,7 +126,7 @@ impl Host {
     pub async fn run(self, shutdown: impl Future<Output = ()>) -> Result<Exit> {
         let Host {
             database,
-            seat,
+            mut seat,
             role,
             version,
             config: mut configs,
@@ -167,6 +169,7 @@ impl Host {
         let mut next_delivery = now;
         let mut next_attachment_maintenance = now;
         let mut next_executable_check = now + executable::CHECK_INTERVAL;
+        let mut next_wake_socket_check = now + WAKE_SOCKET_CHECK_INTERVAL;
         loop {
             let sync_on = config.automatic_sync_is_enabled();
             let reminders_on = config.reminders.enabled;
@@ -205,7 +208,7 @@ impl Host {
                     }
                     config = next;
                 }
-                retry_now = next_wake(&seat.socket, &wake, debounce, &mut wake_buf) => {
+                retry_now = next_wake(&seat.wake, &wake, debounce, &mut wake_buf) => {
                     let now = Instant::now();
                     requested = true;
                     next_reminder = now;
@@ -219,6 +222,10 @@ impl Host {
                         return Ok(Exit::ExecutableChanged(fingerprint.path.clone()));
                     }
                     next_executable_check = Instant::now() + executable::CHECK_INTERVAL;
+                }
+                _ = sleep_until(next_wake_socket_check) => {
+                    seat.wake.refresh();
+                    next_wake_socket_check = Instant::now() + WAKE_SOCKET_CHECK_INTERVAL;
                 }
                 // Reminders wait while sync rounds have more work, so they
                 // never judge a partly synced database.
@@ -429,7 +436,7 @@ async fn maintain_attachments(database: &Database, blob_dir: &Path, config: &App
 /// Waits for a wake from another process or from this one, and returns whether
 /// it may bypass failure backoff.
 async fn next_wake(
-    socket: &UdpSocket,
+    listener: &Listener,
     direct_wake: &Notify,
     debounce: Duration,
     wake_buf: &mut [u8],
@@ -440,25 +447,24 @@ async fn next_wake(
             tokio::time::sleep(debounce).await;
             false
         }
-        result = socket.recv_from(wake_buf) => {
+        result = listener.recv(wake_buf) => {
             let mut retry_now = false;
-            if let Ok((len, _)) = &result {
-                retry_now = &wake_buf[..*len] == b"r";
+            match result {
+                Ok(len) => {
+                    retry_now = &wake_buf[..len] == wake::RETRY;
+                    debug!("daemon wake received");
+                }
+                Err(err) => warn!(error = %err, "daemon wake receive failed"),
             }
-            if let Err(err) = result {
-                warn!(error = %err, "daemon wake receive failed");
-            } else {
-                debug!("daemon wake received");
-            }
-            retry_now | drain_wakes(socket, wake_buf)
+            retry_now | drain_wakes(listener, wake_buf)
         }
     }
 }
 
-fn drain_wakes(socket: &UdpSocket, wake_buf: &mut [u8]) -> bool {
+fn drain_wakes(listener: &Listener, wake_buf: &mut [u8]) -> bool {
     let mut retry_now = false;
-    while let Ok((len, _)) = socket.try_recv_from(wake_buf) {
-        retry_now |= &wake_buf[..len] == b"r";
+    while let Ok(len) = listener.try_recv(wake_buf) {
+        retry_now |= &wake_buf[..len] == wake::RETRY;
     }
     retry_now
 }
@@ -513,15 +519,14 @@ mod tests {
 
     #[tokio::test]
     async fn draining_preserves_retry_wakes_among_ordinary_wakes() {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let addr = socket.local_addr().unwrap();
-        for payload in [b"1", b"r", b"1"] {
-            sender.send_to(payload, addr).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        let listener = Listener::bind(&db);
+        for payload in [wake::CHANGED, wake::RETRY, wake::CHANGED] {
+            assert!(wake::send(&db, payload));
         }
-        socket.readable().await.unwrap();
-        assert!(drain_wakes(&socket, &mut [0; 16]));
-        assert!(!drain_wakes(&socket, &mut [0; 16]));
+        assert!(drain_wakes(&listener, &mut [0; 16]));
+        assert!(!drain_wakes(&listener, &mut [0; 16]));
     }
 
     #[tokio::test]
@@ -577,7 +582,7 @@ mod tests {
     ) {
         let db = dir.join("db.sqlite");
         let (database, pool) = crate::test_support::open_database(&db).await.unwrap();
-        let Election::Won(seat) = elect(&db, "127.0.0.1:0".parse().unwrap()).await.unwrap() else {
+        let Election::Won(seat) = elect(&db).await.unwrap() else {
             panic!("the host wins");
         };
         let (configs, receiver) = watch::channel(config);
@@ -674,5 +679,51 @@ mod tests {
         wait_for(async || !recorder.0.lock().unwrap().is_empty()).await;
         assert_eq!(*recorder.0.lock().unwrap(), ["1 due today"]);
         running.abort();
+    }
+
+    /// Two users' hosts, each on its own database in its own state
+    /// directory, both run, and a round asked of one runs only there.
+    #[tokio::test]
+    async fn hosts_of_two_users_each_run_the_rounds_asked_of_them() {
+        let mut config = AppConfig::default();
+        config.sync.enabled = true;
+        // Rounds run only when asked, within the test.
+        config.sync.interval_seconds = Some(3600);
+        let first_home = tempfile::tempdir().unwrap();
+        let second_home = tempfile::tempdir().unwrap();
+        let (first, _first_configs, _, _first_pool) = host(first_home.path(), config.clone()).await;
+        let (second, _second_configs, _, _second_pool) = host(second_home.path(), config).await;
+        let first_db = first.database.clone();
+        let second_db = second.database.clone();
+        let first_run = tokio::spawn(first.run(std::future::pending()));
+        let second_run = tokio::spawn(second.run(std::future::pending()));
+        for database in [&first_db, &second_db] {
+            wait_for(async || {
+                crate::host::host_state(database)
+                    .await
+                    .unwrap()
+                    .running()
+                    .is_some_and(|status| status.capabilities == [CAPABILITY_SYNC])
+            })
+            .await;
+        }
+
+        let before = second_db.host_status().await.unwrap().unwrap();
+        let request = crate::host::request_round(&first_db)
+            .await
+            .expect("the first host syncs");
+        assert!(crate::host::await_round(&first_db, request, Duration::from_secs(10)).await);
+        let after = second_db.host_status().await.unwrap().unwrap();
+        assert_eq!(
+            after.round_finished, before.round_finished,
+            "the second host was not woken"
+        );
+
+        let request = crate::host::request_round(&second_db)
+            .await
+            .expect("the second host syncs");
+        assert!(crate::host::await_round(&second_db, request, Duration::from_secs(10)).await);
+        first_run.abort();
+        second_run.abort();
     }
 }

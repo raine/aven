@@ -490,7 +490,7 @@ async fn dispatch_database(
                 resolve_command_workspace(&database, workspace.as_deref(), &routing).await?;
             let changed = cmd_related(&database, &workspace, args).await?;
             if changed {
-                daemon::wake_if_enabled(&config);
+                daemon::wake_if_enabled(&config, &db_path);
             }
             Ok(())
         }
@@ -607,7 +607,7 @@ async fn dispatch_database(
         }
     };
     if result.is_ok() && should_wake {
-        daemon::wake_if_enabled(&config);
+        daemon::wake_if_enabled(&config, &db_path);
     }
     result
 }

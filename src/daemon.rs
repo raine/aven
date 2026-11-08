@@ -1,6 +1,5 @@
 //! `aven daemon`: the background host that a service manager starts.
 use std::future::Future;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -39,7 +38,6 @@ pub struct DaemonRunArgs {
 /// Runs until stopped, idle while the config gives it nothing to do, so that a
 /// service manager that restarts it on exit never loops.
 pub async fn run(args: DaemonRunArgs) -> Result<()> {
-    let wake_addr = args.config.wake_addr()?;
     #[cfg(target_os = "macos")]
     if move_service_into_bundle().await {
         return Ok(());
@@ -51,15 +49,15 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         return Ok(());
     }
     let mut shutdown = std::pin::pin!(shutdown_signal());
-    let Some(seat) = take_seat(&args.db_path, wake_addr, &fingerprint, shutdown.as_mut()).await?
-    else {
+    let Some(seat) = take_seat(&args.db_path, &fingerprint, shutdown.as_mut()).await? else {
         return Ok(());
     };
     let database = Database::open(&args.db_path).await?;
     println!(
         "daemon db={} wake={} sync={} reminders={}",
         args.db_path.display(),
-        wake_addr,
+        seat.wake_path()
+            .map_or_else(|| "none".to_string(), |path| path.display().to_string()),
         args.config.automatic_sync_is_enabled(),
         args.config.reminders.enabled
     );
@@ -130,25 +128,23 @@ fn follow_config(
 /// should stop instead: on a shutdown signal or a replaced executable.
 async fn take_seat(
     db_path: &Path,
-    wake_addr: SocketAddr,
     fingerprint: &Fingerprint,
     mut shutdown: Pin<&mut impl Future<Output = ()>>,
 ) -> Result<Option<Seat>> {
-    let mut waiting = None;
+    let mut waiting = false;
     loop {
-        let (reason, retry) = match host::elect(db_path, wake_addr).await? {
+        match host::elect(db_path).await? {
             Election::Won(seat) => return Ok(Some(seat)),
-            Election::Taken => ("host-running", host::LOCK_RETRY),
-            Election::WakeAddressBusy(_) => ("wake-address-busy", host::OLD_DAEMON_RETRY),
-        };
-        if waiting != Some(reason) {
+            Election::Taken => {}
+        }
+        if !waiting {
             println!(
-                "daemon-waiting reason={reason} lock={} wake={wake_addr}",
+                "daemon-waiting reason=host-running lock={}",
                 host::lock_path(db_path).display()
             );
-            waiting = Some(reason);
+            waiting = true;
         }
-        let deadline = Instant::now() + retry;
+        let deadline = Instant::now() + host::LOCK_RETRY;
         while Instant::now() < deadline {
             tokio::select! {
                 () = shutdown.as_mut() => return Ok(None),
@@ -221,8 +217,7 @@ impl EmbeddedSync {
         host_config: watch::Receiver<AppConfig>,
         blob_dir: PathBuf,
     ) -> Result<Self> {
-        let wake_addr = config.wake_addr()?;
-        let (seat, client) = match host::elect(database.path(), wake_addr).await? {
+        let (seat, client) = match host::elect(database.path()).await? {
             Election::Won(seat) => (Some(seat), None),
             Election::Taken => {
                 let host = host::describe_host(&database).await;
@@ -231,12 +226,6 @@ impl EmbeddedSync {
                     Some(format!("sync-client reason=host-running host=\"{host}\"")),
                 )
             }
-            Election::WakeAddressBusy(_) => (
-                None,
-                Some(format!(
-                    "sync-client reason=wake-address-busy host=\"an older Aven daemon\" wake={wake_addr}"
-                )),
-            ),
         };
         Ok(Self {
             database,
@@ -246,7 +235,7 @@ impl EmbeddedSync {
             wake: Arc::new(Notify::new()),
             seat,
             client,
-            retry: host::OLD_DAEMON_RETRY,
+            retry: host::CLIENT_RETRY,
         })
     }
 
@@ -311,14 +300,13 @@ impl EmbeddedSync {
         retry: Duration,
         mut shutdown: Pin<&mut impl Future<Output = ()>>,
     ) -> Result<Option<Seat>> {
-        let wake_addr = config.wake_addr()?;
         let mut next_election = Instant::now() + retry;
         loop {
             tokio::select! {
                 () = shutdown.as_mut() => return Ok(None),
-                () = wake.notified() => wake_if_enabled(config),
+                () = wake.notified() => wake_if_enabled(config, database.path()),
                 () = tokio::time::sleep_until(next_election) => {
-                    if let Election::Won(seat) = host::elect(database.path(), wake_addr).await? {
+                    if let Election::Won(seat) = host::elect(database.path()).await? {
                         return Ok(Some(seat));
                     }
                     next_election = Instant::now() + retry;
@@ -396,7 +384,7 @@ mod tests {
         let other_host = File::create(host::lock_path(&db)).unwrap();
         other_host.try_lock().unwrap();
 
-        let config = aven_host::test_support::isolated_config();
+        let config = AppConfig::default();
         let host_config = watch::channel(config.clone()).1;
         let mut sync = EmbeddedSync::elect(database.clone(), config, host_config, blob_dir)
             .await

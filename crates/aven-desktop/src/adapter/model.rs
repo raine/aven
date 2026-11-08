@@ -452,6 +452,8 @@ pub struct BackgroundStatus {
     /// The intent and switches ask for the agent.
     pub wanted: bool,
     pub agent: AgentShown,
+    /// What a waiting agent waits for.
+    pub waiting_for: Option<String>,
     /// Unix seconds of the agent's last completed sync.
     pub last_sync: Option<i64>,
     /// Notifications from the last week that weren't shown because
@@ -466,7 +468,7 @@ impl BackgroundStatus {
     pub fn keeps_syncing(&self) -> bool {
         self.sync_when_quit
             && (!self.managed
-                || (self.wanted || self.agent == AgentShown::Running)
+                || (self.wanted || matches!(self.agent, AgentShown::Running | AgentShown::Waiting))
                     && self.agent != AgentShown::TurnedOff)
     }
 }
@@ -477,6 +479,9 @@ pub enum AgentShown {
     #[default]
     Unknown,
     Running,
+    /// It runs, but another process hosts the database and keeps it from
+    /// taking over when Aven quits.
+    Waiting,
     Off,
     /// The switches want it, but it isn't running.
     NotRunning,

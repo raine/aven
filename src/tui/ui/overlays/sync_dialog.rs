@@ -1594,7 +1594,7 @@ fn detail_lines(theme: &Theme, status: &TuiSyncStatus, width: usize) -> Vec<Line
         });
         lines.extend(wrapped_row(
             theme,
-            "Wake address",
+            "Wake socket",
             &status.daemon_wake.value,
             wake_style,
             width,

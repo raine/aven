@@ -92,7 +92,7 @@ fn details_reveal_internal_diagnostics() {
     let rendered = render_overlay_view(sync_overlay(sync_status(), true));
 
     assert!(rendered.contains("DETAILS"));
-    assert!(rendered.contains("Wake address"));
+    assert!(rendered.contains("Wake socket"));
     assert!(rendered.contains("Sync cursor"));
     assert!(rendered.contains("Local sequence"));
     assert!(rendered.contains("d summary"));
@@ -101,7 +101,7 @@ fn details_reveal_internal_diagnostics() {
 #[test]
 fn wake_failures_are_visible_without_expanding_details() {
     let mut status = sync_status();
-    status.daemon_wake = SyncStatusCheck::new(false, "invalid daemon wake address");
+    status.daemon_wake = SyncStatusCheck::new(false, "no socket path fits");
     let state = SyncDialogState::default();
     let lines = sync_dialog_lines_for_test(&sync_view(&state, status));
 
@@ -112,7 +112,8 @@ fn wake_failures_are_visible_without_expanding_details() {
     );
     assert!(lines.iter().any(|line| {
         line.spans.iter().any(|span| {
-            span.style.fg == Some(Theme::dark().warning) && span.content.contains("invalid")
+            span.style.fg == Some(Theme::dark().warning)
+                && span.content.contains("no socket path fits")
         })
     }));
     assert!(!lines.iter().any(|line| line.to_string() == "DETAILS"));
@@ -944,7 +945,7 @@ fn sync_status() -> TuiSyncStatus {
         set_up: true,
         phase: LocalPhase::SetUp,
         interval_seconds: 60,
-        daemon_wake: SyncStatusCheck::new(true, "127.0.0.1:3746"),
+        daemon_wake: SyncStatusCheck::new(true, "/data/aven.sqlite.host.sock"),
         sync_cursor: Some("42".to_string()),
         local_sequence: Some("45".to_string()),
         server: Some("https://sync.example.com".to_string()),

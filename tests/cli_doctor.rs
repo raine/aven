@@ -60,7 +60,6 @@ fn doctor_reports_workspace_resolution_failures() {
 fn doctor_reports_configured_paths_and_sync_settings() {
     let env = TestEnv::new();
     let db = env.db("configured-doctor.sqlite");
-    let wake_addr = env.free_loopback_addr();
     env.write_config(&format!(
         r#"
 local:
@@ -71,11 +70,11 @@ sync:
   interval_seconds: 45
 
 daemon:
-  wake_addr: "{}"
+  wake_addr: "127.0.0.1:47631"
 "#,
         db.display(),
-        wake_addr
     ));
+    let wake_socket = format!("{}.host.sock", db.display());
 
     let output = ok(env.aven_config(["doctor"]));
 
@@ -86,7 +85,7 @@ daemon:
             &db.display().to_string(),
             "enabled            yes",
             "45 seconds",
-            &wake_addr,
+            &wake_socket,
         ],
     );
 }
@@ -128,9 +127,9 @@ fn doctor_reports_disabled_sync_without_server_error() {
 }
 
 #[test]
-fn doctor_reports_invalid_daemon_wake_address() {
+fn doctor_accepts_and_ignores_an_invalid_old_daemon_wake_address() {
     let env = TestEnv::new();
-    let db = env.db("invalid-wake.sqlite");
+    let db = env.db("old-wake.sqlite");
     env.write_config(&format!(
         r#"
 local:
@@ -144,7 +143,9 @@ daemon:
 
     let output = ok(env.aven_config(["doctor"]));
 
-    contains_all(&output, &["!! daemon wake", "invalid daemon wake address"]);
+    assert!(!output.contains("!! daemon wake"), "{output}");
+    assert!(!output.contains("invalid"), "{output}");
+    contains_all(&output, &["daemon wake", "old-wake.sqlite.host.sock"]);
 }
 
 #[test]

@@ -3,27 +3,24 @@
 //! Desktop or `aven mcp --sync`.
 //!
 //! A host holds an exclusive lock on `<db>.host.lock` for its whole life and
-//! then listens on the wake address. The lock decides who hosts; the wake
-//! address also keeps out a daemon from before the lock existed, which only
-//! knows the address. Only the lock holder writes the database's host status
-//! row, so a stale heartbeat while the lock is held means the host stopped
+//! listens on the database's [`wake`] socket. The lock alone decides who
+//! hosts. Only the lock holder writes the database's host status row, so a stale heartbeat while the lock is held means the host stopped
 //! responding, and is reported rather than taken over. The host stamps the
 //! lock file's modification time when it takes the lock, which tells a host
 //! that is still starting from one that never recorded its status.
 use std::fs::{File, OpenOptions, TryLockError};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use aven_core::db::Database;
 use aven_core::local_state::HostStatus;
-use tokio::net::UdpSocket;
 use tokio::time::Instant;
 use tracing::warn;
 
 pub mod executable;
 pub mod runtime;
+pub mod wake;
 
 pub use runtime::{Delivery, Exit, Host, HostEvent, RoundReport, watch_config_file};
 
@@ -32,9 +29,9 @@ pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 /// A heartbeat older than this, while the lock is held, is a fault, and so
 /// is a host that took the lock this long ago without recording its status.
 pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
-/// How often a process that wants to host tries again while an older daemon
-/// holds the wake address.
-pub const OLD_DAEMON_RETRY: Duration = Duration::from_secs(30);
+/// How often Aven Desktop and `aven mcp --sync` try again to host while
+/// another process holds the lock.
+pub const CLIENT_RETRY: Duration = Duration::from_secs(30);
 /// How often the daemon tries again while another host holds the lock.
 pub const LOCK_RETRY: Duration = Duration::from_secs(5);
 /// How long a caller waits for the round it asked a host for.
@@ -73,16 +70,18 @@ pub fn lock_path(db: &Path) -> PathBuf {
     db.with_file_name(name)
 }
 
-/// The host lock and wake socket of a host. Dropping it gives up both.
+/// The host lock and wake socket of a host. Dropping it gives up both, the
+/// socket first.
 #[derive(Debug)]
 pub struct Seat {
+    pub(crate) wake: wake::Listener,
     _lock: File,
-    pub(crate) socket: UdpSocket,
 }
 
 impl Seat {
-    pub fn wake_addr(&self) -> Result<SocketAddr> {
-        Ok(self.socket.local_addr()?)
+    /// Where the host listens for wakes, if it could bind a socket.
+    pub fn wake_path(&self) -> Option<&Path> {
+        self.wake.path()
     }
 }
 
@@ -91,15 +90,11 @@ pub enum Election {
     Won(Seat),
     /// Another host holds the lock.
     Taken,
-    /// This process had the lock, but something else listens on the wake
-    /// address: a daemon from before the lock, or a host of another database
-    /// configured with the same address. The lock was given up again.
-    WakeAddressBusy(std::io::Error),
 }
 
 /// Tries once to become the host of the database at `db`. Takes the lock
-/// first, so of several processes at most one binds the wake address.
-pub async fn elect(db: &Path, wake_addr: SocketAddr) -> Result<Election> {
+/// first, so of several processes at most one binds the wake socket.
+pub async fn elect(db: &Path) -> Result<Election> {
     let path = lock_path(db);
     let lock = OpenOptions::new()
         .create(true)
@@ -121,18 +116,13 @@ pub async fn elect(db: &Path, wake_addr: SocketAddr) -> Result<Election> {
             }
         }
     }
-    match UdpSocket::bind(wake_addr).await {
-        Ok(socket) => {
-            if let Err(error) = lock.set_modified(SystemTime::now()) {
-                warn!(%error, "could not stamp the host lock");
-            }
-            Ok(Election::Won(Seat {
-                _lock: lock,
-                socket,
-            }))
-        }
-        Err(error) => Ok(Election::WakeAddressBusy(error)),
+    if let Err(error) = lock.set_modified(SystemTime::now()) {
+        warn!(%error, "could not stamp the host lock");
     }
+    Ok(Election::Won(Seat {
+        wake: wake::Listener::bind(db),
+        _lock: lock,
+    }))
 }
 
 /// How a message names the program in a host status row's `role`.
@@ -240,7 +230,7 @@ pub struct RoundRequest {
 
 /// Wakes the running host for a round that bypasses its failure backoff.
 /// Returns `None` when no responsive host syncs this database.
-pub async fn request_round(database: &Database, wake_addr: SocketAddr) -> Option<RoundRequest> {
+pub async fn request_round(database: &Database) -> Option<RoundRequest> {
     let state = match host_state(database).await {
         Ok(state) => state,
         Err(error) => {
@@ -259,7 +249,7 @@ pub async fn request_round(database: &Database, wake_addr: SocketAddr) -> Option
     let request = RoundRequest {
         after: status.round_started,
     };
-    crate::daemon::send_wake(wake_addr, b"r");
+    wake::send(database.path(), wake::RETRY);
     Some(request)
 }
 
@@ -286,11 +276,6 @@ pub async fn await_round(database: &Database, request: RoundRequest, wait: Durat
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn loopback() -> SocketAddr {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket.local_addr().unwrap()
-    }
 
     fn status(heartbeat_at: i64) -> HostStatus {
         HostStatus {
@@ -326,7 +311,7 @@ mod tests {
             drop(probe);
         });
 
-        let election = elect(&db, loopback()).await.unwrap();
+        let election = elect(&db).await.unwrap();
         release.join().unwrap();
         assert!(matches!(election, Election::Won(_)), "{election:?}");
     }
@@ -335,34 +320,61 @@ mod tests {
     async fn of_two_hosts_only_the_first_wins_until_it_stops() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("db.sqlite");
-        let addr = loopback();
         assert!(!lock_is_held(&db).unwrap());
 
-        let Election::Won(seat) = elect(&db, addr).await.unwrap() else {
+        let Election::Won(seat) = elect(&db).await.unwrap() else {
             panic!("the first host wins");
         };
-        assert_eq!(seat.wake_addr().unwrap(), addr);
+        assert_eq!(seat.wake_path(), Some(wake::paths(&db)[0].as_path()));
         assert!(lock_is_held(&db).unwrap());
-        assert!(matches!(elect(&db, addr).await.unwrap(), Election::Taken));
+        assert!(matches!(elect(&db).await.unwrap(), Election::Taken));
 
         drop(seat);
         assert!(!lock_is_held(&db).unwrap());
-        assert!(matches!(elect(&db, addr).await.unwrap(), Election::Won(_)));
+        assert!(matches!(elect(&db).await.unwrap(), Election::Won(_)));
     }
 
+    /// Two users each have their own database in their own state directory,
+    /// so each one's host wins its own election and hears only its own wakes.
     #[tokio::test]
-    async fn an_old_daemon_on_the_wake_address_keeps_the_lock_free() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("db.sqlite");
-        let old_daemon = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let addr = old_daemon.local_addr().unwrap();
+    async fn hosts_of_two_users_host_and_wake_independently() {
+        let first_home = tempfile::tempdir().unwrap();
+        let second_home = tempfile::tempdir().unwrap();
+        let first_db = first_home.path().join("aven.sqlite");
+        let second_db = second_home.path().join("aven.sqlite");
 
-        let election = elect(&db, addr).await.unwrap();
-        assert!(matches!(election, Election::WakeAddressBusy(_)));
-        assert!(!lock_is_held(&db).unwrap());
+        let Election::Won(first) = elect(&first_db).await.unwrap() else {
+            panic!("the first user's host wins");
+        };
+        let Election::Won(second) = elect(&second_db).await.unwrap() else {
+            panic!("the second user's host wins too");
+        };
+        assert_ne!(first.wake_path(), second.wake_path());
+        assert!(first.wake_path().unwrap().starts_with(first_home.path()));
+        assert!(second.wake_path().unwrap().starts_with(second_home.path()));
 
-        drop(old_daemon);
-        assert!(matches!(elect(&db, addr).await.unwrap(), Election::Won(_)));
+        let mut buf = [0; 4];
+        assert!(wake::send(&second_db, wake::RETRY));
+        let len = tokio::time::timeout(Duration::from_secs(5), second.wake.recv(&mut buf))
+            .await
+            .expect("the second host hears its wake")
+            .unwrap();
+        assert_eq!(&buf[..len], wake::RETRY);
+        assert!(
+            first.wake.try_recv(&mut buf).is_err(),
+            "nothing for the first"
+        );
+
+        assert!(wake::send(&first_db, wake::CHANGED));
+        let len = tokio::time::timeout(Duration::from_secs(5), first.wake.recv(&mut buf))
+            .await
+            .expect("the first host hears its wake")
+            .unwrap();
+        assert_eq!(&buf[..len], wake::CHANGED);
+        assert!(
+            second.wake.try_recv(&mut buf).is_err(),
+            "nothing for the second"
+        );
     }
 
     #[test]
@@ -423,7 +435,7 @@ mod tests {
             HostState::Stopped(None)
         );
 
-        let Election::Won(seat) = elect(&db, loopback()).await.unwrap() else {
+        let Election::Won(seat) = elect(&db).await.unwrap() else {
             panic!("the host wins");
         };
         assert_eq!(host_state(&database).await.unwrap(), HostState::Starting);
@@ -449,10 +461,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("db.sqlite");
         let database = Database::open(&db).await.unwrap();
-        let Election::Won(seat) = elect(&db, loopback()).await.unwrap() else {
+        let Election::Won(seat) = elect(&db).await.unwrap() else {
             panic!("the host wins");
         };
-        let addr = seat.wake_addr().unwrap();
         let now = chrono::Utc::now().timestamp();
         database
             .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_SYNC], now)
@@ -461,10 +472,10 @@ mod tests {
         // A round in progress when the request arrives does not count.
         database.record_host_round_started(7, 4).await.unwrap();
 
-        let request = request_round(&database, addr).await.unwrap();
-        let mut wake = [0; 4];
-        let (len, _) = seat.socket.recv_from(&mut wake).await.unwrap();
-        assert_eq!(&wake[..len], b"r");
+        let request = request_round(&database).await.unwrap();
+        let mut buf = [0; 4];
+        let len = seat.wake.recv(&mut buf).await.unwrap();
+        assert_eq!(&buf[..len], wake::RETRY);
         database.record_host_round_finished(7, 4).await.unwrap();
         assert!(!await_round(&database, request, Duration::from_millis(200)).await);
 
@@ -485,10 +496,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("db.sqlite");
         let database = Database::open(&db).await.unwrap();
-        let addr = loopback();
-        assert_eq!(request_round(&database, addr).await, None);
+        assert_eq!(request_round(&database).await, None);
 
-        let Election::Won(_seat) = elect(&db, addr).await.unwrap() else {
+        let Election::Won(_seat) = elect(&db).await.unwrap() else {
             panic!("the host wins");
         };
         let now = chrono::Utc::now().timestamp();
@@ -496,6 +506,6 @@ mod tests {
             .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_REMINDERS], now)
             .await
             .unwrap();
-        assert_eq!(request_round(&database, addr).await, None);
+        assert_eq!(request_round(&database).await, None);
     }
 }
