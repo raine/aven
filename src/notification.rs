@@ -1,5 +1,6 @@
 //! Notifications from the command line and the daemon: which way they reach
 //! the platform, and the CLI's own "Added" message.
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -59,7 +60,7 @@ async fn queue_and_deliver(database: &Database, notification: QueuedNotification
     database
         .queue_notifications(&[], &[notification], notify::unix_now())
         .await?;
-    notify::deliver_pending(database, &delivery()).await?;
+    notify::deliver_pending(database, &delivery(database.path())).await?;
     Ok(())
 }
 
@@ -103,13 +104,24 @@ fn process_is_running(pid: u32) -> bool {
     }
 }
 
-/// How this process reaches the platform's notification service.
+/// How this process reaches the platform's notification service, for the
+/// database at `database`.
 ///
 /// On macOS, an executable in Aven's bundle delivers through a short-lived
 /// child of itself, so no long-lived process takes clicks from the app.
 /// Anything else posts with the older notification API under Terminal's
 /// identity, which a bundle can't use once Aven has used the newer one.
-pub(crate) fn delivery() -> Arc<dyn Deliver> {
+///
+/// On Linux, a build with the desktop app opens it at what a clicked
+/// notification is about, for as long as this process runs to hear the
+/// click.
+pub(crate) fn delivery(database: &Path) -> Arc<dyn Deliver> {
+    #[cfg(all(target_os = "linux", feature = "desktop"))]
+    if let Some(opening) = desktop::opening_app(database) {
+        return opening;
+    }
+    #[cfg(not(all(target_os = "linux", feature = "desktop")))]
+    let _ = database;
     permission_child().unwrap_or_else(|| Arc::new(Unbundled))
 }
 
@@ -249,6 +261,61 @@ pub(crate) fn serve_child() -> Result<()> {
     let output = notify::child::serve(&input, &Unbundled)?;
     std::io::stdout().write_all(&output)?;
     Ok(())
+}
+
+/// Clicks that open Aven Desktop on Linux.
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+mod desktop {
+    use std::os::unix::process::CommandExt as _;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::sync::Arc;
+
+    use aven_host::notify::Deliver;
+    use aven_host::notify::freedesktop::{Click, Freedesktop};
+
+    use crate::desktop_launch::{OPEN_NOTIFICATION, has_display};
+
+    /// Posts through the session bus, and opens the app for a click.
+    pub(super) fn opening_app(database: &Path) -> Option<Arc<dyn Deliver>> {
+        let executable = std::env::current_exe().ok()?;
+        let database = database.to_path_buf();
+        Some(Arc::new(Freedesktop::new("Aven", move |click| {
+            open(&executable, &database, click);
+        })))
+    }
+
+    /// Starts the app at what `click` is about, with the click's token so
+    /// its window can take focus. An app already open on the database takes
+    /// the click over from it.
+    fn open(executable: &Path, database: &Path, click: Click) {
+        if !has_display() {
+            tracing::warn!("a notification was clicked, but there is no display to open Aven on");
+            return;
+        }
+        let mut command = Command::new(executable);
+        command
+            .args(OPEN_NOTIFICATION)
+            .arg(database)
+            .arg(&click.tag)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        if let Some(token) = &click.activation_token {
+            command
+                .env("XDG_ACTIVATION_TOKEN", token)
+                .env("DESKTOP_STARTUP_ID", token);
+        }
+        match command.spawn() {
+            Ok(mut child) => {
+                std::thread::spawn(move || child.wait());
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not open Aven for a clicked notification");
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]

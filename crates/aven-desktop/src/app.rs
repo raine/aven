@@ -128,10 +128,37 @@ pub(crate) fn show_window(cx: &mut App) {
 }
 
 /// Brings the window to the front for a later launch or a click, with the
-/// token the window system gave that launch or click.
+/// token the window system gave that launch or click, and opens what a
+/// clicked notification is about.
 #[cfg(target_os = "linux")]
-fn come_forward(activation: &platform::Activation, cx: &mut App) {
-    with_root(cx, |_, window, _| platform::activate(window, activation));
+fn come_forward(forward: platform::instance::Forward, cx: &mut App) {
+    with_root(cx, |_, window, _| {
+        platform::activate(window, &forward.activation)
+    });
+    if let Some(opens) = forward.notification.as_deref().and_then(notified) {
+        open_notified(opens, cx);
+    }
+}
+
+/// Follows clicks on the notifications this app posted.
+#[cfg(target_os = "linux")]
+fn follow_clicks(cx: &mut App) {
+    let Some(mut clicks) = platform::notification_clicks() else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        while let Some(click) = clicks.recv().await {
+            let forward = platform::instance::Forward {
+                activation: platform::Activation {
+                    token: click.activation_token.clone(),
+                    startup_id: click.activation_token,
+                },
+                notification: Some(click.tag),
+            };
+            cx.update(|cx| come_forward(forward, cx));
+        }
+    })
+    .detach();
 }
 
 /// Actions that need no window, so they work with it closed. An action from an
@@ -211,15 +238,38 @@ fn window_placement(saved: Option<&SavedWindow>, cx: &App) -> (WindowBounds, Opt
 
 /// Runs on the owner's own configuration and database, as the CLI resolves them.
 pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
+    start(version, updates, None)
+}
+
+/// Opens the app on `database` at what the clicked notification `tag` is
+/// about, or hands the click to the app already open there.
+#[cfg(target_os = "linux")]
+pub fn run_clicked(version: String, database: PathBuf, tag: String) -> Result<()> {
+    start(version, None, Some((database, tag)))
+}
+
+/// Runs the app, at a clicked notification's tag on its database if given.
+fn start(
+    version: String,
+    updates: Option<Arc<dyn Updates>>,
+    clicked: Option<(PathBuf, String)>,
+) -> Result<()> {
     crate::startup::mark("desktop-entry");
     let config = AppConfig::load()?;
     let automatic_checks = config.update.automatic_checks;
-    let database = resolve_db_path(None, &config)?;
+    let (database, clicked) = match clicked {
+        Some((database, tag)) => (database, Some(tag)),
+        None => (resolve_db_path(None, &config)?, None),
+    };
     // macOS opens one app per bundle by itself.
     #[cfg(target_os = "linux")]
-    let Some(mut claim) =
-        platform::instance::claim(&database, &platform::Activation::from_environment())
-    else {
+    let Some(mut claim) = platform::instance::claim(
+        &database,
+        &platform::instance::Forward {
+            activation: platform::Activation::from_environment(),
+            notification: clicked.clone(),
+        },
+    ) else {
         return Ok(());
     };
     let prefs = Prefs::path(&database);
@@ -261,15 +311,21 @@ pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
         crate::startup::mark("app-callback");
         prepare_app(cx);
         crate::updates::install(version, updates, automatic_checks, cx);
+        if let Some(opens) = clicked.as_deref().and_then(notified) {
+            cx.global_mut::<NotifiedTask>().0 = Some(opens);
+        }
         open_main(session, replies, saved, prefs, cx);
         #[cfg(target_os = "linux")]
-        if let Some(mut raised) = raised {
-            cx.spawn(async move |cx| {
-                while let Some(activation) = raised.recv().await {
-                    cx.update(|cx| come_forward(&activation, cx));
-                }
-            })
-            .detach();
+        {
+            follow_clicks(cx);
+            if let Some(mut raised) = raised {
+                cx.spawn(async move |cx| {
+                    while let Some(forward) = raised.recv().await {
+                        cx.update(|cx| come_forward(forward, cx));
+                    }
+                })
+                .detach();
+            }
         }
     });
     Ok(())

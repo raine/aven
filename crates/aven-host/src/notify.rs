@@ -21,6 +21,8 @@ use aven_core::notification_outbox::{OutboxRow, OutboxState, QueuedNotification}
 use serde::{Deserialize, Serialize};
 
 pub mod child;
+#[cfg(target_os = "linux")]
+pub mod freedesktop;
 #[cfg(target_os = "macos")]
 pub mod un;
 
