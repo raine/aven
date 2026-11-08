@@ -718,8 +718,12 @@ impl Root {
     }
 
     /// Takes the window off screen with everything in it left running. The Dock
-    /// icon and Show Aven bring it back.
+    /// icon and Show Aven bring it back. Linux has neither, so there closing
+    /// the window quits.
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg!(target_os = "linux") {
+            return self.ask_quit(window, cx);
+        }
         self.save_state(window, cx);
         // A full screen window owns its space, so ordering it out leaves that blank.
         if window.is_fullscreen() {

@@ -205,6 +205,11 @@ pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
     let config = AppConfig::load()?;
     let automatic_checks = config.update.automatic_checks;
     let database = resolve_db_path(None, &config)?;
+    // macOS opens one app per bundle by itself.
+    #[cfg(target_os = "linux")]
+    let Some(mut claim) = platform::instance::claim(&database) else {
+        return Ok(());
+    };
     let prefs = Prefs::path(&database);
     let runtime = tokio::runtime::Runtime::new()?;
     let launch = Launch {
@@ -237,11 +242,23 @@ pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
     let (session, replies) = finish_store()?;
     crate::startup::mark("store-ready");
     app.on_reopen(show_window);
+    // The claim itself stays here, held until the app quits.
+    #[cfg(target_os = "linux")]
+    let raised = claim.raised.take();
     app.run(move |cx: &mut App| {
         crate::startup::mark("app-callback");
         prepare_app(cx);
         crate::updates::install(version, updates, automatic_checks, cx);
         open_main(session, replies, saved, prefs, cx);
+        #[cfg(target_os = "linux")]
+        if let Some(mut raised) = raised {
+            cx.spawn(async move |cx| {
+                while raised.recv().await.is_some() {
+                    cx.update(show_window);
+                }
+            })
+            .detach();
+        }
     });
     Ok(())
 }
