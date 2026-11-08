@@ -104,17 +104,14 @@ pub(crate) async fn check_for_update(
     save_cache(&cache);
     let etag = cache.release.as_ref().and(cache.etag.as_deref());
     match fetch_latest(client, etag, release_channel()).await {
-        Ok(FetchResult::NotModified { etag }) => {
-            cache.etag = etag;
-            cache.last_success_at = Some(now);
-            cache.next_attempt_after = Some(now.saturating_add(SUCCESS_INTERVAL));
-            cache.failure_count = 0;
-            save_cache(&cache);
-            outcome_from_cache(&cache, false)
-        }
-        Ok(FetchResult::Release { release, etag }) => {
-            cache.release = Some(release);
-            cache.etag = etag;
+        Ok(fetched) => {
+            cache.etag = match fetched {
+                FetchResult::NotModified { etag } => etag,
+                FetchResult::Release { release, etag } => {
+                    cache.release = Some(release);
+                    etag
+                }
+            };
             cache.last_success_at = Some(now);
             cache.next_attempt_after = Some(now.saturating_add(SUCCESS_INTERVAL));
             cache.failure_count = 0;
@@ -153,9 +150,6 @@ fn failure_delay(failure_count: u32) -> u64 {
 }
 
 fn check_due_at(cache: &UpdateCache, now: u64) -> bool {
-    if cache.schema != CACHE_SCHEMA {
-        return true;
-    }
     !matches!(
         cache.next_attempt_after,
         Some(next) if next >= now && next.saturating_sub(now) <= SUCCESS_INTERVAL
