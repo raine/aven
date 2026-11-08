@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::eligibility::release_channel;
-use super::release::{FetchResult, ReleaseChannel, fetch_latest};
+use super::release::{FetchResult, ReleaseChannel, ensure_published, fetch_latest};
 use super::{CheckOutcome, Release, current_version};
 
 const CACHE_SCHEMA: u32 = 3;
@@ -94,6 +94,7 @@ pub(crate) async fn check_for_update(
     client: &reqwest::Client,
     force: bool,
 ) -> Result<CheckOutcome> {
+    ensure_published(release_channel())?;
     let mut cache = load_cache();
     let now = now_secs();
     if !force && !check_due_at(&cache, now) {

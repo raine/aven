@@ -191,6 +191,12 @@ pub(crate) enum ReleaseChannel {
     Desktop,
 }
 
+/// Fails, before any request, where `channel` publishes nothing for this
+/// platform.
+pub(super) fn ensure_published(channel: ReleaseChannel) -> Result<()> {
+    channel_app_archive_name(channel).map(drop)
+}
+
 /// The archive holding only `Aven.app` for `channel` on this platform, or
 /// `None` where the terminal channel ships only the bare binary archive.
 fn channel_app_archive_name(channel: ReleaseChannel) -> Result<Option<String>> {
@@ -199,7 +205,10 @@ fn channel_app_archive_name(channel: ReleaseChannel) -> Result<Option<String>> {
     match channel {
         ReleaseChannel::Terminal => Ok(macos.then(|| format!("aven-{suffix}-app.tar.gz"))),
         ReleaseChannel::Desktop if macos => Ok(Some(format!("aven-desktop-{suffix}-app.tar.gz"))),
-        ReleaseChannel::Desktop => bail!("Aven Desktop releases do not support {suffix}"),
+        ReleaseChannel::Desktop => bail!(
+            "Aven Desktop has no Linux releases, so this desktop build can't update itself. \
+             Rebuild it from a newer source checkout."
+        ),
     }
 }
 
@@ -336,10 +345,11 @@ mod tests {
             );
         } else {
             assert_eq!(terminal, None);
-            assert!(
-                desktop.is_err(),
-                "the desktop channel must not fall back to terminal archives"
-            );
+            let error =
+                desktop.expect_err("the desktop channel must not fall back to terminal archives");
+            assert!(error.to_string().contains("no Linux releases"), "{error}");
+            assert!(ensure_published(ReleaseChannel::Desktop).is_err());
+            assert!(ensure_published(ReleaseChannel::Terminal).is_ok());
         }
     }
 
