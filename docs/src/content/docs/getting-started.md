@@ -39,7 +39,7 @@ Tasks live in a local SQLite database.
 
 The TUI is the human interface for aven. It opens to the queue, which highlights tasks that need attention.
 
-Use [Configuration](/configuration/) later when you want a specific database path, sync server, workspace routes, or project path mappings. Use `aven doctor` when config or database routing is unclear.
+Use [Configuration](/configuration/) later when you want a specific database path, workspace routes, or project path mappings. Use `aven doctor` when config or database routing is unclear.
 
 ## Explore the demo
 

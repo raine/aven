@@ -270,18 +270,10 @@ sync:
 
 `sync.enabled` is the daemon's switch; Aven Desktop syncs whenever it is open,
 and shows **Keep syncing after Aven quits** on when `sync.enabled` is set and
-its background agent runs. The top-level `background` key records whether Aven
-Desktop runs the background agent, set by its Settings and by
-`aven daemon install` (`on`) or `aven daemon uninstall` (`off`). Without it,
-Aven Desktop leaves any installed daemon as it is. See
+its background agent runs. The top-level `background` key, `on` or `off`,
+records whether Aven Desktop runs that agent; without it, Aven Desktop leaves
+any installed daemon as it is. See
 [Aven Desktop in the background](/notifications/#aven-desktop-in-the-background).
-
-A local change wakes the process that syncs the database through a socket
-beside the database, `<database>.host.sock`, next to its host lock. Each
-database has its own, and only the user who owns the database's folder can
-use it, so several users on one Mac or Linux machine each sync on their own.
-When that path is too long for a socket, the socket goes in your own
-temporary folder instead. There is nothing to configure.
 
 Device invitation QR codes use Unicode sextants, which make them about half as
 wide and two thirds as tall, in terminals known to draw them: Alacritty, kitty,
@@ -296,7 +288,7 @@ sync:
 
 ## Automatic update checks
 
-The TUI checks for releases in the background and shows an update badge when a release is available. Set `automatic_checks` to `false` to disable these automatic checks and notifications:
+The TUI and Aven Desktop check for releases in the background, and the TUI shows an update badge when a release is available. Set `automatic_checks` to `false` to disable these automatic checks and notifications:
 
 ```yaml
 update:
