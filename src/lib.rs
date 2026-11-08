@@ -1,4 +1,4 @@
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "desktop")))]
 use std::process::ExitCode;
 
 use anyhow::Result;
@@ -15,6 +15,8 @@ mod commands;
 use aven_host::config;
 use aven_host::config_edit;
 mod daemon;
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+mod desktop_launch;
 use aven_host::due;
 pub mod encrypted_tail_http;
 mod http_admission;
@@ -84,15 +86,27 @@ pub fn run_bundle_launch() -> Option<ExitCode> {
     }
 }
 
-#[cfg(all(target_os = "macos", feature = "desktop"))]
+/// Runs a desktop launcher's start of the app to its end, or returns `None` for
+/// a command. Comes before any async runtime, because the app needs the main
+/// thread.
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+pub fn run_desktop_launch() -> Option<ExitCode> {
+    desktop_launch::opens().then(run_app)
+}
+
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "desktop"))]
 fn run_app() -> ExitCode {
     let started = logging::init(logging::LogMode::Tui).and_then(|()| {
+        #[cfg(target_os = "macos")]
         let updates = update::DesktopUpdater::new()
             .inspect_err(|error| {
                 tracing::warn!(error = %format_args!("{error:#}"), "the app cannot update itself")
             })
             .ok()
             .map(|updater| std::sync::Arc::new(updater) as _);
+        // Linux Desktop has no release of its own to update to.
+        #[cfg(target_os = "linux")]
+        let updates = None;
         aven_desktop::launch(updates)
     });
     match started {

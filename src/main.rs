@@ -5,6 +5,10 @@ fn main() -> ExitCode {
     if let Some(status) = aven::run_bundle_launch() {
         return status;
     }
+    #[cfg(all(target_os = "linux", feature = "desktop"))]
+    if let Some(status) = aven::run_desktop_launch() {
+        return status;
+    }
     run_command()
 }
 

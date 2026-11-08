@@ -27,7 +27,10 @@ pub(crate) fn release_channel() -> ReleaseChannel {
             Ok(canonical) => channel_for(
                 &canonical,
                 dirs::home_dir().as_deref(),
-                cfg!(all(target_os = "macos", feature = "desktop")),
+                cfg!(all(
+                    any(target_os = "macos", target_os = "linux"),
+                    feature = "desktop"
+                )),
             ),
             Err(_) => ReleaseChannel::Terminal,
         }
@@ -38,9 +41,20 @@ pub(crate) fn release_channel() -> ReleaseChannel {
 /// one of the terminal channel's bundles: the install script's bundle under
 /// `~/.local/share/aven`, or a Homebrew formula's in its Cellar. Older terminal
 /// releases were desktop builds too, so the build alone does not decide it.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn channel_for(_: &Path, _: Option<&Path>, _: bool) -> ReleaseChannel {
     ReleaseChannel::Terminal
+}
+
+/// A Linux desktop build is Desktop wherever it runs, so it never updates to a
+/// terminal-only release.
+#[cfg(target_os = "linux")]
+fn channel_for(_: &Path, _: Option<&Path>, desktop_build: bool) -> ReleaseChannel {
+    if desktop_build {
+        ReleaseChannel::Desktop
+    } else {
+        ReleaseChannel::Terminal
+    }
 }
 
 #[cfg(target_os = "macos")]
