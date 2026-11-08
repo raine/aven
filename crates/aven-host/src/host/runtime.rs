@@ -36,14 +36,8 @@ const WAKE_SOCKET_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 #[derive(Debug, PartialEq, Eq)]
 pub enum Exit {
     Shutdown,
-    /// The executable it runs was replaced at this path.
-    ExecutableChanged(PathBuf),
-}
-
-/// What a host's owner may want to show.
-#[derive(Debug)]
-pub enum HostEvent {
-    Round(RoundReport),
+    /// The executable it runs was replaced.
+    ExecutableChanged,
 }
 
 /// Who delivers the notifications a host queues.
@@ -75,9 +69,9 @@ pub struct Host {
     pub blob_dir: PathBuf,
     pub sync: DaemonSync,
     pub delivery: Delivery,
-    /// Hears what the host did. Called on the host's task, so it must not
+    /// Hears how each round ended. Called on the host's task, so it must not
     /// block.
-    pub events: Box<dyn FnMut(&HostEvent) + Send>,
+    pub rounds: Box<dyn FnMut(&RoundReport) + Send>,
     /// Notifying this requests a round. A notification sent during a round is
     /// kept and starts the next one.
     pub wake: Arc<Notify>,
@@ -133,7 +127,7 @@ impl Host {
             blob_dir,
             mut sync,
             delivery,
-            mut events,
+            mut rounds,
             wake,
             debounce,
             executable,
@@ -219,7 +213,7 @@ impl Host {
                     if let Some(fingerprint) = &executable
                         && fingerprint.changed()?
                     {
-                        return Ok(Exit::ExecutableChanged(fingerprint.path.clone()));
+                        return Ok(Exit::ExecutableChanged);
                     }
                     next_executable_check = Instant::now() + executable::CHECK_INTERVAL;
                 }
@@ -267,7 +261,7 @@ impl Host {
                     {
                         warn!(%error, "could not record the host round");
                     }
-                    events(&HostEvent::Round(report));
+                    rounds(&report);
                 }
             }
         }
@@ -596,7 +590,7 @@ mod tests {
             blob_dir: dir.join("blobs"),
             sync: DaemonSync::default(),
             delivery: Delivery::Here(recorder.clone()),
-            events: Box::new(|_| {}),
+            rounds: Box::new(|_| {}),
             wake: Arc::new(Notify::new()),
             debounce: Duration::ZERO,
             executable: None,
