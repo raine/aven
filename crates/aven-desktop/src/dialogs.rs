@@ -1505,12 +1505,48 @@ impl Root {
         let has_header = content.len() > 1;
         let mut content = content.into_iter();
         let header = has_header.then(|| content.next()).flatten();
+        let scroll = layer.scroll.clone();
+        let bar = t.bar;
         let body = div()
-            .id("dialog-body")
+            .relative()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&layer.scroll)
-            .child(div().children(content));
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("dialog-body")
+                    .min_h_0()
+                    .pr(px(8.))
+                    .overflow_y_scroll()
+                    .track_scroll(&layer.scroll)
+                    .child(div().children(content)),
+            )
+            .child(
+                gpui::canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        if let Some((top, height)) = dialog_scroll_thumb(
+                            bounds.size.height,
+                            scroll.bounds().size.height,
+                            scroll.max_offset().y,
+                            -scroll.offset().y,
+                        ) {
+                            window.paint_quad(gpui::fill(
+                                gpui::Bounds::new(
+                                    gpui::point(bounds.origin.x, bounds.origin.y + top),
+                                    gpui::size(bounds.size.width, height),
+                                ),
+                                bar,
+                            ));
+                        }
+                    },
+                )
+                .absolute()
+                .right(px(3.))
+                .top(px(4.))
+                .bottom(px(4.))
+                .w(px(4.)),
+            );
         Some(
             div()
                 .id("dialog-backdrop")
@@ -1575,6 +1611,24 @@ fn relative_third() -> gpui::Length {
     gpui::relative(1. / 3.).into()
 }
 
+/// Thumb geometry is calculated at paint time so wheel scrolling and resizing
+/// update the indicator without waiting for another view render.
+fn dialog_scroll_thumb(
+    track: gpui::Pixels,
+    viewport: gpui::Pixels,
+    max: gpui::Pixels,
+    offset: gpui::Pixels,
+) -> Option<(gpui::Pixels, gpui::Pixels)> {
+    if max <= px(0.) || track <= px(0.) || viewport <= px(0.) {
+        return None;
+    }
+    let height = (track * (viewport / (viewport + max)))
+        .max(px(24.))
+        .min(track);
+    let top = (track - height) * (offset / max).clamp(0., 1.);
+    Some((top, height))
+}
+
 fn help_scroll_offset(
     current: gpui::Pixels,
     max: gpui::Pixels,
@@ -1590,6 +1644,34 @@ fn help_scroll_offset(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialog_indicator_tracks_overflow_and_clamps_to_its_track() {
+        assert_eq!(
+            dialog_scroll_thumb(px(100.), px(100.), px(0.), px(0.)),
+            None
+        );
+        assert_eq!(
+            dialog_scroll_thumb(px(0.), px(100.), px(100.), px(0.)),
+            None
+        );
+        assert_eq!(
+            dialog_scroll_thumb(px(100.), px(100.), px(100.), px(0.)),
+            Some((px(0.), px(50.)))
+        );
+        assert_eq!(
+            dialog_scroll_thumb(px(100.), px(100.), px(100.), px(50.)),
+            Some((px(25.), px(50.)))
+        );
+        assert_eq!(
+            dialog_scroll_thumb(px(100.), px(100.), px(100.), px(200.)),
+            Some((px(50.), px(50.)))
+        );
+        assert_eq!(
+            dialog_scroll_thumb(px(10.), px(10.), px(1000.), px(1000.)),
+            Some((px(0.), px(10.)))
+        );
+    }
 
     #[test]
     fn help_scrolls_by_rows_or_pages_with_one_row_of_overlap() {
