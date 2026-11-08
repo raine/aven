@@ -24,7 +24,7 @@ use crate::sync::encrypted::{DaemonRound, DaemonSync, Outcome};
 use crate::sync::error_explanations::{self, ErrorAction, ErrorSurface};
 use crate::sync::scheduler::{ROUND_BUDGET, SyncScheduler};
 
-pub const ATTACHMENT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const ATTACHMENT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How often a host that delivers looks for notifications left waiting, such
 /// as those queued by a command or while another process delivered.

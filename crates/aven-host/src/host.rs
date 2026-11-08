@@ -30,7 +30,7 @@ pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 /// is a host that took the lock this long ago without recording its status.
 /// A heartbeat's age leaves out time the system spent asleep, as its timer
 /// does; see [`awake_now`].
-pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
+const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
 /// How often Aven Desktop and `aven mcp --sync` try again to host while
 /// another process holds the lock.
 pub const CLIENT_RETRY: Duration = Duration::from_secs(30);

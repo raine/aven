@@ -125,7 +125,7 @@ fn quarantine_unapproved(_path: &Path) -> bool {
 
 /// The flags field of a `com.apple.quarantine` value such as
 /// `0181;6aee0191;Homebrew Cask;…`.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg(any(target_os = "macos", test))]
 fn quarantine_flags(value: &[u8]) -> Option<u32> {
     let value = std::str::from_utf8(value).ok()?;
     u32::from_str_radix(value.split(';').next()?, 16).ok()
