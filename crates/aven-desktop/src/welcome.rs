@@ -274,7 +274,7 @@ impl Root {
             .size_full()
             .bg(t.page)
             .text_color(t.ink)
-            .font_family(".SystemUIFont")
+            .font_family(crate::platform::ui_font())
             .text(Text::Body)
             .line_height(px(UI_LINE_HEIGHT))
             .key_context(key_context)

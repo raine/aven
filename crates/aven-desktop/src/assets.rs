@@ -69,6 +69,14 @@ impl AssetSource for Assets {
             "icons/toast-error.svg" => include_bytes!("../assets/icons/toast-error.svg"),
             "icons/toast-progress.svg" => include_bytes!("../assets/icons/toast-progress.svg"),
             "icons/toast-dismiss.svg" => include_bytes!("../assets/icons/toast-dismiss.svg"),
+            #[cfg(target_os = "linux")]
+            "icons/window-minimize.svg" => include_bytes!("../assets/icons/window-minimize.svg"),
+            #[cfg(target_os = "linux")]
+            "icons/window-maximize.svg" => include_bytes!("../assets/icons/window-maximize.svg"),
+            #[cfg(target_os = "linux")]
+            "icons/window-restore.svg" => include_bytes!("../assets/icons/window-restore.svg"),
+            #[cfg(target_os = "linux")]
+            "icons/window-close.svg" => include_bytes!("../assets/icons/window-close.svg"),
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))

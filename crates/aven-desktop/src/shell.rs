@@ -2083,7 +2083,7 @@ impl Root {
             .h_full()
             .flex()
             .flex_col()
-            .child(self.render_lights(cx))
+            .child(self.render_lights(window, cx))
             .child(body)
             .child(
                 div()
@@ -2123,8 +2123,9 @@ impl Root {
             )
     }
 
-    fn render_lights(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_lights(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx);
+        let controls = platform::top_bar_insets(window, cx);
         div()
             .flex_none()
             .mt(px(6.))
@@ -2132,9 +2133,9 @@ impl Root {
             .w(if self.nav_open {
                 relative(1.).into()
             } else {
-                gpui::Length::from(px(112.))
+                gpui::Length::from(controls.start + px(32.))
             })
-            .pl(px(80.))
+            .pl(controls.start)
             .flex()
             .items_center()
             .on_mouse_down(MouseButton::Left, drag_window)
@@ -2213,11 +2214,12 @@ impl Root {
         let width = window.viewport_size().width;
         let hints = width > px(HEADER_HINTS_MIN_WINDOW_WIDTH);
         let crumbs = !settings && width > px(CRUMBS_MIN_WINDOW_WIDTH);
+        let controls = platform::top_bar_insets(window, cx);
         div()
             .flex_none()
             .h(px(44.))
             .pl(px(if self.nav_open { 16. } else { 0. }))
-            .pr(px(12.))
+            .pr(px(12.) + controls.end)
             .flex()
             .items_center()
             .gap(px(8.))
@@ -2231,7 +2233,9 @@ impl Root {
                     .h(px(1.))
                     .bg(t.line),
             )
-            .when(!self.nav_open, |top| top.child(self.render_lights(cx)))
+            .when(!self.nav_open, |top| {
+                top.child(self.render_lights(window, cx))
+            })
             .child(
                 div()
                     .flex()
@@ -3169,6 +3173,13 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.render_window(window, cx);
+        platform::frame(content, window, cx)
+    }
+}
+
+impl Root {
+    fn render_window(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
         if FIRST.swap(false, std::sync::atomic::Ordering::Relaxed) && crate::startup::enabled() {
             crate::startup::mark("first-render");
@@ -3179,7 +3190,7 @@ impl Render for Root {
         self.focus_update_phase(window, cx);
         self.sync_welcome(window, cx);
         if self.welcome.is_some() {
-            return self.render_welcome(window, cx);
+            return self.render_welcome(window, cx).into_any_element();
         }
         let t = theme(cx);
         let narrow = window.viewport_size().width <= px(DETAIL_MIN_WINDOW_WIDTH);
@@ -3270,7 +3281,7 @@ impl Render for Root {
                 .flex()
                 .bg(t.page)
                 .text_color(t.ink)
-                .font_family(".SystemUIFont")
+                .font_family(platform::ui_font())
                 .text(Text::Body)
                 .line_height(px(UI_LINE_HEIGHT))
                 .track_focus(&self.focus)
@@ -3284,7 +3295,8 @@ impl Render for Root {
                 .on_action(cx.listener(Self::run_toast_action))
                 .child(gate)
                 .children(dialog)
-                .children(toast);
+                .children(toast)
+                .into_any_element();
         }
         div()
             .relative()
@@ -3292,7 +3304,7 @@ impl Render for Root {
             .flex()
             .bg(t.chrome)
             .text_color(t.ink)
-            .font_family(".SystemUIFont")
+            .font_family(platform::ui_font())
             .text(Text::Body)
             .line_height(px(UI_LINE_HEIGHT))
             .key_context(key_context)
@@ -3402,6 +3414,7 @@ impl Render for Root {
             .when_some(display, |root, display| root.child(display))
             .when_some(toast, |root, toast| root.child(toast))
             .map(|root| crate::tooltip::host(root, window, cx, &t))
+            .into_any_element()
     }
 }
 

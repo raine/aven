@@ -102,6 +102,39 @@ pub fn order_out(window: &gpui::Window) {
     }
 }
 
+/// The family the app's text is set in: the system font.
+pub fn ui_font() -> gpui::SharedString {
+    ".SystemUIFont".into()
+}
+
+/// The room the window's own controls take at each end of the top bar.
+pub struct TopBarInsets {
+    pub start: gpui::Pixels,
+    pub end: gpui::Pixels,
+}
+
+/// The traffic lights sit at the start of the top bar.
+pub fn top_bar_insets(_window: &gpui::Window, _cx: &gpui::App) -> TopBarInsets {
+    TopBarInsets {
+        start: gpui::px(80.),
+        end: gpui::px(0.),
+    }
+}
+
+/// Does what the user's Dock settings say a double-clicked title bar does.
+pub fn title_bar_double_click(window: &gpui::Window) {
+    window.titlebar_double_click();
+}
+
+/// AppKit frames the window and draws its traffic lights.
+pub fn frame(
+    content: gpui::AnyElement,
+    _window: &mut gpui::Window,
+    _cx: &mut gpui::App,
+) -> gpui::AnyElement {
+    content
+}
+
 /// Leaves a transparent panel to draw its own frame and shadow, without the
 /// title bar edge AppKit lights, and shows it at once without the utility
 /// window's fade. Runs before the panel is shown: changing the style of a key

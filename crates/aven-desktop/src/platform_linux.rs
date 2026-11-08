@@ -131,6 +131,244 @@ pub fn order_out(window: &gpui::Window) {
 /// The panel keeps the window manager's frame.
 pub fn plain_panel(_window: &gpui::Window) {}
 
+/// The family the app's text is set in: the desktop's sans-serif font, as
+/// fontconfig resolves it. Without fontconfig, GPUI's stand-ins for the
+/// system font.
+pub fn ui_font() -> gpui::SharedString {
+    static FAMILY: OnceLock<gpui::SharedString> = OnceLock::new();
+    FAMILY
+        .get_or_init(|| desktop_sans().map_or_else(|| ".SystemUIFont".into(), Into::into))
+        .clone()
+}
+
+fn desktop_sans() -> Option<String> {
+    let output = std::process::Command::new("fc-match")
+        .args(["--format=%{family[0]}", "sans-serif"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let family = String::from_utf8(output.stdout).ok()?;
+    let family = family.trim();
+    (output.status.success() && !family.is_empty()).then(|| family.to_string())
+}
+
+pub use frame::{frame, title_bar_double_click, top_bar_insets};
+
+/// The decorations the app draws when the compositor leaves them to it, as
+/// GNOME's and Weston's do: window buttons in the top bar, resize edges and
+/// a border.
+mod frame {
+    use accesskit::Role;
+    use gpui::{
+        AnyElement, App, CursorStyle, Decorations, Div, MouseButton, Pixels, ResizeEdge, Stateful,
+        Tiling, Window, WindowButton, WindowButtonLayout, div, prelude::*, px, svg,
+    };
+
+    use crate::actions::CloseWindow;
+    use crate::theme::{Theme, theme};
+
+    /// The space between the top bar's start and its first control without
+    /// window buttons there.
+    const MARGIN: Pixels = px(12.);
+    /// The top bar's height, which the buttons centre in.
+    const BAR: Pixels = px(44.);
+    const BUTTON: Pixels = px(24.);
+    const GAP: Pixels = px(8.);
+    /// How far in from the window's edge a press resizes it.
+    const EDGE: Pixels = px(5.);
+    /// How far along each edge from a corner a press resizes both ways.
+    const CORNER: Pixels = px(14.);
+
+    /// The room the window's own controls take at each end of the top bar.
+    pub struct TopBarInsets {
+        pub start: Pixels,
+        pub end: Pixels,
+    }
+
+    pub fn top_bar_insets(window: &Window, cx: &App) -> TopBarInsets {
+        let Some(layout) = buttons(window, cx) else {
+            return TopBarInsets {
+                start: MARGIN,
+                end: px(0.),
+            };
+        };
+        TopBarInsets {
+            start: MARGIN + width(&layout.left),
+            end: width(&layout.right),
+        }
+    }
+
+    /// The window menu's default: a double click on the top bar maximizes
+    /// the window, or restores it, when it is the window's title bar.
+    pub fn title_bar_double_click(window: &Window) {
+        if matches!(window.window_decorations(), Decorations::Client { .. }) {
+            window.zoom_window();
+        }
+    }
+
+    pub fn frame(content: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
+        let Some(layout) = buttons(window, cx) else {
+            return content;
+        };
+        let Decorations::Client { mut tiling } = window.window_decorations() else {
+            return content;
+        };
+        if window.is_maximized() || window.is_fullscreen() {
+            tiling = Tiling::tiled();
+        }
+        let t = theme(cx);
+        let maximized = window.is_maximized();
+        div()
+            .relative()
+            .size_full()
+            .child(content)
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .border_color(t.line2)
+                    .when(!tiling.top, |border| border.border_t_1())
+                    .when(!tiling.bottom, |border| border.border_b_1())
+                    .when(!tiling.left, |border| border.border_l_1())
+                    .when(!tiling.right, |border| border.border_r_1()),
+            )
+            .children(edges(tiling))
+            .child(side(&layout.left, maximized, &t).left_0().pl(px(10.)))
+            .child(side(&layout.right, maximized, &t).right_0().pr(px(10.)))
+            .into_any_element()
+    }
+
+    /// The buttons at each end of the top bar, when the app draws them.
+    fn buttons(window: &Window, cx: &App) -> Option<WindowButtonLayout> {
+        if !matches!(window.window_decorations(), Decorations::Client { .. }) {
+            return None;
+        }
+        let controls = window.window_controls();
+        let mut layout = cx
+            .button_layout()
+            .unwrap_or_else(WindowButtonLayout::linux_default);
+        for slot in layout.left.iter_mut().chain(layout.right.iter_mut()) {
+            let offered = match slot {
+                Some(WindowButton::Minimize) => controls.minimize,
+                Some(WindowButton::Maximize) => controls.maximize,
+                Some(WindowButton::Close) | None => true,
+            };
+            if !offered {
+                *slot = None;
+            }
+        }
+        Some(layout)
+    }
+
+    fn width(side: &[Option<WindowButton>]) -> Pixels {
+        let count = side.iter().flatten().count();
+        if count == 0 {
+            return px(0.);
+        }
+        px(10.) + BUTTON * count as f32 + GAP * (count - 1) as f32
+    }
+
+    fn side(buttons: &[Option<WindowButton>], maximized: bool, t: &Theme) -> Div {
+        div()
+            .absolute()
+            .top_0()
+            .h(BAR)
+            .flex()
+            .items_center()
+            .gap(GAP)
+            .children(
+                buttons
+                    .iter()
+                    .flatten()
+                    .map(|button| window_button(*button, maximized, t)),
+            )
+    }
+
+    fn window_button(button: WindowButton, maximized: bool, t: &Theme) -> Stateful<Div> {
+        let (icon, label) = match button {
+            WindowButton::Minimize => ("icons/window-minimize.svg", "Minimize"),
+            WindowButton::Maximize if maximized => ("icons/window-restore.svg", "Restore"),
+            WindowButton::Maximize => ("icons/window-maximize.svg", "Maximize"),
+            WindowButton::Close => ("icons/window-close.svg", "Close"),
+        };
+        div()
+            .id(button.id())
+            .role(Role::Button)
+            .aria_label(label)
+            .size(BUTTON)
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(t.raised)
+            .hover(|style| style.bg(t.line))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| match button {
+                WindowButton::Minimize => window.minimize_window(),
+                WindowButton::Maximize => window.zoom_window(),
+                WindowButton::Close => window.dispatch_action(Box::new(CloseWindow), cx),
+            })
+            .child(svg().path(icon).size(px(14.)).text_color(t.body))
+    }
+
+    /// The bands along the window's free edges that resize it.
+    fn edges(tiling: Tiling) -> Vec<Div> {
+        let top = !tiling.top;
+        let bottom = !tiling.bottom;
+        let left = !tiling.left;
+        let right = !tiling.right;
+        let mut edges = Vec::new();
+        let mut edge = |free: bool, resize: ResizeEdge, place: fn(Div) -> Div| {
+            if free {
+                edges.push(place(handle(resize)));
+            }
+        };
+        edge(top, ResizeEdge::Top, |band| {
+            band.top_0().left_0().w_full().h(EDGE)
+        });
+        edge(bottom, ResizeEdge::Bottom, |band| {
+            band.bottom_0().left_0().w_full().h(EDGE)
+        });
+        edge(left, ResizeEdge::Left, |band| {
+            band.top_0().left_0().h_full().w(EDGE)
+        });
+        edge(right, ResizeEdge::Right, |band| {
+            band.top_0().right_0().h_full().w(EDGE)
+        });
+        edge(top && left, ResizeEdge::TopLeft, |corner| {
+            corner.top_0().left_0().size(CORNER)
+        });
+        edge(top && right, ResizeEdge::TopRight, |corner| {
+            corner.top_0().right_0().size(CORNER)
+        });
+        edge(bottom && left, ResizeEdge::BottomLeft, |corner| {
+            corner.bottom_0().left_0().size(CORNER)
+        });
+        edge(bottom && right, ResizeEdge::BottomRight, |corner| {
+            corner.bottom_0().right_0().size(CORNER)
+        });
+        edges
+    }
+
+    fn handle(edge: ResizeEdge) -> Div {
+        let cursor = match edge {
+            ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
+            ResizeEdge::Left | ResizeEdge::Right => CursorStyle::ResizeLeftRight,
+            ResizeEdge::TopLeft | ResizeEdge::BottomRight => CursorStyle::ResizeUpLeftDownRight,
+            ResizeEdge::TopRight | ResizeEdge::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
+        };
+        div().absolute().cursor(cursor).occlude().on_mouse_down(
+            MouseButton::Left,
+            move |_, window, cx| {
+                cx.stop_propagation();
+                window.start_window_resize(edge);
+            },
+        )
+    }
+}
+
 /// What lets a window take focus from the window system: the token of the
 /// launch or click that asked for it. A compositor that prevents focus
 /// stealing only marks a window as wanting attention without one.
