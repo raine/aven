@@ -20,9 +20,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, TableState,
-};
+use ratatui::widgets::{Block, Paragraph, ScrollbarState, TableState};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug)]
@@ -352,13 +350,8 @@ pub(super) fn render_task_scrollbar(
     if viewport_rows == 0 || row_count <= viewport_rows {
         return;
     }
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .thumb_symbol("┃")
-        .track_symbol(Some("│"))
-        .thumb_style(Style::new().fg(theme.accent).bg(theme.bg))
-        .track_style(Style::new().fg(theme.scrollbar_track).bg(theme.bg));
+    let scrollbar =
+        crate::tui::ui::scroll::list_scrollbar(theme.accent, theme.scrollbar_track, theme.bg);
     let mut scrollbar_state = ScrollbarState::new(row_count)
         .position(scrollbar_position(
             scroll,
@@ -537,6 +530,7 @@ pub(super) fn render_task_row_cells(
 mod tests {
     use super::super::tests::*;
     use super::*;
+    use crate::tui::ui::scroll::{LIST_SCROLLBAR_THUMB, LIST_SCROLLBAR_TRACK};
 
     #[test]
     fn label_header_cell_aligns_with_label_column_content() {
@@ -623,11 +617,35 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
 
-        assert_eq!(buffer[(4, 1)].symbol(), "│");
-        assert_eq!(buffer[(4, 2)].symbol(), "│");
-        assert_eq!(buffer[(4, 3)].symbol(), "│");
-        assert_eq!(buffer[(4, 4)].symbol(), "┃");
-        assert_eq!(buffer[(4, 5)].symbol(), "┃");
+        assert_eq!(buffer[(4, 1)].symbol(), LIST_SCROLLBAR_TRACK);
+        assert_eq!(buffer[(4, 2)].symbol(), LIST_SCROLLBAR_TRACK);
+        assert_eq!(buffer[(4, 3)].symbol(), LIST_SCROLLBAR_TRACK);
+        assert_eq!(buffer[(4, 4)].symbol(), LIST_SCROLLBAR_THUMB);
+        assert_eq!(buffer[(4, 5)].symbol(), LIST_SCROLLBAR_THUMB);
+    }
+
+    #[test]
+    fn task_scrollbar_is_not_dimmed_by_blocked_rows() {
+        let backend = TestBackend::new(5, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                frame
+                    .buffer_mut()
+                    .set_style(area, Style::new().add_modifier(Modifier::DIM));
+                render_task_scrollbar(frame, THEME, 6, 10, 4, 0, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        for y in 1..6 {
+            assert!(
+                !buffer[(4, y)].modifier.contains(Modifier::DIM),
+                "scrollbar cell at row {y} is dimmed"
+            );
+        }
+        assert!(buffer[(0, 1)].modifier.contains(Modifier::DIM));
     }
 
     #[test]

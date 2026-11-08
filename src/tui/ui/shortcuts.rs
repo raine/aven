@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Paragraph, ScrollbarState};
 
 use super::ViewState;
 use super::dialog::Dialog;
@@ -1013,13 +1013,11 @@ fn render_command_scrollbar(
     }
     let position =
         super::scroll::scrollbar_thumb_position(layout.visible.start, match_count, visible);
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .thumb_symbol("┃")
-        .track_symbol(Some("│"))
-        .thumb_style(Style::new().fg(theme.accent).bg(theme.bg_raised))
-        .track_style(Style::new().fg(theme.scrollbar_track).bg(theme.bg_raised));
+    let scrollbar = crate::tui::ui::scroll::list_scrollbar(
+        theme.accent,
+        theme.scrollbar_track,
+        theme.bg_raised,
+    );
     let mut state = ScrollbarState::new(match_count)
         .position(position)
         .viewport_content_length(visible);
@@ -2067,7 +2065,7 @@ mod tests {
             .unwrap()
             + 1;
         assert!(rendered.contains(&format!("{position}/{}", candidates.len())));
-        assert!(rendered.contains("┃"));
+        assert!(rendered.contains(crate::tui::ui::scroll::LIST_SCROLLBAR_THUMB));
         assert!((0..buffer.area.height).any(|row| {
             buffer_row(&buffer, row).contains(":search")
                 && (0..buffer.area.width).any(|column| {

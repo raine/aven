@@ -2,9 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{
-    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, TableState, Wrap,
-};
+use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState, TableState, Wrap};
 
 use super::timestamps::local_timestamp_display;
 use crate::change_log::op_type;
@@ -488,13 +486,8 @@ fn render_scrollbar(
     if viewport_rows == 0 || row_count <= viewport_rows {
         return;
     }
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .thumb_symbol("┃")
-        .track_symbol(Some("│"))
-        .thumb_style(Style::new().fg(theme.accent).bg(theme.bg))
-        .track_style(Style::new().fg(theme.scrollbar_track).bg(theme.bg));
+    let scrollbar =
+        crate::tui::ui::scroll::list_scrollbar(theme.accent, theme.scrollbar_track, theme.bg);
     let mut state = ScrollbarState::new(row_count)
         .position(scroll)
         .viewport_content_length(viewport_rows);
