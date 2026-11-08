@@ -18,8 +18,6 @@ pub(crate) struct Theme {
     pub(crate) bg_selected: Color,
     /// Rows marked for a bulk action.
     pub(crate) bg_row_marked: Color,
-    /// Group heading rows in task lists.
-    pub(crate) bg_row_group: Color,
     /// Kanban lane.
     pub(crate) bg_lane: Color,
     /// Emphasized kanban lane and rows related to the selection.
@@ -35,7 +33,6 @@ pub(crate) struct Theme {
     /// Borders, separators, rules, and tree rails.
     pub(crate) border: Color,
     pub(crate) scrollbar_track: Color,
-    pub(crate) table_header_bg: Color,
     /// Fill behind neutral badges and unselected chips.
     pub(crate) badge_bg: Color,
     /// Fill behind the changelog's installed-version badge.
@@ -118,7 +115,6 @@ impl Theme {
             bg_panel: Color::Rgb(39, 40, 38),
             bg_selected: Color::Rgb(50, 45, 78),
             bg_row_marked: bg_raised,
-            bg_row_group: bg_raised,
             bg_lane: Color::Rgb(24, 25, 24),
             bg_lane_active: Color::Rgb(27, 26, 32),
             lane_divider: Color::Rgb(49, 50, 47),
@@ -130,7 +126,6 @@ impl Theme {
 
             border,
             scrollbar_track: border,
-            table_header_bg: border,
             badge_bg: border,
             badge_installed_bg: Color::Rgb(55, 56, 52),
 
@@ -201,7 +196,6 @@ impl Theme {
             bg_panel: Color::Rgb(229, 229, 223),
             bg_selected: Color::Rgb(219, 211, 248),
             bg_row_marked: bg_raised,
-            bg_row_group: bg_raised,
             bg_lane: Color::Rgb(244, 244, 240),
             bg_lane_active: Color::Rgb(238, 236, 247),
             lane_divider: Color::Rgb(213, 213, 207),
@@ -213,7 +207,6 @@ impl Theme {
 
             border,
             scrollbar_track: border,
-            table_header_bg: border,
             badge_bg: border,
             badge_installed_bg: Color::Rgb(218, 218, 211),
 
@@ -280,7 +273,6 @@ impl Theme {
             bg_panel: Color::Reset,
             bg_selected: Color::Reset,
             bg_row_marked: Color::Reset,
-            bg_row_group: Color::Reset,
             bg_lane: Color::Reset,
             bg_lane_active: Color::Reset,
             lane_divider: Color::Reset,
@@ -290,7 +282,6 @@ impl Theme {
             inverse_fg: Color::Reset,
             border: Color::Reset,
             scrollbar_track: Color::Reset,
-            table_header_bg: Color::Reset,
             badge_bg: Color::Reset,
             badge_installed_bg: Color::Reset,
             accent: Color::Magenta,
@@ -425,10 +416,16 @@ impl Theme {
         }
     }
 
+    /// Section titles such as sidebar headings and the task table header.
+    pub(crate) const fn section_title(&self) -> Style {
+        self.dim().bg(self.bg_raised).add_modifier(Modifier::BOLD)
+    }
+
+    /// The task table header, styled like other section titles. Terminal
+    /// palettes have no raised background, so the header is underlined to
+    /// stay distinct from rows.
     pub(crate) const fn table_header(&self) -> Style {
-        let style = self
-            .badge(self.table_header_bg)
-            .add_modifier(Modifier::BOLD);
+        let style = self.section_title();
         if self.terminal_palette {
             style.add_modifier(Modifier::UNDERLINED)
         } else {

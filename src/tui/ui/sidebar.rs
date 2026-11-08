@@ -263,7 +263,7 @@ fn sidebar_section_line(
         let spacer = " ".repeat(width - label.width() - 3);
         format!(" {label}{spacer}{indicator} ")
     };
-    Line::from(text).style(theme.dim().bg(theme.bg_raised).add_modifier(Modifier::BOLD))
+    Line::from(text).style(theme.section_title())
 }
 
 fn sidebar_entry_active(entry: &SidebarEntry, store: &TuiStore) -> bool {
