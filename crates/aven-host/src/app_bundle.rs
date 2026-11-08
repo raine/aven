@@ -132,6 +132,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundle_executable_resolves_enclosing_bundle() {
+        assert_eq!(
+            enclosing_bundle(Path::new(
+                "/opt/homebrew/Cellar/aven/0.2.0/Aven.app/Contents/MacOS/aven"
+            ))
+            .as_deref(),
+            Some(Path::new("/opt/homebrew/Cellar/aven/0.2.0/Aven.app"))
+        );
+    }
+
+    #[test]
+    fn bare_and_dev_executables_have_no_bundle() {
+        for path in [
+            "/usr/local/bin/aven",
+            "/Users/me/code/aven/target/debug/aven",
+            "/Applications/Aven.app/Contents/MacOS/other",
+            "/tmp/Aven.app/Contents/Resources/aven",
+            "/tmp/Aven/Contents/MacOS/aven",
+            "aven",
+        ] {
+            assert_eq!(enclosing_bundle(Path::new(path)), None, "{path}");
+        }
+    }
+
+    #[test]
     fn launch_settings_are_forwarded_but_not_the_rest() {
         assert!(forwarded("AVEN_DB"));
         assert!(forwarded("HOME"));
