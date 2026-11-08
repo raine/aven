@@ -250,6 +250,7 @@ pub struct Layer {
     /// and each field already reports the one in `fields`.
     container: FocusHandle,
     pub(crate) fields: Vec<FocusHandle>,
+    scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -294,6 +295,7 @@ impl Root {
             prior,
             container,
             fields,
+            scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         });
         cx.notify();
@@ -1399,6 +1401,24 @@ impl Root {
         ]
     }
 
+    fn scroll_help(&self, direction: f32, page: bool, cx: &mut Context<Self>) {
+        let Some(layer) = &self.dialog else {
+            return;
+        };
+        let scroll = &layer.scroll;
+        let offset = scroll.offset();
+        let y = help_scroll_offset(
+            offset.y,
+            scroll.max_offset().y,
+            scroll.bounds().size.height,
+            direction,
+            page,
+        );
+        scroll.set_offset(gpui::point(offset.x, y));
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     pub(crate) fn render_dialog(
         &self,
         window: &Window,
@@ -1461,7 +1481,7 @@ impl Root {
                 "Keyboard shortcuts",
                 WIDE_WIDTH,
                 self.render_help(cx, &t),
-                "Dialog",
+                "Dialog Help",
             ),
             Dialog::Incoming { .. } => (
                 "Incoming description",
@@ -1471,6 +1491,17 @@ impl Root {
             ),
         };
         let width = width.min(f32::from(viewport.width) - 32.);
+        // Multi-part dialogs put their heading first. Keep it outside the
+        // scrolling body; single-part dialogs scroll as a whole.
+        let has_header = content.len() > 1;
+        let mut content = content.into_iter();
+        let header = has_header.then(|| content.next()).flatten();
+        let body = div()
+            .id("dialog-body")
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&layer.scroll)
+            .child(div().children(content));
         Some(
             div()
                 .id("dialog-backdrop")
@@ -1492,6 +1523,21 @@ impl Root {
                         .key_context(context)
                         .track_focus(&layer.container)
                         .on_action(cx.listener(Self::accept))
+                        .when(matches!(layer.dialog, Dialog::Help), |dialog| {
+                            dialog
+                                .on_action(cx.listener(|this, _: &MoveDown, _, cx| {
+                                    this.scroll_help(1., false, cx);
+                                }))
+                                .on_action(cx.listener(|this, _: &MoveUp, _, cx| {
+                                    this.scroll_help(-1., false, cx);
+                                }))
+                                .on_action(cx.listener(|this, _: &HelpPageDown, _, cx| {
+                                    this.scroll_help(1., true, cx);
+                                }))
+                                .on_action(cx.listener(|this, _: &HelpPageUp, _, cx| {
+                                    this.scroll_help(-1., true, cx);
+                                }))
+                        })
                         .on_action(cx.listener(Self::toggle_search_scope))
                         .on_action(cx.listener(Self::full_results))
                         .absolute()
@@ -1507,7 +1553,10 @@ impl Root {
                         .shadow(t.dlg_shadow())
                         .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .children(content),
+                        .when_some(header, |dialog, header| {
+                            dialog.child(div().flex_none().child(header))
+                        })
+                        .child(body),
                 ),
         )
     }
@@ -1515,4 +1564,61 @@ impl Root {
 
 fn relative_third() -> gpui::Length {
     gpui::relative(1. / 3.).into()
+}
+
+fn help_scroll_offset(
+    current: gpui::Pixels,
+    max: gpui::Pixels,
+    viewport: gpui::Pixels,
+    direction: f32,
+    page: bool,
+) -> gpui::Pixels {
+    let row = px(22.);
+    let step = if page { (viewport - row).max(row) } else { row };
+    (current - step * direction).clamp(-max, px(0.))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_scrolls_by_rows_or_pages_with_one_row_of_overlap() {
+        assert_eq!(
+            help_scroll_offset(px(0.), px(900.), px(300.), 1., false),
+            px(-22.)
+        );
+        assert_eq!(
+            help_scroll_offset(px(-44.), px(900.), px(300.), -1., false),
+            px(-22.)
+        );
+        assert_eq!(
+            help_scroll_offset(px(0.), px(900.), px(300.), 1., true),
+            px(-278.)
+        );
+        assert_eq!(
+            help_scroll_offset(px(-556.), px(900.), px(300.), -1., true),
+            px(-278.)
+        );
+    }
+
+    #[test]
+    fn help_scrolling_stays_within_the_body() {
+        assert_eq!(
+            help_scroll_offset(px(-890.), px(900.), px(300.), 1., true),
+            px(-900.)
+        );
+        assert_eq!(
+            help_scroll_offset(px(-10.), px(900.), px(300.), -1., true),
+            px(0.)
+        );
+        assert_eq!(
+            help_scroll_offset(px(0.), px(0.), px(300.), 1., true),
+            px(0.)
+        );
+        assert_eq!(
+            help_scroll_offset(px(0.), px(100.), px(10.), 1., true),
+            px(-22.)
+        );
+    }
 }
