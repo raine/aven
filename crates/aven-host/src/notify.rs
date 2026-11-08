@@ -184,7 +184,9 @@ pub fn lock_path(db: &Path) -> PathBuf {
 
 /// The right to deliver a database's notifications. Dropping it gives it up.
 #[derive(Debug)]
-pub struct DeliveryLock(#[allow(dead_code)] File);
+pub struct DeliveryLock {
+    _file: File,
+}
 
 impl DeliveryLock {
     /// Takes the lock unless another process holds it.
@@ -198,7 +200,7 @@ impl DeliveryLock {
             .open(&path)
             .with_context(|| format!("open delivery lock {}", path.display()))?;
         match file.try_lock() {
-            Ok(()) => Ok(Some(Self(file))),
+            Ok(()) => Ok(Some(Self { _file: file })),
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(error)) => {
                 Err(error).with_context(|| format!("lock {}", path.display()))

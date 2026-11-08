@@ -193,7 +193,7 @@ pub enum LoginItem {
 /// Why the agent was not started: the user turned Aven off in Login Items.
 #[cfg(target_os = "macos")]
 #[derive(Debug)]
-pub struct TurnedOffInLoginItems;
+struct TurnedOffInLoginItems;
 
 #[cfg(target_os = "macos")]
 impl std::fmt::Display for TurnedOffInLoginItems {
@@ -1084,8 +1084,9 @@ fn write_plist(spec: &ServiceSpec, plist: &str) -> Result<()> {
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum KeepAlive {
-    /// Restart after every exit. Written by earlier versions; a removed
-    /// executable then fails to spawn every throttle interval.
+    /// Restart after every exit, as LaunchAgents without a `PathState`
+    /// condition do. A removed executable then fails to spawn every throttle
+    /// interval.
     Always,
     /// Restart after every exit while the executable exists, and start again
     /// when it reappears, so moving Aven.app to the Trash stops the daemon

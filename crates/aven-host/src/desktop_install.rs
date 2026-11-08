@@ -85,17 +85,17 @@ impl Layout {
     }
 
     /// Where Desktop links the `aven` command when nothing else provides it.
-    pub fn command_link(&self) -> PathBuf {
+    fn command_link(&self) -> PathBuf {
         self.home.join(".local/bin/aven")
     }
 
-    pub fn script_bundle(&self) -> PathBuf {
+    fn script_bundle(&self) -> PathBuf {
         direct_install_bundle(&self.home)
     }
 
     /// Whether the running app is the one in `/Applications`, not a copy in
     /// Downloads or on a disk image.
-    pub fn in_place(&self) -> bool {
+    fn in_place(&self) -> bool {
         same_file(&self.running, &self.executable())
     }
 
@@ -255,7 +255,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    pub fn is_desktop(self) -> bool {
+    fn is_desktop(self) -> bool {
         matches!(self, Owner::Desktop | Owner::Cask)
     }
 
@@ -1008,7 +1008,7 @@ fn retarget_keep_alive(plist: &Path, previous: &Path, executable: &str) -> Resul
 }
 
 /// The executable a LaunchAgent plist runs.
-pub fn plist_program(plist: &Path) -> Result<PathBuf> {
+fn plist_program(plist: &Path) -> Result<PathBuf> {
     plutil(&["-extract", "ProgramArguments.0", "raw", "-o", "-"], plist)
         .map(|program| PathBuf::from(program.trim_end_matches('\n')))
 }

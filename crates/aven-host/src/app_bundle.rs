@@ -33,13 +33,7 @@ pub fn direct_install_bundle(home: &Path) -> PathBuf {
 /// quarantined app that Finder didn't move. `None` when it runs in place or
 /// macOS can't say.
 pub fn translocated_original(bundle: &Path) -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    return translocation::original(bundle);
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = bundle;
-        None
-    }
+    translocation::original(bundle)
 }
 
 /// `open --env` arguments carrying this process's `AVEN_*`, `HOME` and XDG
@@ -70,7 +64,6 @@ fn forwarded(key: &str) -> bool {
 
 /// Security's App Translocation functions. They are exported but not in the
 /// public SDK, so they are looked up at run time.
-#[cfg(target_os = "macos")]
 mod translocation {
     use std::ffi::{CStr, c_void};
     use std::path::{Path, PathBuf};
@@ -147,7 +140,6 @@ mod tests {
         assert!(!forwarded("XPC_SERVICE_NAME"));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_bundle_that_runs_in_place_is_not_translocated() {
         assert!(translocation::functions().is_some());
