@@ -777,6 +777,10 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-segmentation",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "x11rb",
  "zeroize",
 ]
 

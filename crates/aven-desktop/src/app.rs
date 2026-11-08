@@ -127,6 +127,13 @@ pub(crate) fn show_window(cx: &mut App) {
     cx.activate(true);
 }
 
+/// Brings the window to the front for a later launch or a click, with the
+/// token the window system gave that launch or click.
+#[cfg(target_os = "linux")]
+fn come_forward(activation: &platform::Activation, cx: &mut App) {
+    with_root(cx, |_, window, _| platform::activate(window, activation));
+}
+
 /// Actions that need no window, so they work with it closed. An action from an
 /// open window runs while GPUI holds that window, which nothing else can update
 /// until the action returns, so those that use it wait with `defer`.
@@ -210,7 +217,9 @@ pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
     let database = resolve_db_path(None, &config)?;
     // macOS opens one app per bundle by itself.
     #[cfg(target_os = "linux")]
-    let Some(mut claim) = platform::instance::claim(&database) else {
+    let Some(mut claim) =
+        platform::instance::claim(&database, &platform::Activation::from_environment())
+    else {
         return Ok(());
     };
     let prefs = Prefs::path(&database);
@@ -256,8 +265,8 @@ pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
         #[cfg(target_os = "linux")]
         if let Some(mut raised) = raised {
             cx.spawn(async move |cx| {
-                while raised.recv().await.is_some() {
-                    cx.update(show_window);
+                while let Some(activation) = raised.recv().await {
+                    cx.update(|cx| come_forward(&activation, cx));
                 }
             })
             .detach();
@@ -423,6 +432,8 @@ fn open_main(
                     traffic_light_position: Some(point(px(14.), px(21.))),
                 }),
                 window_min_size: Some(size(px(960.), px(600.))),
+                // GPUI asks Wayland for activation only for a window with
+                // an app ID.
                 app_id: Some(APP_ID.into()),
                 ..Default::default()
             },

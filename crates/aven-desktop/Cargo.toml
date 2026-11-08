@@ -36,6 +36,11 @@ raw-window-handle = "0.6"
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "ba63a022c9a22ca66d68ef2a8f0bb9b5b0a9984d", features = ["wayland", "x11"] }
 notify-rust = "4"
+raw-window-handle = "0.6"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
 aven-host = { path = "../aven-host", features = ["test-support"] }
