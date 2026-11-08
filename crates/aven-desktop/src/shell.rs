@@ -1006,20 +1006,18 @@ impl Root {
         cx.notify();
     }
 
-    /// Shows the tasks due today and earlier in `workspace`, or in the
-    /// current workspace when `None`.
+    /// Shows the tasks due today and earlier in `workspace`.
     pub(crate) fn open_due(
         &mut self,
-        workspace: Option<String>,
+        workspace: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match workspace {
-            Some(workspace) if self.active_workspace_key() != Some(workspace.as_str()) => {
-                self.switch_view(Command::SwitchWorkspace(workspace), window, cx);
-                self.session.switch_view(Command::ShowDue);
-            }
-            _ => self.switch_view(Command::ShowDue, window, cx),
+        if self.active_workspace_key() == Some(workspace.as_str()) {
+            self.switch_view(Command::ShowDue, window, cx);
+        } else {
+            self.switch_view(Command::SwitchWorkspace(workspace), window, cx);
+            self.session.switch_view(Command::ShowDue);
         }
         cx.notify();
     }
