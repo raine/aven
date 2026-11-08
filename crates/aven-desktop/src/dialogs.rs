@@ -51,7 +51,7 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
         "Move",
         &[
             ("Next, previous", "j / k"),
-            ("Expand task", "Enter"),
+            ("Expand task", "↩"),
             ("Previous, next", "[ / ]"),
             ("Close", "Esc"),
             ("All projects", "g a"),
@@ -889,7 +889,7 @@ impl Root {
                             this.full_results(&FullResults, window, cx);
                         }))
                         .child("All results")
-                        .child(kbd("⇧↵", t.faint)),
+                        .child(kbd("⇧↩", t.faint)),
                 )
                 .into_any_element(),
         ]

@@ -89,7 +89,7 @@ fn hint(text: impl Into<SharedString>, t: &Theme) -> Div {
         .child(text.into())
 }
 
-/// Puts a dialog button on the Tab order, where Enter does what a click does.
+/// Puts a dialog button on the Tab order, where Return does what a click does.
 pub(crate) fn tab_stop(
     button: Stateful<Div>,
     focus: &FocusHandle,
@@ -546,7 +546,7 @@ impl Root {
         cells
     }
 
-    /// Enter on a series opens its current task.
+    /// Return on a series opens its current task.
     pub(crate) fn open_series_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current =
             (self.session.series_detail.as_ref()).and_then(|series| series.current.clone());
@@ -1912,7 +1912,7 @@ impl Root {
                     .gap(px(6.))
                     .when(review.more > 0, |row| {
                         row.child(
-                            fill_btn("review-next", "Next batch ↵", t).on_click(cx.listener(
+                            fill_btn("review-next", "Next batch ↩", t).on_click(cx.listener(
                                 |this, _, window, cx| {
                                     this.review_next(&ReviewNext, window, cx);
                                 },

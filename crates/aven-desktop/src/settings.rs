@@ -568,7 +568,7 @@ impl Root {
             action,
             buttons,
         };
-        // Cancel takes focus, so Enter alone never confirms.
+        // Cancel takes focus, so Return alone never confirms.
         self.open_dialog_at(dialog, Vec::new(), fields, 0, window, cx);
     }
 
@@ -1898,7 +1898,7 @@ impl Root {
             .into_any_element()
     }
 
-    /// The Sync dialog's main action, which Enter also runs.
+    /// The Sync dialog's main action, which Return also runs.
     pub(crate) fn sync_accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.session.sync_page.clone() {
             SyncPage::Invitation { kind, new_database } => {

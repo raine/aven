@@ -1149,30 +1149,14 @@ impl Launcher {
             .shadow(vec![t.inset_ring(t.line2)])
     }
 
-    /// A label and its key. A trailing `↵` draws as an icon, because the
-    /// system font's arrow sits apart from the modifier glyphs.
+    /// A label and its key.
     fn hint(key: &'static str, what: &'static str, t: &Theme) -> gpui::Div {
-        let (modifiers, enter) = match key.strip_suffix('↵') {
-            Some(modifiers) => (modifiers, true),
-            None => (key, false),
-        };
-        div().flex().items_center().gap(px(5.)).child(what).child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(0.5))
-                .when(!modifiers.is_empty(), |keys| {
-                    keys.child(kbd(modifiers, t.faint))
-                })
-                .when(enter, |keys| {
-                    keys.child(
-                        svg()
-                            .path("icons/ic-return.svg")
-                            .size(px(13.))
-                            .text_color(t.faint),
-                    )
-                }),
-        )
+        div()
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .child(what)
+            .child(kbd(key, t.faint))
     }
 
     fn render_footer(&self, cx: &mut Context<Self>, t: &Theme) -> AnyElement {
@@ -1286,20 +1270,20 @@ impl Launcher {
         let keys = match (other, ai) {
             (true, true) => keys
                 .text_color(t.body)
-                .child(Self::hint("⌥↵", "Add without AI", t)),
+                .child(Self::hint("⌥↩", "Add without AI", t)),
             (true, false) => keys
                 .text_color(t.body)
-                .child(Self::hint("⌥↵", "Create with AI", t)),
+                .child(Self::hint("⌥↩", "Create with AI", t)),
             (false, true) => keys
                 .text_color(t.faint)
                 .child(
-                    Self::hint("↵", "Create with AI", t)
+                    Self::hint("↩", "Create with AI", t)
                         .id("l-create-hint")
                         .hint(Hint::new("Hold ⌥ to add without AI")),
                 )
-                .child(Self::hint("⌘↵", "Review", t)),
+                .child(Self::hint("⌘↩", "Review", t)),
             (false, false) => keys.text_color(t.faint).child(
-                Self::hint("↵", "Add", t)
+                Self::hint("↩", "Add", t)
                     .id("l-create-hint")
                     .when(agent, |hint| {
                         hint.hint(Hint::new("Hold ⌥ to create with AI"))

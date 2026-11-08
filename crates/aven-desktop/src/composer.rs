@@ -800,7 +800,7 @@ impl Composer {
         let is_title = *editor == composer.title;
         let is_schedule = *editor == composer.schedule;
         match event {
-            // Enter in the description breaks the line, so only one-line fields
+            // Return in the description breaks the line, so only one-line fields
             // reach here.
             EditorEvent::Submit | EditorEvent::Cancel if is_schedule => {
                 self.close_schedule(true, window, cx);
@@ -1823,7 +1823,7 @@ impl Composer {
                 )
             })
             // While the agent reads there is nothing to press, only what
-            // ⌘↵ does meanwhile.
+            // ⌘↩ does meanwhile.
             .when(composer.reading.is_some(), |row| {
                 row.child(
                     div()
@@ -1842,7 +1842,7 @@ impl Composer {
                         .min_w_0()
                         .truncate()
                         .text_color(t.faint)
-                        .child("⌘↵ skips review"),
+                        .child("⌘↩ skips review"),
                 )
             })
             .child(div().flex_1())
@@ -1860,7 +1860,7 @@ impl Composer {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.create_task(&CreateTask, window, cx);
                     }))
-                    .child(kbd("⌘↵", t.on_fill)),
+                    .child(kbd("⌘↩", t.on_fill)),
             )
     }
 
@@ -2040,7 +2040,7 @@ impl Composer {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.close_schedule(true, window, cx);
                             }))
-                            .child(kbd("↵", t.on_fill)),
+                            .child(kbd("↩", t.on_fill)),
                     ),
             )
             .into_any_element()

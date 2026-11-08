@@ -23,7 +23,6 @@ impl AssetSource for Assets {
             "icons/ic-recent.svg" => include_bytes!("../assets/icons/ic-recent.svg"),
             "icons/ic-search.svg" => include_bytes!("../assets/icons/ic-search.svg"),
             "icons/ic-sparkle.svg" => include_bytes!("../assets/icons/ic-sparkle.svg"),
-            "icons/ic-return.svg" => include_bytes!("../assets/icons/ic-return.svg"),
             "icons/ic-expand.svg" => include_bytes!("../assets/icons/ic-expand.svg"),
             "icons/chevron.svg" => include_bytes!("../assets/icons/chevron.svg"),
             "icons/ic-labels.svg" => include_bytes!("../assets/icons/ic-labels.svg"),

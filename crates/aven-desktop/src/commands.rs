@@ -750,7 +750,7 @@ impl Root {
             delete_entry()
         };
         let entries = vec![
-            Entry::action("Expand", "↵", Expand).mark(Mark::Icon("icons/ic-expand.svg")),
+            Entry::action("Expand", "↩", Expand).mark(Mark::Icon("icons/ic-expand.svg")),
             Entry::action("Copy ref", "y r", CopyRef).mark(Mark::Icon("icons/ic-copy.svg")),
             Entry::action("Copy task report", "y m", CopyReport)
                 .mark(Mark::Icon("icons/ic-copy.svg")),
@@ -819,7 +819,7 @@ impl Root {
         };
         let anchor = Bounds::new(at, size(px(0.), px(0.)));
         let entries = vec![
-            Entry::action("Expand", "↵", Expand).mark(Mark::Icon("icons/ic-expand.svg")),
+            Entry::action("Expand", "↩", Expand).mark(Mark::Icon("icons/ic-expand.svg")),
             Entry::action("Done", "d", MarkDone)
                 .mark(Mark::Status(TaskStatus::Done))
                 .sep(),
@@ -1268,7 +1268,7 @@ impl Root {
                 Entry::action("Edit metadata", "e m", EditMetadata),
                 Entry::action("Add note", "n", FocusNote),
                 Entry::action("Rename task", "e t", RenameTask),
-                Entry::action("Expand task", "↵", Expand),
+                Entry::action("Expand task", "↩", Expand),
                 Entry::action("Add to epic", "t c", AddToEpic),
                 Entry::action("Publish report as secret gist", "t g", PublishGist),
             ]);

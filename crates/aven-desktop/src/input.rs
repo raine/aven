@@ -390,7 +390,7 @@ pub struct Editor {
     mode: Mode,
     read_only: bool,
     emit_arrows: bool,
-    /// Enter breaks the line, leaving saving to the surface around the editor.
+    /// Return breaks the line, leaving saving to the surface around the editor.
     enter_breaks: bool,
     takes_images: bool,
     content: String,

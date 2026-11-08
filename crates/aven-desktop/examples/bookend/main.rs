@@ -224,7 +224,7 @@ impl Render for Bookend {
                                     .bg(mix(theme.panel, Theme::dark().accent, 0.25))
                                     .text_size(px(13.))
                                     .text_color(theme.muted)
-                                    .child("Add ↵"),
+                                    .child("Add ↩"),
                             ),
                     ))
                     .child(rise(
@@ -238,7 +238,7 @@ impl Render for Bookend {
                             .text_size(px(12.))
                             .text_color(theme.faint)
                             .child("Adds to ● Personal  PRS")
-                            .child("More details ⌘↵"),
+                            .child("More details ⌘↩"),
                     ))
                     .child(rise(
                         4,

@@ -342,7 +342,7 @@ impl Root {
                 small(Text::Secondary)
                     .mt(px(6.))
                     .text_color(t.faint)
-                    .child("⌘↵ or clicking away saves. Esc discards."),
+                    .child("⌘↩ or clicking away saves. Esc discards."),
             )
     }
 
@@ -750,7 +750,7 @@ impl Root {
             .when(!expanded, |top| {
                 top.child(
                     btn("expand", "Expand", t)
-                        .hint(Hint::new("Expand").keys("↵"))
+                        .hint(Hint::new("Expand").keys("↩"))
                         .px(px(8.))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.expand(&Expand, window, cx);

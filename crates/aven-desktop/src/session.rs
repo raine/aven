@@ -638,7 +638,7 @@ impl Session {
         if self.snapshot.view.query == TaskQuery::Recurring {
             self.show_toast(
                 Toast::info("Recurring rows cannot be marked")
-                    .detail("Press Enter to open an occurrence"),
+                    .detail("Press Return to open an occurrence"),
             );
             return;
         }

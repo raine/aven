@@ -215,7 +215,7 @@ async fn a_failed_note_returns_to_its_draft() {
     assert_eq!(
         h.session.toast().cloned().unwrap().action,
         None,
-        "Enter saves the draft again"
+        "Return saves the draft again"
     );
 }
 

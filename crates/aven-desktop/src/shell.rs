@@ -471,7 +471,7 @@ impl Root {
         let note = cx.new(|cx| {
             Editor::new(
                 Mode::Multi,
-                "Add a note. Enter saves, Shift+Enter adds a line.",
+                "Add a note. Return saves, Shift+Return adds a line.",
                 window,
                 cx,
             )
