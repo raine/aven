@@ -18,6 +18,9 @@ pub(crate) struct Theme {
     pub(crate) bg_selected: Color,
     /// Rows marked for a bulk action.
     pub(crate) bg_row_marked: Color,
+    /// Group heading rows in task lists: between the base and raised
+    /// backgrounds, so groups stand apart from both rows and the table header.
+    pub(crate) bg_row_group: Color,
     /// Kanban lane.
     pub(crate) bg_lane: Color,
     /// Emphasized kanban lane and rows related to the selection.
@@ -115,6 +118,7 @@ impl Theme {
             bg_panel: Color::Rgb(39, 40, 38),
             bg_selected: Color::Rgb(50, 45, 78),
             bg_row_marked: bg_raised,
+            bg_row_group: Color::Rgb(28, 29, 27),
             bg_lane: Color::Rgb(24, 25, 24),
             bg_lane_active: Color::Rgb(27, 26, 32),
             lane_divider: Color::Rgb(49, 50, 47),
@@ -196,6 +200,7 @@ impl Theme {
             bg_panel: Color::Rgb(229, 229, 223),
             bg_selected: Color::Rgb(219, 211, 248),
             bg_row_marked: bg_raised,
+            bg_row_group: Color::Rgb(241, 241, 237),
             bg_lane: Color::Rgb(244, 244, 240),
             bg_lane_active: Color::Rgb(238, 236, 247),
             lane_divider: Color::Rgb(213, 213, 207),
@@ -273,6 +278,7 @@ impl Theme {
             bg_panel: Color::Reset,
             bg_selected: Color::Reset,
             bg_row_marked: Color::Reset,
+            bg_row_group: Color::Reset,
             bg_lane: Color::Reset,
             bg_lane_active: Color::Reset,
             lane_divider: Color::Reset,
