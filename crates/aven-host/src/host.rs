@@ -28,7 +28,7 @@ pub use runtime::{Delivery, Exit, Host, HostEvent, RoundReport, watch_config_fil
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 /// A heartbeat older than this, while the lock is held, is a fault, and so
 /// is a host that took the lock this long ago without recording its status.
-pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
+const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
 /// How often Aven Desktop and `aven mcp --sync` try again to host while
 /// another process holds the lock.
 pub const CLIENT_RETRY: Duration = Duration::from_secs(30);

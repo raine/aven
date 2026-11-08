@@ -62,14 +62,6 @@ fn center() -> Option<Retained<UNUserNotificationCenter>> {
     Some(UNUserNotificationCenter::currentNotificationCenter())
 }
 
-/// What the user allowed, read in this process.
-pub fn authorization() -> Result<Authorization> {
-    match center() {
-        Some(center) => authorization_of(&center),
-        None => Ok(Authorization::Unavailable),
-    }
-}
-
 fn authorization_of(center: &UNUserNotificationCenter) -> Result<Authorization> {
     let (sender, receiver) = mpsc::sync_channel(1);
     let completion = RcBlock::new(move |settings: std::ptr::NonNull<UNNotificationSettings>| {
