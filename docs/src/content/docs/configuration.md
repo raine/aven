@@ -273,8 +273,7 @@ and shows **Keep syncing after Aven quits** on when `sync.enabled` is set and
 its background agent runs. The top-level `background` key records whether Aven
 Desktop runs the background agent, set by its Settings and by
 `aven daemon install` (`on`) or `aven daemon uninstall` (`off`). Without it,
-Aven Desktop records `on` for a daemon that already runs Aven Desktop and
-leaves any other daemon as it is. See
+Aven Desktop leaves any installed daemon as it is. See
 [Aven Desktop in the background](/notifications/#aven-desktop-in-the-background).
 
 A local change wakes the process that syncs the database through a socket
@@ -283,13 +282,6 @@ database has its own, and only the user who owns the database's folder can
 use it, so several users on one Mac or Linux machine each sync on their own.
 When that path is too long for a socket, the socket goes in your own
 temporary folder instead. There is nothing to configure.
-
-:::note[`daemon.wake_addr` is ignored]
-Earlier versions woke the daemon through `daemon.wake_addr`, a loopback UDP
-address shared by every user of the machine. Aven no longer reads the
-setting. A config file that still has it loads as before, and you can remove
-it.
-:::
 
 Device invitation QR codes use Unicode sextants, which make them about half as
 wide and two thirds as tall, in terminals known to draw them: Alacritty, kitty,

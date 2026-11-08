@@ -68,9 +68,6 @@ local:
 sync:
   enabled: true
   interval_seconds: 45
-
-daemon:
-  wake_addr: "127.0.0.1:47631"
 "#,
         db.display(),
     ));
@@ -124,28 +121,6 @@ fn doctor_reports_disabled_sync_without_server_error() {
         &["enabled            no", "runtime allowed    yes"],
     );
     assert!(!output.contains("!! set up"));
-}
-
-#[test]
-fn doctor_accepts_and_ignores_an_invalid_old_daemon_wake_address() {
-    let env = TestEnv::new();
-    let db = env.db("old-wake.sqlite");
-    env.write_config(&format!(
-        r#"
-local:
-  db_path: "{}"
-
-daemon:
-  wake_addr: "not-an-address"
-"#,
-        db.display()
-    ));
-
-    let output = ok(env.aven_config(["doctor"]));
-
-    assert!(!output.contains("!! daemon wake"), "{output}");
-    assert!(!output.contains("invalid"), "{output}");
-    contains_all(&output, &["daemon wake", "old-wake.sqlite.host.sock"]);
 }
 
 #[test]

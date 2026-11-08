@@ -89,20 +89,15 @@ fn a_second_daemon_waits_for_the_first_and_takes_over_when_it_stops() {
     second.wait_for_log("daemon db=", PICKUP);
 }
 
-/// Two users on one machine: each has their own home, config and database,
-/// and both configs still name the wake address every Aven once shared.
+/// Two users on one machine: each has their own home, config and database.
 /// Each user's daemon hosts its own database on its own wake socket.
 #[test]
-fn daemons_of_two_users_both_host_with_the_old_shared_wake_address() {
+fn daemons_of_two_users_both_host_their_own_database() {
     let users = [TestEnv::new(), TestEnv::new()];
     let mut daemons = Vec::new();
     for env in &users {
         let db = env.db("aven.sqlite");
-        write_config(
-            env,
-            &db,
-            "daemon:\n  wake_addr: \"127.0.0.1:47631\"\nreminders:\n  enabled: true\n",
-        );
+        write_config(env, &db, "reminders:\n  enabled: true\n");
         let daemon = daemon(env);
         daemon.wait_for_log("daemon db=", STARTUP);
         let socket = aven_host::host::wake::paths(&db)[0].clone();
