@@ -12,9 +12,7 @@ use aven_host::running_processes::blocking_processes;
 use super::bundle::{self, BundleLayout, StagedBundle};
 use super::install::DESKTOP_ARCHIVE_LIMIT;
 use super::relaunch::{self, LaunchOutcome, PendingUpdate, UpdateState};
-use super::{
-    CURRENT_VERSION, CheckOutcome, InstallMethod, REPOSITORY, Release, ReleaseChannel, UpdatePhase,
-};
+use super::{CheckOutcome, InstallMethod, REPOSITORY, Release, ReleaseChannel, UpdatePhase};
 use crate::app_bundle::{BUNDLE_EXECUTABLE, enclosing_bundle};
 
 pub(crate) struct DesktopUpdater {
@@ -81,10 +79,6 @@ fn unwritable_reason(bundle: &Path) -> String {
 }
 
 impl Updates for DesktopUpdater {
-    fn version(&self) -> String {
-        CURRENT_VERSION.to_string()
-    }
-
     fn supported(&self) -> bool {
         super::eligibility::release_channel() == ReleaseChannel::Desktop
     }

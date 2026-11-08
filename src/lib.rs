@@ -107,7 +107,7 @@ fn run_app() -> ExitCode {
         // Linux Desktop has no release of its own to update to.
         #[cfg(target_os = "linux")]
         let updates = None;
-        aven_desktop::launch(updates)
+        aven_desktop::launch(update::CURRENT_VERSION.to_string(), updates)
     });
     match started {
         Ok(()) => ExitCode::SUCCESS,

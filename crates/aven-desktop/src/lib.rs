@@ -71,7 +71,11 @@ mod welcome;
 mod workflows;
 
 /// Starts the app and returns when it quits. Takes over the main thread, and
-/// must run outside any async runtime. `updates` lets the app update itself.
-pub fn launch(updates: Option<std::sync::Arc<dyn updates::Updates>>) -> anyhow::Result<()> {
-    app::run(updates)
+/// must run outside any async runtime. `version` is the running Aven release,
+/// and `updates` lets the app update itself.
+pub fn launch(
+    version: String,
+    updates: Option<std::sync::Arc<dyn updates::Updates>>,
+) -> anyhow::Result<()> {
+    app::run(version, updates)
 }

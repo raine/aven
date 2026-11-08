@@ -66,8 +66,6 @@ pub enum Relaunched {
 }
 
 pub trait Updates: Send + Sync {
-    /// The running version.
-    fn version(&self) -> String;
     /// Whether this installation updates itself in the app.
     fn supported(&self) -> bool;
     /// A newer release, if there is one. Without `force` a recent answer
@@ -130,9 +128,20 @@ pub(crate) struct Updater {
 
 impl Global for Updater {}
 
-/// Makes the app's updates available. Without a service the app only shows
-/// its version.
-pub(crate) fn install(service: Option<Arc<dyn Updates>>, automatic: bool, cx: &mut App) {
+/// The running Aven release, which the app crate cannot know on its own.
+struct Version(String);
+
+impl Global for Version {}
+
+/// Makes the app's version and updates available. Without a service the app
+/// only shows its version.
+pub(crate) fn install(
+    version: String,
+    service: Option<Arc<dyn Updates>>,
+    automatic: bool,
+    cx: &mut App,
+) {
+    cx.set_global(Version(version));
     if let Some(service) = service {
         cx.set_global(Updater {
             service,
@@ -162,12 +171,9 @@ fn phase(cx: &App) -> Phase {
     updater(cx).map_or(Phase::Idle, |updater| updater.phase.clone())
 }
 
-/// The running version, which the app crate cannot know on its own.
+/// The running version.
 pub(crate) fn version(cx: &App) -> String {
-    cx.try_global::<Updater>().map_or_else(
-        || env!("CARGO_PKG_VERSION").to_string(),
-        |updater| updater.service.version(),
-    )
+    cx.global::<Version>().0.clone()
 }
 
 /// Whether the app is quitting onto a new version it installed.

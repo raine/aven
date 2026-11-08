@@ -200,7 +200,7 @@ fn window_placement(saved: Option<&SavedWindow>, cx: &App) -> (WindowBounds, Opt
 }
 
 /// Runs on the owner's own configuration and database, as the CLI resolves them.
-pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
+pub fn run(version: String, updates: Option<Arc<dyn Updates>>) -> Result<()> {
     crate::startup::mark("desktop-entry");
     let config = AppConfig::load()?;
     let automatic_checks = config.update.automatic_checks;
@@ -212,10 +212,7 @@ pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
         config,
         config_file: config_file_path().ok(),
         storage: None,
-        version: updates.as_ref().map_or_else(
-            || env!("CARGO_PKG_VERSION").to_string(),
-            |updates| updates.version(),
-        ),
+        version: version.clone(),
     };
     crate::startup::mark("runtime-ready");
     let saved = Prefs::load(&prefs);
@@ -228,7 +225,7 @@ pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
         app.on_reopen(show_window);
         app.run(move |cx: &mut App| {
             prepare_app(cx);
-            crate::updates::install(updates, automatic_checks, cx);
+            crate::updates::install(version, updates, automatic_checks, cx);
             open_setup(layout, handle, launch, saved, prefs, cx);
             cx.activate(true);
         });
@@ -243,7 +240,7 @@ pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
     app.run(move |cx: &mut App| {
         crate::startup::mark("app-callback");
         prepare_app(cx);
-        crate::updates::install(updates, automatic_checks, cx);
+        crate::updates::install(version, updates, automatic_checks, cx);
         open_main(session, replies, saved, prefs, cx);
     });
     Ok(())
