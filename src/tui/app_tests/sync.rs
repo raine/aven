@@ -612,7 +612,6 @@ static INSTALLED_DB: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::M
 fn record_install(
     args: crate::daemon::ServiceInstallArgs,
 ) -> anyhow::Result<crate::daemon::InstalledService> {
-    assert!(args.config.sync.enabled);
     *INSTALLED_DB.lock().unwrap() = Some(args.db_path);
     Ok(crate::daemon::InstalledService {
         path: std::path::PathBuf::from("/service"),

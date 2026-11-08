@@ -387,7 +387,6 @@ async fn dispatch_standalone(
                     let reminders = config.reminders.enabled;
                     daemon::install(daemon::ServiceInstallArgs {
                         db_path,
-                        config,
                         program: args.program,
                     })?
                     .print();
@@ -405,7 +404,6 @@ async fn dispatch_standalone(
                 Some(DaemonSubcommand::Restart) => daemon::restart(),
                 Some(DaemonSubcommand::Repair(args)) => daemon::repair(daemon::ServiceRepairArgs {
                     db_path,
-                    config,
                     program: args.program,
                     if_installed: args.if_installed,
                 }),
