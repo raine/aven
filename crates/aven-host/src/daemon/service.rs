@@ -144,7 +144,7 @@ pub struct AgentState {
 
 #[cfg(target_os = "macos")]
 pub fn agent_state() -> Result<AgentState> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     Ok(AgentState {
         loaded: service_is_loaded(&SystemRunner, &spec)?,
         disabled: service_is_disabled(&SystemRunner, &spec)?,
@@ -155,14 +155,14 @@ pub fn agent_state() -> Result<AgentState> {
 /// and enablement as they are.
 #[cfg(target_os = "macos")]
 pub fn stop_agent() -> Result<()> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     stop_service(&SystemRunner, &SystemSleeper, &spec).map(drop)
 }
 
 /// Loads the agent from its plist as it stands.
 #[cfg(target_os = "macos")]
 pub fn start_agent() -> Result<()> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     bootstrap_service(&SystemRunner, &SystemSleeper, &spec, true)
 }
 
@@ -219,7 +219,7 @@ pub struct AgentStatus {
 
 #[cfg(target_os = "macos")]
 pub fn agent_status() -> Result<AgentStatus> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     agent_status_with_runner(&SystemRunner, &spec)
 }
 
@@ -251,7 +251,7 @@ pub fn ensure_agent(db_path: PathBuf) -> Result<Ensured> {
 /// whether it removed one.
 #[cfg(target_os = "macos")]
 pub fn remove_agent(program: &Path) -> Result<bool> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     remove_with_runner(&SystemRunner, &SystemSleeper, &spec, program)
 }
 
@@ -370,7 +370,7 @@ fn install_with_runner(
 
 #[cfg(target_os = "macos")]
 fn uninstall_with_runner(runner: &impl LaunchctlRunner) -> Result<()> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     if service_is_loaded(runner, &spec)? {
         run_launchctl(runner, &["bootout", &spec.service_target])?;
     }
@@ -393,7 +393,7 @@ fn uninstall_with_runner(_runner: &impl LaunchctlRunner) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn restart_with_runner(runner: &impl LaunchctlRunner) -> Result<()> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     run_launchctl(runner, &["kickstart", "-k", &spec.service_target])?;
     println!("restarted {}", spec.service_target);
     Ok(())
@@ -448,7 +448,7 @@ fn repair_with_runner(
 
 #[cfg(target_os = "macos")]
 fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     let program = read_plist_program(&spec.plist_path)?;
     let current_executable = std::env::current_exe().context("resolve current executable")?;
     let program_matches_current = program
@@ -506,7 +506,7 @@ fn prepare_bundle_migration_with_runner(runner: &impl LaunchctlRunner) -> Result
     if std::env::var_os("XPC_SERVICE_NAME").is_none_or(|name| name != LABEL) {
         return Ok(BundleMigration::NotNeeded);
     }
-    let base = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let base = ServiceSpec::current()?;
     let existing = match std::fs::read_to_string(&base.plist_path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -582,7 +582,7 @@ fn reload_definition_with_runner(
     runner: &impl LaunchctlRunner,
     sleeper: &impl Sleeper,
 ) -> Result<()> {
-    let spec = ServiceSpec::from_current_process(config::default_db_path()?)?;
+    let spec = ServiceSpec::current()?;
     let performed_bootout = stop_service(runner, sleeper, &spec)?;
     bootstrap_service(runner, sleeper, &spec, performed_bootout)?;
     println!("reloaded {}", spec.service_target);
@@ -608,8 +608,9 @@ struct ServiceSpec {
 
 #[cfg(target_os = "macos")]
 impl ServiceSpec {
-    fn from_current_process(db_path: PathBuf) -> Result<Self> {
-        Self::from_install_args(db_path, None)
+    /// The spec for the default database and the running executable.
+    fn current() -> Result<Self> {
+        Self::from_install_args(config::default_db_path()?, None)
     }
 
     fn from_install_args(db_path: PathBuf, program: Option<PathBuf>) -> Result<Self> {
@@ -788,28 +789,8 @@ fn unescape_xml(value: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ServicePresence {
-    Loaded,
-    Absent,
-}
-
-#[cfg(target_os = "macos")]
-fn service_presence(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<ServicePresence> {
-    let args = ["print", spec.service_target.as_str()];
-    let output = runner.run(&args)?;
-    if output.status.success() {
-        return Ok(ServicePresence::Loaded);
-    }
-    if output.status.code() == Some(113) {
-        return Ok(ServicePresence::Absent);
-    }
-    Err(launchctl_failure(&args, &output))
-}
-
-#[cfg(target_os = "macos")]
 fn service_is_loaded(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<bool> {
-    Ok(service_presence(runner, spec)? == ServicePresence::Loaded)
+    Ok(service_runtime(runner, spec)?.loaded)
 }
 
 #[cfg(target_os = "macos")]
@@ -970,7 +951,7 @@ fn wait_for_service_absence(
     spec: &ServiceSpec,
 ) -> Result<()> {
     for poll in 0..=BOOTOUT_POLL_LIMIT {
-        if service_presence(runner, spec)? == ServicePresence::Absent {
+        if !service_is_loaded(runner, spec)? {
             return Ok(());
         }
         if poll == BOOTOUT_POLL_LIMIT {
@@ -1002,7 +983,7 @@ fn bootstrap_service(
         if !performed_bootout || output.status.code() != Some(5) {
             return Err(launchctl_failure(&args, &output));
         }
-        if service_presence(runner, spec)? == ServicePresence::Loaded {
+        if service_is_loaded(runner, spec)? {
             return Ok(());
         }
         let Some(delay) = BOOTSTRAP_RETRY_DELAYS.get(retry) else {
