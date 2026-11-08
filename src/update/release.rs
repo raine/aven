@@ -6,8 +6,6 @@ use serde::Deserialize;
 
 use super::{REPOSITORY, Release, ReleaseArchive};
 
-const RELEASE_API: &str = "https://api.github.com/repos/raine/aven/releases/latest";
-
 /// Debug builds read releases from this URL instead, so a local server can
 /// stand in for GitHub. Its assets may then live on a loopback HTTP address.
 #[cfg(debug_assertions)]
@@ -18,7 +16,7 @@ fn release_api() -> String {
     if let Some(api) = release_api_override() {
         return api;
     }
-    RELEASE_API.to_string()
+    format!("https://api.github.com/repos/{REPOSITORY}/releases/latest")
 }
 
 #[cfg(debug_assertions)]
@@ -113,13 +111,11 @@ fn parse_release(release: GithubRelease, channel: ReleaseChannel) -> Result<Rele
         (ReleaseChannel::Terminal, None) => None,
         // A Desktop install updates only from its own archive.
         (ReleaseChannel::Desktop, Some(name)) => {
-            if !release.assets.iter().any(|asset| asset.name == name) {
-                bail!(
-                    "release {} has no Aven Desktop archive {name}",
-                    release.tag_name
-                );
-            }
-            optional_archive(&release.assets, name)?
+            let missing = format!(
+                "release {} has no Aven Desktop archive {name}",
+                release.tag_name
+            );
+            Some(optional_archive(&release.assets, name)?.context(missing)?)
         }
         (ReleaseChannel::Desktop, None) => bail!("Aven Desktop has no release archive here"),
     };
@@ -184,11 +180,6 @@ pub(super) fn platform_archive_name() -> Result<String> {
     Ok(format!("aven-{}.tar.gz", platform_suffix()?))
 }
 
-#[cfg(test)]
-fn platform_app_archive_name() -> Result<Option<String>> {
-    channel_app_archive_name(ReleaseChannel::Terminal)
-}
-
 /// The product line an installation updates within. Each channel has its own
 /// release archives and never falls back to the other channel's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,7 +187,7 @@ pub(crate) enum ReleaseChannel {
     /// CLI, TUI and daemon without the desktop app.
     Terminal,
     /// The desktop app, which also provides the CLI, TUI and daemon.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
     Desktop,
 }
 
@@ -337,7 +328,6 @@ mod tests {
         let suffix = platform_suffix().unwrap();
         let terminal = channel_app_archive_name(ReleaseChannel::Terminal).unwrap();
         let desktop = channel_app_archive_name(ReleaseChannel::Desktop);
-        assert_eq!(terminal, platform_app_archive_name().unwrap());
         if cfg!(target_os = "macos") {
             assert_eq!(terminal, Some(format!("aven-{suffix}-app.tar.gz")));
             assert_eq!(
