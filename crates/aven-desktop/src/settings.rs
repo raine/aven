@@ -13,8 +13,9 @@ use aven_host::store::TaskQuery;
 use chrono::Local;
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, Bounds, ClipboardItem, Context, Div, Entity,
-    FocusHandle, FontWeight, HighlightStyle, Hsla, SharedString, Stateful, StyledText,
-    Transformation, Window, canvas, div, fill, point, prelude::*, radians, size, svg,
+    FocusHandle, FontWeight, HighlightStyle, Hsla, Pixels, SharedString, Stateful, StyledText,
+    TextRun, Transformation, Window, canvas, div, fill, font, point, prelude::*, radians, size,
+    svg,
 };
 use qrcode::{Color, EcLevel, QrCode};
 
@@ -75,6 +76,42 @@ fn path_title(title: &'static str, path: String, t: &Theme) -> Div {
             .text_color(t.muted)
             .child(path),
     )
+}
+
+const SEGMENT_INSET: f32 = 2.;
+const SEGMENT_PADDING: f32 = 10.;
+
+/// One width for segmented controls that share a column: each control's
+/// segments split it evenly, so it fits the control whose widest label,
+/// repeated across its segments, needs the most room.
+fn segments_width(controls: &[&[&'static str]], window: &Window) -> Pixels {
+    let size = px(Text::Body.value());
+    let label_width = |label: &'static str| {
+        let run = TextRun {
+            len: label.len(),
+            font: font(crate::platform::ui_font()),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_line(label.into(), size, &[run], None)
+            .width
+            .ceil()
+    };
+    controls
+        .iter()
+        .map(|labels| {
+            let widest = labels
+                .iter()
+                .map(|label| label_width(label))
+                .fold(Pixels::ZERO, Pixels::max);
+            (widest + px(SEGMENT_PADDING * 2.)) * labels.len() as f32
+        })
+        .fold(Pixels::ZERO, Pixels::max)
+        + px(SEGMENT_INSET * 2.)
 }
 
 fn row(t: &Theme) -> Div {
@@ -937,11 +974,13 @@ impl Root {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn segment<T: Copy + PartialEq + 'static>(
         &self,
         name: &'static str,
         options: &[(T, &'static str)],
         current: T,
+        width: Pixels,
         pick: fn(&mut Self, T, &mut Window, &mut Context<Self>),
         cx: &mut Context<Self>,
         t: &Theme,
@@ -950,7 +989,8 @@ impl Root {
         div()
             .flex()
             .flex_none()
-            .p(px(2.))
+            .w(width)
+            .p(px(SEGMENT_INSET))
             .rounded(px(RADIUS_CONTROL))
             .bg(t.raised)
             .children(options.iter().map(|(value, label)| {
@@ -961,10 +1001,13 @@ impl Root {
                     .id(SharedString::from(format!("{name}-{label}")))
                     .role(Role::RadioButton)
                     .aria_label(*label)
+                    .flex_1()
+                    .min_w_0()
                     .h(px(24.))
-                    .px(px(10.))
+                    .px(px(SEGMENT_PADDING))
                     .flex()
                     .items_center()
+                    .justify_center()
                     .rounded(px(RADIUS_CHIP))
                     .text_color(if on { ink } else { muted })
                     .when(on, |item| item.bg(page).shadow(vec![ring]))
@@ -1010,13 +1053,22 @@ impl Root {
     ) -> AnyElement {
         self.switched.switch_track(track, name, on, scale, cx, t)
     }
-    fn general_tab(&self, _: &Window, cx: &mut Context<Self>, t: &Theme) -> Div {
+    fn general_tab(&self, window: &Window, cx: &mut Context<Self>, t: &Theme) -> Div {
         let themes = [
             (ThemePref::Dark, "Dark"),
             (ThemePref::Light, "Light"),
             (ThemePref::System, "System"),
         ];
+        let densities = [(false, "Comfortable"), (true, "Compact")];
         let zooms = [(92, "Small"), (100, "Default"), (110, "Large")];
+        let width = segments_width(
+            &[
+                &themes.map(|(_, label)| label),
+                &densities.map(|(_, label)| label),
+                &zooms.map(|(_, label)| label),
+            ],
+            window,
+        );
         let (update_note, update_button) = self.update_status(cx, t);
         page("General", Some("Appearance applies to this device."), t)
             .child(group(
@@ -1027,6 +1079,7 @@ impl Root {
                             "theme",
                             &themes,
                             self.prefs.theme,
+                            width,
                             Self::set_theme_pref,
                             cx,
                             t,
@@ -1035,8 +1088,9 @@ impl Root {
                         .child(row_title("Density", None, t))
                         .child(self.segment(
                             "density",
-                            &[(false, "Comfortable"), (true, "Compact")],
+                            &densities,
                             self.prefs.compact,
+                            width,
                             |this, compact, _, cx| this.set_compact(compact, cx),
                             cx,
                             t,
@@ -1047,6 +1101,7 @@ impl Root {
                             "zoom",
                             &zooms,
                             (self.prefs.zoom * 100.).round() as i32,
+                            width,
                             |this, zoom, _, cx| this.set_zoom(zoom as f32 / 100., cx),
                             cx,
                             t,
