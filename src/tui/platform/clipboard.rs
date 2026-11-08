@@ -1,6 +1,6 @@
 #[cfg(target_os = "macos")]
 use std::fs;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use std::io;
 #[cfg(all(not(test), any(target_os = "macos", target_os = "linux")))]
 use std::io::Write;
@@ -407,8 +407,89 @@ pub(crate) fn read_clipboard_image() -> Result<Option<ClipboardImage>> {
     Ok(None)
 }
 
+/// Environment variables that mean the native clipboard tool may write to a
+/// different machine than the one the user is looking at: an SSH session, or a
+/// multiplexer whose client can attach from elsewhere. Multiplexer panes do not
+/// inherit `SSH_*` from the attached client, so those need their own markers.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+const OSC52_SESSION_VARS: [&str; 5] = ["SSH_TTY", "SSH_CONNECTION", "TMUX", "ZELLIJ", "HERDR_ENV"];
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+pub(super) fn prefers_osc52(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    OSC52_SESSION_VARS
+        .iter()
+        .any(|name| env(name).is_some_and(|value| !value.is_empty()))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+pub(super) fn osc52_sequence(value: &str) -> String {
+    use base64::Engine;
+    let payload = base64::engine::general_purpose::STANDARD.encode(value);
+    // BEL rather than ST: some terminals and multiplexers only honor BEL here.
+    format!("\x1b]52;c;{payload}\x07")
+}
+
+/// Copies with the native tool, and also asks the terminal to copy via OSC 52
+/// when the session may be remote. Elsewhere OSC 52 is only a fallback for a
+/// failed native copy, such as a Linux host without wl-copy or xclip.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+pub(super) fn copy_with_osc52(
+    prefer_osc52: bool,
+    value: &str,
+    native: impl FnOnce(&str) -> Result<()>,
+    osc52: impl FnOnce(&str) -> io::Result<()>,
+) -> Result<()> {
+    if prefer_osc52 {
+        let osc52_result = osc52(value);
+        let native_result = native(value);
+        return match (osc52_result, native_result) {
+            (Ok(()), _) | (_, Ok(())) => Ok(()),
+            (Err(osc52_error), Err(native_error)) => {
+                anyhow::bail!("{native_error}; OSC 52 write failed: {osc52_error}")
+            }
+        };
+    }
+    match native(value) {
+        Ok(()) => Ok(()),
+        Err(native_error) => osc52(value).map_err(|osc52_error| {
+            anyhow::anyhow!("{native_error}; OSC 52 write failed: {osc52_error}")
+        }),
+    }
+}
+
+#[cfg(all(not(test), any(target_os = "macos", target_os = "linux")))]
+fn write_osc52(value: &str) -> io::Result<()> {
+    let sequence = osc52_sequence(value);
+    match std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+        Ok(mut tty) => {
+            tty.write_all(sequence.as_bytes())?;
+            tty.flush()
+        }
+        Err(_) => {
+            let mut stdout = io::stdout();
+            stdout.write_all(sequence.as_bytes())?;
+            stdout.flush()
+        }
+    }
+}
+
+#[cfg(all(not(test), any(target_os = "macos", target_os = "linux")))]
+fn session_prefers_osc52() -> bool {
+    prefers_osc52(|name| std::env::var_os(name))
+}
+
 #[cfg(all(not(test), target_os = "macos"))]
 pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
+    copy_with_osc52(
+        session_prefers_osc52(),
+        value,
+        copy_with_pbcopy,
+        write_osc52,
+    )
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn copy_with_pbcopy(value: &str) -> Result<()> {
     let mut child = ProcessCommand::new("pbcopy")
         .stdin(std::process::Stdio::piped())
         .spawn()?;
@@ -428,7 +509,12 @@ pub(crate) fn copy_to_clipboard(value: &str) -> Result<()> {
         std::env::var_os("WAYLAND_DISPLAY").as_deref(),
         std::env::var_os("XDG_SESSION_TYPE").as_deref(),
     );
-    copy_linux_clipboard_with(backends, value, run_clipboard_write_command)
+    copy_with_osc52(
+        session_prefers_osc52(),
+        value,
+        |value| copy_linux_clipboard_with(backends, value, run_clipboard_write_command),
+        write_osc52,
+    )
 }
 
 #[cfg(all(not(test), not(any(target_os = "macos", target_os = "linux"))))]
@@ -457,6 +543,105 @@ pub(crate) fn clipboard_text_for_test() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefers_osc52_in_ssh_and_multiplexer_sessions() {
+        fn env<'a>(
+            vars: &'a [(&'a str, &'a str)],
+        ) -> impl Fn(&str) -> Option<std::ffi::OsString> + 'a {
+            move |name| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.into())
+            }
+        }
+
+        assert!(!prefers_osc52(env(&[("TERM", "xterm-ghostty")])));
+        assert!(!prefers_osc52(env(&[("TMUX", "")])));
+        for name in OSC52_SESSION_VARS {
+            assert!(
+                prefers_osc52(env(&[(name, "1")])),
+                "{name} should prefer OSC 52"
+            );
+        }
+    }
+
+    #[test]
+    fn osc52_sequence_base64_encodes_utf8_with_bel_terminator() {
+        assert_eq!(osc52_sequence("할일 ✓"), "\x1b]52;c;7ZWg7J28IOKckw==\x07");
+    }
+
+    #[test]
+    fn remote_sessions_write_osc52_and_succeed_without_a_native_clipboard() {
+        let mut written = None;
+        copy_with_osc52(
+            true,
+            "task",
+            |_| anyhow::bail!("Linux clipboard copy requires wl-copy or xclip"),
+            |value| {
+                written = Some(value.to_string());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(written.as_deref(), Some("task"));
+    }
+
+    #[test]
+    fn remote_sessions_also_copy_natively_when_the_terminal_write_fails() {
+        let mut native = None;
+        copy_with_osc52(
+            true,
+            "task",
+            |value| {
+                native = Some(value.to_string());
+                Ok(())
+            },
+            |_| Err(io::Error::other("no tty")),
+        )
+        .unwrap();
+        assert_eq!(native.as_deref(), Some("task"));
+
+        let error = copy_with_osc52(
+            true,
+            "task",
+            |_| anyhow::bail!("pbcopy exited with 1"),
+            |_| Err(io::Error::other("no tty")),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "pbcopy exited with 1; OSC 52 write failed: no tty"
+        );
+    }
+
+    #[test]
+    fn local_sessions_use_osc52_only_after_the_native_copy_fails() {
+        let mut osc52_calls = 0;
+        copy_with_osc52(
+            false,
+            "task",
+            |_| Ok(()),
+            |_| {
+                osc52_calls += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(osc52_calls, 0);
+
+        copy_with_osc52(
+            false,
+            "task",
+            |_| anyhow::bail!("Linux clipboard copy requires wl-copy or xclip"),
+            |_| {
+                osc52_calls += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(osc52_calls, 1);
+    }
 
     #[test]
     fn selects_linux_clipboard_backend_from_session_environment() {

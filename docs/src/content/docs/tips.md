@@ -64,6 +64,16 @@ csi-u
 
 If `Ctrl-Enter` inserts a newline, open a fresh Alacritty window, reapply the tmux settings, and restart Aven. Use `Ctrl-s` when any terminal layer cannot preserve the modifier.
 
+## Copy over SSH and in multiplexers
+
+TUI copy commands use `pbcopy` on macOS and `wl-copy` or `xclip` on Linux. Over SSH, or inside tmux, Zellij, or Herdr, Aven also sends an OSC 52 escape sequence so the terminal you are looking at copies the text, even when Aven runs on another machine. Elsewhere, Aven sends OSC 52 only when the native copy fails, such as on a Linux host without `wl-copy` or `xclip`.
+
+Your terminal must allow OSC 52 clipboard writes. tmux ignores them from applications by default; add this to `~/.tmux.conf`:
+
+```text
+set -g set-clipboard on
+```
+
 ## Troubleshoot image previews
 
 If task detail shows a text label instead of a picture, use the label and the checks below to find the cause. The attachment remains part of the task even when Aven cannot show a preview.
