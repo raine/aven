@@ -747,6 +747,12 @@ mod tests {
         }
     }
 
+    /// A Wednesday, when no two presets fall on the same day. On a Thursday
+    /// "Tomorrow" is also "Friday", and on a Sunday also "Next Monday".
+    fn midweek() -> NaiveDate {
+        date("2026-11-04")
+    }
+
     #[test]
     fn typed_dates_show_the_date_and_how_far_off_it_is() {
         let today = today();
@@ -760,8 +766,11 @@ mod tests {
 
     #[test]
     fn a_typed_date_matches_the_preset_that_says_the_same() {
-        let setting = setting(DateField::Due, Some(None), None);
-        let typed = setting.typed("tomorrow").unwrap();
+        let setting = Setting {
+            today: midweek(),
+            ..setting(DateField::Due, Some(None), None)
+        };
+        let typed = setting.typed("2026-11-05").unwrap();
         let entries = setting.entries();
         let same: Vec<&Entry> = entries
             .iter()
@@ -773,8 +782,11 @@ mod tests {
 
     #[test]
     fn the_stored_date_is_checked_unless_marked_tasks_share_none() {
-        let tomorrow = after_days(today(), 1).to_string();
-        let one = setting(DateField::Due, Some(Some(tomorrow)), None);
+        let tomorrow = after_days(midweek(), 1).to_string();
+        let one = Setting {
+            today: midweek(),
+            ..setting(DateField::Due, Some(Some(tomorrow)), None)
+        };
         let checked = |setting: &Setting| {
             let entries = setting.entries();
             let checked = entries.into_iter().filter(|entry| entry.checked);
