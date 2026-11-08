@@ -119,6 +119,16 @@ pub(crate) enum InternalSubcommand {
     /// process that asked never connects to the notification service.
     #[command(name = "notify", hide = true)]
     Notify,
+    /// Opens the Linux desktop app on a database at what a clicked
+    /// notification is about.
+    #[command(name = "open-notification", hide = true)]
+    OpenNotification(InternalOpenNotificationArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct InternalOpenNotificationArgs {
+    pub(crate) database: PathBuf,
+    pub(crate) tag: String,
 }
 
 #[derive(Args)]

@@ -91,7 +91,15 @@ pub fn run_bundle_launch() -> Option<ExitCode> {
 /// thread.
 #[cfg(all(target_os = "linux", feature = "desktop"))]
 pub fn run_desktop_launch() -> Option<ExitCode> {
-    desktop_launch::opens().then(run_app)
+    match desktop_launch::opens()? {
+        desktop_launch::Opening::App => Some(run_app()),
+        desktop_launch::Opening::Notification { database, tag } => {
+            let started = logging::init(logging::LogMode::Tui).and_then(|()| {
+                aven_desktop::open_notification(update::CURRENT_VERSION.to_string(), database, tag)
+            });
+            Some(app_exit(started))
+        }
+    }
 }
 
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "desktop"))]
@@ -109,6 +117,11 @@ fn run_app() -> ExitCode {
         let updates = None;
         aven_desktop::launch(update::CURRENT_VERSION.to_string(), updates)
     });
+    app_exit(started)
+}
+
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "desktop"))]
+fn app_exit(started: Result<()>) -> ExitCode {
     match started {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -362,6 +375,10 @@ async fn dispatch_standalone(
             InternalSubcommand::ReloadDaemon => daemon::reload_service_definition(),
             InternalSubcommand::DesktopSetup => cmd_internal_desktop_setup(),
             InternalSubcommand::Notify => notification::serve_child(),
+            // A desktop build with a display opens the app before this.
+            InternalSubcommand::OpenNotification(_) => {
+                anyhow::bail!("this aven has no desktop app, or no display to open it on")
+            }
             #[cfg(target_os = "macos")]
             InternalSubcommand::FinishDesktopUpdate(args) => {
                 update::finish_desktop_update(&args.marker, args.pid).await

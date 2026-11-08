@@ -2,9 +2,12 @@
 //! app manages there. On Linux the app runs in place, with no bundle or install
 //! layout, and leaves the daemon to `aven daemon install`.
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
-use aven_host::notify::{Authorization, Deliver, Report, Request};
+use aven_host::notify::freedesktop::{Click, Freedesktop};
+use aven_host::notify::{Deliver, Report, Request};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 /// The app's name to the window system and its desktop entry, the same as
 /// its bundle identifier on macOS.
@@ -69,30 +72,38 @@ pub fn agent_app() -> Option<PathBuf> {
 }
 
 /// Posts the app's notifications through the freedesktop notification
-/// service. It has no permission to read, and clicks open nothing.
+/// service, and hands clicks on them to [`notification_clicks`].
 pub struct Notifier;
 
 impl Deliver for Notifier {
     fn deliver(&self, request: &Request) -> Result<Report> {
-        let errors = request
-            .posts
-            .iter()
-            .map(|post| {
-                notify_rust::Notification::new()
-                    .appname("Aven")
-                    .summary(&post.title)
-                    .body(&post.body)
-                    .show()
-                    .err()
-                    .map(|error| error.to_string())
+        static SERVICE: OnceLock<Freedesktop> = OnceLock::new();
+        SERVICE
+            .get_or_init(|| {
+                Freedesktop::new("Aven", |click| {
+                    let _ = clicks().0.send(click);
+                })
             })
-            .collect();
-        Ok(Report {
-            authorization: Authorization::Allowed,
-            errors,
-            delivered: None,
-        })
+            .deliver(request)
     }
+}
+
+type Clicks = (
+    UnboundedSender<Click>,
+    Mutex<Option<UnboundedReceiver<Click>>>,
+);
+
+fn clicks() -> &'static Clicks {
+    static CLICKS: OnceLock<Clicks> = OnceLock::new();
+    CLICKS.get_or_init(|| {
+        let (sender, receiver) = unbounded_channel();
+        (sender, Mutex::new(Some(receiver)))
+    })
+}
+
+/// Clicks on the app's notifications, for the one caller that follows them.
+pub fn notification_clicks() -> Option<UnboundedReceiver<Click>> {
+    clicks().1.lock().ok()?.take()
 }
 
 /// Linux desktops keep the setting in their own places, which this does not
@@ -369,6 +380,16 @@ pub mod instance {
 
     use super::Activation;
 
+    /// What a later launch asks of the app that has the database.
+    #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub struct Forward {
+        /// What lets the window come to the front, which only the later
+        /// launch was given.
+        pub activation: Activation,
+        /// The tag of a clicked notification to open.
+        pub notification: Option<String>,
+    }
+
     /// How long a later launch keeps trying to reach an app that holds the
     /// lock but may not listen yet.
     const REACH_FOR: Duration = Duration::from_secs(2);
@@ -382,14 +403,14 @@ pub mod instance {
     pub struct Claim {
         _lock: Option<File>,
         /// One message per later launch, which wants the window in front.
-        pub raised: Option<UnboundedReceiver<Activation>>,
+        pub raised: Option<UnboundedReceiver<Forward>>,
     }
 
     /// Claims the database at `db` for this app. Returns `None` once the app
-    /// that has it is asked to come forward with `activation`. Anything that
-    /// stops the claim from being checked lets this app run, since refusing
-    /// to open is worse than a second window.
-    pub fn claim(db: &Path, activation: &Activation) -> Option<Claim> {
+    /// that has it is handed `forward`. Anything that stops the claim from
+    /// being checked lets this app run, since refusing to open is worse than
+    /// a second window.
+    pub fn claim(db: &Path, forward: &Forward) -> Option<Claim> {
         let lock = match open_lock(&beside(db, ".desktop.lock")) {
             Ok(lock) => lock,
             Err(error) => {
@@ -404,7 +425,7 @@ pub mod instance {
         match lock.try_lock() {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => {
-                raise(&socket, activation);
+                raise(&socket, forward);
                 return None;
             }
             Err(TryLockError::Error(error)) => {
@@ -441,11 +462,10 @@ pub mod instance {
             .open(path)
     }
 
-    /// Asks the app that has the database to come forward, handing it this
-    /// launch's activation, which only this launch was given. Its socket may
+    /// Asks the app that has the database to come forward. Its socket may
     /// not be bound yet when both start together, so this retries a moment.
-    fn raise(socket: &Path, activation: &Activation) {
-        let message = serde_json::to_vec(activation).unwrap_or_default();
+    fn raise(socket: &Path, forward: &Forward) {
+        let message = serde_json::to_vec(forward).unwrap_or_default();
         let mut waited = Duration::ZERO;
         loop {
             match UnixStream::connect(socket).and_then(|mut stream| stream.write_all(&message)) {
@@ -466,7 +486,7 @@ pub mod instance {
     }
 
     /// Listens at `socket`, which the lock makes this app's to replace.
-    fn listen(socket: &Path) -> io::Result<UnboundedReceiver<Activation>> {
+    fn listen(socket: &Path) -> io::Result<UnboundedReceiver<Forward>> {
         match std::fs::symlink_metadata(socket) {
             Ok(meta) if meta.file_type().is_socket() => std::fs::remove_file(socket)?,
             Ok(_) => {
@@ -488,7 +508,7 @@ pub mod instance {
                     let Ok(stream) = stream else {
                         continue;
                     };
-                    if sender.send(read_activation(stream)).is_err() {
+                    if sender.send(read_forward(stream)).is_err() {
                         break;
                     }
                 }
@@ -498,7 +518,7 @@ pub mod instance {
 
     /// What a later launch handed over. One that says nothing readable
     /// still asks for the window, without a token.
-    fn read_activation(mut stream: UnixStream) -> Activation {
+    fn read_forward(mut stream: UnixStream) -> Forward {
         let _ = stream.set_read_timeout(Some(READ_FOR));
         let mut message = Vec::new();
         let _ = (&mut stream).take(MESSAGE_LIMIT).read_to_end(&mut message);
@@ -510,14 +530,17 @@ pub mod instance {
         use super::*;
 
         #[test]
-        fn a_second_claim_raises_the_first_with_its_activation() {
+        fn a_second_claim_hands_the_first_its_activation_and_notification() {
             let dir = tempfile::tempdir().unwrap();
             let db = dir.path().join("aven.sqlite");
-            let none = Activation::default();
+            let none = Forward::default();
             let mut first = claim(&db, &none).expect("the first app claims the database");
-            let second = Activation {
-                token: Some("token-1".into()),
-                startup_id: Some("launcher-2_TIME42".into()),
+            let second = Forward {
+                activation: Activation {
+                    token: Some("token-1".into()),
+                    startup_id: Some("launcher-2_TIME42".into()),
+                },
+                notification: Some("v1:task:home:T:e1".into()),
             };
             assert!(
                 claim(&db, &second).is_none(),
@@ -541,7 +564,7 @@ pub mod instance {
             let (mut sender, receiver) = UnixStream::pair().unwrap();
             sender.write_all(b"raise").unwrap();
             drop(sender);
-            assert_eq!(read_activation(receiver), Activation::default());
+            assert_eq!(read_forward(receiver), Forward::default());
         }
     }
 }

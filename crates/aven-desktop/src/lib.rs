@@ -79,3 +79,15 @@ pub fn launch(
 ) -> anyhow::Result<()> {
     app::run(version, updates)
 }
+
+/// Starts the app on `database` at what the clicked notification `tag` is
+/// about, or hands the click to the app already open there, and returns when
+/// the app quits. Runs as [`launch`] does.
+#[cfg(target_os = "linux")]
+pub fn open_notification(
+    version: String,
+    database: std::path::PathBuf,
+    tag: String,
+) -> anyhow::Result<()> {
+    app::run_clicked(version, database, tag)
+}

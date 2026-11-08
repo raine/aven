@@ -70,7 +70,7 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         config: follow_config(&args.config, |_| {}),
         blob_dir,
         sync: DaemonSync::default(),
-        delivery: Delivery::Here(crate::notification::delivery()),
+        delivery: Delivery::Here(crate::notification::delivery(&args.db_path)),
         rounds: Box::new(|_| {}),
         wake: Arc::new(Notify::new()),
         debounce: Duration::ZERO,
@@ -274,6 +274,7 @@ impl EmbeddedSync {
                 seat
             }
         };
+        let delivery = crate::notification::delivery(self.database.path());
         let host = Host {
             database: self.database,
             seat,
@@ -282,7 +283,7 @@ impl EmbeddedSync {
             config: self.host_config,
             blob_dir: self.blob_dir,
             sync: DaemonSync::default(),
-            delivery: Delivery::Here(crate::notification::delivery()),
+            delivery: Delivery::Here(delivery),
             rounds: Box::new(|_| {}),
             wake: self.wake,
             debounce: Duration::ZERO,
