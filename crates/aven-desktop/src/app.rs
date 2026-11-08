@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use aven_core::ids::TaskId;
-use aven_host::app_bundle::enclosing_bundle;
 use aven_host::config::{AppConfig, config_file_path, resolve_db_path};
-use aven_host::desktop_install::{self, Layout, MacSystem};
 use aven_host::notify::{self, Target};
 use gpui::{
     App, Bounds, DisplayId, Global, Pixels, Size, TitlebarOptions, WindowBounds, WindowHandle,
@@ -17,6 +15,8 @@ use gpui_platform::application;
 
 use crate::adapter::{self, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
 use crate::assets::{Assets, load_fonts};
+use crate::platform::desktop_install::{self, Layout, MacSystem};
+use crate::platform::enclosing_bundle;
 use crate::session::Session;
 use crate::setup::Setup;
 use crate::shell::Root;
