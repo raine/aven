@@ -332,7 +332,7 @@ impl TuiStore {
     }
 
     pub(super) fn wake_after_mutation(&self) {
-        crate::daemon::wake_if_enabled(&self.app_config);
+        crate::daemon::wake_if_enabled(&self.app_config, self.database.path());
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -695,7 +695,7 @@ impl TuiProjection {
         let workspace_id = self.active_workspace.id.clone();
         let reconciliation = database.reconcile_recurrence_reports(&workspace_id).await?;
         if reconciliation.changed > 0 {
-            crate::daemon::wake_if_enabled(app_config);
+            crate::daemon::wake_if_enabled(app_config, database.path());
         }
         inject_refresh_failure(fail_at, RefreshFailureStage::Projects)?;
         self.projects = database

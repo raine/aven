@@ -2688,9 +2688,57 @@ async fn background_status(
         },
         None => AgentShown::Unknown,
     };
+    let waiting_for = match (agent, &database) {
+        (AgentShown::Running, Some(database)) => match host::host_state(database).await {
+            Ok(state) => agent_waits_for(&state, std::process::id()),
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "could not read the background host");
+                None
+            }
+        },
+        _ => None,
+    };
     BackgroundStatus {
-        agent,
+        agent: if waiting_for.is_some() {
+            AgentShown::Waiting
+        } else {
+            agent
+        },
+        waiting_for,
         ..background_settings(app.is_some(), config, database).await
+    }
+}
+
+/// What keeps a running agent from taking over sync and reminders when this
+/// app quits, if anything: a host other than the agent and this app, or one
+/// that stopped responding. While this app hosts, the agent waits for it to
+/// quit, which is what it is for.
+fn agent_waits_for(state: &HostState, own_pid: u32) -> Option<String> {
+    let name = |status: &aven_core::local_state::HostStatus| {
+        format!(
+            "{} (process {})",
+            host::describe_role(&status.role).replace('`', ""),
+            status.pid
+        )
+    };
+    match state {
+        HostState::Running(status)
+            if status.role != Role::Daemon.as_str() && status.pid != own_pid =>
+        {
+            Some(format!(
+                "{} runs sync and reminders; the agent takes over when it stops",
+                name(status)
+            ))
+        }
+        HostState::Unresponsive(Some(status)) => Some(format!(
+            "{} stopped responding and keeps the agent from syncing; restart it",
+            name(status)
+        )),
+        HostState::Unresponsive(None) => Some(
+            "Another Aven process stopped responding and keeps the agent from syncing; restart it"
+                .to_string(),
+        ),
+        _ => None,
     }
 }
 
@@ -2719,6 +2767,7 @@ async fn background_settings(
         reminders: config.reminders.enabled,
         wanted: background::wants_agent(config),
         agent: AgentShown::Unknown,
+        waiting_for: None,
         last_sync,
         notifications_off,
     }
@@ -2748,8 +2797,8 @@ fn hosted(config: &AppConfig) -> AppConfig {
 struct Background {
     database: Database,
     path: PathBuf,
-    /// Whether this is the configured database, the one the daemon and the
-    /// wake address belong to. Only it is hosted here.
+    /// Whether this is the configured database, the one the daemon hosts.
+    /// Only it is hosted here.
     hostable: bool,
     config: watch::Receiver<AppConfig>,
     blob_dir: PathBuf,
@@ -2784,17 +2833,17 @@ async fn run_background(mut background: Background) {
         background.notifications.clone(),
         background.deliver.clone(),
     )));
-    let mut told = None;
+    let mut told_unresponsive = false;
     loop {
         if background.hostable
-            && let Some(seat) = try_to_host(&background, &mut told).await
+            && let Some(seat) = try_to_host(&background, &mut told_unresponsive).await
         {
             return host_here(background, seat).await;
         }
         let config = background.config.borrow_and_update().clone();
         let retry = background
             .hostable
-            .then(|| Instant::now() + host::OLD_DAEMON_RETRY);
+            .then(|| Instant::now() + host::CLIENT_RETRY);
         if !config.sync_is_allowed() {
             tokio::select! {
                 () = background.stop.notified() => return,
@@ -2822,43 +2871,23 @@ fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(365 * 24 * 60 * 60)
 }
 
-/// Why this app does not host, as last told to the user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NotHosting {
-    OldProcess,
-    Unresponsive,
-}
-
-/// Takes the host lock and wake address if it can. Tells the user, once per
-/// cause, about a host that keeps this app from hosting and needs their help.
-async fn try_to_host(background: &Background, told: &mut Option<NotHosting>) -> Option<Seat> {
-    let wake_addr = background.config.borrow().wake_addr().ok()?;
-    let cause = match host::elect(&background.path, wake_addr).await {
+/// Takes the host lock if it can. Tells the user, once, about a host that
+/// keeps this app from hosting and stopped responding.
+async fn try_to_host(background: &Background, told_unresponsive: &mut bool) -> Option<Seat> {
+    match host::elect(&background.path).await {
         Ok(Election::Won(seat)) => return Some(seat),
-        Ok(Election::WakeAddressBusy(_)) => Some(NotHosting::OldProcess),
-        Ok(Election::Taken) => match host::host_state(&background.database).await {
-            Ok(HostState::Unresponsive(status)) => {
-                if *told != Some(NotHosting::Unresponsive) {
-                    *told = Some(NotHosting::Unresponsive);
-                    background.send(ReplyBody::Notice(unresponsive_host(status.as_ref())));
-                }
-                return None;
+        Ok(Election::Taken) => {
+            if let Ok(HostState::Unresponsive(status)) =
+                host::host_state(&background.database).await
+                && !*told_unresponsive
+            {
+                *told_unresponsive = true;
+                background.send(ReplyBody::Notice(unresponsive_host(status.as_ref())));
             }
-            _ => None,
-        },
+        }
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "could not take the host lock");
-            None
         }
-    };
-    if cause == Some(NotHosting::OldProcess) && *told != cause {
-        *told = cause;
-        background.send(ReplyBody::Notice(
-            Toast::info("An older Aven background process is running").detail(
-                "It keeps reminders to itself, so this app does not send them until it \
-                 stops. Run `aven daemon restart` to start the current version.",
-            ),
-        ));
     }
     None
 }
@@ -3344,10 +3373,7 @@ mod tests {
         let (_directory, mut actor, _replies) = actor("Keep").await;
         let posted = Arc::new(Posted::default());
         actor.notifications = posted.clone();
-        let Election::Won(_daemon) = host::elect(&actor.database, "127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap()
-        else {
+        let Election::Won(_daemon) = host::elect(&actor.database).await.unwrap() else {
             panic!("the other host wins");
         };
         actor.spawn_background_sync();
@@ -3374,10 +3400,7 @@ mod tests {
     #[tokio::test]
     async fn the_app_only_syncs_while_another_host_holds_the_lock() {
         let (_directory, mut actor, mut replies) = actor("Keep").await;
-        let Election::Won(_daemon) = host::elect(&actor.database, "127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap()
-        else {
+        let Election::Won(_daemon) = host::elect(&actor.database).await.unwrap() else {
             panic!("the other host wins");
         };
         let mut due = draft("Pay invoice");
@@ -3407,21 +3430,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_older_process_on_the_wake_address_is_reported_once() {
+    async fn the_app_hosts_on_its_own_databases_wake_socket() {
         let (_directory, mut actor, mut replies) = actor("Keep").await;
-        let old_daemon = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        actor.config.daemon.wake_addr = Some(old_daemon.local_addr().unwrap().to_string());
         actor.spawn_background_sync();
 
-        let notice = reply_matching(&mut replies, |body| match body {
-            ReplyBody::Notice(toast) => Some(toast),
+        reply_matching(&mut replies, |body| match body {
+            ReplyBody::Sync(_) => Some(()),
+            ReplyBody::Notice(toast) => panic!("unexpected notice {:?}", toast.title),
             _ => None,
         })
         .await;
-        assert_eq!(notice.title, "An older Aven background process is running");
-        assert!(!host::lock_is_held(&actor.database).unwrap());
-        assert_eq!(actor.store.database().host_status().await.unwrap(), None);
+        assert!(host::lock_is_held(&actor.database).unwrap());
+        assert!(
+            host::wake::paths(&actor.database)[0].exists(),
+            "the app listens on its own database's socket"
+        );
         timeout(Duration::from_secs(5), actor.quit()).await.unwrap();
+    }
+
+    #[test]
+    fn a_running_agent_waits_only_for_a_host_other_than_itself_and_this_app() {
+        let status = |role: &str, pid| aven_core::local_state::HostStatus {
+            pid,
+            role: role.to_string(),
+            version: "0.1.0".to_string(),
+            capabilities: vec![host::CAPABILITY_SYNC.to_string()],
+            started_at: 0,
+            heartbeat_at: 0,
+            round_started: 0,
+            round_finished: 0,
+        };
+        assert_eq!(
+            agent_waits_for(&HostState::Running(status("daemon", 7)), 9),
+            None
+        );
+        assert_eq!(
+            agent_waits_for(&HostState::Running(status("desktop", 9)), 9),
+            None,
+            "the agent stands by while this app hosts"
+        );
+        assert_eq!(agent_waits_for(&HostState::Starting, 9), None);
+        assert_eq!(agent_waits_for(&HostState::Stopped(None), 9), None);
+        let behind_mcp = agent_waits_for(&HostState::Running(status("mcp", 5)), 9).unwrap();
+        assert!(
+            behind_mcp.contains("aven mcp --sync (process 5)"),
+            "{behind_mcp}"
+        );
+        assert!(behind_mcp.contains("takes over"));
+        let behind_other_app =
+            agent_waits_for(&HostState::Running(status("desktop", 6)), 9).unwrap();
+        assert!(behind_other_app.contains("Aven Desktop (process 6)"));
+        let stuck =
+            agent_waits_for(&HostState::Unresponsive(Some(status("daemon", 4))), 9).unwrap();
+        assert!(stuck.contains("stopped responding"), "{stuck}");
     }
 
     #[tokio::test]
@@ -3581,7 +3642,7 @@ mod tests {
             runtime.handle().clone(),
             Launch {
                 database: path,
-                config: aven_host::test_support::isolated_config(),
+                config: AppConfig::default(),
                 config_file: None,
                 storage: None,
                 version: "0.0.0".to_string(),
@@ -3641,7 +3702,7 @@ mod tests {
                     handle,
                     Launch {
                         database: path,
-                        config: aven_host::test_support::isolated_config(),
+                        config: AppConfig::default(),
                         config_file: None,
                         storage: None,
                         version: "0.0.0".to_string(),
@@ -3678,7 +3739,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let launch = Launch {
             database: path.clone(),
-            config: aven_host::test_support::isolated_config(),
+            config: AppConfig::default(),
             config_file: None,
             storage: Some(Arc::new(
                 aven_core::sync::client::keys::FileProtectedStorage::new(
@@ -3948,7 +4009,7 @@ mod tests {
         let actor = Actor::new(
             store,
             path,
-            aven_host::test_support::isolated_config(),
+            AppConfig::default(),
             replies,
             Arc::new(Notify::new()),
             Some(Arc::new(

@@ -17,7 +17,7 @@ use tempfile::TempDir;
 fn start(directory: &TempDir) -> (Session, Replies) {
     let launch = adapter::Launch {
         database: directory.path().join("db.sqlite"),
-        config: aven_host::test_support::isolated_config(),
+        config: aven_host::config::AppConfig::default(),
         config_file: None,
         storage: Some(Arc::new(FileProtectedStorage::new(
             directory.path().join("keys"),

@@ -244,8 +244,7 @@ pub enum Ensured {
 /// kept, so the app and `aven daemon install` from a shell don't rewrite each
 /// other's. Never starts an agent the user turned off in Login Items.
 #[cfg(target_os = "macos")]
-pub fn ensure_agent(db_path: PathBuf, config: &AppConfig) -> Result<Ensured> {
-    validate_install_config(config)?;
+pub fn ensure_agent(db_path: PathBuf) -> Result<Ensured> {
     let spec = ServiceSpec::from_install_args(db_path, None)?;
     ensure_with_runner(&SystemRunner, &SystemSleeper, &spec)
 }
@@ -270,7 +269,7 @@ pub fn reload_service_definition() -> Result<()> {
 #[cfg(target_os = "linux")]
 pub fn install(args: ServiceInstallArgs) -> Result<InstalledService> {
     let spec = systemd::UnitSpec::from_install_args(args.db_path.clone(), args.program.clone())?;
-    systemd::install_with_runner(args, &spec, &systemd::SystemSystemctl)
+    systemd::install_with_runner(&spec, &systemd::SystemSystemctl)
 }
 
 #[cfg(target_os = "linux")]
@@ -350,7 +349,6 @@ fn install_with_runner(
     runner: &impl LaunchctlRunner,
     sleeper: &impl Sleeper,
 ) -> Result<InstalledService> {
-    validate_install_config(&args.config)?;
     let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
     let plist = render_plist(&spec);
     reload_service(runner, sleeper, &spec, &plist)?;
@@ -434,7 +432,6 @@ fn repair_with_runner(
             spec.plist_path.display()
         );
     }
-    validate_install_config(&args.config)?;
     let plist = render_plist(&spec);
     reload_service(runner, sleeper, &spec, &plist)?;
     println!(
@@ -603,15 +600,6 @@ fn reload_definition_with_runner(
     let performed_bootout = stop_service(runner, sleeper, &spec)?;
     bootstrap_service(runner, sleeper, &spec, performed_bootout)?;
     println!("reloaded {}", spec.service_target);
-    Ok(())
-}
-
-/// An installed daemon idles until the config gives it sync or reminders, so
-/// installing one without either is allowed; `aven daemon install` refuses it
-/// separately to point a terminal user at the setting they likely meant.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn validate_install_config(config: &AppConfig) -> Result<()> {
-    config.wake_addr()?;
     Ok(())
 }
 

@@ -14,6 +14,7 @@ pub use server::TestServer;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::net::TcpListener;
+use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -73,7 +74,7 @@ impl TestEnv {
         std::fs::write(path, text).expect("write config");
     }
 
-    pub fn write_daemon_config(&self, db: &Path, wake_addr: &str, interval: u64) {
+    pub fn write_daemon_config(&self, db: &Path, interval: u64) {
         self.write_config(&format!(
             r#"
 local:
@@ -82,12 +83,9 @@ local:
 sync:
   enabled: true
   interval_seconds: {}
-daemon:
-  wake_addr: "{}"
 "#,
             db.display(),
             interval,
-            wake_addr
         ));
     }
 
@@ -210,6 +208,20 @@ daemon:
         );
         output
     }
+}
+
+/// Listens where the host of the database at `db` takes wakes, standing in
+/// for a host. Reads time out after `timeout`.
+pub fn wake_listener(db: &Path, timeout: Duration) -> UnixDatagram {
+    let path = aven_host::host::wake::paths(db)
+        .into_iter()
+        .next()
+        .expect("a wake socket path");
+    let socket = UnixDatagram::bind(path).expect("bind wake socket");
+    socket
+        .set_read_timeout(Some(timeout))
+        .expect("set read timeout");
+    socket
 }
 
 pub fn bin() -> PathBuf {

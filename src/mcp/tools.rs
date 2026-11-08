@@ -501,7 +501,7 @@ impl Tools {
     fn wake(&self) {
         match &self.sync_wake {
             Some(wake) => wake.notify_one(),
-            None => daemon::wake_if_enabled(&self.config),
+            None => daemon::wake_if_enabled(&self.config, self.database.path()),
         }
     }
 

@@ -1682,6 +1682,14 @@ impl Root {
                 Some(t.good),
                 "Keeps reminders and sync going while Aven is quit",
             ),
+            AgentShown::Waiting => (
+                "Waiting",
+                Some(t.warn),
+                background
+                    .waiting_for
+                    .as_deref()
+                    .unwrap_or("Another process runs sync and reminders"),
+            ),
             AgentShown::Off => ("Off", None, "Reminders and sync stop when Aven quits"),
             AgentShown::NotRunning => (
                 "Not running",
@@ -1773,6 +1781,15 @@ impl Root {
         let stalled = on && background.managed && background.agent == AgentShown::NotRunning;
         let note = match background.last_sync {
             _ if stalled => "The background agent isn't running".to_string(),
+            _ if on && background.managed && background.agent == AgentShown::Waiting => {
+                format!(
+                    "The background agent is waiting: {}",
+                    background
+                        .waiting_for
+                        .as_deref()
+                        .unwrap_or("another process hosts sync")
+                )
+            }
             Some(at) => format!("Last background sync {}", ago(at, Local::now().timestamp())),
             None => "Keeps this Mac up to date in the background".to_string(),
         };

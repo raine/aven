@@ -50,7 +50,7 @@ aven config set local.db_path null
 `config.yaml`, and preserves comments and unrelated settings. The write replaces
 the file atomically. Use `null` to clear `local.db_path`.
 
-Use `aven doctor` to inspect the active config, database path, workspace, project, sync cursor, daemon wake address, and routing decisions. Doctor still produces a redacted report when this file is malformed, unreadable, or contains an invalid value. It includes available YAML line and column context without printing config values that may contain secrets.
+Use `aven doctor` to inspect the active config, database path, workspace, project, sync cursor, daemon wake socket, and routing decisions. Doctor still produces a redacted report when this file is malformed, unreadable, or contains an invalid value. It includes available YAML line and column context without printing config values that may contain secrets.
 
 When configuration prevents startup, run `aven doctor --db /expected/path/to/db.sqlite` to bypass database path resolution while retaining the config finding. Doctor does not rewrite the config, create the selected database, or run database migrations. After correcting the file, rerun doctor before starting an ordinary command. Use `aven doctor --json --fail-on-error` in recovery automation.
 
@@ -96,9 +96,6 @@ project:
 sync:
   enabled: true
   interval_seconds: 30
-
-daemon:
-  wake_addr: "127.0.0.1:47631"
 
 reminders:
   enabled: false
@@ -269,9 +266,6 @@ when a database is set up or joined, not in configuration; see
 sync:
   enabled: true
   interval_seconds: 30
-
-daemon:
-  wake_addr: "127.0.0.1:47631"
 ```
 
 `sync.enabled` is the daemon's switch; Aven Desktop syncs whenever it is open,
@@ -283,8 +277,18 @@ Aven Desktop records `on` for a daemon that already runs Aven Desktop and
 leaves any other daemon as it is. See
 [Aven Desktop in the background](/notifications/#aven-desktop-in-the-background).
 
-:::note[Loopback wake address]
-Daemon wake addresses must be loopback.
+A local change wakes the process that syncs the database through a socket
+beside the database, `<database>.host.sock`, next to its host lock. Each
+database has its own, and only the user who owns the database's folder can
+use it, so several users on one Mac or Linux machine each sync on their own.
+When that path is too long for a socket, the socket goes in your own
+temporary folder instead. There is nothing to configure.
+
+:::note[`daemon.wake_addr` is ignored]
+Earlier versions woke the daemon through `daemon.wake_addr`, a loopback UDP
+address shared by every user of the machine. Aven no longer reads the
+setting. A config file that still has it loads as before, and you can remove
+it.
 :::
 
 Device invitation QR codes use Unicode sextants, which make them about half as

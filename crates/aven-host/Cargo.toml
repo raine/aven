@@ -28,6 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde-saphyr = "1.3"
 sqlx = { workspace = true, features = ["sqlite"], optional = true }
+sha2.workspace = true
 similar = "3.1"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "rt-multi-thread", "net"] }

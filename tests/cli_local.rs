@@ -316,15 +316,12 @@ local:
 fn attachment_add_and_delete_work_when_sync_enabled() {
     let env = TestEnv::new();
     let db = env.db("attachment-sync-enabled.sqlite");
-    env.write_config(&format!(
+    env.write_config(
         r#"
 sync:
   enabled: true
-daemon:
-  wake_addr: "{}"
 "#,
-        env.free_loopback_addr()
-    ));
+    );
     let created = ok(env.aven(&db, ["add", "sync attachment", "--project", "app"]));
     let task_ref = extract_ref(&created);
     let image = env.path("sync-photo.png");

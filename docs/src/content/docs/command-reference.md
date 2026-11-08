@@ -1289,12 +1289,16 @@ aven daemon restart
 aven daemon repair [--if-installed] [--program <path>]
 ```
 
-`aven daemon` syncs when `sync.enabled` is true and sends reminders when `reminders.enabled` is true. With neither on it stays idle, and it picks up changes to `config.yaml` while running. One process runs sync and reminders for a database at a time, whether `aven daemon`, Aven Desktop, or `aven mcp --sync`; a daemon started while another holds the database waits for it to stop, and `aven daemon status` shows which process it is. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local mutation sends a UDP wake signal. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
+`aven daemon` syncs when `sync.enabled` is true and sends reminders when `reminders.enabled` is true. With neither on it stays idle, and it picks up changes to `config.yaml` while running. One process runs sync and reminders for a database at a time, whether `aven daemon`, Aven Desktop, or `aven mcp --sync`; a daemon started while another holds the database waits for it to stop, and `aven daemon status` shows which process it is. Until the database is set up or joined it waits without contacting a server. Once set up, it syncs immediately, then on the configured interval and whenever a local change wakes it through the database's wake socket, `<database>.host.sock`, which only your user can reach. Failed syncs use exponential backoff up to five minutes. Bounded rounds with more work remaining resume promptly. The process exits when its executable changes so a service manager can restart the updated binary.
 
 `daemon status` is observational. It reports platform support, installation,
-loaded and running state, executable consistency, configuration validity,
-service and log paths, and a recovery action. Its JSON states are
-`unavailable`, `unconfigured`, `healthy`, `degraded`, `blocked`, and `failed`.
+loaded and running state, executable consistency, whether sync and reminders
+are on, the database's background host, service and log paths, and a recovery
+action. Its JSON states are `unavailable`, `off`, `unconfigured`, `healthy`,
+`waiting`, `degraded`, `blocked`, and `failed`. `off` means sync and reminders
+are both turned off, so the daemon has nothing to do; `waiting` means the
+daemon runs but another process, such as Aven Desktop, hosts the database,
+and the guidance names it.
 
 Service management is available on macOS, as a LaunchAgent, and on Linux, as a
 systemd user service named `aven-daemon.service`:
@@ -1456,7 +1460,7 @@ Doctor has a standalone bootstrap path. It can report malformed or invalid confi
 
 Database inspection uses an isolated snapshot and never creates or changes the selected database, initializes metadata or a workspace, enables WAL, runs migrations, or removes sidecars. Checks that reconcile derived state operate only on the disposable snapshot. Doctor performs no sync, daemon wakeup, update check, or repair. Its only network request asks the sync server for its AI capabilities with this device's credential when sync is set up; that request is not billable and never fails doctor. A missing database remains missing. Pending migrations are reported with backup and normal-startup guidance.
 
-The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, daemon wake settings, the running sync server's AI status, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
+The report includes config and database paths and their sources, schema and sidecar state, workspace counts, client and sequence metadata, sync configuration and recent sync state, unresolved conflict count, the daemon wake socket, the running sync server's AI status, and service status on macOS and Linux. Attachment checks report image storage, cleanup eligibility, quotas, operations in progress, and inconsistencies. Independent sections continue after failures, while dependent checks use `skipped` status and include a reason.
 
 Normal doctor checks attachment records and local image availability. `--integrity` also runs read-only SQLite and relationship checks, verifies recurring schedules, generated tasks, history, pauses, and lifecycle state, verifies stored image hashes and sizes, decodes images, and confirms formats and dimensions. A missing current recurring task is a repairable warning with guidance to run `aven recur list`. Other recurring-task integrity failures include guidance to preserve the database and recover from a known-good backup.
 

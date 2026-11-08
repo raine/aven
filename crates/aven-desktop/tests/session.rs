@@ -313,7 +313,7 @@ async fn writes_run_in_order_and_outside_writes_arrive() {
 
     let launch = adapter::Launch {
         database: path.clone(),
-        config: aven_host::test_support::isolated_config(),
+        config: aven_host::config::AppConfig::default(),
         config_file: None,
         storage: Some(Arc::new(FileProtectedStorage::new(
             directory.path().join("keys"),
@@ -635,7 +635,7 @@ async fn a_row_the_store_dropped_can_be_reopened_from_the_done_group() {
     let storage = Arc::new(FileProtectedStorage::new(directory.path().join("keys")));
     let launch = adapter::Launch {
         database: path,
-        config: aven_host::test_support::isolated_config(),
+        config: aven_host::config::AppConfig::default(),
         config_file: None,
         storage: Some(storage),
         version: "0.0.0".to_string(),
@@ -963,7 +963,7 @@ async fn review_undo_case(view: Option<TaskQuery>) {
     let storage = Arc::new(FileProtectedStorage::new(directory.path().join("keys")));
     let launch = adapter::Launch {
         database: path,
-        config: aven_host::test_support::isolated_config(),
+        config: aven_host::config::AppConfig::default(),
         config_file: None,
         storage: Some(storage),
         version: "0.0.0".to_string(),

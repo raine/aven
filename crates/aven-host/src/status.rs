@@ -2,16 +2,22 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, BackgroundIntent};
 use crate::daemon::ServiceStatus;
+use crate::host::Role;
 
 /// Stable top-level condition used by daemon status reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusState {
     Unavailable,
+    /// Sync and reminders are both off, so the daemon has nothing to do.
+    Off,
     Unconfigured,
     Healthy,
+    /// The daemon runs but does not host the database: another process
+    /// does, or none does yet.
+    Waiting,
     Degraded,
     Blocked,
     Failed,
@@ -21,8 +27,10 @@ impl StatusState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unavailable => "unavailable",
+            Self::Off => "off",
             Self::Unconfigured => "unconfigured",
             Self::Healthy => "healthy",
+            Self::Waiting => "waiting",
             Self::Degraded => "degraded",
             Self::Blocked => "blocked",
             Self::Failed => "failed",
@@ -44,9 +52,10 @@ pub struct DaemonStatusReport {
     /// Aven is turned off in System Settings > General > Login Items &
     /// Extensions. `null` where there's no such setting.
     pub turned_off_in_login_items: Option<bool>,
+    /// The config gives the daemon sync or reminders to do.
     pub configuration_valid: bool,
     pub sync_enabled: bool,
-    pub wake_address_valid: bool,
+    pub reminders_enabled: bool,
     pub paths: DaemonPaths,
     pub guidance: Vec<String>,
     pub sync: aven_core::local_state::DaemonSyncState,
@@ -96,14 +105,14 @@ pub struct DaemonPaths {
 }
 
 pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> DaemonStatusReport {
-    let wake_address_valid = config.wake_addr().is_ok();
-    let configuration_valid = config.daemon_has_work() && wake_address_valid;
+    let configuration_valid = config.daemon_has_work();
     let state = if !service.platform_supported {
         StatusState::Unavailable
+    } else if !configuration_valid {
+        StatusState::Off
     } else if !service.installed {
         StatusState::Unconfigured
-    } else if !configuration_valid
-        || service.program_matches_current == Some(false)
+    } else if service.program_matches_current == Some(false)
         || service.turned_off_in_login_items == Some(true)
     {
         StatusState::Blocked
@@ -119,15 +128,11 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
         guidance.push(
             "The managed daemon is supported on macOS and on Linux with systemd.".to_string(),
         );
+    } else if state == StatusState::Off {
+        guidance.push(turn_on_guidance(config, service.installed));
     } else if state == StatusState::Unconfigured {
         guidance.push("Install it with `aven daemon install`.".to_string());
     } else {
-        if !configuration_valid {
-            guidance.push(
-                "Enable sync or reminders with `aven config set sync.enabled true` or `aven config set reminders.enabled true`. The daemon picks up the change itself."
-                    .to_string(),
-            );
-        }
         if service.turned_off_in_login_items == Some(true) {
             guidance.push(
                 "Aven is turned off in System Settings > General > Login Items & Extensions. Turn it on there to run the daemon."
@@ -166,7 +171,7 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
         turned_off_in_login_items: service.turned_off_in_login_items,
         configuration_valid,
         sync_enabled: config.automatic_sync_is_enabled(),
-        wake_address_valid,
+        reminders_enabled: config.reminders.enabled,
         paths: DaemonPaths {
             service: nonempty_path(service.service_path),
             program: service.program,
@@ -175,6 +180,29 @@ pub fn build_daemon_status(config: &AppConfig, service: ServiceStatus) -> Daemon
             stderr_log: service.stderr_path,
         },
         guidance,
+    }
+}
+
+/// How to give a daemon that has nothing to do some work.
+fn turn_on_guidance(config: &AppConfig, installed: bool) -> String {
+    if config.sync.enabled && !config.sync_is_allowed() {
+        return "Sync is turned off by AVEN_SYNC_DISABLED. Unset it to let the daemon sync."
+            .to_string();
+    }
+    let commands =
+        "`aven config set sync.enabled true` or `aven config set reminders.enabled true`";
+    if installed {
+        format!(
+            "Sync and reminders are both turned off. Turn one on with {commands}; the daemon picks up the change itself."
+        )
+    } else if config.background == Some(BackgroundIntent::On) {
+        format!(
+            "Sync and reminders are both turned off, so Aven Desktop runs no background agent. Turn on Keep syncing after Aven quits or Reminders on this Mac in Aven Desktop's Settings, or run {commands} and then `aven daemon install`."
+        )
+    } else {
+        format!(
+            "Sync and reminders are both turned off. Turn one on with {commands}, then run `aven daemon install`."
+        )
     }
 }
 
@@ -192,9 +220,30 @@ impl DaemonStatusReport {
 
     /// A host that holds the lock without a recent heartbeat is a fault. No
     /// other process takes over from it, so the user has to restart it. One
-    /// that is still starting is not.
+    /// that is still starting is not. A running daemon that isn't the host
+    /// is waiting, for the process that hosts or for the lock.
     pub fn with_host(mut self, state: crate::host::HostState) -> Self {
         use crate::host::HostState;
+        let daemon_runs = self.running == Some(true)
+            && matches!(self.state, StatusState::Healthy | StatusState::Degraded);
+        match &state {
+            HostState::Running(status) if daemon_runs && status.role != Role::Daemon.as_str() => {
+                self.state = StatusState::Waiting;
+                self.guidance.push(format!(
+                    "{} (pid {}) runs sync and reminders for this database, so the daemon waits and takes over when it stops.",
+                    crate::host::describe_role(&status.role),
+                    status.pid
+                ));
+            }
+            HostState::Stopped(_) if daemon_runs => {
+                self.state = StatusState::Waiting;
+                self.guidance.push(
+                    "The daemon is running but doesn't host this database yet. It tries again every few seconds; if this lasts, an Aven daemon older than this version may be running, and `aven daemon restart` starts the current one."
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
         let (report, status) = match state {
             HostState::Running(status) => (HostReportState::Running, Some(status)),
             HostState::Starting => (HostReportState::Starting, None),
@@ -334,17 +383,104 @@ mod tests {
     }
 
     #[test]
-    fn daemon_states_cover_stopped_and_invalid_configuration() {
+    fn daemon_states_cover_stopped() {
         let mut stopped = service(true);
         stopped.running = Some(false);
         assert_eq!(
             build_daemon_status(&configured(), stopped).state,
             StatusState::Failed
         );
+    }
+
+    #[test]
+    fn a_daemon_without_sync_or_reminders_is_off_and_says_how_to_turn_it_on() {
+        let idle = build_daemon_status(&AppConfig::default(), service(true));
+        assert_eq!(idle.state, StatusState::Off);
+        assert!(!idle.configuration_valid);
+        assert_eq!(idle.guidance.len(), 1, "{:?}", idle.guidance);
+        assert!(idle.guidance[0].contains("aven config set sync.enabled true"));
+        assert!(idle.guidance[0].contains("picks up the change"));
+
+        // Sync turned off when joining from Aven Desktop removes the agent.
+        let desktop = AppConfig {
+            background: Some(BackgroundIntent::On),
+            ..AppConfig::default()
+        };
+        let mut removed = service(false);
+        removed.loaded = Some(false);
+        removed.running = Some(false);
+        let off = build_daemon_status(&desktop, removed.clone());
+        assert_eq!(off.state, StatusState::Off);
+        assert_eq!(off.guidance.len(), 1, "{:?}", off.guidance);
+        assert!(off.guidance[0].contains("Keep syncing after Aven quits"));
+        assert!(off.guidance[0].contains("aven daemon install"));
+        assert!(!off.guidance[0].contains("restart"));
+
+        let terminal = build_daemon_status(&AppConfig::default(), removed);
+        assert_eq!(terminal.state, StatusState::Off);
+        assert!(!terminal.guidance[0].contains("Aven Desktop"));
+        assert!(terminal.guidance[0].contains("aven daemon install"));
+
+        let mut overridden = configured();
+        overridden.sync.disable_override = true;
+        let overridden = build_daemon_status(&overridden, service(true));
+        assert_eq!(overridden.state, StatusState::Off);
+        assert!(overridden.guidance[0].contains("AVEN_SYNC_DISABLED"));
+
+        let json = serde_json::to_value(off).unwrap();
+        assert_eq!(json["state"], "off");
+    }
+
+    fn host_status(role: &str, pid: u32) -> aven_core::local_state::HostStatus {
+        aven_core::local_state::HostStatus {
+            pid,
+            role: role.to_string(),
+            version: "0.1.0".to_string(),
+            capabilities: vec!["sync".to_string()],
+            started_at: 0,
+            heartbeat_at: 0,
+            round_started: 0,
+            round_finished: 0,
+        }
+    }
+
+    #[test]
+    fn a_running_daemon_that_does_not_host_is_waiting_and_says_why() {
+        let running = build_daemon_status(&configured(), service(true));
+        let hosting = running
+            .clone()
+            .with_host(crate::host::HostState::Running(host_status("daemon", 7)));
+        assert_eq!(hosting.state, StatusState::Healthy);
+        assert!(hosting.guidance.is_empty());
+
+        let behind_desktop = running
+            .clone()
+            .with_host(crate::host::HostState::Running(host_status("desktop", 9)));
+        assert_eq!(behind_desktop.state, StatusState::Waiting);
+        assert_eq!(behind_desktop.guidance.len(), 1);
+        assert!(behind_desktop.guidance[0].contains("Aven Desktop (pid 9)"));
+        assert!(behind_desktop.guidance[0].contains("takes over"));
+        assert!(!behind_desktop.guidance[0].contains("restart"));
+
+        let without_lock = running
+            .clone()
+            .with_host(crate::host::HostState::Stopped(None));
+        assert_eq!(without_lock.state, StatusState::Waiting);
+        assert!(without_lock.guidance[0].contains("doesn't host this database"));
         assert_eq!(
-            build_daemon_status(&AppConfig::default(), service(true)).state,
-            StatusState::Blocked
+            serde_json::to_value(&without_lock).unwrap()["state"],
+            "waiting"
         );
+
+        // A daemon that isn't running isn't waiting.
+        let mut stopped = service(true);
+        stopped.running = Some(false);
+        let stopped = build_daemon_status(&configured(), stopped)
+            .with_host(crate::host::HostState::Running(host_status("desktop", 9)));
+        assert_eq!(stopped.state, StatusState::Failed);
+        let off = build_daemon_status(&AppConfig::default(), service(true))
+            .with_host(crate::host::HostState::Stopped(None));
+        assert_eq!(off.state, StatusState::Off);
     }
 
     #[test]

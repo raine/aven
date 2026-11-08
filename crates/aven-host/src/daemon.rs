@@ -1,21 +1,21 @@
 //! The parts of the daemon other processes reach: its service definition and
 //! the wake it listens for.
-use std::net::SocketAddr;
+use std::path::Path;
 
 use aven_core::db::Database;
 use tracing::{debug, warn};
 
 use crate::config::AppConfig;
-use crate::host::{self, ROUND_WAIT, RoundRequest};
+use crate::host::{self, ROUND_WAIT, RoundRequest, wake};
 
 pub mod service;
 
 pub use service::{ServiceStatus, status_snapshot};
 
 /// A successful foreground sync can repair prompt-less key access, so after
-/// one it asks a host that recorded a failure for a round now. The `r` wake
-/// bypasses backoff; ordinary mutation wakes retain the legacy `1` payload.
-/// Returns the round to wait for, when a host can report it.
+/// one it asks a host that recorded a failure for a round now, with a wake
+/// that bypasses backoff. Returns the round to wait for, when a host can
+/// report it.
 pub async fn retry_after_foreground_sync(
     database: &Database,
     config: &AppConfig,
@@ -24,15 +24,7 @@ pub async fn retry_after_foreground_sync(
         return None;
     }
     match database.daemon_sync_state().await {
-        Ok(state) if state.error.is_some() => {
-            let addr = config.wake_addr().ok()?;
-            let request = host::request_round(database, addr).await;
-            if request.is_none() {
-                // A daemon from before the host lock still takes the wake.
-                send_wake(addr, b"r");
-            }
-            request
-        }
+        Ok(state) if state.error.is_some() => host::request_round(database).await,
         Err(error) => {
             warn!(%error, "could not read daemon sync health");
             None
@@ -47,55 +39,65 @@ pub async fn await_daemon_retry(database: &Database, request: RoundRequest) {
     host::await_round(database, request, ROUND_WAIT).await;
 }
 
-/// Tells the host about a local change. A host may sync while `sync.enabled`
-/// is off, as Aven Desktop does, so only `AVEN_SYNC_DISABLED` without
-/// reminders keeps the wake back.
-pub fn wake_if_enabled(config: &AppConfig) {
+/// Tells the host of the database at `db` about a local change. A host may
+/// sync while `sync.enabled` is off, as Aven Desktop does, so only
+/// `AVEN_SYNC_DISABLED` without reminders keeps the wake back.
+pub fn wake_if_enabled(config: &AppConfig, db: &Path) {
     if !config.sync_is_allowed() && !config.reminders.enabled {
         return;
     }
-    let Ok(addr) = config.wake_addr() else {
-        return;
-    };
-    debug!(wake_addr = %addr, "waking daemon after local mutation");
-    wake(addr);
-}
-
-fn wake(addr: SocketAddr) {
-    send_wake(addr, b"1");
-}
-
-pub(crate) fn send_wake(addr: SocketAddr, payload: &[u8]) {
-    let bind_addr = SocketAddr::new(addr.ip(), 0);
-    match std::net::UdpSocket::bind(bind_addr).and_then(|socket| socket.send_to(payload, addr)) {
-        Ok(_) => debug!(wake_addr = %addr, "daemon wake sent"),
-        Err(err) => warn!(wake_addr = %addr, error = %err, "daemon wake send failed"),
-    }
+    debug!(db = %db.display(), "waking the host after a local mutation");
+    wake::send(db, wake::CHANGED);
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::time::Duration;
 
     use super::*;
+    use crate::host::Election;
+
+    async fn host_seat(db: &Path) -> host::Seat {
+        let Election::Won(seat) = host::elect(db).await.unwrap() else {
+            panic!("the host wins");
+        };
+        seat
+    }
+
+    fn received(seat: &host::Seat) -> Option<Vec<u8>> {
+        let mut buf = [0; 16];
+        seat.wake
+            .try_recv(&mut buf)
+            .ok()
+            .map(|len| buf[..len].to_vec())
+    }
+
+    async fn receive(seat: &host::Seat) -> Vec<u8> {
+        let mut buf = [0; 16];
+        let len = tokio::time::timeout(Duration::from_secs(5), seat.wake.recv(&mut buf))
+            .await
+            .expect("a wake arrives")
+            .unwrap();
+        buf[..len].to_vec()
+    }
 
     #[tokio::test]
     async fn foreground_recovery_wakes_only_when_allowed_and_error_recorded() {
-        let database = Database::open(Path::new(":memory:")).await.unwrap();
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_millis(100)))
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        let database = Database::open(&db).await.unwrap();
+        let seat = host_seat(&db).await;
+        database
+            .record_host_start(7, "daemon", "0.1.0", &[host::CAPABILITY_SYNC], now())
+            .await
             .unwrap();
         let mut config = AppConfig::default();
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
-        let mut buf = [0; 16];
         assert!(
             retry_after_foreground_sync(&database, &config)
                 .await
                 .is_none()
         );
-        assert!(socket.recv(&mut buf).is_err());
+        assert_eq!(received(&seat), None);
         database
             .record_daemon_sync_round(
                 100,
@@ -109,16 +111,14 @@ mod tests {
                 .await
                 .is_none()
         );
-        assert!(socket.recv(&mut buf).is_err());
-        // With no host holding the lock, the wake still reaches an old daemon.
+        assert_eq!(received(&seat), None);
         config.sync.disable_override = false;
         assert!(
             retry_after_foreground_sync(&database, &config)
                 .await
-                .is_none()
+                .is_some()
         );
-        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
-        assert_eq!(buf[0], b'r');
+        assert_eq!(receive(&seat).await, wake::RETRY);
         // Foreground success cannot claim that the daemon recovered.
         assert!(database.daemon_sync_state().await.unwrap().error.is_some());
         database.record_daemon_sync_round(200, None).await.unwrap();
@@ -127,7 +127,7 @@ mod tests {
                 .await
                 .is_none()
         );
-        assert!(socket.recv(&mut buf).is_err());
+        assert_eq!(received(&seat), None);
     }
 
     #[tokio::test]
@@ -135,14 +135,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("db.sqlite");
         let database = Database::open(&db).await.unwrap();
-        let host::Election::Won(seat) = host::elect(&db, "127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap()
-        else {
-            panic!("the host wins");
-        };
-        let mut config = AppConfig::default();
-        config.daemon.wake_addr = Some(seat.wake_addr().unwrap().to_string());
+        let _seat = host_seat(&db).await;
+        let config = AppConfig::default();
         database
             .record_host_start(7, "desktop", "0.1.0", &[host::CAPABILITY_SYNC], now())
             .await
@@ -169,65 +163,54 @@ mod tests {
         chrono::Utc::now().timestamp()
     }
 
-    #[test]
-    fn wake_if_enabled_sends_to_configured_address() {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
+    #[tokio::test]
+    async fn wake_if_enabled_wakes_the_host_of_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        let other = dir.path().join("other.sqlite");
+        let seat = host_seat(&db).await;
+        let other_seat = host_seat(&other).await;
         let mut config = AppConfig::default();
         config.sync.enabled = true;
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&config, &db);
 
-        let mut buf = [0_u8; 1];
-        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
-        assert_eq!(buf, [b'1']);
+        assert_eq!(receive(&seat).await, wake::CHANGED);
+        assert_eq!(received(&other_seat), None);
     }
 
-    #[test]
-    fn wake_if_enabled_wakes_a_host_that_syncs_without_sync_enabled() {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let mut config = AppConfig::default();
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
+    #[tokio::test]
+    async fn wake_if_enabled_wakes_a_host_that_syncs_without_sync_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        let seat = host_seat(&db).await;
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&AppConfig::default(), &db);
 
-        let mut buf = [0_u8; 1];
-        assert_eq!(socket.recv(&mut buf).unwrap(), 1);
+        assert_eq!(receive(&seat).await, wake::CHANGED);
     }
 
-    #[test]
-    fn wake_if_enabled_skips_when_sync_is_disabled() {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_millis(25)))
-            .unwrap();
+    #[tokio::test]
+    async fn wake_if_enabled_skips_when_sync_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db.sqlite");
+        let seat = host_seat(&db).await;
         let mut config = AppConfig::default();
         config.sync.enabled = true;
         config.sync.disable_override = true;
-        config.daemon.wake_addr = Some(socket.local_addr().unwrap().to_string());
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&config, &db);
 
-        let mut buf = [0_u8; 1];
-        let error = socket.recv(&mut buf).unwrap_err();
-        assert!(matches!(
-            error.kind(),
-            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-        ));
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert_eq!(received(&seat), None);
     }
 
     #[test]
-    fn wake_if_enabled_skips_invalid_address() {
+    fn wake_if_enabled_without_a_host_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
         config.sync.enabled = true;
-        config.daemon.wake_addr = Some("not-an-address".to_string());
 
-        wake_if_enabled(&config);
+        wake_if_enabled(&config, &dir.path().join("db.sqlite"));
     }
 }

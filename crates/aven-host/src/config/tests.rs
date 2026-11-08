@@ -247,3 +247,14 @@ fn config_write_modes_and_parent_symlinks() {
             .is_some()
     );
 }
+
+#[test]
+fn a_config_with_the_old_daemon_wake_address_still_loads() {
+    for value in ["\"127.0.0.1:47631\"", "\"not-an-address\"", "null"] {
+        let config = load_config(&format!(
+            "sync:\n  enabled: true\ndaemon:\n  wake_addr: {value}\n"
+        ))
+        .unwrap();
+        assert!(config.sync.enabled);
+    }
+}

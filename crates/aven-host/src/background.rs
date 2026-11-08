@@ -88,7 +88,7 @@ pub fn reconcile(config: &AppConfig, db_path: PathBuf, app: &Path) -> Result<Rec
             Ok(Reconciled::TurnedOff)
         }
         Action::Leave => Ok(Reconciled::Unchanged),
-        Action::Install => Ok(match service::ensure_agent(db_path, config)? {
+        Action::Install => Ok(match service::ensure_agent(db_path)? {
             Ensured::Unchanged => Reconciled::Unchanged,
             Ensured::Started => Reconciled::Started,
             Ensured::TurnedOff => Reconciled::TurnedOff,
