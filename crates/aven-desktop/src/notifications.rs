@@ -1,14 +1,21 @@
 //! Whether macOS lets Aven show notifications, and asking for it.
 //!
 //! Only the app asks: the daemon has no window to explain the prompt from.
+//! Linux has no notification permission to read or ask for.
+#[cfg(target_os = "macos")]
 use std::sync::Mutex;
 
+#[cfg(target_os = "macos")]
 use block2::RcBlock;
+#[cfg(target_os = "macos")]
 use objc2::runtime::Bool;
+#[cfg(target_os = "macos")]
 use objc2_foundation::{NSBundle, NSError};
+#[cfg(target_os = "macos")]
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
 };
+#[cfg(target_os = "macos")]
 use tokio::sync::oneshot;
 
 /// What the user allowed in System Settings > Notifications.
@@ -30,11 +37,13 @@ pub const SETTINGS_URL: &str =
 
 /// `UNUserNotificationCenter` aborts the process outside an app bundle, as in
 /// `cargo run`.
+#[cfg(target_os = "macos")]
 fn center() -> Option<objc2::rc::Retained<UNUserNotificationCenter>> {
     NSBundle::mainBundle().bundleIdentifier()?;
     Some(UNUserNotificationCenter::currentNotificationCenter())
 }
 
+#[cfg(target_os = "macos")]
 pub async fn permission() -> Permission {
     let Some(center) = center() else {
         return Permission::Unavailable;
@@ -59,6 +68,7 @@ pub async fn permission() -> Permission {
 
 /// Asks the user to allow notifications, once: macOS answers from the
 /// recorded choice after that. Returns the resulting permission.
+#[cfg(target_os = "macos")]
 pub async fn request() -> Permission {
     let Some(center) = center() else {
         return Permission::Unavailable;
@@ -83,4 +93,14 @@ pub async fn request() -> Permission {
         Ok(false) => permission().await,
         Err(_) => Permission::Unavailable,
     }
+}
+
+#[cfg(target_os = "linux")]
+pub async fn permission() -> Permission {
+    Permission::Unavailable
+}
+
+#[cfg(target_os = "linux")]
+pub async fn request() -> Permission {
+    Permission::Unavailable
 }

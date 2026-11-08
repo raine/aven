@@ -13,14 +13,20 @@ use gpui::{
 };
 use gpui_platform::application;
 
-use crate::adapter::{self, Launch, Prefs, SavedWindow, ThemePref, WindowMode};
+#[cfg(target_os = "macos")]
+use crate::adapter::ThemePref;
+use crate::adapter::{self, Launch, Prefs, SavedWindow, WindowMode};
 use crate::assets::{Assets, load_fonts};
+#[cfg(target_os = "macos")]
 use crate::platform::desktop_install::{self, Layout, MacSystem};
 use crate::platform::enclosing_bundle;
 use crate::session::Session;
+#[cfg(target_os = "macos")]
 use crate::setup::Setup;
 use crate::shell::Root;
-use crate::theme::{Theme, theme};
+use crate::theme::Theme;
+#[cfg(target_os = "macos")]
+use crate::theme::theme;
 use crate::toast::Toast;
 use crate::updates::Updates;
 use crate::{actions, input, launcher, platform};
@@ -138,6 +144,7 @@ pub fn register_actions(cx: &mut App) {
 }
 
 /// The setup window's frame.
+#[cfg(target_os = "macos")]
 const SETUP_SIZE: Size<f32> = Size {
     width: 720.,
     height: 720.,
@@ -214,6 +221,7 @@ pub fn run(updates: Option<Arc<dyn Updates>>) -> Result<()> {
     let saved = Prefs::load(&prefs);
     // The database waits until this app is the installation that runs the
     // command and the daemon.
+    #[cfg(target_os = "macos")]
     if let Some(layout) = Layout::current().ok().filter(desktop_install::needs_setup) {
         let app = application().with_assets(Assets);
         let handle = runtime.handle().clone();
@@ -301,6 +309,7 @@ fn open_notified(opens: Notified, cx: &mut App) {
 }
 
 /// Opens setup, and the main window on the database once setup is through.
+#[cfg(target_os = "macos")]
 fn open_setup(
     layout: Layout,
     handle: tokio::runtime::Handle,
@@ -356,6 +365,7 @@ fn open_setup(
 }
 
 /// Keeps the theme on the saved choice, or on the system's while it changes.
+#[cfg(target_os = "macos")]
 fn follow_appearance(dark: Option<bool>, window: &mut gpui::Window, cx: &mut App) {
     let apply = move |window: &gpui::Window, cx: &mut App| {
         let dark = dark.unwrap_or_else(|| {

@@ -14,7 +14,7 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant is required by notify-rust's zbus 5 backend" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names is required by notify-rust's zbus 5 backend" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is required by notify-rust's zbus 5 backend" },
-    # Unmaintained, not vulnerable; only the macOS app reaches them, through GPUI.
+    # Unmaintained, not vulnerable; only the desktop app reaches them, through GPUI.
     { id = "RUSTSEC-2024-0436", reason = "paste is required by GPUI's dependencies" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is required by GPUI's text stack" },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz is required by GPUI's text stack" },
@@ -33,6 +33,12 @@ allow = [
     "Unicode-3.0",
     "Zlib",
 ]
+
+# CC0 is public domain dedication; GPUI's X11 input method stack reaches it
+# through ahash.
+[[licenses.exceptions]]
+name = "tiny-keccak"
+allow = ["CC0-1.0"]
 
 [[licenses.clarify]]
 name = "ring"
@@ -76,5 +82,6 @@ allow-git = [
     "https://github.com/zed-industries/calloop",
     "https://github.com/zed-industries/font-kit",
     "https://github.com/zed-industries/oo7",
+    "https://github.com/zed-industries/xim-rs.git",
     "https://github.com/zed-industries/zed",
 ]
