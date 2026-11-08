@@ -5,6 +5,14 @@ pub use aven_host::background;
 pub use aven_host::daemon::service as agent_service;
 /// Posts the app's notifications.
 pub use aven_host::notify::un::InProcess as Notifier;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::ffi::{CStr, c_char, c_void};
+
+unsafe extern "C" {
+    fn objc_getClass(name: *const c_char) -> *mut c_void;
+    fn sel_registerName(name: *const c_char) -> *mut c_void;
+    fn objc_msgSend();
+}
 
 /// The executable the background agent runs while this app's installation
 /// manages it.
@@ -15,13 +23,6 @@ pub fn agent_app() -> Option<std::path::PathBuf> {
 
 /// `NSWorkspace.accessibilityDisplayShouldReduceMotion`.
 pub fn reduce_motion() -> bool {
-    use std::ffi::{CStr, c_void};
-
-    unsafe extern "C" {
-        fn objc_getClass(name: *const std::ffi::c_char) -> *mut c_void;
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
-        fn objc_msgSend();
-    }
     const CLASS: &CStr = c"NSWorkspace";
     const SHARED: &CStr = c"sharedWorkspace";
     const REDUCE: &CStr = c"accessibilityDisplayShouldReduceMotion";
@@ -42,13 +43,6 @@ pub fn reduce_motion() -> bool {
 
 /// `NSApplication.isActive`. A window can be closed while the app stays in front.
 pub fn is_active() -> bool {
-    use std::ffi::{CStr, c_void};
-
-    unsafe extern "C" {
-        fn objc_getClass(name: *const std::ffi::c_char) -> *mut c_void;
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
-        fn objc_msgSend();
-    }
     const CLASS: &CStr = c"NSApplication";
     const SHARED: &CStr = c"sharedApplication";
     const ACTIVE: &CStr = c"isActive";
@@ -70,13 +64,6 @@ pub fn is_active() -> bool {
 /// Whether Option is held without Command or Control, read from the keyboard
 /// whichever app is in front.
 pub fn option_alone() -> bool {
-    use std::ffi::{CStr, c_void};
-
-    unsafe extern "C" {
-        fn objc_getClass(name: *const std::ffi::c_char) -> *mut c_void;
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
-        fn objc_msgSend();
-    }
     const CLASS: &CStr = c"NSEvent";
     const FLAGS: &CStr = c"modifierFlags";
     const CONTROL: usize = 1 << 18;
@@ -98,30 +85,15 @@ pub fn option_alone() -> bool {
 /// Takes the window off screen while it stays open, which `orderOut:` does and
 /// `activate_window` undoes.
 pub fn order_out(window: &gpui::Window) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use std::ffi::{CStr, c_void};
-
-    unsafe extern "C" {
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
-        fn objc_msgSend();
-    }
-    const WINDOW: &CStr = c"window";
     const ORDER_OUT: &CStr = c"orderOut:";
-    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+    let Some((native, _)) = ns_window(window) else {
         return;
     };
-    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-        return;
-    };
-    // SAFETY: the handle holds this window's live `NSView`, both selectors exist
-    // on AppKit's classes, and each `objc_msgSend` is cast to the signature of the
-    // method it sends.
+    // SAFETY: `native` is this window's live `NSWindow`, `orderOut:` exists on
+    // it, and `objc_msgSend` is cast to the method's signature.
     unsafe {
-        let native: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         let order: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
             std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-        let native = native(handle.ns_view.as_ptr(), sel_registerName(WINDOW.as_ptr()));
         order(
             native,
             sel_registerName(ORDER_OUT.as_ptr()),
@@ -136,14 +108,6 @@ pub fn order_out(window: &gpui::Window) {
 /// window takes its focus. Changing the style also moves first responder off
 /// GPUI's view, which takes typing, so this hands it back.
 pub fn plain_panel(window: &gpui::Window) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use std::ffi::{CStr, c_void};
-
-    unsafe extern "C" {
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
-        fn objc_msgSend();
-    }
-    const WINDOW: &CStr = c"window";
     const SET_STYLE_MASK: &CStr = c"setStyleMask:";
     const SET_HAS_SHADOW: &CStr = c"setHasShadow:";
     const SET_ANIMATION: &CStr = c"setAnimationBehavior:";
@@ -152,25 +116,19 @@ pub fn plain_panel(window: &gpui::Window) {
     const BORDERLESS_PANEL: usize = 1 << 7;
     /// `NSWindowAnimationBehaviorNone`.
     const NO_ANIMATION: isize = 2;
-    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+    let Some((native, view)) = ns_window(window) else {
         return;
     };
-    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-        return;
-    };
-    // SAFETY: the handle holds this window's live `NSView`, the selectors exist
-    // on AppKit's classes, and each `objc_msgSend` is cast to the signature of the
-    // method it sends.
+    // SAFETY: `native` is this window's live `NSWindow` and `view` its content
+    // view, the selectors exist on AppKit's classes, and each `objc_msgSend` is
+    // cast to the signature of the method it sends.
     unsafe {
-        let native: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         let set_flag: extern "C" fn(*mut c_void, *mut c_void, bool) =
             std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         let set_behavior: extern "C" fn(*mut c_void, *mut c_void, isize) =
             std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         let set_mask: extern "C" fn(*mut c_void, *mut c_void, usize) =
             std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-        let native = native(handle.ns_view.as_ptr(), sel_registerName(WINDOW.as_ptr()));
         set_mask(
             native,
             sel_registerName(SET_STYLE_MASK.as_ptr()),
@@ -187,9 +145,27 @@ pub fn plain_panel(window: &gpui::Window) {
         make_first(
             native,
             sel_registerName(MAKE_FIRST_RESPONDER.as_ptr()),
-            handle.ns_view.as_ptr(),
+            view,
         );
     }
+}
+
+/// The `NSWindow` of a GPUI window and its content `NSView`.
+fn ns_window(window: &gpui::Window) -> Option<(*mut c_void, *mut c_void)> {
+    const WINDOW: &CStr = c"window";
+    let handle = HasWindowHandle::window_handle(window).ok()?;
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return None;
+    };
+    let view = handle.ns_view.as_ptr();
+    // SAFETY: the handle holds this window's live `NSView`, which answers
+    // `window`, and `objc_msgSend` is cast to that method's signature.
+    let native = unsafe {
+        let native: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        native(view, sel_registerName(WINDOW.as_ptr()))
+    };
+    Some((native, view))
 }
 
 /// Opens `bundle` in the background once this process has exited, through Launch
