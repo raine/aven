@@ -1,5 +1,7 @@
 //! A system-wide shortcut through Carbon's hot keys, which reach the app while
-//! another one is in front and need no accessibility permission.
+//! another one is in front and need no accessibility permission. Linux has none.
+// The Carbon bindings stay compiled on Linux, where nothing calls them.
+#![cfg_attr(target_os = "linux", allow(dead_code, unused_imports))]
 use std::ffi::c_void;
 use std::ptr::null_mut;
 use std::sync::OnceLock;
@@ -143,6 +145,7 @@ struct EventHotKeyId {
 
 type Handler = extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32;
 
+#[cfg(target_os = "macos")]
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     fn GetApplicationEventTarget() -> *mut c_void;
@@ -183,6 +186,7 @@ extern "C" fn pressed(_: *mut c_void, _: *mut c_void, _: *mut c_void) -> i32 {
 
 /// Starts hearing hot keys and returns their presses. Only the first call
 /// listens. Runs on the main thread, whose event loop delivers them.
+#[cfg(target_os = "macos")]
 pub fn listen() -> Option<UnboundedReceiver<()>> {
     let (presses, received) = unbounded_channel();
     PRESSES.set(presses).ok()?;
@@ -207,8 +211,10 @@ pub fn listen() -> Option<UnboundedReceiver<()>> {
 }
 
 /// A registered shortcut, which frees its keys when dropped.
+#[cfg(target_os = "macos")]
 pub struct HotKey(*mut c_void);
 
+#[cfg(target_os = "macos")]
 impl Drop for HotKey {
     fn drop(&mut self) {
         // SAFETY: the reference came from a successful registration and is
@@ -220,6 +226,7 @@ impl Drop for HotKey {
 }
 
 /// Takes `shortcut` for the app, or says why it cannot.
+#[cfg(target_os = "macos")]
 pub fn register(shortcut: &Shortcut) -> Result<HotKey, String> {
     let code = key_code(&shortcut.key).filter(|_| shortcut.usable());
     let Some(code) = code else {
@@ -250,6 +257,22 @@ pub fn register(shortcut: &Shortcut) -> Result<HotKey, String> {
             shortcut.label()
         )),
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn listen() -> Option<UnboundedReceiver<()>> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+pub enum HotKey {}
+
+#[cfg(target_os = "linux")]
+pub fn register(shortcut: &Shortcut) -> Result<HotKey, String> {
+    Err(format!(
+        "Aven has no system-wide shortcuts on Linux, so {} can\u{2019}t be one",
+        shortcut.label()
+    ))
 }
 
 #[cfg(test)]

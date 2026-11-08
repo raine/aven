@@ -1,8 +1,21 @@
 # aven-desktop
 
-The GPUI desktop app. This macOS-only library is linked into `aven` by the
-`desktop` feature, and `aven` starts it when Launch Services opens the bundle.
-On other platforms the crate is empty.
+The GPUI desktop app. This library is linked into `aven` by the `desktop`
+feature on macOS and Linux. On macOS `aven` starts it when Launch Services opens
+the bundle. On Linux it starts when run with no arguments and no terminal in a
+graphical session, as a desktop launcher runs it. On other platforms the crate
+is empty.
+
+macOS services the app manages sit behind `src/platform.rs`, with Linux
+stand-ins in `src/platform_linux.rs`. On Linux the app has no install setup,
+in-app updates, background agent management or system-wide shortcut, and its
+notifications go to the freedesktop notification service without click
+handling.
+
+Building on Linux needs a glibc target and the development packages for
+xkbcommon (with its X11 support), Wayland, xcb, fontconfig and freetype. At run
+time GPUI renders through Vulkan or OpenGL, so it also needs a Vulkan or EGL
+driver, such as Mesa's.
 
 Run its tests from the repository root:
 

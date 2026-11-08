@@ -1,6 +1,6 @@
 //! The Aven desktop app, a GPUI application on the shared Aven crates. It exists
-//! only on macOS, where `aven` links it behind the `desktop` feature.
-#![cfg(target_os = "macos")]
+//! on macOS and Linux, where `aven` links it behind the `desktop` feature.
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 mod actions;
 pub mod adapter;
@@ -28,10 +28,12 @@ mod ledger;
 mod markdown;
 mod notifications;
 mod overlays;
+#[cfg_attr(target_os = "linux", path = "platform_linux.rs")]
 mod platform;
 mod schedule;
 pub mod session;
 mod settings;
+#[cfg(target_os = "macos")]
 mod setup;
 mod shell;
 mod startup;
