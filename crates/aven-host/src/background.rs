@@ -1,19 +1,22 @@
-//! Keeps the LaunchAgent in step with the `background` intent while Aven
-//! Desktop is the installation that owns it.
+//! The `background` intent, and on macOS the LaunchAgent kept in step with it
+//! while Aven Desktop is the installation that owns it.
 //!
 //! The agent runs only when the intent is on and the config gives it sync or
 //! reminders to do. An unset intent leaves whatever is installed alone, so a
 //! terminal install's agent stays the terminal user's. The agent is never
 //! started while the user has Aven turned off in Login Items.
+#[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use crate::config::{self, AppConfig, BackgroundIntent};
 use crate::config_edit;
+#[cfg(target_os = "macos")]
 use crate::daemon::service::{self, AgentStatus, Ensured, LoginItem};
 
 /// What [`reconcile`] should do with the agent.
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Leave,
@@ -22,6 +25,7 @@ pub enum Action {
 }
 
 /// What [`reconcile`] did.
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reconciled {
     Unchanged,
@@ -33,6 +37,7 @@ pub enum Reconciled {
 
 /// The step that brings the agent in line with `intent`. `app` is Desktop's
 /// executable. Only an agent running `app`, or none, is Desktop's to change.
+#[cfg(target_os = "macos")]
 pub fn decide(
     intent: Option<BackgroundIntent>,
     has_work: bool,
@@ -62,6 +67,7 @@ pub fn decide(
 
 /// Installs, repairs or removes the agent for the database at `db_path` as
 /// `config` asks. `app` is Desktop's executable.
+#[cfg(target_os = "macos")]
 pub fn reconcile(config: &AppConfig, db_path: PathBuf, app: &Path) -> Result<Reconciled> {
     let agent = service::agent_status()?;
     match decide(config.background, config.daemon_has_work(), &agent, app) {
@@ -93,7 +99,7 @@ pub fn set_intent(intent: BackgroundIntent) -> Result<()> {
         .with_context(|| format!("set background in {}", path.display()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
