@@ -191,6 +191,7 @@ pub fn show(cx: &mut App) {
         is_minimizable: false,
         display_id: Some(display.id()),
         window_background: WindowBackgroundAppearance::Transparent,
+        app_id: Some(crate::app::APP_ID.into()),
         ..Default::default()
     };
     let opened = cx.open_window(options, |window, cx| {

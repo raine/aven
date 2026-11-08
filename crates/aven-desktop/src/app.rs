@@ -39,6 +39,9 @@ const UPDATE_POLL: Duration = Duration::from_secs(5);
 
 /// The window title.
 const TITLE: &str = "Aven";
+/// The windows' Wayland app ID and X11 `WM_CLASS`, which group them with the
+/// desktop entry and icon of the same name in `linux/`. macOS ignores it.
+pub(crate) const APP_ID: &str = "fi.zendit.Aven";
 
 /// Identifies the file at `path`. A bundle swap puts a new file there, while
 /// this process keeps running the old one.
@@ -420,6 +423,7 @@ fn open_main(
                     traffic_light_position: Some(point(px(14.), px(21.))),
                 }),
                 window_min_size: Some(size(px(960.), px(600.))),
+                app_id: Some(APP_ID.into()),
                 ..Default::default()
             },
             |window, cx| {
