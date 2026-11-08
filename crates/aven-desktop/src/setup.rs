@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aven_host::desktop_install::{
-    self, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, Misplaced, Outcome, Plan, Report,
+    self, Agent, Blocked, CASK_RELINK, FORMULA_UNINSTALL, Layout, Misplaced, Outcome, Plan, Report,
     Switch, System,
 };
 use aven_host::running_processes::RunningProcess;
@@ -365,6 +365,29 @@ fn notification_line(permission: Permission) -> Option<NotificationLine> {
     Some(NotificationLine { text, settings })
 }
 
+/// What the switch screen says happens to the daemon's LaunchAgent.
+fn agent_line(agent: &Agent, reminders: bool) -> String {
+    // The verbs agree with the subject: "sync" alone is singular.
+    let (work, moves, restarts, stays, continues) = if reminders {
+        (
+            "Background sync and reminders",
+            "move",
+            "restart",
+            "stay",
+            "continue",
+        )
+    } else {
+        ("Background sync", "moves", "restarts", "stays", "continues")
+    };
+    if agent.disabled {
+        format!("{work} {moves} to this app and {stays} off")
+    } else if agent.loaded {
+        format!("{work} {restarts} from this app and {continues} while it is quit")
+    } else {
+        format!("{work} {moves} to this app and {continues} while it is quit")
+    }
+}
+
 /// What the screen for a copy outside `/Applications` says.
 #[derive(Debug, PartialEq, Eq)]
 struct Moving<'a> {
@@ -623,19 +646,11 @@ impl Setup {
         };
         changes = changes.child(item("icons/ic-return.svg", commands, t));
         if let Some(agent) = &switch.agent {
-            let work = if self.reminders {
-                "Background sync and reminders"
-            } else {
-                "Background sync"
-            };
-            let state = if agent.disabled {
-                format!("{work} move to this app and stay off")
-            } else if agent.loaded {
-                format!("{work} restart from this app and continue while it is quit")
-            } else {
-                format!("{work} move to this app and continue while it is quit")
-            };
-            changes = changes.child(item("icons/cloud.svg", state, t));
+            changes = changes.child(item(
+                "icons/cloud.svg",
+                agent_line(agent, self.reminders),
+                t,
+            ));
             if self.reminders
                 && !agent.disabled
                 && let Some(line) = notification_line(self.permission)
@@ -1207,6 +1222,35 @@ mod tests {
         assert_eq!(elsewhere.title, "Move Aven to Applications");
         assert_eq!(elsewhere.bundle, downloads);
         assert!(!elsewhere.text.contains("temporary"));
+    }
+
+    #[test]
+    fn the_agent_line_agrees_with_its_subject() {
+        let agent = |loaded, disabled| Agent {
+            program: PathBuf::from("/usr/local/bin/aven"),
+            owner: desktop_install::Owner::Script,
+            loaded,
+            disabled,
+        };
+        let lines: Vec<String> = [(true, false), (false, false), (false, true)]
+            .into_iter()
+            .flat_map(|(loaded, disabled)| {
+                let agent = agent(loaded, disabled);
+                [agent_line(&agent, false), agent_line(&agent, true)]
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Background sync restarts from this app and continues while it is quit",
+                "Background sync and reminders restart from this app and continue while it \
+                 is quit",
+                "Background sync moves to this app and continues while it is quit",
+                "Background sync and reminders move to this app and continue while it is quit",
+                "Background sync moves to this app and stays off",
+                "Background sync and reminders move to this app and stay off",
+            ]
+        );
     }
 
     #[test]
