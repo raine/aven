@@ -292,7 +292,6 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::config::AppConfig;
 
     #[test]
     fn renders_escaped_unit() {
@@ -353,7 +352,6 @@ mod tests {
         let runner = FakeRunner::new(vec![]);
         let args = ServiceRepairArgs {
             db_path: spec.db_path.clone(),
-            config: enabled_config(),
             program: None,
             if_installed: true,
         };
@@ -433,12 +431,6 @@ mod tests {
             path_env: DEFAULT_PATH.to_string(),
             unit_path: dir.join("systemd/user").join(UNIT),
         }
-    }
-
-    fn enabled_config() -> AppConfig {
-        let mut config = AppConfig::default();
-        config.sync.enabled = true;
-        config
     }
 
     struct FakeRunner {

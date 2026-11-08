@@ -271,7 +271,6 @@ impl App {
         let installed = tokio::task::spawn_blocking(move || {
             install(crate::daemon::ServiceInstallArgs {
                 db_path,
-                config,
                 program: None,
             })
         })
