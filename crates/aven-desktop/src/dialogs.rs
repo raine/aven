@@ -1312,11 +1312,19 @@ impl Root {
                     div()
                         .flex()
                         .items_center()
-                        .justify_between()
-                        .h(px(22.))
+                        .gap(px(8.))
+                        .min_h(px(22.))
                         .text(Text::Secondary)
-                        .child(div().truncate().text_color(t.body).child(*text))
-                        .child(div().flex_none().text_color(t.accent).child(*key)),
+                        .child(div().flex_none().text_color(t.body).child(*text))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .font_family(MONO)
+                                .text_right()
+                                .text_color(t.accent)
+                                .child(*key),
+                        ),
                 );
             }
             columns = columns.child(column);
@@ -1326,6 +1334,7 @@ impl Root {
                 .flex()
                 .items_center()
                 .pr(px(10.))
+                .pb(px(12.))
                 .child(
                     div()
                         .flex_1()
