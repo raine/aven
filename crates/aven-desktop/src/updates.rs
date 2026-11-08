@@ -415,16 +415,34 @@ fn megabytes(bytes: u64) -> String {
 
 impl Root {
     pub(crate) fn open_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let buttons = [cx.focus_handle(), cx.focus_handle()];
-        let fields = buttons.to_vec();
-        self.open_dialog_at(
-            Dialog::Update { buttons },
-            Vec::new(),
-            fields,
-            1,
-            window,
-            cx,
-        );
+        let dialog = Dialog::Update {
+            buttons: [cx.focus_handle(), cx.focus_handle()],
+            phase: None,
+        };
+        // The first render moves focus onto the phase's buttons.
+        self.open_dialog_at(dialog, Vec::new(), Vec::new(), 0, window, cx);
+    }
+
+    /// Moves focus with the Update dialog's phase, which changes on its own,
+    /// so focus stays on a control the dialog shows and Return and Escape
+    /// reach the dialog.
+    pub(crate) fn focus_update_phase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = phase(cx);
+        let Some(layer) = self.dialog.as_mut() else {
+            return;
+        };
+        let Dialog::Update { buttons, phase } = &mut layer.dialog else {
+            return;
+        };
+        let discriminant = std::mem::discriminant(&current);
+        if *phase == Some(discriminant) {
+            return;
+        }
+        *phase = Some(discriminant);
+        let (fields, first) = focus_plan(&current);
+        layer.fields = fields.iter().map(|&at| buttons[at].clone()).collect();
+        let focus = first.map_or_else(|| layer.container.clone(), |at| buttons[at].clone());
+        cx.defer_in(window, move |_, window, cx| window.focus(&focus, cx));
     }
 
     /// The sidebar row while an update is on offer or under way.
@@ -564,6 +582,7 @@ impl Root {
     pub(crate) fn render_update(&self, cx: &mut Context<Self>, t: &Theme) -> Vec<AnyElement> {
         let Some(Dialog::Update {
             buttons: [secondary, primary],
+            ..
         }) = self.dialog.as_ref().map(|layer| &layer.dialog)
         else {
             return Vec::new();
@@ -900,6 +919,21 @@ impl Root {
     }
 }
 
+/// The Update dialog's buttons a phase shows, as indexes into its secondary
+/// and primary pair in Tab order, and the one that takes focus. Without one,
+/// the dialog itself takes focus: Return there closes it, where on Cancel it
+/// would stop the wait for other processes.
+fn focus_plan(phase: &Phase) -> (&'static [usize], Option<usize>) {
+    match phase {
+        Phase::Idle | Phase::Checking | Phase::Current | Phase::CheckFailed(_) => (&[0], Some(0)),
+        Phase::Available(_) | Phase::Downloading(..) | Phase::Failed { .. } | Phase::Ready(_) => {
+            (&[0, 1], Some(1))
+        }
+        Phase::Waiting(..) => (&[0], None),
+        Phase::Restarting(_) => (&[], None),
+    }
+}
+
 type Run = Rc<dyn Fn(&mut Root, &mut Window, &mut Context<Root>)>;
 
 /// A secondary and a primary button. A `split` footer puts the secondary
@@ -967,5 +1001,40 @@ mod tests {
         assert!(Phase::Available(available.clone()).settled());
         assert!(!Phase::Ready(available.clone()).settled());
         assert!(!Phase::Downloading(available, Progress::default()).settled());
+    }
+
+    #[test]
+    fn every_phase_focuses_a_button_it_shows_or_the_dialog() {
+        let available = Available {
+            version: "1.3.0".into(),
+            notes_url: String::new(),
+            blocked: None,
+        };
+        let phases = [
+            Phase::Idle,
+            Phase::Checking,
+            Phase::Current,
+            Phase::CheckFailed("offline".into()),
+            Phase::Available(available.clone()),
+            Phase::Downloading(available.clone(), Progress::default()),
+            Phase::Failed {
+                available: available.clone(),
+                error: "offline".into(),
+                installing: false,
+            },
+            Phase::Ready(available.clone()),
+            Phase::Waiting(available.clone(), Vec::new()),
+            Phase::Restarting(available),
+        ];
+        for phase in &phases {
+            let (fields, first) = focus_plan(phase);
+            if let Some(first) = first {
+                assert!(fields.contains(&first), "{phase:?}");
+            }
+        }
+        assert_eq!(focus_plan(&Phase::Current), (&[0][..], Some(0)));
+        assert_eq!(focus_plan(&phases[7]), (&[0, 1][..], Some(1)));
+        assert_eq!(focus_plan(&phases[8]), (&[0][..], None));
+        assert_eq!(focus_plan(&phases[9]), (&[][..], None));
     }
 }

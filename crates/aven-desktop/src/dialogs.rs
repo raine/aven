@@ -224,6 +224,8 @@ pub enum Dialog {
     Update {
         /// The secondary and primary buttons, in Tab order.
         buttons: [FocusHandle; 2],
+        /// The phase focus was last placed for.
+        phase: Option<std::mem::Discriminant<crate::updates::Phase>>,
     },
 }
 
@@ -276,7 +278,7 @@ pub struct Layer {
     prior: Option<FocusHandle>,
     /// The dialog's own handle, since a focusable element reports its handle
     /// and each field already reports the one in `fields`.
-    container: FocusHandle,
+    pub(crate) container: FocusHandle,
     pub(crate) fields: Vec<FocusHandle>,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,

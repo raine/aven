@@ -3168,6 +3168,7 @@ impl Render for Root {
         }
         self.arm_toast(cx);
         self.focus_sync_page(window, cx);
+        self.focus_update_phase(window, cx);
         self.sync_welcome(window, cx);
         if self.welcome.is_some() {
             return self.render_welcome(window, cx);
