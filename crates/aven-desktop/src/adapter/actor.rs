@@ -1,5 +1,7 @@
 use crate::launch;
 use crate::launch::{Catalog, LaunchEnv, LaunchEvent, LaunchJob, LaunchMode, Place};
+use crate::platform::agent_service::{self, AgentStatus, LoginItem};
+use crate::platform::{Notifier, background, desktop_install};
 use crate::session::Session;
 use crate::sync_ops;
 use crate::sync_ops::{SyncOp, SyncRequest, SyncWork};
@@ -27,12 +29,10 @@ use aven_core::recurrence::{RecurrenceDuePolicy, RecurrenceProjectionState, Recu
 use aven_core::sync::client::engine::{LocalPhase, local_phase};
 use aven_core::sync::client::keys::ProtectedStorage;
 use aven_host::attachments::preview::{cached_preview_path, load_preview_png};
-use aven_host::background;
 use aven_host::config::{
     AppConfig, BackgroundIntent, RemindersConfig, config_file_path, resolve_blob_dir,
 };
 use aven_host::config_edit;
-use aven_host::daemon::service::{self as agent_service, AgentStatus, LoginItem};
 use aven_host::gist::create_secret_gist;
 use aven_host::host::{
     self, Delivery, Election, Host, HostEvent, HostState, Role, RoundReport, Seat,
@@ -426,7 +426,7 @@ impl Actor {
             sync_stop: Arc::new(Notify::new()),
             storage,
             background_sync: None,
-            notifications: Arc::new(notify::un::InProcess),
+            notifications: Arc::new(Notifier),
             sync_busy: Arc::new(AtomicBool::new(false)),
             invitation: None,
             handled: 0,
@@ -3169,7 +3169,7 @@ pub(crate) fn prepare(
                 });
                 actor.welcome = welcome;
                 actor.version = launch_version;
-                actor.agent_app = aven_host::desktop_install::Layout::current()
+                actor.agent_app = desktop_install::Layout::current()
                     .ok()
                     .filter(|layout| layout.manages_agent())
                     .map(|layout| layout.executable());

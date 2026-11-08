@@ -1,4 +1,11 @@
-//! What GPUI does not do for itself.
+//! What GPUI does not do for itself, and the macOS services the app manages.
+
+pub use aven_host::app_bundle::enclosing_bundle;
+pub use aven_host::background;
+pub use aven_host::daemon::service as agent_service;
+pub use aven_host::desktop_install;
+/// Posts the app's notifications.
+pub use aven_host::notify::un::InProcess as Notifier;
 
 /// `NSWorkspace.accessibilityDisplayShouldReduceMotion`.
 pub fn reduce_motion() -> bool {
