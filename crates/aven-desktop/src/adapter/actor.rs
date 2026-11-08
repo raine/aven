@@ -34,9 +34,7 @@ use aven_host::config::{
 };
 use aven_host::config_edit;
 use aven_host::gist::create_secret_gist;
-use aven_host::host::{
-    self, Delivery, Election, Host, HostEvent, HostState, Role, RoundReport, Seat,
-};
+use aven_host::host::{self, Delivery, Election, Host, HostState, Role, RoundReport, Seat};
 use aven_host::notify::{self, Deliver, DeliveryLock};
 use aven_host::schedule_input::{ParsedScheduleInput, parse_schedule_input};
 use aven_host::store::task_selection::TaskSelection;
@@ -2962,8 +2960,7 @@ async fn host_here(background: Background, seat: Seat) {
         blob_dir: background.blob_dir.clone(),
         sync: background.sync(),
         delivery: Delivery::Elsewhere(background.deliver.clone()),
-        events: Box::new(move |event| {
-            let HostEvent::Round(round) = event;
+        rounds: Box::new(move |round| {
             report(ReplyBody::Sync(match round {
                 RoundReport::Completed(outcome) => {
                     if outcome.received_changes > 0 {

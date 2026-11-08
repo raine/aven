@@ -71,12 +71,12 @@ pub async fn run(args: DaemonRunArgs) -> Result<()> {
         blob_dir,
         sync: DaemonSync::default(),
         delivery: Delivery::Here(crate::notification::delivery()),
-        events: Box::new(|_| {}),
+        rounds: Box::new(|_| {}),
         wake: Arc::new(Notify::new()),
         debounce: Duration::ZERO,
         executable: Some(fingerprint.clone()),
     };
-    if let Exit::ExecutableChanged(_) = host.run(shutdown).await? {
+    if let Exit::ExecutableChanged = host.run(shutdown).await? {
         stop_for_executable(&fingerprint).await;
     }
     Ok(())
@@ -283,7 +283,7 @@ impl EmbeddedSync {
             blob_dir: self.blob_dir,
             sync: DaemonSync::default(),
             delivery: Delivery::Here(crate::notification::delivery()),
-            events: Box::new(|_| {}),
+            rounds: Box::new(|_| {}),
             wake: self.wake,
             debounce: Duration::ZERO,
             executable: None,

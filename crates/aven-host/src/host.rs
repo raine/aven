@@ -22,7 +22,7 @@ pub mod executable;
 pub mod runtime;
 pub mod wake;
 
-pub use runtime::{Delivery, Exit, Host, HostEvent, RoundReport, watch_config_file};
+pub use runtime::{Delivery, Exit, Host, RoundReport, watch_config_file};
 
 /// How often a host records that it is alive, in time the system is awake.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
