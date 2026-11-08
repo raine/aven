@@ -26,9 +26,7 @@ pub const RETRY: &[u8] = b"r";
 /// Where the host of the database at `db` may listen, in the order a host
 /// tries them and a waker sends to them.
 pub fn paths(db: &Path) -> Vec<PathBuf> {
-    let mut name = db.file_name().unwrap_or(db.as_os_str()).to_os_string();
-    name.push(".host.sock");
-    let mut paths = vec![db.with_file_name(name)];
+    let mut paths = vec![crate::paths::beside_db(db, ".host.sock")];
     if let Some(dir) = user_temp_dir() {
         paths.push(dir.join(format!("aven-{}.sock", database_key(db))));
     }

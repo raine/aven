@@ -19,6 +19,7 @@ use crate::app_bundle::{
 };
 use crate::config::BackgroundIntent;
 use crate::daemon::service::{self, AgentState};
+use crate::paths::{same_file, same_path};
 use crate::running_processes::{RunningProcess, blocking_processes};
 
 /// What the user runs to remove the Homebrew formula. Setup never runs it.
@@ -134,7 +135,7 @@ impl Layout {
     fn search_dirs(&self) -> Vec<(PathBuf, bool)> {
         let mut dirs: Vec<(PathBuf, bool)> = Vec::new();
         let mut add = |dir: PathBuf, on_path: bool| {
-            if dir.is_absolute() && !dirs.iter().any(|(seen, _)| same_dir(seen, &dir)) {
+            if dir.is_absolute() && !dirs.iter().any(|(seen, _)| same_path(seen, &dir)) {
                 dirs.push((dir, on_path));
             }
         };
@@ -160,7 +161,7 @@ impl Layout {
         path.parent().is_some_and(|dir| {
             self.brew_prefixes
                 .iter()
-                .any(|prefix| same_dir(dir, &prefix.join("bin")))
+                .any(|prefix| same_path(dir, &prefix.join("bin")))
         })
     }
 
@@ -1097,17 +1098,6 @@ fn writable(dir: &Path) -> bool {
         .prefix(".aven-setup-")
         .tempfile_in(dir)
         .is_ok()
-}
-
-fn same_file(left: &Path, right: &Path) -> bool {
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn same_dir(left: &Path, right: &Path) -> bool {
-    left == right || same_file(left, right)
 }
 
 /// Whether `path` is `root` or inside it, also through `root`'s real path.
