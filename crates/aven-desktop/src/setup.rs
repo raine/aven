@@ -47,6 +47,23 @@ pub(crate) enum Stage {
     Done(Report),
 }
 
+impl Stage {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Checking => "checking",
+            Self::MoveToApplications(_) => "move to applications",
+            Self::Confirm(_) => "confirm",
+            Self::Declined(_) => "declined",
+            Self::Working => "working",
+            Self::Waiting { .. } => "waiting",
+            Self::RemoveFormula { .. } => "remove formula",
+            Self::Blocked(_) => "blocked",
+            Self::Failed(_) => "failed",
+            Self::Done(_) => "done",
+        }
+    }
+}
+
 type OnDone = Box<dyn FnOnce(&mut Window, &mut App)>;
 
 pub(crate) struct Setup {
@@ -64,6 +81,9 @@ pub(crate) struct Setup {
     permission: Permission,
     /// Counts waits, so only the latest one runs the switch.
     waits: usize,
+    /// The stage the last frame showed, so the log tells a stage that never
+    /// drew from one that did.
+    drawn: &'static str,
 }
 
 impl Setup {
@@ -87,6 +107,7 @@ impl Setup {
                 .is_ok_and(|config| config.reminders.enabled),
             permission: Permission::Unavailable,
             waits: 0,
+            drawn: "",
         };
         setup.check(window, cx);
         setup
@@ -180,6 +201,7 @@ impl Setup {
     fn arrive(&mut self, stage: Option<Stage>, window: &mut Window, cx: &mut Context<Self>) {
         match stage {
             Some(stage) => {
+                tracing::info!(stage = stage.name(), "setup moved on");
                 let waiting = matches!(stage, Stage::Waiting { .. });
                 self.stage = stage;
                 cx.notify();
@@ -974,6 +996,10 @@ impl Setup {
 
 impl Render for Setup {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.drawn != self.stage.name() {
+            self.drawn = self.stage.name();
+            tracing::info!(stage = self.drawn, "setup drew");
+        }
         let t = theme(cx);
         let screen = self.screen(cx, &t);
         let mut buttons = div().mt(px(24.)).flex().items_center().gap(px(10.));
