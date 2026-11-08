@@ -467,12 +467,12 @@ fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
     let current_executable = std::env::current_exe().context("resolve current executable")?;
     let program_matches_current = program
         .as_ref()
-        .map(|program| paths_resolve_to_same_file(program, &current_executable));
+        .map(|program| crate::paths::same_file(program, &current_executable));
     let bundled_target = enclosing_bundle(&stable_program_path(&current_executable)).is_some();
     let bundle_migration_pending = program.as_ref().map(|program| {
         bundled_target
             && enclosing_bundle(program).is_none()
-            && paths_resolve_to_same_file(program, &current_executable)
+            && crate::paths::same_file(program, &current_executable)
     });
     let runtime = service_runtime(runner, &spec)?;
     let turned_off_in_login_items = (runtime.loaded || spec.plist_path.exists())
@@ -567,7 +567,7 @@ fn bundle_migration_plist(
     {
         return Err("customized-plist");
     }
-    if !paths_resolve_to_same_file(&spec.executable, program) {
+    if !crate::paths::same_file(&spec.executable, program) {
         return Err("different-program");
     }
     spec.executable = program.to_path_buf();
@@ -742,19 +742,8 @@ fn stable_program_path_from_candidates(
 ) -> PathBuf {
     candidates
         .into_iter()
-        .find(|candidate| paths_resolve_to_same_file(candidate, current_exe))
+        .find(|candidate| crate::paths::same_file(candidate, current_exe))
         .unwrap_or_else(|| current_exe.to_path_buf())
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn paths_resolve_to_same_file(left: &Path, right: &Path) -> bool {
-    let Ok(left) = left.canonicalize() else {
-        return false;
-    };
-    let Ok(right) = right.canonicalize() else {
-        return false;
-    };
-    left == right
 }
 
 #[cfg(target_os = "macos")]
@@ -923,7 +912,7 @@ fn ensure_with_runner(
         .as_deref()
         .and_then(|text| spec.with_plist_settings(text))
         .filter(|kept| {
-            paths_resolve_to_same_file(&kept.executable, &spec.executable)
+            crate::paths::same_file(&kept.executable, &spec.executable)
                 && kept.db_path == spec.db_path
         })
         .map(|kept| ServiceSpec {
@@ -960,7 +949,7 @@ fn remove_with_runner(
     let Some(installed) = read_plist_program(&spec.plist_path)? else {
         return Ok(false);
     };
-    if !paths_resolve_to_same_file(&installed, program) && installed != program {
+    if !crate::paths::same_path(&installed, program) {
         return Ok(false);
     }
     stop_service(runner, sleeper, spec)?;
