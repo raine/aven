@@ -40,7 +40,7 @@ pub fn decide(
     app: &Path,
 ) -> Action {
     let ours = match &agent.program {
-        Some(program) => same_program(program, app),
+        Some(program) => crate::paths::same_path(program, app),
         None => !agent.installed,
     };
     if !ours {
@@ -91,16 +91,6 @@ pub fn set_intent(intent: BackgroundIntent) -> Result<()> {
     let path = config::config_file_path()?;
     config_edit::set_top_level_scalar(&path, "background", intent.as_str())
         .with_context(|| format!("set background in {}", path.display()))
-}
-
-fn same_program(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
 }
 
 #[cfg(test)]

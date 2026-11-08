@@ -32,7 +32,7 @@ impl Fingerprint {
         let launch_path = std::env::args_os()
             .next()
             .map(PathBuf::from)
-            .filter(|argv0| argv0.is_absolute() && same_file(argv0, &current))
+            .filter(|argv0| argv0.is_absolute() && crate::paths::same_file(argv0, &current))
             .unwrap_or(current);
         Self::of(&launch_path)
     }
@@ -129,10 +129,6 @@ fn quarantine_unapproved(_path: &Path) -> bool {
 fn quarantine_flags(value: &[u8]) -> Option<u32> {
     let value = std::str::from_utf8(value).ok()?;
     u32::from_str_radix(value.split(';').next()?, 16).ok()
-}
-
-fn same_file(left: &Path, right: &Path) -> bool {
-    matches!((left.canonicalize(), right.canonicalize()), (Ok(left), Ok(right)) if left == right)
 }
 
 #[cfg(test)]

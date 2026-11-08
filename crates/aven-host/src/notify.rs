@@ -177,9 +177,7 @@ pub fn unix_now() -> i64 {
 
 /// Where the delivery lock of the database at `db` lives.
 pub fn lock_path(db: &Path) -> PathBuf {
-    let mut name = db.file_name().unwrap_or(db.as_os_str()).to_os_string();
-    name.push(".delivery.lock");
-    db.with_file_name(name)
+    crate::paths::beside_db(db, ".delivery.lock")
 }
 
 /// The right to deliver a database's notifications. Dropping it gives it up.

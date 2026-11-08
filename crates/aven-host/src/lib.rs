@@ -17,6 +17,7 @@ pub mod gist;
 pub mod host;
 pub mod notify;
 pub mod operations;
+mod paths;
 pub mod projects;
 pub mod protected_local_keys;
 pub mod recurrence_input;

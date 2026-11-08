@@ -4,7 +4,7 @@ use std::process::Output;
 
 use anyhow::{Context, Result, bail};
 
-use super::{InstalledService, ServiceRepairArgs, ServiceStatus, paths_resolve_to_same_file};
+use super::{InstalledService, ServiceRepairArgs, ServiceStatus};
 #[cfg(target_os = "linux")]
 use super::{absolute_path, stable_program_path_from_candidates};
 
@@ -135,7 +135,7 @@ pub(super) fn status_with_runner(
     let current_executable = std::env::current_exe().context("resolve current executable")?;
     let program_matches_current = program
         .as_ref()
-        .map(|program| paths_resolve_to_same_file(program, &current_executable));
+        .map(|program| crate::paths::same_file(program, &current_executable));
     let args = [
         "show",
         UNIT,
