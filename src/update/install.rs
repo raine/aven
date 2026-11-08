@@ -14,7 +14,7 @@ use super::eligibility::can_stage_beside;
 use super::{InstallPlan, InstallSuccess, UpdatePhase, UpdateProgress, ensure_not_cancelled};
 
 pub(super) const ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
-/// Desktop archives carry the whole app, and only new updaters read them.
+/// Desktop archives carry the whole app, and only Desktop installs read them.
 #[cfg(target_os = "macos")]
 pub(super) const DESKTOP_ARCHIVE_LIMIT: usize = 192 * 1024 * 1024;
 const CHECKSUM_LIMIT: usize = 4096;
