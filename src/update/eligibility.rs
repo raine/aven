@@ -37,10 +37,6 @@ pub(crate) fn release_channel() -> ReleaseChannel {
     })
 }
 
-/// A Desktop install is a desktop build running from an `Aven.app` that is not
-/// one of the terminal channel's bundles: the install script's bundle under
-/// `~/.local/share/aven`, or a Homebrew formula's in its Cellar. Older terminal
-/// releases were desktop builds too, so the build alone does not decide it.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn channel_for(_: &Path, _: Option<&Path>, _: bool) -> ReleaseChannel {
     ReleaseChannel::Terminal
@@ -57,6 +53,10 @@ fn channel_for(_: &Path, _: Option<&Path>, desktop_build: bool) -> ReleaseChanne
     }
 }
 
+/// A Desktop install is a desktop build running from an `Aven.app` that is not
+/// one of the terminal channel's bundles: the install script's bundle under
+/// `~/.local/share/aven`, or a Homebrew formula's in its Cellar. Older terminal
+/// releases were desktop builds too, so the build alone does not decide it.
 #[cfg(target_os = "macos")]
 fn channel_for(canonical: &Path, home: Option<&Path>, desktop_build: bool) -> ReleaseChannel {
     if !desktop_build {
