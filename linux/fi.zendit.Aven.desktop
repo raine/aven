@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Aven
+GenericName=Task Manager
+Comment=Local-first task manager
+Exec=aven
+TryExec=aven
+Icon=fi.zendit.Aven
+Terminal=false
+Categories=Office;ProjectManagement;
+Keywords=tasks;todo;
+StartupWMClass=fi.zendit.Aven

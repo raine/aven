@@ -110,6 +110,51 @@ macos-icon:
     done
     cp "$out/Assets.car" "$out/Aven.icns" macos/Resources/
 
+# Generate the committed Linux hicolor icons from the light macOS icon layers (needs rsvg-convert)
+linux-icon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    icons=linux/icons/hicolor
+    svg=$icons/scalable/apps/fi.zendit.Aven.svg
+    mkdir -p "$(dirname "$svg")"
+    # The layers are drawn for the macOS tile, 824 units wide; this tile is 896.
+    {
+        echo '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
+        echo '  <defs>'
+        echo '    <linearGradient id="tile-gradient" x1="0" y1="64" x2="0" y2="960" gradientUnits="userSpaceOnUse">'
+        echo '      <stop offset="0" stop-color="#FFFFFF"/>'
+        echo '      <stop offset="1" stop-color="#EBEBEB"/>'
+        echo '    </linearGradient>'
+        echo '  </defs>'
+        echo '  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile-gradient)"/>'
+        echo '  <g transform="translate(512 512) scale(1.0874) translate(-512 -512)">'
+        for layer in aven-a-light aven-check-light; do
+            sed '1d;$d' "macos/Aven.icon/Assets/$layer.svg"
+        done
+        echo '  </g>'
+        echo '</svg>'
+    } >| "$svg"
+    for size in 16 24 32 48 64 128 256 512; do
+        mkdir -p "$icons/${size}x${size}/apps"
+        rsvg-convert -w "$size" -h "$size" "$svg" -o "$icons/${size}x${size}/apps/fi.zendit.Aven.png"
+    done
+
+# Install the Linux desktop entry and icons for this user, launching `aven` from PATH
+linux-desktop-install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data=${XDG_DATA_HOME:-$HOME/.local/share}
+    install -Dm644 linux/fi.zendit.Aven.desktop "$data/applications/fi.zendit.Aven.desktop"
+    (cd linux/icons && find hicolor -type f) | while read -r icon; do
+        install -Dm644 "linux/icons/$icon" "$data/icons/$icon"
+    done
+    if command -v gtk-update-icon-cache >/dev/null; then
+        gtk-update-icon-cache -qtf "$data/icons/hicolor" || true
+    fi
+    if command -v update-desktop-database >/dev/null; then
+        update-desktop-database -q "$data/applications" || true
+    fi
+
 # Test generic locking, hook isolation and worktree setup
 public-tooling-test:
     scripts/test-process-lock
