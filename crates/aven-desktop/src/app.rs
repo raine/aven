@@ -272,15 +272,14 @@ impl Global for NotifiedTask {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Notified {
     Task(String, TaskId),
-    /// The due digest's tasks, in its workspace, or the current one for a
-    /// digest that names none.
-    Due(Option<String>),
+    /// The due digest's tasks, in its workspace.
+    Due(String),
 }
 
 fn notified(tag: &str) -> Option<Notified> {
     match notify::target(tag)? {
         Target::Task { workspace, task } => Some(Notified::Task(workspace, task.parse().ok()?)),
-        Target::Due { workspace, .. } => Some(Notified::Due(workspace)),
+        Target::Due { workspace } => Some(Notified::Due(workspace)),
     }
 }
 
@@ -465,9 +464,8 @@ mod tests {
             "home".into(),
             "0123456789ABCDEF".parse().unwrap(),
         ));
-        assert_eq!(notified("task:home:0123456789ABCDEF"), task);
         assert_eq!(notified("v1:task:home:0123456789ABCDEF:e1"), task);
-        assert_eq!(notified("task:home:nope"), None);
+        assert_eq!(notified("v1:task:home:nope:e1"), None);
         assert_eq!(notified("launch-failed:3"), None);
         assert_eq!(notified("v1:available:e1"), None);
     }
@@ -476,9 +474,8 @@ mod tests {
     fn the_due_digest_opens_the_due_view_of_its_workspace() {
         assert_eq!(
             notified("v1:digest:work:2026-11-06"),
-            Some(Notified::Due(Some("work".into())))
+            Some(Notified::Due("work".into()))
         );
-        assert_eq!(notified("v1:digest:2026-11-06"), Some(Notified::Due(None)));
     }
 
     #[test]

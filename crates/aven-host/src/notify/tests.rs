@@ -114,9 +114,9 @@ fn tags_name_what_a_click_opens() {
     };
     assert_eq!(
         target(&task_tag("home", "0123456789ABCDEF", "e1")),
-        Some(task.clone())
+        Some(task)
     );
-    assert_eq!(target("task:home:0123456789ABCDEF"), Some(task));
+    assert_eq!(target("task:home:0123456789ABCDEF"), None);
     assert_eq!(
         target(&task_tag("a:b", "T", "e1")),
         Some(Target::Task {
@@ -127,24 +127,16 @@ fn tags_name_what_a_click_opens() {
     assert_eq!(
         target(&digest_tag("home", "2026-11-06")),
         Some(Target::Due {
-            workspace: Some("home".into()),
-            date: "2026-11-06".into()
+            workspace: "home".into()
         })
     );
     assert_eq!(
         target(&digest_tag("a:b", "2026-11-06")),
         Some(Target::Due {
-            workspace: Some("a:b".into()),
-            date: "2026-11-06".into()
+            workspace: "a:b".into()
         })
     );
-    assert_eq!(
-        target("v1:digest:2026-11-06"),
-        Some(Target::Due {
-            workspace: None,
-            date: "2026-11-06".into()
-        })
-    );
+    assert_eq!(target("v1:digest:2026-11-06"), None);
     assert_eq!(target("v1:digest::2026-11-06"), None);
     assert_eq!(target(&plain_tag("available", "e1")), None);
     assert_eq!(target("launch-failed:3"), None);
