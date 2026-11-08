@@ -195,7 +195,8 @@ fn turn_on_guidance(config: &AppConfig, installed: bool) -> String {
         format!(
             "Sync and reminders are both turned off. Turn one on with {commands}; the daemon picks up the change itself."
         )
-    } else if config.background == Some(BackgroundIntent::On) {
+    } else if cfg!(target_os = "macos") && config.background == Some(BackgroundIntent::On) {
+        // Only the macOS app runs a background agent.
         format!(
             "Sync and reminders are both turned off, so Aven Desktop runs no background agent. Turn on Keep syncing after Aven quits or Reminders on this Mac in Aven Desktop's Settings, or run {commands} and then `aven daemon install`."
         )
@@ -401,7 +402,8 @@ mod tests {
         assert!(idle.guidance[0].contains("aven config set sync.enabled true"));
         assert!(idle.guidance[0].contains("picks up the change"));
 
-        // Sync turned off when joining from Aven Desktop removes the agent.
+        // Sync turned off when joining from Aven Desktop on macOS removes the
+        // agent. On Linux the app runs none, so the intent changes nothing.
         let desktop = AppConfig {
             background: Some(BackgroundIntent::On),
             ..AppConfig::default()
@@ -412,7 +414,10 @@ mod tests {
         let off = build_daemon_status(&desktop, removed.clone());
         assert_eq!(off.state, StatusState::Off);
         assert_eq!(off.guidance.len(), 1, "{:?}", off.guidance);
-        assert!(off.guidance[0].contains("Keep syncing after Aven quits"));
+        assert_eq!(
+            off.guidance[0].contains("Keep syncing after Aven quits"),
+            cfg!(target_os = "macos")
+        );
         assert!(off.guidance[0].contains("aven daemon install"));
         assert!(!off.guidance[0].contains("restart"));
 

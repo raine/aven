@@ -429,10 +429,12 @@ impl Root {
                             .line_height(px(20.))
                             .text_center()
                             .text_color(t.muted)
-                            .child(
+                            .child(by_platform!(
                                 "Local-first tasks for you and your coding agents. Everything \
-                             stays on this Mac until you choose to sync.",
-                            ),
+                                     stays on this Mac until you choose to sync.",
+                                "Local-first tasks for you and your coding agents. Everything \
+                                     stays on this computer until you choose to sync."
+                            )),
                     ),
                     1,
                     intro,

@@ -151,7 +151,7 @@ fn page(title: &'static str, lead: Option<&'static str>, t: &Theme) -> Div {
 /// The switch that keeps the agent syncing after Aven quits.
 const KEEP_SYNCING: &str = "Keep syncing after Aven quits";
 /// The switch that turns on reminders.
-const REMINDERS: &str = "Reminders on this Mac";
+const REMINDERS: &str = by_platform!("Reminders on this Mac", "Reminders on this computer");
 /// The switch that has the launcher's agent write tasks.
 const LAUNCHER_AI: &str = "Create tasks with AI";
 /// Where Settings sends the user to allow the background agent again.
@@ -165,11 +165,18 @@ fn lead(text: impl Into<SharedString>, t: &Theme) -> Div {
 /// What the Reminders page says about when reminders arrive.
 fn reminders_lead(enabled: bool, agent: AgentShown) -> &'static str {
     match (enabled, agent) {
-        (false, _) => "Notifications on this Mac when tasks come due or become available again.",
+        (false, _) => by_platform!(
+            "Notifications on this Mac when tasks come due or become available again.",
+            "Notifications on this computer when tasks come due or become available again."
+        ),
         (true, AgentShown::Running) => {
             "Sent while Aven is open or quit. Each device keeps its own record of sent reminders."
         }
-        (true, AgentShown::Unknown) => "Each device keeps its own record of sent reminders.",
+        (true, AgentShown::Unknown) => by_platform!(
+            "Each device keeps its own record of sent reminders.",
+            "Sent while Aven is open, and after it quits by the aven daemon if it is installed. \
+             Each device keeps its own record of sent reminders."
+        ),
         (true, _) => {
             "Sent only while Aven is open. Each device keeps its own record of sent reminders."
         }
@@ -1066,7 +1073,10 @@ impl Root {
     fn quick_capture_tab(&self, cx: &mut Context<Self>, t: &Theme) -> Div {
         page(
             "Quick capture",
-            Some("The launcher adds tasks from any app while Aven runs."),
+            Some(by_platform!(
+                "The launcher adds tasks from any app while Aven runs.",
+                "The launcher adds tasks while Aven runs."
+            )),
             t,
         )
         .child(group(
@@ -1789,7 +1799,11 @@ impl Root {
                 )
             }
             Some(at) => format!("Last background sync {}", ago(at, Local::now().timestamp())),
-            None => "Keeps this Mac up to date in the background".to_string(),
+            None => by_platform!(
+                "Keeps this Mac up to date in the background",
+                "Lets the aven daemon sync while Aven is closed, once aven daemon install sets it up"
+            )
+            .to_string(),
         };
         let track = div()
             .id(KEEP_SYNCING)
@@ -3193,8 +3207,12 @@ impl Root {
             .child(row_title(
                 KEEP_SYNCING,
                 Some(
-                    "A background agent keeps this Mac up to date while Aven is closed."
-                        .to_string(),
+                    by_platform!(
+                        "A background agent keeps this Mac up to date while Aven is closed.",
+                        "The aven daemon keeps this computer up to date while Aven is closed, \
+                         once aven daemon install sets it up."
+                    )
+                    .to_string(),
                 ),
                 t,
             ))
