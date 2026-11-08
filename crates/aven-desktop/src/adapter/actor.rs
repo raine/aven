@@ -3457,6 +3457,7 @@ mod tests {
             capabilities: vec![host::CAPABILITY_SYNC.to_string()],
             started_at: 0,
             heartbeat_at: 0,
+            heartbeat_awake: None,
             round_started: 0,
             round_finished: 0,
         };

@@ -88,7 +88,7 @@ mod tests {
         let database = Database::open(&db).await.unwrap();
         let seat = host_seat(&db).await;
         database
-            .record_host_start(7, "daemon", "0.1.0", &[host::CAPABILITY_SYNC], now())
+            .record_host_start(7, "daemon", "0.1.0", &[host::CAPABILITY_SYNC], now(), None)
             .await
             .unwrap();
         let mut config = AppConfig::default();
@@ -138,7 +138,7 @@ mod tests {
         let _seat = host_seat(&db).await;
         let config = AppConfig::default();
         database
-            .record_host_start(7, "desktop", "0.1.0", &[host::CAPABILITY_SYNC], now())
+            .record_host_start(7, "desktop", "0.1.0", &[host::CAPABILITY_SYNC], now(), None)
             .await
             .unwrap();
         database

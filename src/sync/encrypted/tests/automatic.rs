@@ -234,6 +234,7 @@ async fn foreground_sync_success_sends_retry_wake_for_recorded_daemon_failure() 
             "0.1.0",
             &[aven_host::host::CAPABILITY_SYNC],
             chrono::Utc::now().timestamp(),
+            None,
         )
         .await
         .unwrap();

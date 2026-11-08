@@ -24,10 +24,12 @@ pub mod wake;
 
 pub use runtime::{Delivery, Exit, Host, HostEvent, RoundReport, watch_config_file};
 
-/// How often a host records that it is alive.
+/// How often a host records that it is alive, in time the system is awake.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 /// A heartbeat older than this, while the lock is held, is a fault, and so
 /// is a host that took the lock this long ago without recording its status.
+/// A heartbeat's age leaves out time the system spent asleep, as its timer
+/// does; see [`awake_now`].
 pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_secs(3 * 60);
 /// How often Aven Desktop and `aven mcp --sync` try again to host while
 /// another process holds the lock.
@@ -192,7 +194,42 @@ pub async fn host_state(database: &Database) -> Result<HostState> {
         return Ok(HostState::Stopped(status));
     }
     let taken_at = lock_taken_at(database.path());
-    Ok(classify(status, taken_at, chrono::Utc::now().timestamp()))
+    Ok(classify(
+        status,
+        taken_at,
+        chrono::Utc::now().timestamp(),
+        awake_now(),
+    ))
+}
+
+/// The system's awake time: seconds since boot, leaving out time asleep.
+/// Tokio's timers, and so a host's heartbeat, run on this clock, so a host
+/// records it with each heartbeat. `None` where the platform has no such
+/// clock.
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+pub fn awake_now() -> Option<i64> {
+    #[cfg(target_vendor = "apple")]
+    const CLOCK: libc::clockid_t = libc::CLOCK_UPTIME_RAW;
+    #[cfg(not(target_vendor = "apple"))]
+    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `time` is writable for the call.
+    if unsafe { libc::clock_gettime(CLOCK, &mut time) } != 0 {
+        return None;
+    }
+    #[allow(
+        clippy::useless_conversion,
+        reason = "time_t is narrower than i64 on some targets"
+    )]
+    Some(i64::from(time.tv_sec))
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+pub fn awake_now() -> Option<i64> {
+    None
 }
 
 /// When the current holder took the host lock of the database at `db`, in
@@ -203,13 +240,19 @@ fn lock_taken_at(db: &Path) -> Option<i64> {
     i64::try_from(since_epoch.as_secs()).ok()
 }
 
-fn classify(status: Option<HostStatus>, taken_at: Option<i64>, now: i64) -> HostState {
+/// What the host state is at Unix time `now` and awake time `awake`.
+fn classify(
+    status: Option<HostStatus>,
+    taken_at: Option<i64>,
+    now: i64,
+    awake: Option<i64>,
+) -> HostState {
     let stale_after = HEARTBEAT_STALE_AFTER.as_secs() as i64;
     // A row recorded before the lock was taken is an earlier host's.
     let current = |status: &HostStatus| taken_at.is_none_or(|taken| status.started_at >= taken);
     match status {
         Some(status) if current(&status) => {
-            if now - status.heartbeat_at <= stale_after {
+            if heartbeat_age(&status, now, awake) <= stale_after {
                 HostState::Running(status)
             } else {
                 HostState::Unresponsive(Some(status))
@@ -219,6 +262,18 @@ fn classify(status: Option<HostStatus>, taken_at: Option<i64>, now: i64) -> Host
             Some(taken) if now - taken <= stale_after => HostState::Starting,
             _ => HostState::Unresponsive(status),
         },
+    }
+}
+
+/// Seconds since the host's last heartbeat. Where the host and this process
+/// both read the awake clock, time the system spent asleep doesn't count: no
+/// heartbeat can come then, and after a wake the host's timer still has the
+/// rest of its interval to run.
+fn heartbeat_age(status: &HostStatus, now: i64, awake: Option<i64>) -> i64 {
+    match (status.heartbeat_awake, awake) {
+        // An awake time behind the heartbeat's is from another boot.
+        (Some(then), Some(awake)) if awake >= then => awake - then,
+        _ => now - status.heartbeat_at,
     }
 }
 
@@ -285,6 +340,7 @@ mod tests {
             capabilities: vec![CAPABILITY_SYNC.to_string()],
             started_at: 0,
             heartbeat_at,
+            heartbeat_awake: None,
             round_started: 0,
             round_finished: 0,
         }
@@ -381,46 +437,122 @@ mod tests {
     fn a_held_lock_with_a_stale_heartbeat_is_unresponsive() {
         let stale = HEARTBEAT_STALE_AFTER.as_secs() as i64;
         assert!(matches!(
-            classify(Some(status(1_000)), Some(0), 1_000 + stale),
+            classify(Some(status(1_000)), Some(0), 1_000 + stale, None),
             HostState::Running(_)
         ));
         assert!(matches!(
-            classify(Some(status(1_000)), Some(0), 1_001 + stale),
+            classify(Some(status(1_000)), Some(0), 1_001 + stale, None),
             HostState::Unresponsive(Some(_))
         ));
         assert!(matches!(
-            classify(Some(status(1_000)), None, 1_001 + stale),
+            classify(Some(status(1_000)), None, 1_001 + stale, None),
             HostState::Unresponsive(Some(_))
         ));
-        assert_eq!(classify(None, None, 0), HostState::Unresponsive(None));
+        assert_eq!(classify(None, None, 0, None), HostState::Unresponsive(None));
+    }
+
+    fn status_awake(heartbeat_at: i64, heartbeat_awake: i64) -> HostStatus {
+        HostStatus {
+            heartbeat_awake: Some(heartbeat_awake),
+            ..status(heartbeat_at)
+        }
+    }
+
+    #[test]
+    fn time_asleep_does_not_age_a_heartbeat() {
+        let stale = HEARTBEAT_STALE_AFTER.as_secs() as i64;
+        let night = 8 * 60 * 60;
+        // Just after a night asleep, the heartbeat from before it is hours
+        // old on the wall clock but seconds old on the awake clock.
+        assert!(matches!(
+            classify(
+                Some(status_awake(1_000, 500)),
+                Some(0),
+                1_030 + night,
+                Some(530)
+            ),
+            HostState::Running(_)
+        ));
+        // The same heartbeat, unchanged for the window of awake time.
+        assert!(matches!(
+            classify(
+                Some(status_awake(1_000, 500)),
+                Some(0),
+                1_000 + night + stale,
+                Some(500 + stale)
+            ),
+            HostState::Running(_)
+        ));
+        assert!(matches!(
+            classify(
+                Some(status_awake(1_000, 500)),
+                Some(0),
+                1_001 + night + stale,
+                Some(501 + stale)
+            ),
+            HostState::Unresponsive(Some(_))
+        ));
+        // A host that kept checking in after the wake stays responsive.
+        assert!(matches!(
+            classify(
+                Some(status_awake(1_000 + night + stale, 500 + stale)),
+                Some(0),
+                1_001 + night + stale,
+                Some(501 + stale)
+            ),
+            HostState::Running(_)
+        ));
+    }
+
+    #[test]
+    fn a_heartbeat_without_a_comparable_awake_time_ages_on_the_wall_clock() {
+        let stale = HEARTBEAT_STALE_AFTER.as_secs() as i64;
+        // This process has no awake clock.
+        assert!(matches!(
+            classify(Some(status_awake(1_000, 500)), Some(0), 1_001 + stale, None),
+            HostState::Unresponsive(Some(_))
+        ));
+        // The heartbeat's awake time is from another boot.
+        assert!(matches!(
+            classify(
+                Some(status_awake(1_000, 500)),
+                Some(0),
+                1_001 + stale,
+                Some(10)
+            ),
+            HostState::Unresponsive(Some(_))
+        ));
     }
 
     #[test]
     fn a_host_that_has_not_recorded_its_status_is_starting_for_a_while() {
         let stale = HEARTBEAT_STALE_AFTER.as_secs() as i64;
-        assert_eq!(classify(None, Some(1_000), 1_000), HostState::Starting);
         assert_eq!(
-            classify(None, Some(1_000), 1_000 + stale),
+            classify(None, Some(1_000), 1_000, None),
             HostState::Starting
         );
         assert_eq!(
-            classify(None, Some(1_000), 1_001 + stale),
+            classify(None, Some(1_000), 1_000 + stale, None),
+            HostState::Starting
+        );
+        assert_eq!(
+            classify(None, Some(1_000), 1_001 + stale, None),
             HostState::Unresponsive(None)
         );
         // An earlier host's row, however fresh, does not speak for the new one.
         let earlier = status(999);
         assert_eq!(
-            classify(Some(earlier.clone()), Some(1_000), 1_000),
+            classify(Some(earlier.clone()), Some(1_000), 1_000, None),
             HostState::Starting
         );
         assert_eq!(
-            classify(Some(earlier.clone()), Some(1_000), 1_001 + stale),
+            classify(Some(earlier.clone()), Some(1_000), 1_001 + stale, None),
             HostState::Unresponsive(Some(earlier))
         );
         let mut current = status(1_000);
         current.started_at = 1_000;
         assert!(matches!(
-            classify(Some(current), Some(1_000), 1_000),
+            classify(Some(current), Some(1_000), 1_000, None),
             HostState::Running(_)
         ));
     }
@@ -441,12 +573,34 @@ mod tests {
         assert_eq!(host_state(&database).await.unwrap(), HostState::Starting);
         let now = chrono::Utc::now().timestamp();
         database
-            .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_SYNC], now)
+            .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_SYNC], now, awake_now())
             .await
             .unwrap();
         assert!(matches!(
             host_state(&database).await.unwrap(),
             HostState::Running(status) if status.pid == 7
+        ));
+
+        // A heartbeat from before a long sleep still counts on waking, while
+        // the awake clock says it is recent.
+        let before_sleep = now - 8 * 60 * 60;
+        database
+            .record_host_heartbeat(7, before_sleep, awake_now())
+            .await
+            .unwrap();
+        let state = host_state(&database).await.unwrap();
+        if awake_now().is_some() {
+            assert!(matches!(state, HostState::Running(_)), "{state:?}");
+        } else {
+            assert!(matches!(state, HostState::Unresponsive(_)), "{state:?}");
+        }
+        database
+            .record_host_heartbeat(7, before_sleep, None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            host_state(&database).await.unwrap(),
+            HostState::Unresponsive(Some(status)) if status.pid == 7
         ));
 
         drop(seat);
@@ -466,7 +620,7 @@ mod tests {
         };
         let now = chrono::Utc::now().timestamp();
         database
-            .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_SYNC], now)
+            .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_SYNC], now, awake_now())
             .await
             .unwrap();
         // A round in progress when the request arrives does not count.
@@ -503,7 +657,14 @@ mod tests {
         };
         let now = chrono::Utc::now().timestamp();
         database
-            .record_host_start(7, "daemon", "0.1.0", &[CAPABILITY_REMINDERS], now)
+            .record_host_start(
+                7,
+                "daemon",
+                "0.1.0",
+                &[CAPABILITY_REMINDERS],
+                now,
+                awake_now(),
+            )
             .await
             .unwrap();
         assert_eq!(request_round(&database).await, None);
