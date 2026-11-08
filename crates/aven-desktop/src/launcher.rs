@@ -226,6 +226,14 @@ pub fn set_catalog(catalog: Catalog, cx: &mut App) {
     }
 }
 
+/// Redraws an open launcher in the theme the app changed to.
+pub(crate) fn retheme(cx: &mut App) {
+    // The theme is first set before the launcher is.
+    if cx.has_global::<Host>() {
+        update_open(cx, |launcher, _, cx| launcher.retint(cx));
+    }
+}
+
 /// The launcher's view, once its window is made.
 fn update_open<R>(
     cx: &mut App,

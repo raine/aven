@@ -643,6 +643,7 @@ impl Root {
         if !cx.has_global::<Theme>() || theme(cx).dark != dark {
             cx.set_global(if dark { Theme::dark() } else { Theme::light() });
             self.tint_composer_title(cx);
+            crate::launcher::retheme(cx);
         }
         cx.notify();
     }
