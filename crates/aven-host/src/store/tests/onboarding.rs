@@ -37,6 +37,32 @@ async fn established_database_is_not_treated_as_first_launch() {
 }
 
 #[tokio::test]
+async fn database_joined_to_empty_sync_is_not_treated_as_first_launch() {
+    let store = test_store().await;
+    aven_core::test_support::mark_joined(&store.database, true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.onboarding_status().await.unwrap(),
+        OnboardingStatus::Established
+    );
+}
+
+#[tokio::test]
+async fn unfinished_join_of_empty_database_stays_due() {
+    let store = test_store().await;
+    aven_core::test_support::mark_joined(&store.database, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.onboarding_status().await.unwrap(),
+        OnboardingStatus::Due
+    );
+}
+
+#[tokio::test]
 async fn marker_parsing_is_trimmed_and_downgrade_safe() {
     let store = test_store().await;
     for value in [" 1 ", "2", "4294967295"] {

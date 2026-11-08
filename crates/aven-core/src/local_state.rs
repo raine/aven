@@ -207,7 +207,13 @@ impl Database {
         let has_tasks: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tasks)")
             .fetch_one(&mut *conn)
             .await?;
-        Ok(if has_tasks {
+        drop(conn);
+        // A database that joined or set up sync already uses Aven, even while
+        // its synced workspace has no tasks, whichever app did the joining.
+        let established = has_tasks
+            || crate::sync::client::engine::local_phase(self).await?
+                == crate::sync::client::engine::LocalPhase::SetUp;
+        Ok(if established {
             OnboardingStatus::Established
         } else {
             OnboardingStatus::Due

@@ -347,11 +347,6 @@ impl SyncWork {
                 engine::run_join(link, database, host, || Ok(invitation), replace, &progress)
             })
             .await?;
-        // A joined device already uses Aven, even when the workspace it joined
-        // has no tasks yet, so it opens on the Queue rather than the welcome.
-        if let Err(error) = database.complete_onboarding().await {
-            tracing::warn!(%error, "could not record the welcome as done");
-        }
         Ok("Joined sync".to_string())
     }
 

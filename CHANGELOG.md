@@ -5,6 +5,7 @@ description: Release notes for aven.
 
 ## Unreleased
 
+- Fix: A database joined with `aven sync join` opens on the Queue in Aven Desktop and the terminal app instead of the welcome, even when the synced workspace has no tasks yet.
 - Fix: Each user on a shared Mac or Linux machine gets background sync of their own. The daemon, Aven Desktop and `aven mcp --sync` are now woken through a socket beside the database, `<database>.host.sock`, that only its owner can reach, instead of a UDP port every user shared, where the second user's background agent ran but never synced. The `daemon.wake_addr` setting is gone; remove it from `config.yaml`, where it is ignored. See [Sync and daemon settings](https://aventasks.dev/configuration/#sync-and-daemon-settings).
 - UX: `aven daemon status` says `off`, and how to turn sync or reminders back on, when both are turned off, instead of "failed" or "Configuration: invalid". It says `waiting` and names the process that hosts the database when the daemon runs without hosting it. Settings in Aven Desktop shows the background agent as **Waiting**, with the reason, when another process keeps it from syncing. In `daemon status --json`, `wake_address_valid` is gone and `reminders_enabled` is new.
 - UX: Aven Desktop's device lists show iPhone and Android devices with a phone icon.

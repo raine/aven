@@ -9,7 +9,7 @@ use aven_core::db::Database;
 use aven_core::local_state::OnboardingStatus;
 use aven_core::operations::TaskDraft;
 use aven_core::sync::client::keys::FileProtectedStorage;
-use aven_desktop::adapter::{self, NewTask, Replies, ReplyBody};
+use aven_desktop::adapter::{self, NewTask, Replies, ReplyBody, SyncPhase};
 use aven_desktop::session::Session;
 use aven_host::config::AppConfig;
 use tempfile::TempDir;
@@ -106,6 +106,33 @@ async fn the_welcome_shows_only_on_a_fresh_database_never_welcomed() {
             .unwrap(),
         OnboardingStatus::Complete
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_database_joined_from_the_terminal_opens_on_the_queue() {
+    // `aven sync join` into a workspace with no tasks yet leaves no tasks and
+    // no welcome marker, only the join itself.
+    let joined = tempfile::tempdir().unwrap();
+    aven_core::test_support::mark_joined(&database(&joined).await, true)
+        .await
+        .unwrap();
+    let (session, _replies) = start(&joined);
+    assert!(!session.snapshot.welcome);
+    assert_eq!(session.snapshot.sync.phase, SyncPhase::SetUp);
+    assert_eq!(
+        database(&joined).await.onboarding_status().await.unwrap(),
+        OnboardingStatus::Complete
+    );
+
+    // A join that stopped before the tasks came keeps the welcome, which
+    // offers to resume it.
+    let unfinished = tempfile::tempdir().unwrap();
+    aven_core::test_support::mark_joined(&database(&unfinished).await, false)
+        .await
+        .unwrap();
+    let (session, _replies) = start(&unfinished);
+    assert!(session.snapshot.welcome);
+    assert_eq!(session.snapshot.sync.phase, SyncPhase::JoinIncomplete);
 }
 
 #[tokio::test(flavor = "multi_thread")]

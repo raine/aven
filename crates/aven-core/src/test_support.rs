@@ -161,6 +161,23 @@ pub async fn set_meta(conn: &mut SqliteConnection, key: &str, value: &str) -> Re
     crate::db::set_meta(conn, key, value).await
 }
 
+/// Leaves `database` as a join from another device leaves it, with nothing
+/// synced into it: pinned as a peer and, once `finished`, associated with the
+/// server.
+pub async fn mark_joined(database: &Database, finished: bool) -> Result<()> {
+    let mut conn = database.acquire_writer().await?;
+    sqlx::query(
+        "INSERT INTO local_peer_enrollment(singleton,identity,client_id,role) \
+         VALUES(1,zeroblob(32),COALESCE((SELECT value FROM meta WHERE key='client_id'),'client'),'peer')",
+    )
+    .execute(&mut *conn)
+    .await?;
+    if finished {
+        crate::db::set_meta(&mut conn, "e2ee_association", "association").await?;
+    }
+    Ok(())
+}
+
 /// Records the replica's established sync protocol, which gates the
 /// operations it may produce.
 pub async fn set_established_protocol(database: &Database, protocol: u32) -> Result<()> {
