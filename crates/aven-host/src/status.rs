@@ -238,7 +238,7 @@ impl DaemonStatusReport {
             HostState::Stopped(_) if daemon_runs => {
                 self.state = StatusState::Waiting;
                 self.guidance.push(
-                    "The daemon is running but doesn't host this database yet. It tries again every few seconds; if this lasts, an Aven daemon older than this version may be running, and `aven daemon restart` starts the current one."
+                    "The daemon is running but doesn't host this database yet. It tries again every few seconds."
                         .to_string(),
                 );
             }
@@ -467,6 +467,7 @@ mod tests {
             .with_host(crate::host::HostState::Stopped(None));
         assert_eq!(without_lock.state, StatusState::Waiting);
         assert!(without_lock.guidance[0].contains("doesn't host this database"));
+        assert!(!without_lock.guidance[0].contains("restart"));
         assert_eq!(
             serde_json::to_value(&without_lock).unwrap()["state"],
             "waiting"

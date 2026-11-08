@@ -2,11 +2,9 @@
 //! Desktop is the installation that owns it.
 //!
 //! The agent runs only when the intent is on and the config gives it sync or
-//! reminders to do. An unset intent leaves another installation's agent
-//! alone, so a terminal install's agent stays the terminal user's, and takes
-//! up an agent that already runs Desktop as on. The agent is never started
-//! while the user has Aven turned off in Login Items.
-use std::borrow::Cow;
+//! reminders to do. An unset intent leaves whatever is installed alone, so a
+//! terminal install's agent stays the terminal user's. The agent is never
+//! started while the user has Aven turned off in Login Items.
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -62,27 +60,10 @@ pub fn decide(
     }
 }
 
-/// The intent an unset one stands for: an installed agent that runs `app`
-/// was set up by Desktop before it recorded the intent, so it stays on. One
-/// turned off in Login Items stays so until the user turns it on there.
-pub fn adopted_intent(agent: &AgentStatus, app: &Path) -> Option<BackgroundIntent> {
-    let program = agent.program.as_deref().filter(|_| agent.installed)?;
-    same_program(program, app).then_some(BackgroundIntent::On)
-}
-
 /// Installs, repairs or removes the agent for the database at `db_path` as
-/// `config` asks. `app` is Desktop's executable. An unset intent that
-/// [`adopted_intent`] resolves is recorded in the config file first.
+/// `config` asks. `app` is Desktop's executable.
 pub fn reconcile(config: &AppConfig, db_path: PathBuf, app: &Path) -> Result<Reconciled> {
     let agent = service::agent_status()?;
-    let mut config = Cow::Borrowed(config);
-    if config.background.is_none()
-        && let Some(intent) = adopted_intent(&agent, app)
-    {
-        set_intent(intent)?;
-        config.to_mut().background = Some(intent);
-    }
-    let config = config.as_ref();
     match decide(config.background, config.daemon_has_work(), &agent, app) {
         Action::Leave if wants_agent(config) && agent.login_item == LoginItem::TurnedOff => {
             Ok(Reconciled::TurnedOff)
@@ -190,28 +171,6 @@ mod tests {
         assert_eq!(
             decide_for(off, true, &agent(None, LoginItem::Allowed)),
             Action::Leave
-        );
-    }
-
-    #[test]
-    fn an_installed_desktop_agent_is_taken_up_as_it_runs() {
-        let app = Path::new(APP);
-        assert_eq!(
-            adopted_intent(&agent(Some(APP), LoginItem::Allowed), app),
-            Some(BackgroundIntent::On)
-        );
-        assert_eq!(
-            adopted_intent(&agent(Some(APP), LoginItem::Unknown), app),
-            Some(BackgroundIntent::On)
-        );
-        assert_eq!(
-            adopted_intent(&agent(Some(APP), LoginItem::TurnedOff), app),
-            Some(BackgroundIntent::On)
-        );
-        assert_eq!(adopted_intent(&agent(None, LoginItem::Allowed), app), None);
-        assert_eq!(
-            adopted_intent(&agent(Some(TERMINAL), LoginItem::Allowed), app),
-            None
         );
     }
 

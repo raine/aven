@@ -1129,11 +1129,11 @@ fn http_sync_wakes_the_process_that_holds_the_host_lock() {
 }
 
 #[test]
-fn http_sync_hosts_reminders_too_with_the_old_wake_address_in_the_config() {
+fn http_sync_hosts_reminders_too() {
     let env = TestEnv::new();
-    let db = env.db("old-config.sqlite");
+    let db = env.db("http-reminders.sqlite");
     env.write_config(&format!(
-        "local:\n  db_path: \"{}\"\ndaemon:\n  wake_addr: \"127.0.0.1:47631\"\nreminders:\n  enabled: true\n",
+        "local:\n  db_path: \"{}\"\nreminders:\n  enabled: true\n",
         db.display()
     ));
 
