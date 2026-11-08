@@ -1262,29 +1262,40 @@ impl Launcher {
         let has_chips = !self.labels.is_empty() || !reading.labels.is_empty();
         let add = if has_chips { "+" } else { "+ Label" };
         let keys = div().flex().items_center().gap(px(14.)).whitespace_nowrap();
-        let keys = match (other, ai) {
-            (true, true) => keys
-                .text_color(t.body)
-                .child(Self::hint("⌥↩", "Add without AI", t)),
-            (true, false) => keys
-                .text_color(t.body)
-                .child(Self::hint("⌥↩", "Create with AI", t)),
-            (false, true) => keys
-                .text_color(t.faint)
-                .child(
-                    Self::hint("↩", "Create with AI", t)
+        let keys =
+            match (other, ai) {
+                (true, true) => keys.text_color(t.body).child(Self::hint(
+                    by_platform!("⌥↩", "Alt+↩"),
+                    "Add without AI",
+                    t,
+                )),
+                (true, false) => keys.text_color(t.body).child(Self::hint(
+                    by_platform!("⌥↩", "Alt+↩"),
+                    "Create with AI",
+                    t,
+                )),
+                (false, true) => keys
+                    .text_color(t.faint)
+                    .child(
+                        Self::hint("↩", "Create with AI", t)
+                            .id("l-create-hint")
+                            .hint(Hint::new(by_platform!(
+                                "Hold ⌥ to add without AI",
+                                "Alt+↩ adds without AI"
+                            ))),
+                    )
+                    .child(Self::hint(by_platform!("⌘↩", "Ctrl+↩"), "Review", t)),
+                (false, false) => keys.text_color(t.faint).child(
+                    Self::hint("↩", "Add", t)
                         .id("l-create-hint")
-                        .hint(Hint::new("Hold ⌥ to add without AI")),
-                )
-                .child(Self::hint("⌘↩", "Review", t)),
-            (false, false) => keys.text_color(t.faint).child(
-                Self::hint("↩", "Add", t)
-                    .id("l-create-hint")
-                    .when(agent, |hint| {
-                        hint.hint(Hint::new("Hold ⌥ to create with AI"))
-                    }),
-            ),
-        };
+                        .when(agent, |hint| {
+                            hint.hint(Hint::new(by_platform!(
+                                "Hold ⌥ to create with AI",
+                                "Alt+↩ creates with AI"
+                            )))
+                        }),
+                ),
+            };
         foot.child(workspace)
             // The sparkle's own margin sits right of the slash, so it leans left.
             .child(

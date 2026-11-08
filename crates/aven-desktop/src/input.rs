@@ -69,61 +69,105 @@ actions!(
     ]
 );
 
+/// Text editing keys. macOS follows the Cocoa text system, with Emacs-style
+/// Ctrl keys and Cmd moving by line and document. Linux follows GTK and Qt,
+/// where Ctrl moves by word and Ctrl+Home and Ctrl+End by document.
 pub fn key_bindings() -> Vec<KeyBinding> {
     let c = Some("TextInput");
     vec![
         KeyBinding::new("backspace", Backspace, c),
         KeyBinding::new("shift-backspace", Backspace, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-h", Backspace, c),
         KeyBinding::new("delete", Delete, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-d", Delete, c),
         KeyBinding::new("alt-backspace", DeleteWordLeft, c),
         KeyBinding::new("alt-delete", DeleteWordRight, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-backspace", DeleteWordLeft, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-delete", DeleteWordRight, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-backspace", DeleteToLineStart, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-k", DeleteToParagraphEnd, c),
         KeyBinding::new("left", Left, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-b", Left, c),
         KeyBinding::new("right", Right, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-f", Right, c),
         KeyBinding::new("up", Up, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-p", Up, c),
         KeyBinding::new("down", Down, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-n", Down, c),
         KeyBinding::new("alt-left", WordLeft, c),
         KeyBinding::new("alt-right", WordRight, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-left", WordLeft, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-right", WordRight, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-left", LineStart, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-right", LineEnd, c),
         KeyBinding::new("home", LineStart, c),
         KeyBinding::new("end", LineEnd, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-a", ParagraphStart, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-e", ParagraphEnd, c),
         KeyBinding::new("alt-up", ParagraphStart, c),
         KeyBinding::new("alt-down", ParagraphEnd, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-up", DocStart, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-down", DocEnd, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-home", DocStart, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-end", DocEnd, c),
         KeyBinding::new("shift-left", SelectLeft, c),
         KeyBinding::new("shift-right", SelectRight, c),
         KeyBinding::new("shift-up", SelectUp, c),
         KeyBinding::new("shift-down", SelectDown, c),
         KeyBinding::new("alt-shift-left", SelectWordLeft, c),
         KeyBinding::new("alt-shift-right", SelectWordRight, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-shift-left", SelectWordLeft, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-shift-right", SelectWordRight, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-left", SelectLineStart, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-right", SelectLineEnd, c),
         KeyBinding::new("shift-home", SelectLineStart, c),
         KeyBinding::new("shift-end", SelectLineEnd, c),
         KeyBinding::new("alt-shift-up", SelectParagraphStart, c),
         KeyBinding::new("alt-shift-down", SelectParagraphEnd, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-up", SelectDocStart, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-down", SelectDocEnd, c),
-        KeyBinding::new("cmd-a", SelectAll, c),
-        KeyBinding::new("cmd-c", Copy, c),
-        KeyBinding::new("cmd-x", Cut, c),
-        KeyBinding::new("cmd-v", Paste, c),
-        KeyBinding::new("cmd-z", Undo, c),
-        KeyBinding::new("cmd-shift-z", Redo, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-shift-home", SelectDocStart, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-shift-end", SelectDocEnd, c),
+        KeyBinding::new(secondary!("a"), SelectAll, c),
+        KeyBinding::new(secondary!("c"), Copy, c),
+        KeyBinding::new(secondary!("x"), Cut, c),
+        KeyBinding::new(secondary!("v"), Paste, c),
+        KeyBinding::new(secondary!("z"), Undo, c),
+        KeyBinding::new(secondary!("shift-z"), Redo, c),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("ctrl-y", Redo, c),
         KeyBinding::new("enter", Submit, c),
         KeyBinding::new("shift-enter", InsertNewline, c),
         KeyBinding::new("escape", Cancel, c),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, c),
     ]
 }

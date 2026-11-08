@@ -2101,7 +2101,7 @@ impl Root {
                         nav_item("settings", &t)
                             .role(Role::Button)
                             .aria_label("Settings")
-                            .hint(Hint::new("Settings").keys("⌘,"))
+                            .hint(Hint::new("Settings").keys(by_platform!("⌘,", "Ctrl+,")))
                             .w_auto()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_settings(&OpenSettings, window, cx);
@@ -2333,7 +2333,7 @@ impl Root {
                         this.open_palette(&OpenPalette, window, cx)
                     }))
                     .hint(Hint::new("Command palette").keys(":"))
-                    .child("⌘K"),
+                    .child(by_platform!("⌘K", "Ctrl+K")),
             )
             .child(
                 bare_btn("new-task", "New task", &t)
@@ -3128,7 +3128,11 @@ impl Root {
             .id("sync-state")
             .role(Role::Button)
             .aria_label(label.clone())
-            .hint(Hint::new(label.clone()).sub("Sync now").sub_keys("⇧S"))
+            .hint(
+                Hint::new(label.clone())
+                    .sub("Sync now")
+                    .sub_keys(by_platform!("⇧S", "Shift+S")),
+            )
             .min_w_0()
             .h(px(28.))
             .px(px(6.))

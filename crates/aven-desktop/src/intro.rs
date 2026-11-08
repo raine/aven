@@ -102,7 +102,8 @@ impl Playback {
     /// Skips a playing intro on `keystroke`. Returns whether the key should go
     /// no further: platform shortcuts, such as quit, skip and still run.
     pub fn skip_key(&mut self, keystroke: &Keystroke) -> bool {
-        self.skip() && !keystroke.modifiers.platform
+        let shortcut = by_platform!(keystroke.modifiers.platform, keystroke.modifiers.control);
+        self.skip() && !shortcut
     }
 
     /// The time to draw the intro at, from `clock` given its start, or `None`
@@ -592,8 +593,8 @@ mod tests {
         for (text, swallowed) in [
             ("a", true),
             ("enter", true),
-            ("cmd-q", false),
-            ("cmd-,", false),
+            (secondary!("q"), false),
+            (secondary!(","), false),
         ] {
             let mut playback = Playback::default();
             playback.start(Instant::now());

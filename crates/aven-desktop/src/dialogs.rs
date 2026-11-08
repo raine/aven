@@ -73,13 +73,13 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
             ("Done", "d"),
             ("Canceled", "x"),
             ("Mark", "Space"),
-            ("Extend marks", "⇧J / ⇧K"),
+            ("Extend marks", by_platform!("⇧J / ⇧K", "Shift+J / Shift+K")),
             ("Mark visible", "t V"),
             ("Clear marks", "t C"),
             ("Add to epic", "t c"),
             ("Note", "n"),
             ("Undo", "u"),
-            ("Toast action", "⌘↩"),
+            ("Toast action", by_platform!("⌘↩", "Ctrl+↩")),
             ("Title", "e t"),
             ("Description", "e d"),
             ("Project", "e j"),
@@ -122,7 +122,7 @@ const HELP: [(&str, &[(&str, &str)]); 6] = [
         "Find",
         &[
             ("Search", "/"),
-            ("Palette", "⌘K or :"),
+            ("Palette", by_platform!("⌘K or :", "Ctrl+K or :")),
             ("Filter label", "f l"),
             ("Filter priority", "f p"),
             ("Deleted", "f x"),
@@ -922,7 +922,7 @@ impl Root {
                             this.full_results(&FullResults, window, cx);
                         }))
                         .child("All results")
-                        .child(kbd("⇧↩", t.faint)),
+                        .child(kbd(by_platform!("⇧↩", "Shift+↩"), t.faint)),
                 )
                 .into_any_element(),
         ]

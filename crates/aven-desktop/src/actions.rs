@@ -335,17 +335,23 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     let search = Some("Search > TextInput");
     let welcome = Some("Welcome && !TextInput && !Overlay");
     let mut bindings = vec![
-        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new(secondary!("q"), Quit, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-h", Hide, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("alt-cmd-h", HideOthers, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-m", Minimize, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-n", NewTask, None),
-        KeyBinding::new("cmd-k", OpenPalette, Some("Aven && !Overlay")),
+        #[cfg(target_os = "linux")]
+        KeyBinding::new("f11", ToggleFullScreen, None),
+        KeyBinding::new(secondary!("w"), CloseWindow, None),
+        KeyBinding::new(secondary!("n"), NewTask, None),
+        KeyBinding::new(secondary!("k"), OpenPalette, Some("Aven && !Overlay")),
         KeyBinding::new("a", NewTask, main),
         KeyBinding::new("shift-s", SyncNow, anywhere),
-        KeyBinding::new("cmd-,", OpenSettings, Some("Aven && !Overlay")),
+        KeyBinding::new(secondary!(","), OpenSettings, Some("Aven && !Overlay")),
         KeyBinding::new("escape", CloseSettings, settings),
         KeyBinding::new("j", MoveDown, main),
         KeyBinding::new("k", MoveUp, main),
@@ -362,8 +368,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-1", ChangePriority, main),
         KeyBinding::new("n", FocusNote, main),
         KeyBinding::new("u", input::Undo, main),
-        KeyBinding::new("cmd-z", input::Undo, main),
-        KeyBinding::new("cmd-v", PasteImage, main),
+        KeyBinding::new(secondary!("z"), input::Undo, main),
+        KeyBinding::new(secondary!("v"), PasteImage, main),
         KeyBinding::new("space", ToggleMark, main),
         KeyBinding::new("J", ExtendMarksDown, main),
         KeyBinding::new("shift-j", ExtendMarksDown, main),
@@ -439,22 +445,27 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("!", ChangePriority, review),
         KeyBinding::new("shift-1", ChangePriority, review),
         KeyBinding::new("e", EditAvailability, review),
-        KeyBinding::new("cmd-enter", CreateTask, composer),
+        KeyBinding::new(secondary!("enter"), CreateTask, composer),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-enter", CreateTask, composer),
         KeyBinding::new("ctrl-s", CreateTask, composer),
         KeyBinding::new("ctrl-g", CreateAnother, composer),
-        KeyBinding::new("cmd-shift-backspace", DiscardDraft, composer),
+        KeyBinding::new(secondary!("shift-backspace"), DiscardDraft, composer),
         KeyBinding::new("ctrl-n", ReadNotes, composer_field),
         KeyBinding::new("down", SuggestNext, suggesting),
         KeyBinding::new("up", SuggestPrevious, suggesting),
         KeyBinding::new("tab", AcceptSuggestion, suggesting),
         KeyBinding::new("enter", AcceptSuggestion, suggesting),
         KeyBinding::new("escape", CloseSuggestions, suggesting),
-        KeyBinding::new("cmd-enter", LaunchReview, Some("Launcher")),
+        KeyBinding::new(secondary!("enter"), LaunchReview, Some("Launcher")),
         KeyBinding::new("alt-enter", LaunchOther, Some("Launcher")),
         KeyBinding::new("ctrl-s", ToggleSearchScope, Some("Search")),
         KeyBinding::new("shift-enter", FullResults, search),
-        KeyBinding::new("cmd-enter", SaveDescription, Some("BodyEditor > TextInput")),
+        KeyBinding::new(
+            secondary!("enter"),
+            SaveDescription,
+            Some("BodyEditor > TextInput"),
+        ),
         KeyBinding::new("escape", Dismiss, dialog),
         KeyBinding::new("j", MoveDown, Some("Dialog && Help")),
         KeyBinding::new("k", MoveUp, Some("Dialog && Help")),
@@ -463,7 +474,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("pagedown", HelpPageDown, Some("Dialog && Help")),
         KeyBinding::new("pageup", HelpPageUp, Some("Dialog && Help")),
         KeyBinding::new(
-            "cmd-enter",
+            secondary!("enter"),
             RunToastAction,
             Some("Aven && !TextInput && !Overlay"),
         ),
@@ -475,7 +486,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("?", OpenHelp, welcome),
         KeyBinding::new("shift-/", OpenHelp, welcome),
         KeyBinding::new(
-            "cmd-enter",
+            secondary!("enter"),
             WelcomeDetails,
             Some("WelcomeInput > TextInput"),
         ),
@@ -592,4 +603,22 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("Help").items([MenuItem::action("Keyboard Shortcuts", OpenHelp)]),
     ]
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    /// Super belongs to the desktop on Linux.
+    #[test]
+    fn linux_bindings_leave_super_to_the_desktop() {
+        for binding in crate::input::key_bindings()
+            .into_iter()
+            .chain(super::key_bindings())
+        {
+            let keys = binding.keystrokes();
+            assert!(
+                keys.iter().all(|key| !key.inner().modifiers.platform),
+                "{keys:?}"
+            );
+        }
+    }
 }

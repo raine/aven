@@ -2,6 +2,30 @@
 //! on macOS and Linux, where `aven` links it behind the `desktop` feature.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
+/// A key binding on the platform's shortcut modifier, Cmd on macOS and Ctrl
+/// on Linux, such as `secondary!("shift-z")`.
+macro_rules! secondary {
+    ($keys:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $keys)
+        } else {
+            concat!("ctrl-", $keys)
+        }
+    };
+}
+
+/// Text that differs by platform, given as the macOS form and then the Linux
+/// form, such as a shortcut written `⌘K` on macOS and `Ctrl+K` on Linux.
+macro_rules! by_platform {
+    ($macos:expr, $linux:expr) => {
+        if cfg!(target_os = "macos") {
+            $macos
+        } else {
+            $linux
+        }
+    };
+}
+
 mod actions;
 pub mod adapter;
 mod app;

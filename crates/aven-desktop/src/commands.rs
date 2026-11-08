@@ -1244,7 +1244,7 @@ impl Root {
                 Entry::head("Toast"),
                 Entry::action(
                     format!("{}: {}", action.label(), toast.title),
-                    "⌘↩",
+                    by_platform!("⌘↩", "Ctrl+↩"),
                     RunToastAction,
                 ),
             ]);
@@ -1322,7 +1322,7 @@ impl Root {
             Entry::action("About Aven", "", OpenAbout),
             Entry::action("Sync now", "S", SyncNow),
             Entry::action("Open sync", "", OpenSync),
-            Entry::action("Settings", "⌘,", OpenSettings),
+            Entry::action("Settings", by_platform!("⌘,", "Ctrl+,"), OpenSettings),
             Entry::action(
                 if crate::theme::theme(cx).dark {
                     "Use light theme"

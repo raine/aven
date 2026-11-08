@@ -1088,14 +1088,18 @@ impl Root {
             })
         });
         let action = toast.action.as_ref().map(|action| {
-            toast_button("toast-action", action.label(), Some("⌘↩"), !toast.undo, t).when(
-                !leaving,
-                |button| {
-                    button.on_click(cx.listener(|this, _, window, cx| {
-                        this.run_toast_action(&RunToastAction, window, cx);
-                    }))
-                },
+            toast_button(
+                "toast-action",
+                action.label(),
+                Some(by_platform!("⌘↩", "Ctrl+↩")),
+                !toast.undo,
+                t,
             )
+            .when(!leaving, |button| {
+                button.on_click(cx.listener(|this, _, window, cx| {
+                    this.run_toast_action(&RunToastAction, window, cx);
+                }))
+            })
         });
         let actions = (undo.is_some() || action.is_some()).then(|| {
             div()

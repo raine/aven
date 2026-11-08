@@ -342,7 +342,10 @@ impl Root {
                 small(Text::Secondary)
                     .mt(px(6.))
                     .text_color(t.faint)
-                    .child("⌘↩ or clicking away saves. Esc discards."),
+                    .child(by_platform!(
+                        "⌘↩ or clicking away saves. Esc discards.",
+                        "Ctrl+↩ or clicking away saves. Esc discards."
+                    )),
             )
     }
 

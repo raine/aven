@@ -466,7 +466,7 @@ impl Root {
                                 link("welcome-details", &t)
                                     .flex_none()
                                     .child("More details")
-                                    .child(kbd("⌘↩", t.faint))
+                                    .child(kbd(by_platform!("⌘↩", "Ctrl+↩"), t.faint))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.welcome_details(&WelcomeDetails, window, cx);
                                     })),

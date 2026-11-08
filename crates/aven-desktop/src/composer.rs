@@ -1789,7 +1789,10 @@ impl Composer {
                 let raised = t.raised;
                 let ink = t.ink;
                 row.hover(move |style| style.bg(raised).text_color(ink))
-                    .hint(Hint::new("⌃G creates this task and keeps the dialog open"))
+                    .hint(Hint::new(by_platform!(
+                        "⌃G creates this task and keeps the dialog open",
+                        "Ctrl+G creates this task and keeps the dialog open"
+                    )))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_create_more(cx)))
             })
             .child(self.switch_track(
@@ -1801,7 +1804,7 @@ impl Composer {
                 t,
             ))
             .child("Create more")
-            .child(kbd("⌃G", t.faint));
+            .child(kbd(by_platform!("⌃G", "Ctrl+G"), t.faint));
 
         div()
             .flex()
@@ -1819,7 +1822,7 @@ impl Composer {
                             this.read_notes(&ReadNotes, window, cx);
                         }))
                         .child("Draft with AI")
-                        .child(kbd("⌃N", t.faint)),
+                        .child(kbd(by_platform!("⌃N", "Ctrl+N"), t.faint)),
                 )
             })
             // While the agent reads there is nothing to press, only what
@@ -1842,13 +1845,16 @@ impl Composer {
                         .min_w_0()
                         .truncate()
                         .text_color(t.faint)
-                        .child("⌘↩ skips review"),
+                        .child(by_platform!("⌘↩ skips review", "Ctrl+↩ skips review")),
                 )
             })
             .child(div().flex_1())
             .child(
                 btn("c-discard", "Discard", t)
-                    .hint(Hint::new("Clear the draft and start over").keys("⌘⇧⌫"))
+                    .hint(
+                        Hint::new("Clear the draft and start over")
+                            .keys(by_platform!("⌘⇧⌫", "Ctrl+Shift+Backspace")),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.discard_draft(&DiscardDraft, window, cx);
                     }))
@@ -1860,7 +1866,7 @@ impl Composer {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.create_task(&CreateTask, window, cx);
                     }))
-                    .child(kbd("⌘↩", t.on_fill)),
+                    .child(kbd(by_platform!("⌘↩", "Ctrl+↩"), t.on_fill)),
             )
     }
 
