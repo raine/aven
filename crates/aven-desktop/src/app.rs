@@ -160,7 +160,7 @@ pub(crate) fn show_window(cx: &mut App) {
 /// clicked notification is about.
 #[cfg(target_os = "linux")]
 fn come_forward(forward: platform::instance::Forward, cx: &mut App) {
-    with_root(cx, |_, window, _| {
+    with_root(cx, move |_, window, _| {
         platform::activate(window, &forward.activation)
     });
     if let Some(opens) = forward.notification.as_deref().and_then(notified) {
