@@ -9,6 +9,7 @@ targets = [
 version = 2
 yanked = "deny"
 ignore = [
+    { id = "RUSTSEC-2026-0459", reason = "SQLx 0.9 caps libsqlite3-sys below 0.38; the fix requires 0.39, and exposure requires a crafted -wal file beside the database" },
     # notify-rust requires zbus 5; these crates are folded into zbus 6.
     # https://github.com/z-galaxy/zbus/issues/2043
     { id = "RUSTSEC-2026-0370", reason = "zvariant is required by notify-rust's zbus 5 backend" },
