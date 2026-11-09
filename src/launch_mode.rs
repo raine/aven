@@ -3,8 +3,6 @@
 //! `Contents/MacOS/aven` is one executable for both. Only a launch by Launch
 //! Services becomes the app, and everything else stays clear of AppKit: this is
 //! decided before any other work in the process.
-use std::path::Path;
-
 use crate::app_bundle;
 use crate::notification;
 
@@ -73,7 +71,10 @@ pub fn current() -> LaunchMode {
         .ok()
         .as_deref()
         .and_then(app_bundle::enclosing_bundle);
-    let identifier = bundle.as_deref().and_then(identifier);
+    // A bundle with no readable identifier stays a bundle, one no job can name.
+    let identifier = bundle
+        .as_deref()
+        .map(|bundle| notification::bundle_identifier(bundle).unwrap_or_default());
     let service = std::env::var("XPC_SERVICE_NAME").ok();
     select(Launch {
         has_arguments,
@@ -91,11 +92,6 @@ fn has_terminal() -> bool {
         .write(true)
         .open("/dev/tty")
         .is_ok()
-}
-
-/// A bundle with no readable identifier stays a bundle, one no job can name.
-fn identifier(bundle: &Path) -> Option<String> {
-    Some(notification::bundle_identifier(bundle).unwrap_or_default())
 }
 
 #[cfg(test)]
