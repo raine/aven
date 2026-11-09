@@ -524,17 +524,8 @@ impl Root {
         )
     }
 
-    /// The version line and its button in Settings' About row.
-    pub(crate) fn update_status(
-        &self,
-        cx: &mut Context<Self>,
-        t: &Theme,
-    ) -> (String, Option<Stateful<gpui::Div>>) {
-        let current = version(cx);
-        if updater(cx).is_none() {
-            return (format!("Version {current}"), None);
-        }
-        let (note, label): (String, &'static str) = match phase(cx) {
+    fn update_status_text(phase: Phase, current: &str) -> (String, &'static str) {
+        match phase {
             Phase::Idle => (format!("Version {current}"), "Check for updates"),
             Phase::Checking => (
                 format!("Version {current} \u{b7} Checking\u{2026}"),
@@ -544,8 +535,8 @@ impl Root {
                 format!("Version {current} \u{b7} Up to date"),
                 "Check for updates",
             ),
-            Phase::CheckFailed(_) => (
-                format!("Version {current} \u{b7} Couldn\u{2019}t check for updates"),
+            Phase::CheckFailed(error) => (
+                format!("Version {current} \u{b7} Couldn\u{2019}t check for updates: {error}"),
                 "Check for updates",
             ),
             Phase::Available(available) if available.blocked.is_some() => (
@@ -587,7 +578,20 @@ impl Root {
                 ),
                 "Restart to update",
             ),
-        };
+        }
+    }
+
+    /// The version line and its button in Settings' About row.
+    pub(crate) fn update_status(
+        &self,
+        cx: &mut Context<Self>,
+        t: &Theme,
+    ) -> (String, Option<Stateful<gpui::Div>>) {
+        let current = version(cx);
+        if updater(cx).is_none() {
+            return (format!("Version {current}"), None);
+        }
+        let (note, label) = Self::update_status_text(phase(cx), &current);
         let button =
             line_btn("update-action", label, t).on_click(cx.listener(|this, _, window, cx| {
                 match phase(cx) {
@@ -639,7 +643,22 @@ impl Root {
                 ))
         };
         let (heading, body, actions): (String, Vec<AnyElement>, gpui::Div) = match phase(cx) {
-            Phase::Idle | Phase::Checking | Phase::Current | Phase::CheckFailed(_) => (
+            Phase::Idle => (
+                "Check for updates".into(),
+                vec![paragraph(format!("You have Aven {current}."), t)],
+                footer(cx),
+            ),
+            Phase::Checking => (
+                "Checking for updates\u{2026}".into(),
+                vec![paragraph(format!("You have Aven {current}."), t)],
+                footer(cx),
+            ),
+            Phase::CheckFailed(error) => (
+                "Couldn\u{2019}t check for updates".into(),
+                vec![paragraph(error, t)],
+                footer(cx),
+            ),
+            Phase::Current => (
                 "Aven is up to date".into(),
                 vec![paragraph(format!("You have Aven {current}."), t)],
                 footer(cx),
@@ -1016,6 +1035,21 @@ mod tests {
             version: "9.9.9".into(),
             notes_url: String::new(),
             blocked: None,
+        }
+    }
+
+    #[test]
+    fn settings_shows_the_check_failure_reason_and_keeps_retry_available() {
+        for reason in [
+            "rate limit exceeded",
+            "request timed out",
+            "missing Desktop asset",
+        ] {
+            let (note, action) =
+                Root::update_status_text(Phase::CheckFailed(reason.into()), "1.2.3");
+            assert!(note.contains(reason), "{note}");
+            assert!(!note.contains("Up to date"));
+            assert_eq!(action, "Check for updates");
         }
     }
 
