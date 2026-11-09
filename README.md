@@ -87,7 +87,14 @@ Inspired by Taskwarrior. See [aven and Taskwarrior](https://aventasks.dev/taskwa
 
 ## Quick start
 
-Install with the release script:
+On a Mac, [download Aven Desktop](https://aventasks.dev/download/) or install
+it with Homebrew. It includes `aven` for the terminal:
+
+```sh
+brew install --cask raine/aven/aven
+```
+
+For the terminal only, on macOS or Linux, use the install script:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install | bash

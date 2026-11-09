@@ -1,9 +1,31 @@
 ---
 title: Getting started
-description: Install aven and start using the TUI.
+description: Install Aven Desktop or the terminal app and start using Aven.
 ---
 
 ## Install
+
+### Aven Desktop for macOS
+
+[Download Aven for Mac](/download/#mac) and drag it to Applications. Aven Desktop
+includes `aven` for the terminal and updates itself. It needs macOS 13 or later.
+
+[Download for Apple silicon](https://github.com/raine/aven/releases/latest/download/Aven-Desktop-arm64.dmg).
+Intel Mac? [Download for Intel](https://github.com/raine/aven/releases/latest/download/Aven-Desktop-amd64.dmg).
+
+Or install it with Homebrew:
+
+```sh
+brew install --cask raine/aven/aven
+```
+
+Open Aven from Applications. Setup adds `aven` to your terminal. If you already
+use Aven in the terminal, setup moves that install over and keeps your tasks and
+sync.
+
+### Terminal only
+
+These install `aven` without the app, on macOS and Linux.
 
 Use the install script:
 

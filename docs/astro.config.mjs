@@ -112,6 +112,7 @@ export default defineConfig({
           items: [
             { label: 'What is aven?', slug: 'overview' },
             { label: 'Getting started', slug: 'getting-started' },
+            { label: 'Download', link: '/download/' },
             { label: 'Concepts', slug: 'concepts' },
             { label: 'Coming from Taskwarrior', slug: 'taskwarrior' },
             { label: 'Mobile apps', link: '/mobile/' },
