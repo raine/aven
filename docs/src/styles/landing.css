@@ -58,7 +58,14 @@ h1 { font-size: clamp(3rem, calc(0.25rem + 6.4vw), 5.375rem); font-weight: 500; 
 h1 > span { color: #a49c95; }
 .hero-description { padding-bottom: 0.3125rem; }
 .hero-description > p:first-child { max-width: 22.8125rem; color: var(--muted); font-size: 1.0625rem; line-height: 1.7; letter-spacing: -0.021875rem; }
-.hero-docs { display: inline-flex; align-items: center; gap: 1.5rem; margin-top: 1.6875rem; padding: 0.75rem 1.125rem; border: 1px solid #624a7b; border-radius: 0.4375rem; background: #211a29; color: #dac4f3; font: 0.9375rem/1.5 var(--mono); }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 0.625rem; margin-top: 1.6875rem; }
+.hero-download { display: inline-flex; align-items: center; padding: 0.75rem 1.125rem; border: 1px solid #9d59ef; border-radius: 0.4375rem; background: linear-gradient(100deg, #8728fa, #a162ef); color: #fff; font: 0.9375rem/1.5 var(--mono); }
+.hero-download:hover { border-color: #d5b5ff; }
+.hero-actions .hero-docs { gap: 1rem; }
+.hero-download-alt { margin-top: 0.75rem; color: var(--faint); font: 0.8125rem/1.6 var(--mono); }
+.hero-download-alt a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 0.1875rem; }
+.hero-download-alt a:hover { color: var(--ink); text-decoration-color: var(--faint); }
+.hero-docs { display: inline-flex; align-items: center; gap: 1.5rem; padding: 0.75rem 1.125rem; border: 1px solid #624a7b; border-radius: 0.4375rem; background: #211a29; color: #dac4f3; font: 0.9375rem/1.5 var(--mono); }
 .hero-docs svg { display: block; flex: none; }
 .hero-docs:hover { border-color: var(--violet); color: var(--ink); }
 .text-link { color: var(--violet); font-size: 0.8125rem; display: inline-flex; align-items: center; gap: 0.6875rem; }
@@ -228,7 +235,7 @@ h2 { font-size: 2.6875rem; font-weight: 500; line-height: 1.14; letter-spacing: 
   .hero-intro { grid-template-columns: minmax(0, 1fr); gap: 1.5625rem; margin-top: 1.4375rem; }
   h1 { font-size: clamp(3rem, calc(1rem + 7.5vw), 4.25rem); letter-spacing: -0.1875rem; }
   .hero-description > p:first-child { max-width: 29.375rem; font-size: 1rem; }
-  .hero-docs { margin-top: 1.4375rem; }
+  .hero-actions { margin-top: 1.4375rem; }
   .hero-product { margin-top: 2.375rem; }
   .hero-install .install-command { font-size: 0.75rem; gap: 0.625rem; }
   .hero-install-hint { font-size: 0.6875rem; }

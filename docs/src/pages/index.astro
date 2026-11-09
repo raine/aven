@@ -11,6 +11,7 @@ import AgentSessions from '../components/agent-sessions/AgentSessions.astro';
 import QuickCapture from '../components/QuickCapture.astro';
 import McpSection from '../components/mcp-section/McpSection.astro';
 import FeatureSpecimen from '../components/FeatureSpecimen.astro';
+import { macAppleSilicon, macIntel } from '../downloads';
 
 const heroViews = [
   { id: 'queue', caption: 'See what needs attention across your projects.', label: 'Queue', src: '/tui.webp', alt: 'Aven terminal UI showing a shared task queue, project sidebar, priorities, and selected task context.' },
@@ -89,10 +90,14 @@ const testimonials = [
             <h1 id="hero-heading">Your tasks, everywhere.<br /><span>Agent-ready.</span></h1>
             <div class="hero-description">
               <p>Aven is a local-first task manager with a keyboard-driven TUI for you and a compact CLI for your coding agents. Keep tasks and context together across projects. Work offline, with optional self-hosted, end-to-end encrypted sync across devices.</p>
-              <a class="hero-docs" href="/getting-started/">
-                Read the docs
-                <ArrowRightIcon />
-              </a>
+              <div class="hero-actions">
+                <a class="hero-download" href={macAppleSilicon}>Download for Mac</a>
+                <a class="hero-docs" href="/getting-started/">
+                  Read the docs
+                  <ArrowRightIcon />
+                </a>
+              </div>
+              <p class="hero-download-alt">For Apple silicon. <a href={macIntel}>Intel</a> · <a href="/download/">All downloads</a></p>
             </div>
           </div>
           <div class="install-widget hero-install" id="install">
@@ -107,7 +112,7 @@ const testimonials = [
                 <button type="button" data-method="curl" aria-pressed="false">curl</button>
               </div>
             </div>
-            <p class="hero-install-hint">then <code>aven</code>, or <code>aven demo</code> to try it with sample data.</p>
+            <p class="hero-install-hint">Terminal only. Then <code>aven</code>, or <code>aven demo</code> to try it with sample data.</p>
             <p class="install-note" data-copy-status role="status"></p>
             <noscript><p class="install-note">For the curl command, see <a href="/getting-started/">installation instructions</a>.</p></noscript>
           </div>
@@ -196,7 +201,8 @@ const testimonials = [
           <p>Inspired by Taskwarrior. Built for my own daily use, shared for yours.</p>
           <a class="text-link closing-comparison" href="/taskwarrior/">Coming from Taskwarrior? See how Aven <span class="comparison-ending">compares <ArrowRightIcon /></span></a>
           <div class="closing-actions">
-            <a class="closing-button closing-primary" href="/getting-started/">Get started</a>
+            <a class="closing-button closing-primary" href="/download/">Download</a>
+            <a class="closing-button" href="/getting-started/">Get started</a>
             <a class="closing-button" href="https://github.com/raine/aven">View on GitHub</a>
           </div>
         </section>
