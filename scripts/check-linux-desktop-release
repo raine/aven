@@ -26,11 +26,22 @@ fail() {
 tmp=$(mktemp -d)
 app_pid=""
 xvfb_pid=""
+# Stops whatever the check started and exits with the check's own status:
+# errexit is off here, since finding nothing left to stop is not a failure.
 cleanup() {
-  [[ -n $app_pid ]] && kill "$app_pid" 2>/dev/null
-  pkill -f "^$tmp/" 2>/dev/null
-  [[ -n $xvfb_pid ]] && kill "$xvfb_pid" 2>/dev/null
+  local status=$?
+  set +e
+  if [[ -n $app_pid ]]; then
+    kill "$app_pid" 2>/dev/null
+    wait "$app_pid" 2>/dev/null
+  fi
+  pkill -KILL -f "^$tmp/" 2>/dev/null
+  if [[ -n $xvfb_pid ]]; then
+    kill "$xvfb_pid" 2>/dev/null
+    wait "$xvfb_pid" 2>/dev/null
+  fi
   rm -rf "$tmp"
+  exit "$status"
 }
 trap cleanup EXIT
 
