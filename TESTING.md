@@ -125,8 +125,9 @@ named after it with `.sha256` in place of its extension, for example
 release. Released updaters refuse terminal archives over 64 MiB, so the release
 checks that limit for them.
 
-Every `Aven.app` and disk image is signed as `fi.zendit.Aven`, notarized with
-`scripts/notarize-macos-release` and stapled. The release fails unless
+Apps and bare binaries are signed as `fi.zendit.Aven`; disk images use their
+default signing identifier. All use the same Developer ID. Apps and disk images
+are notarized with `scripts/notarize-macos-release` and stapled. The release fails unless
 `spctl --assess` reports each shipped app and disk image as notarized. The bare
 terminal binary is notarized too but cannot hold a ticket; Gatekeeper looks its
 ticket up online. Notarization uses an App Store Connect API key from the
@@ -223,11 +224,12 @@ suites at 12 threads. Record wall, user, and system time for both phases. Keep
 sccache disabled or hold its cache state equal; on macOS and Linux,
 `RUSTC_WRAPPER=/usr/bin/env` bypasses the configured wrapper.
 
-The workspace packages are `aven`, `aven-host` and `aven-core`. `aven` depends on
-`aven-host`, and both depend on `aven-core`, not the reverse. Select the package
-that owns the changed behavior. If a core or host API or contract change affects
-a consumer, check both packages. Database migration or SQLx query/metadata changes also need
-`just sqlx-check`.
+Select the package that owns the changed behavior; workspace members are listed
+in the root `Cargo.toml`. The CLI/TUI (`aven`) and Desktop (`aven-desktop`) share
+`aven-host`, which depends on `aven-core`. If a core or host API or contract
+change affects a consumer, check both packages. Include `--features desktop`
+when checking the root app's Desktop integration. Database migration or SQLx
+query/metadata changes also need `just sqlx-check`.
 
 The pre-commit hook runs format, dependency/static-safety, and migration-order
 checks; it does not infer affected packages from staged paths. For coordinated
