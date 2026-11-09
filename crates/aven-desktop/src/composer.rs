@@ -1233,8 +1233,8 @@ impl Composer {
             Self::entry(view.clone(), "Add metadata…", |root, window, cx| {
                 root.pick_composer_metadata(window, cx);
             }),
-            Self::entry(view.clone(), "Attach image…", |root, _, cx| {
-                root.prompt_for_images(cx, Self::drop_on_composer);
+            Self::entry(view.clone(), "Attach image…", |_, _, cx| {
+                crate::images::prompt_for_images(cx, Self::drop_on_composer);
             }),
         ];
         let anchor = self.anchor("c-more");
@@ -2116,24 +2116,6 @@ impl Composer {
         });
         window.focus(&fields[next as usize], cx);
         cx.notify();
-    }
-    fn prompt_for_images(
-        &mut self,
-        cx: &mut Context<Self>,
-        then: fn(&mut Self, &[std::path::PathBuf], &mut Context<Self>),
-    ) {
-        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: Some("Add Image".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                this.update(cx, |this, cx| then(this, &paths, cx)).ok();
-            }
-        })
-        .detach();
     }
 }
 

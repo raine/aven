@@ -1359,26 +1359,7 @@ impl Root {
     }
 
     pub(crate) fn add_image_from_disk(&mut self, cx: &mut Context<Self>) {
-        self.prompt_for_images(cx, Self::attach_paths);
-    }
-
-    pub(crate) fn prompt_for_images(
-        &mut self,
-        cx: &mut Context<Self>,
-        then: fn(&mut Self, &[PathBuf], &mut Context<Self>),
-    ) {
-        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: Some("Add Image".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                this.update(cx, |this, cx| then(this, &paths, cx)).ok();
-            }
-        })
-        .detach();
+        crate::images::prompt_for_images(cx, Self::attach_paths);
     }
 
     pub(crate) fn paste_image(&mut self, _: &PasteImage, _: &mut Window, cx: &mut Context<Self>) {

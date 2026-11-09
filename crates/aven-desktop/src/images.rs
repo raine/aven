@@ -3,11 +3,30 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{App, ClipboardEntry};
+use gpui::{App, ClipboardEntry, Context};
 
 use crate::adapter::PendingImage;
 
 const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"];
+
+/// Asks for image files and hands the selection to the requesting view.
+pub fn prompt_for_images<V: 'static>(
+    cx: &mut Context<V>,
+    then: fn(&mut V, &[PathBuf], &mut Context<V>),
+) {
+    let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: true,
+        prompt: Some("Add Image".into()),
+    });
+    cx.spawn(async move |this, cx| {
+        if let Ok(Ok(Some(paths))) = receiver.await {
+            this.update(cx, |this, cx| then(this, &paths, cx)).ok();
+        }
+    })
+    .detach();
+}
 
 /// An image from the clipboard: its bytes, or the file it was copied from.
 #[derive(Clone)]
