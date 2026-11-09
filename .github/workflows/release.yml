@@ -40,8 +40,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS builds twice per architecture: terminal-only under the
-        # aven-darwin-* names, and Desktop under aven-desktop-darwin-*.
+        # Terminal-only builds publish under aven-{darwin,linux}-*, Desktop
+        # builds under aven-desktop-*: macOS builds both per architecture,
+        # Linux builds musl terminal and glibc Desktop archives.
         include:
           - os: macos-15
             target: aarch64-apple-darwin
@@ -69,6 +70,19 @@ jobs:
             target: aarch64-unknown-linux-musl
             artifact: aven-linux-arm64
             use_cross: true
+          # Linux Desktop needs glibc: GPUI loads the system's Vulkan, EGL and
+          # Wayland libraries. Building on Ubuntu 22.04 sets the glibc floor
+          # at 2.35; scripts/check-linux-desktop-release enforces it.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: aven-desktop-linux-amd64
+            features: desktop
+            use_cross: false
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: aven-desktop-linux-arm64
+            features: desktop
+            use_cross: false
     runs-on: ${{ matrix.os }}
     # One codegen unit shrinks shipped binaries by about a quarter at the cost
     # of slower compilation; local release builds keep Cargo's default.
@@ -90,16 +104,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.artifact }}
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux' && matrix.features == 'desktop'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev libfreetype-dev libwayland-dev \
+            libx11-xcb-dev libxkbcommon-x11-dev
       - name: Build
         env:
           FEATURES: ${{ matrix.features }}
         run: |
           if [ "${{ matrix.use_cross }}" == "true" ]; then
             cross build --release --locked --target "${{ matrix.target }}"
-          elif [ -n "$FEATURES" ]; then
+          elif [ "$RUNNER_OS" == macOS ] && [ -n "$FEATURES" ]; then
             # Aven Desktop requires macOS 13; terminal-only keeps the default.
             MACOSX_DEPLOYMENT_TARGET=13.0 \
               cargo build --release --locked --target "${{ matrix.target }}" --features "$FEATURES"
+          elif [ -n "$FEATURES" ]; then
+            cargo build --release --locked --target "${{ matrix.target }}" --features "$FEATURES"
           else
             cargo build --release --locked --target "${{ matrix.target }}"
           fi
@@ -113,17 +135,32 @@ jobs:
           if-no-files-found: error
       - name: Package
         if: runner.os != 'macOS'
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
           bin="target/${{ matrix.target }}/release/${BIN_NAME}"
-          tar -C "$(dirname "$bin")" -czf "${{ matrix.artifact }}.tar.gz" "$BIN_NAME"
+          if [ -n "$FEATURES" ]; then
+            scripts/package-linux-desktop "$bin" "${{ matrix.artifact }}.tar.gz"
+          else
+            tar -C "$(dirname "$bin")" -czf "${{ matrix.artifact }}.tar.gz" "$BIN_NAME"
+          fi
           shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
       - name: Smoke test packaged binary
-        if: runner.os != 'macOS' && matrix.target != 'aarch64-unknown-linux-musl'
+        if: runner.os != 'macOS' && matrix.features != 'desktop' && matrix.target != 'aarch64-unknown-linux-musl'
         run: |
           package_dir="package-${{ matrix.artifact }}"
           mkdir "$package_dir"
           tar -xzf ${{ matrix.artifact }}.tar.gz -C "$package_dir"
           "$package_dir/${BIN_NAME}" --help
+      - name: Install Linux Desktop smoke test tools
+        if: runner.os == 'Linux' && matrix.features == 'desktop'
+        run: sudo apt-get install -y binutils dbus python3 x11-utils xvfb libegl1 libgl1-mesa-dri fonts-dejavu-core
+      - name: Smoke test Linux Desktop archive
+        if: runner.os == 'Linux' && matrix.features == 'desktop'
+        run: |
+          sha256sum -c "${{ matrix.artifact }}.sha256"
+          target="${{ matrix.target }}"
+          scripts/check-linux-desktop-release "${{ matrix.artifact }}.tar.gz" "${target%%-*}"
       - uses: actions/upload-artifact@v7
         if: runner.os != 'macOS'
         with:

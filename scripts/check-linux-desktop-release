@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Checks a Linux Desktop release archive from scripts/package-linux-desktop:
+# its layout, the executable's architecture and glibc floor, and that the app
+# opens a window under Xvfb. Needs readelf, objdump, python3, Xvfb, xwininfo
+# and setsid. Everything it runs uses a throwaway HOME and XDG directories.
+set -euo pipefail
+
+if [[ $# -ne 2 || ! $2 =~ ^(x86_64|aarch64)$ ]]; then
+  echo "usage: check-linux-desktop-release ARCHIVE x86_64|aarch64" >&2
+  exit 2
+fi
+archive=$1
+arch=$2
+# Ubuntu 22.04's, the oldest base the release builds on. Raising it drops
+# distributions.
+max_glibc=2.35
+
+fail() {
+  echo "::error::$*" >&2
+  exit 1
+}
+
+tmp=$(mktemp -d)
+app_pid=""
+xvfb_pid=""
+cleanup() {
+  [[ -n $app_pid ]] && kill "$app_pid" 2>/dev/null
+  pkill -f "^$tmp/" 2>/dev/null
+  [[ -n $xvfb_pid ]] && kill "$xvfb_pid" 2>/dev/null
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+entries=$(python3 -I -c 'import sys, tarfile
+for m in tarfile.open(sys.argv[1]):
+    kind = "dir" if m.isdir() else "file" if m.isreg() else "other"
+    print(kind, oct(m.mode & 0o777), m.name)' "$archive")
+printf '%s\n' "$entries"
+if grep -v '^\(dir\|file\) [0-7o]* aven-desktop\(/\|$\)' <<<"$entries" | grep -q .; then
+  fail "archive may hold only directories and regular files under aven-desktop/"
+fi
+grep -q '^file 0o755 aven-desktop/aven$' <<<"$entries" || fail "aven-desktop/aven is missing or not executable"
+grep -q '^file 0o644 aven-desktop/share/applications/fi.zendit.Aven.desktop$' <<<"$entries" ||
+  fail "the launcher is missing"
+grep -q '^file 0o644 aven-desktop/share/icons/hicolor/scalable/apps/fi.zendit.Aven.svg$' <<<"$entries" ||
+  fail "the scalable icon is missing"
+
+tar -xzf "$archive" -C "$tmp"
+app="$tmp/aven-desktop/aven"
+
+machine=$(readelf -h "$app" | sed -n 's/^ *Machine: *//p')
+case "$arch:$machine" in
+  x86_64:*X86-64* | aarch64:AArch64) ;;
+  *) fail "expected an $arch executable, found $machine" ;;
+esac
+needed=$(objdump -T "$app" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)
+echo "requires glibc $needed"
+if [[ $(printf '%s\n%s\n' "$needed" "$max_glibc" | sort -V | tail -n 1) != "$max_glibc" ]]; then
+  fail "the executable requires glibc $needed, above the supported $max_glibc"
+fi
+
+"$app" --version </dev/null
+"$app" --help </dev/null >/dev/null
+
+# The app opens with no arguments, no terminal and a display. GL is forced
+# because Mesa's software Vulkan renders nothing visible on Xvfb.
+root="$tmp/session"
+mkdir -p "$root"/{home,config,data,state,cache,runtime}
+chmod 700 "$root/runtime"
+Xvfb :97 -screen 0 1280x800x24 -nolisten tcp >"$tmp/xvfb.log" 2>&1 &
+xvfb_pid=$!
+dbus=()
+if command -v dbus-run-session >/dev/null 2>&1; then
+  dbus=(dbus-run-session --)
+fi
+env -i PATH=/usr/bin:/bin DISPLAY=:97 HOME="$root/home" \
+  XDG_CONFIG_HOME="$root/config" XDG_DATA_HOME="$root/data" XDG_STATE_HOME="$root/state" \
+  XDG_CACHE_HOME="$root/cache" XDG_RUNTIME_DIR="$root/runtime" \
+  AVEN_SYNC_DISABLED=1 VK_ICD_FILENAMES=/nonexistent.json \
+  "${dbus[@]}" setsid "$app" </dev/null >"$tmp/app.log" 2>&1 &
+app_pid=$!
+
+window=""
+for _ in $(seq 60); do
+  kill -0 "$app_pid" 2>/dev/null || break
+  window=$(DISPLAY=:97 xwininfo -root -tree 2>/dev/null | grep '"Aven"' || true)
+  [[ -n $window ]] && break
+  sleep 1
+done
+if [[ -z $window ]] || ! kill -0 "$app_pid" 2>/dev/null; then
+  cat "$tmp/app.log" >&2
+  fail "the app did not open a window"
+fi
+echo "window: $window"
+sleep 3
+kill -0 "$app_pid" 2>/dev/null || { cat "$tmp/app.log" >&2; fail "the app exited after opening its window"; }
+echo "ok: $archive"
