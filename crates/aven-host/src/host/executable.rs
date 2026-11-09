@@ -133,8 +133,6 @@ fn quarantine_flags(value: &[u8]) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
 
     #[test]
@@ -143,7 +141,6 @@ mod tests {
         let path = dir.path().join("aven");
         std::fs::write(&path, "one").unwrap();
         let initial = Fingerprint::of(&path).unwrap();
-        std::thread::sleep(Duration::from_millis(5));
         std::fs::write(&path, "two-two").unwrap();
         assert!(initial.changed().unwrap());
     }
