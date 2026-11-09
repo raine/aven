@@ -28,6 +28,7 @@ fn release_api_override() -> Option<String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FetchResult {
+    Unavailable,
     NotModified {
         etag: Option<String>,
     },
@@ -54,7 +55,16 @@ pub(super) async fn fetch_latest(
     etag: Option<&str>,
     channel: ReleaseChannel,
 ) -> Result<FetchResult> {
-    let mut request = client.get(release_api());
+    fetch_latest_at(client, etag, channel, &release_api()).await
+}
+
+async fn fetch_latest_at(
+    client: &reqwest::Client,
+    etag: Option<&str>,
+    channel: ReleaseChannel,
+    url: &str,
+) -> Result<FetchResult> {
+    let mut request = client.get(url);
     if let Some(etag) = etag {
         request = request.header(IF_NONE_MATCH, etag);
     }
@@ -75,6 +85,9 @@ pub(super) async fn fetch_latest(
     {
         bail!("GitHub rate limit reached; try again later");
     }
+    if response.status() == StatusCode::NOT_FOUND && channel == ReleaseChannel::Desktop {
+        return Ok(FetchResult::Unavailable);
+    }
     let response = response
         .error_for_status()
         .context("fetch latest GitHub release")?;
@@ -87,6 +100,12 @@ pub(super) async fn fetch_latest(
     }
     let release: GithubRelease =
         serde_json::from_slice(&body).context("parse latest GitHub release")?;
+    if channel == ReleaseChannel::Desktop
+        && let Some(name) = channel_app_archive_name(channel)?
+        && !release.assets.iter().any(|asset| asset.name == name)
+    {
+        return Ok(FetchResult::Unavailable);
+    }
     Ok(FetchResult::Release {
         release: parse_release(release, channel)?,
         etag: response_etag,
@@ -233,6 +252,108 @@ mod tests {
                 "https://github.com/raine/aven/releases/download/v1.2.3/{name}"
             ),
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn fetch_fixture(
+        status: u16,
+        body: &str,
+        channel: ReleaseChannel,
+    ) -> Result<FetchResult> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}", listener.local_addr()?);
+        let response = format!(
+            "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).await.unwrap();
+                request.push(byte[0]);
+                if request.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(
+                String::from_utf8(request)
+                    .unwrap()
+                    .to_lowercase()
+                    .contains("if-none-match: previous")
+            );
+            if status != 0 {
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let result = fetch_latest_at(
+            &reqwest::Client::builder().no_proxy().build()?,
+            Some("previous"),
+            channel,
+            &url,
+        )
+        .await;
+        server.await?;
+        result
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn only_confirmed_absence_withdraws_a_desktop_release() {
+        assert_eq!(
+            fetch_fixture(404, "", ReleaseChannel::Desktop)
+                .await
+                .unwrap(),
+            FetchResult::Unavailable
+        );
+        assert_eq!(
+            fetch_fixture(
+                200,
+                r#"{"tag_name":"v9.0.0","assets":[]}"#,
+                ReleaseChannel::Desktop
+            )
+            .await
+            .unwrap(),
+            FetchResult::Unavailable
+        );
+        assert_eq!(
+            fetch_fixture(304, "", ReleaseChannel::Desktop)
+                .await
+                .unwrap(),
+            FetchResult::NotModified {
+                etag: Some("previous".into())
+            }
+        );
+        for status in [0, 403, 429, 500, 502, 503] {
+            assert!(
+                fetch_fixture(status, "", ReleaseChannel::Desktop)
+                    .await
+                    .is_err(),
+                "{status}"
+            );
+        }
+        assert!(
+            fetch_fixture(200, "invalid json", ReleaseChannel::Desktop)
+                .await
+                .is_err()
+        );
+        assert!(
+            fetch_fixture(404, "", ReleaseChannel::Terminal)
+                .await
+                .is_err()
+        );
+        assert!(
+            fetch_fixture(
+                200,
+                r#"{"tag_name":"v9.0.0","assets":[]}"#,
+                ReleaseChannel::Terminal
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[test]

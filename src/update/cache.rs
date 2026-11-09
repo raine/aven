@@ -20,6 +20,8 @@ struct UpdateCache {
     schema: u32,
     etag: Option<String>,
     release: Option<Release>,
+    #[serde(default)]
+    unavailable: bool,
     last_success_at: Option<u64>,
     last_attempt_at: Option<u64>,
     next_attempt_after: Option<u64>,
@@ -106,13 +108,7 @@ pub(crate) async fn check_for_update(
     let etag = cache.release.as_ref().and(cache.etag.as_deref());
     match fetch_latest(client, etag, release_channel()).await {
         Ok(fetched) => {
-            cache.etag = match fetched {
-                FetchResult::NotModified { etag } => etag,
-                FetchResult::Release { release, etag } => {
-                    cache.release = Some(release);
-                    etag
-                }
-            };
+            apply_fetched(&mut cache, fetched);
             cache.last_success_at = Some(now);
             cache.next_attempt_after = Some(now.saturating_add(SUCCESS_INTERVAL));
             cache.failure_count = 0;
@@ -128,7 +124,29 @@ pub(crate) async fn check_for_update(
     }
 }
 
+fn apply_fetched(cache: &mut UpdateCache, fetched: FetchResult) {
+    cache.etag = match fetched {
+        FetchResult::Unavailable => {
+            cache.release = None;
+            cache.unavailable = true;
+            None
+        }
+        FetchResult::NotModified { etag } => etag,
+        FetchResult::Release { release, etag } => {
+            cache.release = Some(release);
+            cache.unavailable = false;
+            etag
+        }
+    };
+}
+
 fn outcome_from_cache(cache: &UpdateCache, cached: bool) -> Result<CheckOutcome> {
+    if cache.unavailable {
+        return Ok(CheckOutcome::Current {
+            version: current_version(),
+            cached,
+        });
+    }
     let release = cache
         .release
         .clone()
@@ -301,6 +319,69 @@ mod tests {
         assert!(matches!(
             outcome_from_cache(&cache, true).unwrap(),
             CheckOutcome::Available { cached: true, .. }
+        ));
+    }
+
+    #[test]
+    fn confirmed_answers_replace_or_withdraw_cached_offers() {
+        let release = |major| Release {
+            version: Version::new(major, 0, 0),
+            tag: format!("v{major}.0.0"),
+            archive_name: String::new(),
+            archive_url: String::new(),
+            checksum_url: String::new(),
+            app: None,
+        };
+        let mut cache = cache(None);
+        for major in [99, 98] {
+            apply_fetched(
+                &mut cache,
+                FetchResult::Release {
+                    release: release(major),
+                    etag: Some(format!("etag-{major}")),
+                },
+            );
+            assert!(matches!(outcome_from_cache(&cache, false).unwrap(),
+                CheckOutcome::Available { release, .. } if release.version == Version::new(major, 0, 0)));
+        }
+        apply_fetched(
+            &mut cache,
+            FetchResult::NotModified {
+                etag: Some("etag-98".into()),
+            },
+        );
+        assert_eq!(
+            cache.release.as_ref().unwrap().version,
+            Version::new(98, 0, 0)
+        );
+        apply_fetched(&mut cache, FetchResult::Unavailable);
+        assert!(cache.release.is_none());
+        assert!(cache.etag.is_none());
+        assert!(matches!(
+            outcome_from_cache(&cache, true).unwrap(),
+            CheckOutcome::Current { .. }
+        ));
+        apply_fetched(
+            &mut cache,
+            FetchResult::Release {
+                release: release(97),
+                etag: None,
+            },
+        );
+        assert!(matches!(
+            outcome_from_cache(&cache, false).unwrap(),
+            CheckOutcome::Available { .. }
+        ));
+        apply_fetched(
+            &mut cache,
+            FetchResult::Release {
+                release: release(0),
+                etag: None,
+            },
+        );
+        assert!(matches!(
+            outcome_from_cache(&cache, false).unwrap(),
+            CheckOutcome::Current { .. }
         ));
     }
 

@@ -259,6 +259,18 @@ pub(crate) fn check(force: bool, cx: &mut App) {
             if !phase(cx).settled() {
                 return;
             }
+            if force
+                && matches!(before, Phase::Available(_))
+                && let Err(error) = &checked
+            {
+                let detail = format!("{error:#}");
+                crate::app::with_root(cx, |root, _, cx| {
+                    root.session.show_toast(
+                        Toast::error("Couldn\u{2019}t check for updates").detail(detail),
+                    );
+                    cx.notify();
+                });
+            }
             set_phase(after_check(checked, force, before), cx);
         });
     })
@@ -281,7 +293,7 @@ fn after_check(checked: anyhow::Result<Option<Available>>, force: bool, before: 
             tracing::info!("aven is up to date");
             Phase::Current
         }
-        Err(error) if force => {
+        Err(error) if force && !matches!(before, Phase::Available(_)) => {
             tracing::warn!(error = %format_args!("{error:#}"), "update check failed");
             Phase::CheckFailed(format!("{error:#}"))
         }
@@ -290,6 +302,53 @@ fn after_check(checked: anyhow::Result<Option<Available>>, force: bool, before: 
             before
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DownloadResult {
+    Ready,
+    Replaced(Option<Available>),
+}
+
+/// A download may start only after the server confirms the offered version.
+fn checked_download(
+    service: &dyn Updates,
+    version: &str,
+    report: &(dyn Fn(Progress) + Send + Sync),
+    cancelled: Arc<AtomicBool>,
+) -> anyhow::Result<DownloadResult> {
+    checked_update(service, version, &cancelled, || {
+        service.download(version, report, cancelled.clone())
+    })
+}
+
+fn checked_update(
+    service: &dyn Updates,
+    version: &str,
+    cancelled: &AtomicBool,
+    operation: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<DownloadResult> {
+    let latest = service.check(true)?;
+    if latest
+        .as_ref()
+        .is_none_or(|latest| latest.version != version || latest.blocked.is_some())
+    {
+        return Ok(DownloadResult::Replaced(latest));
+    }
+    anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "update cancelled");
+    operation()?;
+    Ok(DownloadResult::Ready)
+}
+
+fn replace_offer(latest: Option<Available>, cx: &mut App) {
+    crate::app::with_root(cx, |root, _, cx| {
+        root.session.show_toast(
+            Toast::error("This release is no longer available")
+                .detail("The update offer has been refreshed. Nothing was installed."),
+        );
+        cx.notify();
+    });
+    set_phase(latest.map_or(Phase::Current, Phase::Available), cx);
 }
 
 /// Downloads the available update. It installs only on a restart.
@@ -321,7 +380,7 @@ pub(crate) fn download(cx: &mut App) {
                     *shared = progress;
                 }
             };
-            service.download(&version, &report, cancelled)
+            checked_download(service.as_ref(), &version, &report, cancelled)
         }
     });
     let done = Arc::new(AtomicBool::new(false));
@@ -348,7 +407,11 @@ pub(crate) fn download(cx: &mut App) {
                 return;
             }
             let next = match result {
-                Ok(()) => Phase::Ready(available),
+                Ok(DownloadResult::Ready) => Phase::Ready(available),
+                Ok(DownloadResult::Replaced(latest)) => {
+                    replace_offer(latest, cx);
+                    return;
+                }
                 Err(error) => Phase::Failed {
                     available,
                     error: format!("{error:#}"),
@@ -415,12 +478,21 @@ pub(crate) fn restart(cx: &mut App) {
             cx.background_executor().timer(BLOCKER_POLL).await;
         }
         cx.update(|cx| set_phase(Phase::Restarting(available.clone()), cx));
+        let version = available.version.clone();
         let restarted = cx
             .background_executor()
-            .spawn(async move { service.restart() })
+            .spawn(async move {
+                let result =
+                    checked_update(service.as_ref(), &version, &cancelled, || service.restart());
+                if matches!(result, Ok(DownloadResult::Replaced(_))) {
+                    service.discard();
+                }
+                result
+            })
             .await;
         cx.update(|cx| match restarted {
-            Ok(()) => crate::app::with_root(cx, Root::quit),
+            Ok(DownloadResult::Ready) => crate::app::with_root(cx, Root::quit),
+            Ok(DownloadResult::Replaced(latest)) => replace_offer(latest, cx),
             Err(error) => set_phase(
                 Phase::Failed {
                     available,
@@ -1051,6 +1123,138 @@ mod tests {
             assert!(!note.contains("Up to date"));
             assert_eq!(action, "Check for updates");
         }
+    }
+
+    struct TestUpdates {
+        answer: Result<Option<Available>, &'static str>,
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    impl Updates for TestUpdates {
+        fn supported(&self) -> bool {
+            true
+        }
+        fn check(&self, force: bool) -> anyhow::Result<Option<Available>> {
+            assert!(force, "install-time checks must bypass the TTL");
+            self.calls.lock().unwrap().push("check");
+            self.answer.clone().map_err(anyhow::Error::msg)
+        }
+        fn download(
+            &self,
+            _: &str,
+            _: &(dyn Fn(Progress) + Send + Sync),
+            _: Arc<AtomicBool>,
+        ) -> anyhow::Result<()> {
+            self.calls.lock().unwrap().push("download");
+            Ok(())
+        }
+        fn discard(&self) {
+            unreachable!()
+        }
+        fn blockers(&self) -> Vec<Process> {
+            unreachable!()
+        }
+        fn restart(&self) -> anyhow::Result<()> {
+            self.calls.lock().unwrap().push("restart");
+            Ok(())
+        }
+        fn relaunched(&self) -> anyhow::Result<Option<Relaunched>> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn installation_rechecks_before_downloading_and_replaces_withdrawn_offers() {
+        let offered = available();
+        let older = Available {
+            version: "9.9.8".into(),
+            ..offered.clone()
+        };
+        let newer = Available {
+            version: "9.9.10".into(),
+            ..offered.clone()
+        };
+        for latest in [Some(offered.clone()), Some(older), Some(newer), None] {
+            let service = TestUpdates {
+                answer: Ok(latest.clone()),
+                calls: Mutex::new(Vec::new()),
+            };
+            let result = checked_download(
+                &service,
+                &offered.version,
+                &|_| {},
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap();
+            if latest == Some(offered.clone()) {
+                assert_eq!(result, DownloadResult::Ready);
+                assert_eq!(*service.calls.lock().unwrap(), ["check", "download"]);
+            } else {
+                assert_eq!(result, DownloadResult::Replaced(latest));
+                assert_eq!(*service.calls.lock().unwrap(), ["check"]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_staged_update_is_revalidated_before_the_final_swap() {
+        for answer in [Ok(Some(available())), Ok(None), Err("timeout")] {
+            let service = TestUpdates {
+                answer: answer.clone(),
+                calls: Mutex::new(Vec::new()),
+            };
+            let result = checked_update(&service, "9.9.9", &AtomicBool::new(false), || {
+                service.restart()
+            });
+            match answer {
+                Ok(Some(_)) => {
+                    assert_eq!(result.unwrap(), DownloadResult::Ready);
+                    assert_eq!(*service.calls.lock().unwrap(), ["check", "restart"]);
+                }
+                Ok(None) => {
+                    assert_eq!(result.unwrap(), DownloadResult::Replaced(None));
+                    assert_eq!(*service.calls.lock().unwrap(), ["check"]);
+                }
+                Err(_) => {
+                    assert!(result.is_err());
+                    assert_eq!(*service.calls.lock().unwrap(), ["check"]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transient_failures_keep_offers_but_never_start_an_install() {
+        for reason in ["network error", "timeout", "HTTP 503", "rate limit"] {
+            let service = TestUpdates {
+                answer: Err(reason),
+                calls: Mutex::new(Vec::new()),
+            };
+            assert!(
+                checked_download(&service, "9.9.9", &|_| {}, Arc::new(AtomicBool::new(false)))
+                    .is_err()
+            );
+            assert_eq!(*service.calls.lock().unwrap(), ["check"]);
+            for force in [false, true] {
+                let before = Phase::Available(available());
+                assert_eq!(
+                    after_check(Err(anyhow::anyhow!(reason)), force, before.clone()),
+                    before
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cancelling_during_revalidation_prevents_download() {
+        let service = TestUpdates {
+            answer: Ok(Some(available())),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(
+            checked_download(&service, "9.9.9", &|_| {}, Arc::new(AtomicBool::new(true))).is_err()
+        );
+        assert_eq!(*service.calls.lock().unwrap(), ["check"]);
     }
 
     #[test]

@@ -83,11 +83,13 @@ impl Updates for DesktopUpdater {
         super::eligibility::release_channel() == ReleaseChannel::Desktop
     }
 
-    fn check(&self, force: bool) -> Result<Option<Available>> {
+    fn check(&self, _force: bool) -> Result<Option<Available>> {
         let client = super::client()?;
+        // Desktop polls revalidate with the cached ETag instead of waiting for
+        // the CLI's daily TTL. Transient errors leave the previous offer intact.
         let outcome = self
             .runtime
-            .block_on(super::check_for_update(&client, force))?;
+            .block_on(super::check_for_update(&client, true))?;
         let release = match outcome {
             CheckOutcome::Current { .. } => {
                 *lock(&self.release) = None;
