@@ -34,6 +34,37 @@ pub fn px(value: f32) -> Pixels {
     gpui::px(value * ZOOM.load(Ordering::Relaxed) as f32 / 1000.)
 }
 
+/// The mark beside a task-entry token suggestion.
+pub fn token_icon(token: &crate::draft::Token, t: &Theme) -> gpui::AnyElement {
+    use crate::draft::Token;
+    match token {
+        Token::Label(_) => icon("icons/ic-labels.svg", t.muted)
+            .size(px(14.))
+            .into_any_element(),
+        Token::Priority(priority) => priority_icon(*priority, t).into_any_element(),
+        Token::Project(key) => project_dot(key, t).into_any_element(),
+    }
+}
+
+/// Colours task-entry tokens consistently in the composer and launcher.
+pub fn token_tint(
+    range: std::ops::Range<usize>,
+    token: crate::draft::Token,
+    t: &Theme,
+) -> crate::input::Tint {
+    use crate::draft::Token;
+    let (color, background) = match token {
+        Token::Label(_) => (t.accent, t.tint),
+        Token::Priority(priority) => (priority_color(priority, t), t.raised),
+        Token::Project(key) => (t.project(&key), t.project(&key).opacity(0.16)),
+    };
+    crate::input::Tint {
+        range,
+        color,
+        background,
+    }
+}
+
 pub const MONO: &str = "JetBrains Mono";
 pub const UI_LINE_HEIGHT: f32 = 18.2;
 

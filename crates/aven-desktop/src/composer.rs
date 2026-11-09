@@ -24,7 +24,7 @@ use crate::draft::{
     schedule_preview, suggestions, title_tokens,
 };
 use crate::images::{pasted_image, read_image, thumbnail};
-use crate::input::{Editor, EditorEvent, Mode, Tint};
+use crate::input::{Editor, EditorEvent, Mode};
 use crate::kit::*;
 use crate::launch::{LaunchEvent, LaunchJob, LaunchMode, next_job_id};
 use crate::overlays::{Entry, Mark, MenuOptions};
@@ -299,18 +299,7 @@ impl Fields {
         let t = theme(cx);
         let tints = title_tokens(self.title.read(cx).text(), projects)
             .into_iter()
-            .map(|(range, token)| {
-                let (color, background) = match token {
-                    Token::Label(_) => (t.accent, t.tint),
-                    Token::Priority(priority) => (priority_color(priority, &t), t.raised),
-                    Token::Project(key) => (t.project(&key), t.project(&key).opacity(0.16)),
-                };
-                Tint {
-                    range,
-                    color,
-                    background,
-                }
-            })
+            .map(|(range, token)| token_tint(range, token, &t))
             .collect();
         self.title
             .update(cx, |editor, cx| editor.set_tints(tints, cx));
@@ -1892,13 +1881,7 @@ impl Composer {
             .max(px(8.));
         let mut rows = div().p(px(5.)).flex().flex_col();
         for (ix, suggestion) in found.iter().enumerate() {
-            let mark = match &suggestion.token {
-                Token::Label(_) => icon("icons/ic-labels.svg", t.muted)
-                    .size(px(14.))
-                    .into_any_element(),
-                Token::Priority(priority) => priority_icon(*priority, t).into_any_element(),
-                Token::Project(key) => project_dot(key, t).into_any_element(),
-            };
+            let mark = token_icon(&suggestion.token, t);
             rows = rows.child(
                 div()
                     .id(("c-suggestion", ix))
