@@ -583,12 +583,15 @@ pub fn arranged_snapshot(store: &TuiStore, now: DateTime<Local>, arrange: &Arran
 }
 
 /// Coarse age of an RFC3339 task or activity timestamp for list and detail text.
-/// Under an hour reads as "just now"; hours and days round to the nearest unit.
+/// Under a minute reads as "just now"; hours and days round to the nearest unit.
 /// Sync status uses `crate::session::ago` for elapsed whole units, including minutes.
 pub fn relative_time(stamp: &str, now: DateTime<Local>) -> String {
-    let hours = parse_local_timestamp(stamp).map_or(0, |at| (now - at).num_minutes()) as f64 / 60.;
-    if hours < 1. {
+    let minutes = parse_local_timestamp(stamp).map_or(0, |at| (now - at).num_minutes());
+    let hours = minutes as f64 / 60.;
+    if minutes < 1 {
         "just now".to_string()
+    } else if minutes < 60 {
+        format!("{minutes}m ago")
     } else if hours < 24. {
         format!("{}h ago", hours.round())
     } else {
@@ -826,12 +829,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_ages_use_rounded_hours_and_days_without_minutes() {
+    fn task_ages_show_minutes_then_rounded_hours_and_days() {
         let now = parse_local_timestamp("2026-11-02T12:00:00+00:00").unwrap();
         for (minutes, expected) in [
             (-1, "just now"),
             (0, "just now"),
-            (59, "just now"),
+            (1, "1m ago"),
+            (30, "30m ago"),
+            (59, "59m ago"),
             (60, "1h ago"),
             (89, "1h ago"),
             (90, "2h ago"),
