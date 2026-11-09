@@ -154,8 +154,8 @@ jobs:
           "$package_dir/${BIN_NAME}" --help
       - name: Install Linux Desktop smoke test tools
         if: runner.os == 'Linux' && matrix.features == 'desktop'
-        run: sudo apt-get install -y binutils dbus python3 x11-utils xvfb libegl1 libgl1-mesa-dri fonts-dejavu-core
-      - name: Smoke test Linux Desktop archive
+        run: sudo apt-get install -y binutils dbus desktop-file-utils python3 x11-utils xvfb libegl1 libgl1-mesa-dri fonts-dejavu-core
+      - name: Smoke test Linux Desktop archive and installer
         if: runner.os == 'Linux' && matrix.features == 'desktop'
         run: |
           sha256sum -c "${{ matrix.artifact }}.sha256"

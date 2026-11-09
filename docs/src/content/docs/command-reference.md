@@ -1500,6 +1500,8 @@ A direct update downloads the platform archive, verifies it, replaces the curren
 
 On macOS, aven runs from `Aven.app`, and a direct update replaces the whole bundle. A standalone `aven` executable is replaced by a symlink to `~/.local/share/aven/Aven.app/Contents/MacOS/aven`. An installed daemon restarts on the new executable and moves its LaunchAgent into the bundle.
 
+Aven Desktop on Linux doesn't update through `aven update`. Run its [installer](/getting-started/#aven-desktop-for-linux) again instead.
+
 ```sh
 aven update
 aven update --yes

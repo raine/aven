@@ -99,6 +99,12 @@ Or install with Homebrew:
 brew install raine/aven/aven
 ```
 
+On Linux, install Aven Desktop, which includes `aven` for the terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
+```
+
 Open Aven:
 
 ```sh

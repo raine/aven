@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# Exercises scripts/install-desktop against local release fixtures. Downloads
+# are served from a fixture directory and the platform checks are stubbed, so
+# it runs without network access on Linux and macOS.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+tmp=$(mktemp -d)
+trap 'chmod -R u+w "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+sha256_line() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$(dirname "$1")" && sha256sum "$(basename "$1")")
+  else
+    (cd "$(dirname "$1")" && shasum -a 256 "$(basename "$1")")
+  fi
+}
+
+listing() {
+  (cd "$1" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort)
+}
+
+# A stand-in for the aven executable that reports its release label.
+fake_aven() {
+  printf '#!/bin/sh\necho "aven %s"\n' "$1"
+}
+
+release_dir() {
+  mkdir -p "$tmp/releases/$1"
+  printf '%s\n' "$tmp/releases/$1"
+}
+
+# stage LABEL: an aven-desktop/ tree like scripts/package-linux-desktop makes.
+stage() {
+  local root="$tmp/stage-$1/aven-desktop"
+  mkdir -p "$root/share/applications" "$root/share/icons/hicolor/scalable/apps" \
+    "$root/share/icons/hicolor/48x48/apps"
+  fake_aven "$1" >"$root/aven"
+  chmod 755 "$root/aven"
+  cp "$script_dir/../linux/fi.zendit.Aven.desktop" "$root/share/applications/"
+  printf '<svg/>\n' >"$root/share/icons/hicolor/scalable/apps/fi.zendit.Aven.svg"
+  printf 'png\n' >"$root/share/icons/hicolor/48x48/apps/fi.zendit.Aven.png"
+  printf '%s\n' "$tmp/stage-$1"
+}
+
+archive_stage() {
+  local stage_dir=$1 archive=$2
+  # shellcheck disable=SC2046 # Archive every top-level entry by name.
+  tar -C "$stage_dir" -czf "$archive" $(cd "$stage_dir" && ls -A)
+  sha256_line "$archive" >"${archive%.tar.gz}.sha256"
+}
+
+add_release() {
+  local release=$1 label=$2
+  archive_stage "$(stage "$label")" "$release/aven-desktop-linux-amd64.tar.gz"
+}
+
+# run_installer RELEASE ARGS...: runs the installer with downloads served from
+# RELEASE, as a Linux amd64 glibc 2.39 system with the processes listed in
+# $tmp/processes running.
+run_installer() {
+  local release=$1
+  shift
+  (
+    # shellcheck source=scripts/install-desktop
+    source "$script_dir/install-desktop"
+    fetch_url() {
+      cp "$release/${1##*/}" "$2" 2>/dev/null
+    }
+    fetch_stdout() {
+      fail "the fixture pins a version"
+    }
+    detect_platform() {
+      printf 'linux-amd64\n'
+    }
+    glibc_version() {
+      cat "$tmp/glibc"
+    }
+    processes_running() {
+      cat "$tmp/processes" 2>/dev/null || true
+    }
+    export HOME=$home XDG_DATA_HOME=$data XDG_CONFIG_HOME=$config AVEN_VERSION=v1.2.3 PATH="$bin:$PATH"
+    unset AVEN_INSTALL_DIR
+    main "$@"
+  )
+}
+
+expect_refusal() {
+  local name=$1 reason=$2
+  shift 2
+  if run_installer "$@" >"$tmp/$name.log" 2>&1; then
+    fail "$name: installer succeeded"
+  fi
+  grep -Fq "$reason" "$tmp/$name.log" || fail "$name: expected '$reason': $(cat "$tmp/$name.log")"
+}
+
+installed_state() {
+  listing "$home"
+  readlink "$bin/aven" 2>/dev/null || true
+  cat "$app/aven" 2>/dev/null || true
+}
+
+# A HOME with characters the launcher's Exec line must escape.
+home="$tmp/home dir \$x%"
+data="$home/.local/share"
+config="$home/.config"
+bin="$home/.local/bin"
+app="$data/aven/desktop"
+printf '2.39\n' >"$tmp/glibc"
+
+# Data and configuration the installer must never touch.
+mkdir -p "$home/.local/state/aven" "$config/aven" "$data/aven/attachments"
+printf 'tasks\n' >"$home/.local/state/aven/db.sqlite"
+printf 'key\n' >"$config/aven/config.yaml"
+printf 'image\n' >"$data/aven/attachments/one.png"
+user_data() {
+  cat "$home/.local/state/aven/db.sqlite" "$config/aven/config.yaml" "$data/aven/attachments/one.png"
+}
+data_before=$(user_data)
+
+# A fresh install puts the app under XDG_DATA_HOME/aven/desktop, links it from
+# ~/.local/bin and installs the launcher and icons.
+first=$(release_dir first)
+add_release "$first" first
+run_installer "$first" >"$tmp/first.log" 2>&1 || fail "fresh install failed: $(cat "$tmp/first.log")"
+[[ -L $bin/aven && $(readlink "$bin/aven") == "$app/aven" ]] || fail "bin/aven is not a link to the app"
+[[ $("$bin/aven") == "aven first" ]] || fail "the linked executable did not run"
+[[ $(listing "$app") == "aven
+share
+share/applications
+share/applications/fi.zendit.Aven.desktop
+share/icons
+share/icons/hicolor
+share/icons/hicolor/48x48
+share/icons/hicolor/48x48/apps
+share/icons/hicolor/48x48/apps/fi.zendit.Aven.png
+share/icons/hicolor/scalable
+share/icons/hicolor/scalable/apps
+share/icons/hicolor/scalable/apps/fi.zendit.Aven.svg" ]] || fail "unexpected app layout: $(listing "$app")"
+entry="$data/applications/fi.zendit.Aven.desktop"
+grep -Fqx "Exec=\"$tmp/home dir \\\\\$x%%/.local/share/aven/desktop/aven\"" "$entry" ||
+  fail "launcher Exec is not the quoted app path: $(grep '^Exec=' "$entry")"
+grep -Fqx "TryExec=$app/aven" "$entry" || fail "launcher TryExec is not the app path: $(grep '^TryExec=' "$entry")"
+grep -Fqx 'StartupWMClass=fi.zendit.Aven' "$entry" || fail "launcher lost its other keys"
+[[ -f $data/icons/hicolor/scalable/apps/fi.zendit.Aven.svg && -f $data/icons/hicolor/48x48/apps/fi.zendit.Aven.png ]] ||
+  fail "icons were not installed"
+[[ $(user_data) == "$data_before" ]] || fail "install changed user data"
+[[ $(listing "$data/aven") == "attachments
+attachments/one.png
+desktop"* ]] || fail "install left staging directories: $(listing "$data/aven" | grep -v '^desktop/')"
+
+# Running the installer again replaces the whole app, including files the new
+# release lacks, while the daemon keeps running.
+printf 'stale\n' >"$app/stale"
+printf '4242 %s --db /tmp/db daemon\n' "$app/aven" >"$tmp/processes"
+second=$(release_dir second)
+add_release "$second" second
+run_installer "$second" >"$tmp/second.log" 2>&1 || fail "update failed: $(cat "$tmp/second.log")"
+[[ $("$bin/aven") == "aven second" ]] || fail "update did not replace the app"
+[[ ! -e $app/stale ]] || fail "update merged into the old app"
+[[ $(listing "$data/aven" | grep -c '^[^/]*$') == 2 ]] || fail "update left staging directories"
+[[ $(user_data) == "$data_before" ]] || fail "update changed user data"
+
+before=$(installed_state)
+
+# The app, TUI or a command running from the install blocks an update.
+printf '4243 %s\n4244 %s tui\n' "$app/aven" "$app/aven" >>"$tmp/processes"
+expect_refusal running "Quit these and run the installer again" "$second"
+grep -Fq "4244  $app/aven tui" "$tmp/running.log" || fail "blockers were not listed"
+grep -Fq "4242" "$tmp/running.log" && fail "the daemon was listed as a blocker"
+[[ $(installed_state) == "$before" ]] || fail "a blocked update changed the install"
+rm "$tmp/processes"
+
+# Archives that don't hold a plain aven-desktop/ tree are rejected.
+hostile() {
+  local name=$1 reason=$2
+  shift 2
+  local release stage_dir
+  release=$(release_dir "$name")
+  stage_dir=$(stage "$name")
+  (cd "$stage_dir" && "$@")
+  archive_stage "$stage_dir" "$release/aven-desktop-linux-amd64.tar.gz"
+  expect_refusal "$name" "$reason" "$release"
+  [[ $(installed_state) == "$before" ]] || fail "$name: a rejected archive changed the install"
+}
+hostile extra-root 'entries outside aven-desktop' touch evil
+hostile symlink 'links or special files' ln -s /etc aven-desktop/share/link
+hostile symlinked-executable 'links or special files' \
+  sh -c 'rm aven-desktop/aven && ln -s /bin/sh aven-desktop/aven'
+hostile missing-executable 'does not contain an aven executable' rm aven-desktop/aven
+hostile broken-executable 'does not run on this system' \
+  sh -c 'printf "#!/bin/sh\nexit 1\n" >aven-desktop/aven'
+
+bad_sum=$(release_dir bad-sum)
+add_release "$bad_sum" bad-sum
+printf '%064d  aven-desktop-linux-amd64.tar.gz\n' 0 >"$bad_sum/aven-desktop-linux-amd64.sha256"
+expect_refusal bad-sum 'Checksum verification failed' "$bad_sum"
+[[ $(installed_state) == "$before" ]] || fail "a checksum mismatch changed the install"
+
+expect_refusal no-asset 'has no Aven Desktop release for linux-amd64' "$(release_dir empty)"
+
+printf '2.31\n' >"$tmp/glibc"
+expect_refusal old-glibc 'needs glibc 2.35 or newer, and this system has 2.31' "$second"
+: >"$tmp/glibc"
+expect_refusal musl 'has a different C library' "$second"
+printf '2.39\n' >"$tmp/glibc"
+[[ $(installed_state) == "$before" ]] || fail "an unsupported system changed the install"
+
+# A local archive installs without downloading.
+local_archive="$tmp/local/aven-desktop-linux-amd64.tar.gz"
+mkdir -p "$tmp/local"
+archive_stage "$(stage local)" "$local_archive"
+run_installer "$(release_dir unused)" --archive "$local_archive" >"$tmp/local.log" 2>&1 ||
+  fail "local archive install failed: $(cat "$tmp/local.log")"
+[[ $("$bin/aven") == "aven local" ]] || fail "local archive was not installed"
+
+# Uninstalling waits for the daemon service to be removed.
+unit="$config/systemd/user/aven-daemon.service"
+mkdir -p "$(dirname "$unit")"
+printf '[Service]\nExecStart="%s" --db "%s" daemon\n' "$bin/aven" "$home/.local/state/aven/db.sqlite" >"$unit"
+before=$(installed_state)
+expect_refusal daemon-unit 'aven daemon uninstall' "$second" --uninstall
+[[ $(installed_state) == "$before" ]] || fail "a refused uninstall changed the install"
+rm "$unit"
+
+# So does anything running from the install, the daemon included.
+printf '4242 %s daemon\n' "$app/aven" >"$tmp/processes"
+expect_refusal uninstall-running "Quit these" "$second" --uninstall
+rm "$tmp/processes"
+
+# Uninstalling removes the app, link, launcher and icons, and nothing else.
+mkdir -p "$data/icons/hicolor/48x48/apps"
+printf 'other\n' >"$data/icons/hicolor/48x48/apps/other.png"
+run_installer "$second" --uninstall >"$tmp/uninstall.log" 2>&1 || fail "uninstall failed: $(cat "$tmp/uninstall.log")"
+[[ ! -e $app && ! -L $bin/aven && ! -e $entry ]] || fail "uninstall left the app, link or launcher"
+[[ -z $(find "$data/icons" -name 'fi.zendit.Aven.*') ]] || fail "uninstall left icons"
+[[ -f $data/icons/hicolor/48x48/apps/other.png ]] || fail "uninstall removed another app's icon"
+[[ $(user_data) == "$data_before" ]] || fail "uninstall changed user data"
+grep -q 'sync credentials are kept' "$tmp/uninstall.log" || fail "uninstall did not say data is kept"
+
+# Uninstalling again, or with another aven at the link, removes nothing else.
+mkdir -p "$bin"
+fake_aven terminal >"$bin/aven"
+chmod 755 "$bin/aven"
+run_installer "$second" --uninstall >"$tmp/uninstall-again.log" 2>&1 ||
+  fail "a repeated uninstall failed: $(cat "$tmp/uninstall-again.log")"
+grep -q 'is not installed' "$tmp/uninstall-again.log" || fail "a repeated uninstall did not say so"
+[[ $("$bin/aven") == "aven terminal" ]] || fail "uninstall removed another aven"
+[[ $(user_data) == "$data_before" ]] || fail "a repeated uninstall changed user data"
+
+# Another aven at the link is never replaced.
+home="$tmp/other" data="$tmp/other/.local/share" config="$tmp/other/.config" bin="$tmp/other/.local/bin"
+mkdir -p "$bin"
+fake_aven terminal >"$bin/aven"
+chmod 755 "$bin/aven"
+expect_refusal foreign-link "is another aven install" "$second"
+[[ $("$bin/aven") == "aven terminal" ]] || fail "the installer replaced another aven"
+[[ ! -e $data/aven/desktop ]] || fail "a refused install created the app"
+
+echo "ok: installs and updates the app under XDG_DATA_HOME with a bin link, launcher and icons; keeps user data; refuses blockers other than the daemon, hostile archives, checksum mismatches, missing assets, unsupported C libraries and another aven at the link; uninstall waits for the daemon service and removes only its own files"

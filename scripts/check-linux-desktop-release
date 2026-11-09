@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Checks a Linux Desktop release archive from scripts/package-linux-desktop:
-# its layout, the executable's architecture and glibc floor, and that the app
-# opens a window under Xvfb. Needs readelf, objdump, python3, Xvfb, xwininfo
-# and setsid. Everything it runs uses a throwaway HOME and XDG directories.
+# its layout and the executable's architecture and glibc floor; then installs
+# it with scripts/install-desktop, opens the installed app under Xvfb, and
+# uninstalls it, keeping the data the app wrote. Needs readelf, objdump,
+# python3, Xvfb, xwininfo, setsid and pkill. Everything it runs uses a
+# throwaway HOME and XDG directories.
 set -euo pipefail
 
 if [[ $# -ne 2 || ! $2 =~ ^(x86_64|aarch64)$ ]]; then
   echo "usage: check-linux-desktop-release ARCHIVE x86_64|aarch64" >&2
   exit 2
 fi
-archive=$1
+archive=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 arch=$2
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Ubuntu 22.04's, the oldest base the release builds on. Raising it drops
-# distributions.
+# distributions; scripts/install-desktop checks the same floor.
 max_glibc=2.35
 
 fail() {
@@ -62,22 +65,40 @@ fi
 "$app" --version </dev/null
 "$app" --help </dev/null >/dev/null
 
-# The app opens with no arguments, no terminal and a display. GL is forced
-# because Mesa's software Vulkan renders nothing visible on Xvfb.
 root="$tmp/session"
 mkdir -p "$root"/{home,config,data,state,cache,runtime}
 chmod 700 "$root/runtime"
+session=(env -i PATH=/usr/bin:/bin HOME="$root/home" XDG_CONFIG_HOME="$root/config"
+  XDG_DATA_HOME="$root/data" XDG_STATE_HOME="$root/state" XDG_CACHE_HOME="$root/cache"
+  XDG_RUNTIME_DIR="$root/runtime")
+installed="$root/data/aven/desktop/aven"
+entry="$root/data/applications/fi.zendit.Aven.desktop"
+
+# Existing settings and tasks, which installing and uninstalling must keep.
+mkdir -p "$root/home/.config/aven" "$root/state/aven"
+printf 'keep\n' >"$root/home/.config/aven/marker"
+printf 'keep\n' >"$root/state/aven/marker"
+
+"${session[@]}" bash "$script_dir/install-desktop" --archive "$archive"
+[[ $(readlink "$root/home/.local/bin/aven") == "$installed" ]] || fail "the aven link does not point at the app"
+"$root/home/.local/bin/aven" --version </dev/null
+grep -Fqx "Exec=\"$installed\"" "$entry" || fail "the launcher does not run the app: $(grep '^Exec=' "$entry")"
+grep -Fqx "TryExec=$installed" "$entry" || fail "the launcher's TryExec is not the app"
+[[ -f $root/data/icons/hicolor/scalable/apps/fi.zendit.Aven.svg ]] || fail "the icons were not installed"
+if command -v desktop-file-validate >/dev/null 2>&1; then
+  desktop-file-validate "$entry"
+fi
+
+# The launcher runs the app with no arguments, no terminal and a display. GL
+# is forced because Mesa's software Vulkan renders nothing visible on Xvfb.
 Xvfb :97 -screen 0 1280x800x24 -nolisten tcp >"$tmp/xvfb.log" 2>&1 &
 xvfb_pid=$!
 dbus=()
 if command -v dbus-run-session >/dev/null 2>&1; then
   dbus=(dbus-run-session --)
 fi
-env -i PATH=/usr/bin:/bin DISPLAY=:97 HOME="$root/home" \
-  XDG_CONFIG_HOME="$root/config" XDG_DATA_HOME="$root/data" XDG_STATE_HOME="$root/state" \
-  XDG_CACHE_HOME="$root/cache" XDG_RUNTIME_DIR="$root/runtime" \
-  AVEN_SYNC_DISABLED=1 VK_ICD_FILENAMES=/nonexistent.json \
-  "${dbus[@]}" setsid "$app" </dev/null >"$tmp/app.log" 2>&1 &
+"${session[@]}" DISPLAY=:97 AVEN_SYNC_DISABLED=1 VK_ICD_FILENAMES=/nonexistent.json \
+  "${dbus[@]}" setsid "$installed" </dev/null >"$tmp/app.log" 2>&1 &
 app_pid=$!
 
 window=""
@@ -94,4 +115,22 @@ fi
 echo "window: $window"
 sleep 3
 kill -0 "$app_pid" 2>/dev/null || { cat "$tmp/app.log" >&2; fail "the app exited after opening its window"; }
+
+pkill -f "^$installed\$" || true
+for _ in $(seq 20); do
+  pgrep -f "^$installed\$" >/dev/null || break
+  sleep 0.5
+done
+pkill -KILL -f "^$installed\$" || true
+wait "$app_pid" 2>/dev/null || true
+app_pid=""
+state_before=$(cd "$root/state" && find . -type f | LC_ALL=C sort)
+[[ -n $(find "$root/state/aven" -name '*.sqlite') ]] || fail "the app wrote no database"
+
+"${session[@]}" bash "$script_dir/install-desktop" --uninstall
+[[ ! -e $root/data/aven/desktop && ! -L $root/home/.local/bin/aven && ! -e $entry ]] ||
+  fail "uninstall left the app, the link or the launcher"
+[[ -z $(find "$root/data/icons" -name 'fi.zendit.Aven.*') ]] || fail "uninstall left icons"
+[[ $(cd "$root/state" && find . -type f | LC_ALL=C sort) == "$state_before" ]] || fail "uninstall changed the app's data"
+[[ -f $root/home/.config/aven/marker ]] || fail "uninstall removed settings"
 echo "ok: $archive"

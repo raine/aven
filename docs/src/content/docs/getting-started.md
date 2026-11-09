@@ -23,6 +23,27 @@ Or install the prebuilt release binary with Nix:
 nix profile install https://github.com/raine/aven/releases/latest/download/aven-nix.tar.gz
 ```
 
+### Aven Desktop for Linux
+
+Aven Desktop runs on x86-64 and ARM64 Linux with glibc 2.35 or later, such as
+Ubuntu 22.04 and Debian 12 or newer. Install it for your user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
+```
+
+The installer puts the app in `~/.local/share/aven/desktop`, links
+`~/.local/bin/aven` to it for the terminal, and adds Aven to your applications
+menu. Run it again to update. If `~/.local/bin/aven` is already a terminal
+install, the installer stops and explains how to remove it first; your tasks
+and settings stay where they are.
+
+To uninstall, keeping your tasks, settings and sync credentials:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash -s -- --uninstall
+```
+
 ## Terminal font
 
 Some TUI icons require a [Nerd Font](https://www.nerdfonts.com/). Install one and

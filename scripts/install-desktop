@@ -1,0 +1,591 @@
+#!/usr/bin/env bash
+#
+# Aven Desktop installer for Linux
+# Usage: curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
+# Uninstall: curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash -s -- --uninstall
+#
+# Installs for the current user, without administrator access:
+#   ${XDG_DATA_HOME:-~/.local/share}/aven/desktop  the application
+#   ~/.local/bin/aven                              a link to its executable
+#   ${XDG_DATA_HOME:-~/.local/share}/applications  the launcher
+#   ${XDG_DATA_HOME:-~/.local/share}/icons         its icons
+#
+# Running it again replaces the application with the requested release. Tasks,
+# settings and sync credentials live elsewhere; neither installing nor
+# uninstalling touches them.
+#
+# Options:
+#   --archive FILE    Install from a downloaded aven-desktop-linux-*.tar.gz
+#   --uninstall       Remove the application, link, launcher and icons
+#
+# Environment variables:
+#   AVEN_VERSION      - Pin a specific version, such as v0.2.0
+#   AVEN_INSTALL_DIR  - Directory for the aven link (default ~/.local/bin)
+
+set -euo pipefail
+
+readonly red='\033[0;31m'
+readonly green='\033[0;32m'
+readonly yellow='\033[1;33m'
+readonly blue='\033[0;34m'
+readonly reset='\033[0m'
+
+readonly app_id=fi.zendit.Aven
+# The release build's glibc; scripts/check-linux-desktop-release enforces it.
+readonly min_glibc=2.35
+readonly installer_url=https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop
+
+tmp_dir_to_remove=""
+
+cleanup() {
+    if [[ -n "$tmp_dir_to_remove" ]]; then
+        rm -rf "$tmp_dir_to_remove"
+    fi
+}
+
+log_info() {
+    printf '%b==>%b %s\n' "$blue" "$reset" "$1"
+}
+
+log_success() {
+    printf '%b==>%b %s\n' "$green" "$reset" "$1"
+}
+
+log_warning() {
+    printf '%b==>%b %s\n' "$yellow" "$reset" "$1"
+}
+
+log_error() {
+    printf '%bError:%b %s\n' "$red" "$reset" "$1" >&2
+}
+
+fetch_url() {
+    local url=$1
+    local output=$2
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 --retry-connrefused --connect-timeout 10 --max-time 600 -o "$output" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --tries=3 --timeout=600 -q -O "$output" "$url"
+    else
+        log_error "Neither curl nor wget found. Please install one of them."
+        exit 1
+    fi
+}
+
+fetch_stdout() {
+    local url=$1
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 --retry-connrefused --connect-timeout 10 --max-time 30 "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --tries=3 --timeout=30 -qO- "$url"
+    else
+        log_error "Neither curl nor wget found. Please install one of them."
+        exit 1
+    fi
+}
+
+terminal_install_hint() {
+    printf '\nThe terminal-only aven runs here instead:\n'
+    printf '  curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install | bash\n\n'
+}
+
+detect_platform() {
+    case "$(uname -s)" in
+        Linux) ;;
+        Darwin)
+            log_error "This installer is for Linux"
+            printf '\nOn macOS, download Aven Desktop from https://github.com/raine/aven/releases/latest\n'
+            printf 'or run: brew install --cask raine/aven/aven\n\n'
+            exit 1
+            ;;
+        *)
+            log_error "Aven Desktop does not support $(uname -s)"
+            exit 1
+            ;;
+    esac
+
+    case "$(uname -m)" in
+        x86_64 | amd64)
+            printf 'linux-amd64\n'
+            ;;
+        aarch64 | arm64)
+            printf 'linux-arm64\n'
+            ;;
+        *)
+            log_error "Aven Desktop does not support $(uname -m)"
+            terminal_install_hint
+            exit 1
+            ;;
+    esac
+}
+
+# Prints the glibc version, or nothing on other C libraries such as musl.
+glibc_version() {
+    getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc //p'
+}
+
+require_glibc() {
+    local version
+
+    version=$(glibc_version)
+    if [[ -z "$version" ]]; then
+        log_error "Aven Desktop needs glibc $min_glibc or newer, and this system has a different C library"
+        terminal_install_hint
+        exit 1
+    fi
+    if [[ $(printf '%s\n%s\n' "$min_glibc" "$version" | sort -V | head -n 1) != "$min_glibc" ]]; then
+        log_error "Aven Desktop needs glibc $min_glibc or newer, and this system has $version"
+        terminal_install_hint
+        exit 1
+    fi
+}
+
+latest_version() {
+    local release_json
+
+    log_info "Fetching latest release..." >&2
+    release_json=$(fetch_stdout "https://api.github.com/repos/raine/aven/releases/latest")
+    printf '%s\n' "$release_json" | sed -n -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p'
+}
+
+verify_checksum() {
+    local checksum_file=$1
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum -c "$checksum_file" >/dev/null
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 -c "$checksum_file" >/dev/null
+    else
+        log_warning "Neither sha256sum nor shasum found, skipping checksum verification"
+        return 0
+    fi
+}
+
+# Install locations. XDG_DATA_HOME counts only when absolute, as the XDG
+# base directory specification requires.
+data_home() {
+    if [[ ${XDG_DATA_HOME:-} == /* ]]; then
+        printf '%s\n' "$XDG_DATA_HOME"
+    else
+        printf '%s/.local/share\n' "$HOME"
+    fi
+}
+
+app_dir() {
+    printf '%s/aven/desktop\n' "$(data_home)"
+}
+
+bin_dir() {
+    printf '%s\n' "${AVEN_INSTALL_DIR:-$HOME/.local/bin}"
+}
+
+systemd_unit() {
+    local config_home=$HOME/.config
+    if [[ ${XDG_CONFIG_HOME:-} == /* ]]; then
+        config_home=$XDG_CONFIG_HOME
+    fi
+    printf '%s/systemd/user/aven-daemon.service\n' "$config_home"
+}
+
+# Prints "PID ARGUMENTS..." for each process running EXECUTABLE.
+processes_running() {
+    local executable=$1
+    local proc exe
+
+    executable=$(canonical_path "$executable") || return 0
+    for proc in /proc/[0-9]*; do
+        exe=$(readlink "$proc/exe" 2>/dev/null) || continue
+        if [[ "$exe" == "$executable" ]]; then
+            printf '%s %s\n' "${proc#/proc/}" "$(tr '\0' ' ' <"$proc/cmdline" 2>/dev/null)"
+        fi
+    done
+}
+
+canonical_path() {
+    local path=$1
+    [[ -e "$path" ]] || return 1
+    printf '%s/%s\n' "$(cd -P "$(dirname "$path")" && pwd -P)" "$(basename "$path")"
+}
+
+# The daemon notices its executable was replaced and its service manager
+# starts the new one, so only the app, the TUI and commands block a change.
+is_daemon_process() {
+    local arguments=$1
+    arguments=${arguments%"${arguments##*[! ]}"}
+    [[ " $arguments" == *" daemon" ]]
+}
+
+# Refuses to continue while anything but the daemon (or, when uninstalling,
+# anything at all) runs the installed executable. It never stops them.
+refuse_running() {
+    local executable=$1
+    local action=$2
+    local include_daemon=$3
+    local blockers=""
+    local pid arguments
+
+    while read -r pid arguments; do
+        [[ -n "$pid" ]] || continue
+        if [[ $include_daemon == no ]] && is_daemon_process "$arguments"; then
+            continue
+        fi
+        blockers+="  $pid  $arguments"$'\n'
+    done < <(processes_running "$executable")
+
+    if [[ -n "$blockers" ]]; then
+        log_error "Aven is running from $(app_dir), so it can't be $action"
+        printf '\nQuit these and run the installer again:\n%s\n' "$blockers"
+        exit 1
+    fi
+}
+
+# The command link may be missing or already point at this install; anything
+# else is another aven install this installer doesn't own.
+refuse_foreign_link() {
+    local link=$1
+    local executable=$2
+
+    if [[ ! -e "$link" && ! -L "$link" ]]; then
+        return
+    fi
+    if [[ -L "$link" && "$(readlink "$link")" == "$executable" ]]; then
+        return
+    fi
+    log_error "$link is another aven install, which this installer won't replace"
+    printf '\nTo switch it to Aven Desktop, remove it first, keeping your tasks and settings:\n'
+    printf '  aven daemon uninstall   # if you installed the aven daemon\n'
+    printf '  rm %q\n' "$link"
+    printf 'Then run this installer again. Or install the link elsewhere with AVEN_INSTALL_DIR.\n\n'
+    exit 1
+}
+
+# Extracts an archive that may contain only directories and regular files
+# under aven-desktop/.
+extract_app() {
+    local archive=$1
+    local destination=$2
+    local entries
+    local unexpected
+
+    if ! entries=$(tar -tzf "$archive"); then
+        log_error "Could not read $archive"
+        exit 1
+    fi
+    if printf '%s\n' "$entries" | grep -v '^aven-desktop/' | grep -q . ||
+        printf '%s\n' "$entries" | grep -Eq '(^|/)\.\.(/|$)'; then
+        log_error "$archive contains entries outside aven-desktop"
+        exit 1
+    fi
+
+    mkdir "$destination"
+    tar -xzf "$archive" -C "$destination"
+    unexpected=$(find "$destination" \( ! -type f ! -type d \) -o \( -type f -links +1 \))
+    if [[ -n "$unexpected" ]]; then
+        log_error "$archive contains links or special files"
+        exit 1
+    fi
+    if [[ ! -f "$destination/aven-desktop/aven" || ! -x "$destination/aven-desktop/aven" ]]; then
+        log_error "$archive does not contain an aven executable"
+        exit 1
+    fi
+}
+
+# Replaces the application directory as a whole, so files a release drops
+# don't linger. Processes still running the old one keep their open files.
+install_app() {
+    local source=$1
+    local target=$2
+    local parent
+    parent=$(dirname "$target")
+    local new="$parent/.desktop.new.$$"
+    local old="$parent/.desktop.old.$$"
+
+    log_info "Installing to $target..."
+    mkdir -p "$parent"
+    mv "$source" "$new"
+    if [[ -d "$target" ]]; then
+        mv "$target" "$old"
+        if ! mv "$new" "$target"; then
+            mv "$old" "$target"
+            rm -rf "$new"
+            log_error "Failed to replace $target"
+            exit 1
+        fi
+        rm -rf "$old"
+    else
+        mv "$new" "$target"
+    fi
+}
+
+link_binary() {
+    local executable=$1
+    local link=$2
+    local tmp_link
+    tmp_link="$(dirname "$link")/.aven.tmp.$$"
+
+    log_info "Linking $link to $executable..."
+    mkdir -p "$(dirname "$link")"
+    ln -sfn "$executable" "$tmp_link"
+    mv -f "$tmp_link" "$link"
+}
+
+# Quotes PATH as a desktop entry Exec argument: a quoted argument escapes
+# \ " ` $ with a backslash, the string value escapes each backslash again, and
+# % starts a field code.
+desktop_exec_quote() {
+    local path=$1
+    local bs=\\ char quoted=""
+    local i
+    for ((i = 0; i < ${#path}; i++)); do
+        char=${path:i:1}
+        case "$char" in
+            "$bs") quoted+="$bs$bs$bs$bs" ;;
+            '"' | '`' | '$') quoted+="$bs$bs$char" ;;
+            %) quoted+=%% ;;
+            *) quoted+=$char ;;
+        esac
+    done
+    printf '"%s"\n' "$quoted"
+}
+
+# Installs the launcher, pointed at the installed executable rather than
+# whatever aven the desktop session's PATH finds first, and the icons.
+install_launcher() {
+    local source=$1
+    local executable=$2
+    local data
+    data=$(data_home)
+    local entry="$data/applications/$app_id.desktop"
+    local exec_value try_exec_value icon
+
+    log_info "Installing the launcher to $entry..."
+    exec_value=$(desktop_exec_quote "$executable")
+    # TryExec is a plain path, not a command line, so only its escapes apply.
+    try_exec_value=${executable//\\/\\\\}
+    mkdir -p "$data/applications"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            Exec=*) printf 'Exec=%s\n' "$exec_value" ;;
+            TryExec=*) printf 'TryExec=%s\n' "$try_exec_value" ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    done <"$source/share/applications/$app_id.desktop" >"$entry.tmp.$$"
+    chmod 0644 "$entry.tmp.$$"
+    mv -f "$entry.tmp.$$" "$entry"
+
+    while IFS= read -r icon; do
+        mkdir -p "$data/$(dirname "$icon")"
+        cp "$source/share/$icon" "$data/$icon.tmp.$$"
+        chmod 0644 "$data/$icon.tmp.$$"
+        mv -f "$data/$icon.tmp.$$" "$data/$icon"
+    done < <(cd "$source/share" && find icons -type f -name "$app_id.*")
+
+    refresh_desktop_caches "$data"
+}
+
+refresh_desktop_caches() {
+    local data=$1
+
+    if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -d "$data/icons/hicolor" ]]; then
+        gtk-update-icon-cache -qtf "$data/icons/hicolor" >/dev/null 2>&1 || true
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1 && [[ -d "$data/applications" ]]; then
+        update-desktop-database -q "$data/applications" >/dev/null 2>&1 || true
+    fi
+}
+
+download_archive() {
+    local platform=$1
+    local tmp_dir=$2
+    local version=${AVEN_VERSION:-}
+    local archive_name="aven-desktop-${platform}.tar.gz"
+    local checksum_name="aven-desktop-${platform}.sha256"
+    local base_url
+
+    if [[ -z "$version" ]]; then
+        version=$(latest_version)
+        if [[ -z "$version" ]]; then
+            log_error "Failed to fetch latest version"
+            printf '\nSpecify a version manually:\n'
+            printf '  curl -fsSL %s | AVEN_VERSION=v0.2.0 bash\n\n' "$installer_url"
+            exit 1
+        fi
+    fi
+    base_url="https://github.com/raine/aven/releases/download/${version}"
+
+    log_info "Downloading $archive_name ($version)..." >&2
+    if ! fetch_url "$base_url/$archive_name" "$tmp_dir/$archive_name"; then
+        log_error "$version has no Aven Desktop release for $platform"
+        terminal_install_hint
+        exit 1
+    fi
+    log_info "Verifying checksum..." >&2
+    fetch_url "$base_url/$checksum_name" "$tmp_dir/$checksum_name"
+    if ! (cd "$tmp_dir" && verify_checksum "$checksum_name"); then
+        log_error "Checksum verification failed for $archive_name"
+        exit 1
+    fi
+    log_success "Checksum verified" >&2
+    printf '%s\n' "$tmp_dir/$archive_name"
+}
+
+install_desktop() {
+    local archive=${1:-}
+    local platform tmp_dir
+    local target link executable
+
+    platform=$(detect_platform)
+    require_glibc
+    target=$(app_dir)
+    executable="$target/aven"
+    link="$(bin_dir)/aven"
+
+    if [[ -L "$target" ]] || [[ -e "$target" && ! -d "$target" ]]; then
+        log_error "$target exists and is not a directory"
+        exit 1
+    fi
+    refuse_foreign_link "$link" "$executable"
+    refuse_running "$executable" replaced no
+
+    tmp_dir=$(mktemp -d)
+    tmp_dir_to_remove=$tmp_dir
+    trap cleanup EXIT
+
+    if [[ -z "$archive" ]]; then
+        archive=$(download_archive "$platform" "$tmp_dir")
+    elif [[ ! -f "$archive" ]]; then
+        log_error "$archive does not exist"
+        exit 1
+    fi
+
+    log_info "Extracting archive..."
+    extract_app "$archive" "$tmp_dir/app"
+    if ! "$tmp_dir/app/aven-desktop/aven" --version </dev/null >/dev/null 2>&1; then
+        log_error "The downloaded aven does not run on this system"
+        "$tmp_dir/app/aven-desktop/aven" --version </dev/null || true
+        printf '\nAven Desktop needs libxcb, libxkbcommon-x11 and freetype, which desktop\n'
+        printf 'distributions install by default.\n'
+        terminal_install_hint
+        exit 1
+    fi
+
+    install_app "$tmp_dir/app/aven-desktop" "$target"
+    install_launcher "$target" "$executable"
+    link_binary "$executable" "$link"
+
+    log_success "$("$link" --version </dev/null) is installed"
+    printf '\nOpen Aven from your applications menu.\n'
+    printf 'Run the installer again to update; uninstall with:\n'
+    printf '  curl -fsSL %s | bash -s -- --uninstall\n\n' "$installer_url"
+    report_path "$link"
+}
+
+report_path() {
+    local link=$1
+    local dir found
+    dir=$(dirname "$link")
+
+    if [[ ":$PATH:" != *":$dir:"* ]]; then
+        log_warning "$dir is not in your PATH"
+        printf '\nTo use aven in a terminal, add this to your shell profile:\n'
+        printf "  export PATH=\"%s:\$PATH\"\n\n" "$dir"
+        return
+    fi
+    found=$(command -v aven 2>/dev/null || true)
+    if [[ -n "$found" && "$found" != "$link" ]]; then
+        log_warning "aven in a terminal runs $found, which comes before $link in your PATH"
+    fi
+}
+
+uninstall_desktop() {
+    local target link executable unit data icon removed=0
+    target=$(app_dir)
+    executable="$target/aven"
+    link="$(bin_dir)/aven"
+    unit=$(systemd_unit)
+    data=$(data_home)
+
+    if [[ -f "$unit" ]] && grep -Fq -e "$executable" -e "$link" "$unit"; then
+        log_error "The aven daemon service runs from this install"
+        printf '\nRemove the service first, which keeps your tasks and sync settings:\n'
+        printf '  aven daemon uninstall\n'
+        printf 'Then run the uninstaller again.\n\n'
+        exit 1
+    fi
+    refuse_running "$executable" removed yes
+
+    if [[ -L "$link" && "$(readlink "$link")" == "$executable" ]]; then
+        rm -f "$link"
+        log_info "Removed $link"
+        removed=1
+    fi
+    local entry="$data/applications/$app_id.desktop"
+    if [[ -f "$entry" ]] && grep -Fq "$executable" "$entry"; then
+        rm -f "$entry"
+        log_info "Removed $entry"
+        removed=1
+        if [[ -d "$data/icons" ]]; then
+            while IFS= read -r icon; do
+                rm -f "$icon"
+            done < <(find "$data/icons" -path '*/apps/*' -name "$app_id.*" \( -type f -o -type l \))
+        fi
+    fi
+    if [[ -d "$target" && ! -L "$target" ]]; then
+        rm -rf "$target"
+        log_info "Removed $target"
+        removed=1
+    fi
+    refresh_desktop_caches "$data"
+
+    if [[ $removed == 0 ]]; then
+        log_warning "Aven Desktop is not installed at $target"
+    else
+        log_success "Aven Desktop is uninstalled"
+    fi
+    printf '\nYour tasks, settings and sync credentials are kept.\n\n'
+}
+
+main() {
+    local action=install
+    local archive=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --uninstall)
+                action=uninstall
+                ;;
+            --archive)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--archive needs a file"
+                    exit 2
+                fi
+                archive=$2
+                shift
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                exit 2
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -z "${HOME:-}" ]]; then
+        log_error "HOME is not set"
+        exit 1
+    fi
+
+    printf '\nAven Desktop installer\n\n'
+    if [[ $action == uninstall ]]; then
+        uninstall_desktop
+    else
+        install_desktop "$archive"
+    fi
+}
+
+# Tests source this script to call its functions.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi
