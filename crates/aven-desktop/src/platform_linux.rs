@@ -396,6 +396,7 @@ pub fn activate(window: &gpui::Window, activation: &Activation) {
 
     let handles = HasWindowHandle::window_handle(window)
         .and_then(|handle| Ok((handle.as_raw(), window.display_handle()?.as_raw())));
+    let wayland = matches!(handles, Ok((RawWindowHandle::Wayland(_), _)));
     let activated = match handles {
         Ok((RawWindowHandle::Wayland(surface), RawDisplayHandle::Wayland(display))) => {
             // Launchers that set only the startup id on Wayland put the
@@ -416,10 +417,14 @@ pub fn activate(window: &gpui::Window, activation: &Activation) {
             tracing::warn!(error = %format_args!("{error:#}"), "could not bring the window forward with its token");
             window.activate_window();
         }
-        None => {
+        None if wayland => {
             tracing::info!(
                 "no launch token to bring the window forward with; the window system may only mark it as wanting attention"
             );
+            window.activate_window();
+        }
+        None => {
+            tracing::info!("brought the window forward; X11 raises it without a launch token");
             window.activate_window();
         }
     }
