@@ -23,6 +23,28 @@ Open Aven from Applications. Setup adds `aven` to your terminal. If you already
 use Aven in the terminal, setup moves that install over and keeps your tasks and
 sync.
 
+### Aven Desktop for Linux
+
+Aven Desktop runs on x86-64 and ARM64 Linux with glibc 2.35 or later, such as
+Ubuntu 22.04 and Debian 12 or newer, under Wayland or X11. See
+[Download](/download/#linux). Install it for your user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
+```
+
+The installer puts the app in `~/.local/share/aven/desktop`, links
+`~/.local/bin/aven` to it for the terminal, and adds Aven to your applications
+menu. Run it again to update. If `~/.local/bin/aven` is already a terminal
+install, the installer stops and explains how to remove it first; your tasks
+and settings stay where they are.
+
+To uninstall, keeping your tasks, settings and sync credentials:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash -s -- --uninstall
+```
+
 ### Terminal only
 
 These install `aven` without the app, on macOS and Linux.
@@ -43,27 +65,6 @@ Or install the prebuilt release binary with Nix:
 
 ```sh
 nix profile install https://github.com/raine/aven/releases/latest/download/aven-nix.tar.gz
-```
-
-### Aven Desktop for Linux
-
-Aven Desktop runs on x86-64 and ARM64 Linux with glibc 2.35 or later, such as
-Ubuntu 22.04 and Debian 12 or newer. Install it for your user:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
-```
-
-The installer puts the app in `~/.local/share/aven/desktop`, links
-`~/.local/bin/aven` to it for the terminal, and adds Aven to your applications
-menu. Run it again to update. If `~/.local/bin/aven` is already a terminal
-install, the installer stops and explains how to remove it first; your tasks
-and settings stay where they are.
-
-To uninstall, keeping your tasks, settings and sync credentials:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash -s -- --uninstall
 ```
 
 ## Terminal font

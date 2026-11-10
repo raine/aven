@@ -3,7 +3,7 @@ import Brand from '../components/Brand.astro';
 import GitHubIcon from '../components/GitHubIcon.astro';
 import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
 import StoreBadges from '../components/StoreBadges.astro';
-import { macAppleSilicon, macIntel } from '../downloads';
+import { linuxInstall, linuxUninstall, macAppleSilicon, macIntel } from '../downloads';
 import '../styles/landing.css';
 import '../styles/download.css';
 
@@ -21,13 +21,13 @@ const terminal = [
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#121110" />
     <title>Download Aven | aven</title>
-    <meta name="description" content="Download Aven for Mac, install it in the terminal on macOS and Linux, or get the iPhone and Android apps." />
+    <meta name="description" content="Download Aven for Mac and Linux, install it in the terminal only, or get the iPhone and Android apps." />
     <link rel="canonical" href="https://aventasks.dev/download/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Download Aven | aven" />
-    <meta property="og:description" content="Aven for Mac, the terminal, iPhone and Android." />
+    <meta property="og:description" content="Aven for Mac, Linux, the terminal, iPhone and Android." />
     <meta property="og:url" content="https://aventasks.dev/download/" />
   </head>
   <body>
@@ -46,7 +46,7 @@ const terminal = [
 
       <main id="main" class="download">
         <h1>Download Aven</h1>
-        <p class="download-lead">The same tasks on your Mac, in your terminal and on your phone.</p>
+        <p class="download-lead">The same tasks on your computer, in your terminal and on your phone.</p>
 
         <section class="download-platform" id="mac" aria-labelledby="mac-heading">
           <div class="download-platform-head">
@@ -61,6 +61,18 @@ const terminal = [
           <p class="download-label">Or with Homebrew</p>
           <div class="download-command"><span aria-hidden="true">$</span><code>brew install --cask raine/aven/aven</code><button type="button" data-copy>copy</button></div>
           <p class="download-note">Open the disk image and drag Aven to Applications. Already use Aven in the terminal? Setup moves that install over and keeps your tasks and sync.</p>
+        </section>
+
+        <section class="download-platform" id="linux" aria-labelledby="linux-heading">
+          <div class="download-platform-head">
+            <h2 id="linux-heading">Linux</h2>
+            <p>x86-64 and ARM64</p>
+          </div>
+          <p>The same app, installed for your user, with <code>aven</code> for the terminal included. Needs glibc 2.35 or newer and Wayland or X11.</p>
+          <div class="download-command download-command-first"><span aria-hidden="true">$</span><code>{linuxInstall}</code><button type="button" data-copy>copy</button></div>
+          <p class="download-label">Uninstall, keeping your tasks and settings</p>
+          <div class="download-command"><span aria-hidden="true">$</span><code>{linuxUninstall}</code><button type="button" data-copy>copy</button></div>
+          <p class="download-note">Run the installer again to update. Just the terminal? Use a <a href="#terminal">terminal-only install</a>.</p>
         </section>
 
         <section class="download-platform" id="terminal" aria-labelledby="terminal-heading">

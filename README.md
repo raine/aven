@@ -87,11 +87,18 @@ Inspired by Taskwarrior. See [aven and Taskwarrior](https://aventasks.dev/taskwa
 
 ## Quick start
 
-On a Mac, [download Aven Desktop](https://aventasks.dev/download/) or install
+On a Mac, [download Aven Desktop](https://aventasks.dev/download/#mac) or install
 it with Homebrew. It includes `aven` for the terminal:
 
 ```sh
 brew install --cask raine/aven/aven
+```
+
+On Linux, [install Aven Desktop](https://aventasks.dev/download/#linux) for
+your user. It also includes `aven` for the terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
 ```
 
 For the terminal only, on macOS or Linux, use the install script:
@@ -104,12 +111,6 @@ Or install with Homebrew:
 
 ```sh
 brew install raine/aven/aven
-```
-
-On Linux, install Aven Desktop, which includes `aven` for the terminal:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop | bash
 ```
 
 Open Aven:

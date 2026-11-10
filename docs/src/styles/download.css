@@ -22,11 +22,14 @@
 .download-label { margin: 1.5rem 0 0.5rem; color: var(--faint); font: 0.75rem/1.6 var(--mono); }
 .download-label + .download-command + .download-label { margin-top: 1rem; }
 .download-command { display: flex; align-items: center; gap: 0.75rem; padding: 0.625rem 0.625rem 0.625rem 1rem; border: 1px solid #4b3a66; border-radius: 0.5rem; background: #171620; font: 0.8125rem/1.6 var(--mono); }
-.download-command > span { color: var(--violet); user-select: none; }
-.download-command code { flex: 1; min-width: 0; overflow-x: auto; color: var(--ink); white-space: pre; scrollbar-width: thin; }
+.download-command > span { align-self: flex-start; color: var(--violet); user-select: none; }
+.download-command code { flex: 1; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
 .download-command button { flex: none; padding: 0.3125rem 0.5625rem; border: 1px solid #31322f; border-radius: 0.25rem; background: #222321; color: #bfbcb4; font: 0.75rem/1.4 var(--mono); }
 .download-command button:hover { color: var(--ink); border-color: #585853; }
+.download-command-first { margin-top: 1.5rem; }
 .download-note { margin-top: 1.25rem; color: var(--faint); font-size: 0.875rem; line-height: 1.6; }
+.download-note a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 0.1875rem; }
+.download-note a:hover { color: var(--ink); }
 
 .download-stores { display: flex; flex-wrap: wrap; align-items: center; gap: 0.875rem; margin-top: 1.25rem; }
 
