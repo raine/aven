@@ -191,11 +191,11 @@ jobs:
           - artifact: aven-desktop-darwin-arm64
             channel: desktop
             architecture: arm64
-            dmg: Aven-Desktop-arm64
+            dmg: Aven-arm64
           - artifact: aven-desktop-darwin-amd64
             channel: desktop
             architecture: x86_64
-            dmg: Aven-Desktop-amd64
+            dmg: Aven-amd64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

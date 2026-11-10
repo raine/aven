@@ -18,7 +18,7 @@ expect() {
 }
 
 i=0
-for name in Aven-Desktop-arm64 Aven-Desktop-amd64 aven-darwin-arm64-app aven-darwin-amd64-app; do
+for name in Aven-arm64 Aven-amd64 aven-darwin-arm64-app aven-darwin-amd64-app; do
   i=$((i + 1))
   printf '%064d  %s\n' "$i" "$name" >"$tmp/$name.sha256"
 done
@@ -31,7 +31,7 @@ expect 'arch arm: "arm64", intel: "amd64"'
 expect 'version "1.2.3"'
 expect "sha256 arm:   \"$(printf '%064d' 1)\","
 expect "intel: \"$(printf '%064d' 2)\""
-expect 'url "https://github.com/raine/aven/releases/download/v#{version}/Aven-Desktop-#{arch}.dmg"'
+expect 'url "https://github.com/raine/aven/releases/download/v#{version}/Aven-#{arch}.dmg"'
 expect 'auto_updates true'
 expect 'depends_on macos: :ventura'
 expect 'app "Aven.app"'
@@ -152,9 +152,9 @@ reject() {
 reject v1.2.3 "$tmp"
 reject 1.2.3-signtest.1 "$tmp"
 reject 1.2.3
-printf 'not-a-checksum  Aven-Desktop-amd64.dmg\n' >"$tmp/Aven-Desktop-amd64.sha256"
+printf 'not-a-checksum  Aven-amd64.dmg\n' >"$tmp/Aven-amd64.sha256"
 reject 1.2.3 "$tmp"
-rm "$tmp/Aven-Desktop-amd64.sha256"
+rm "$tmp/Aven-amd64.sha256"
 reject 1.2.3 "$tmp"
 
 echo "ok: cask installs the Aven Desktop disk image per architecture, links aven, keeps the background agent on uninstall, and zaps only that agent, preferences, caches and saved state; invalid versions and checksums rejected"

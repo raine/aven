@@ -10,8 +10,8 @@ description: Install Aven Desktop or the terminal app and start using Aven.
 [Download Aven for Mac](/download/#mac) and drag it to Applications. Aven Desktop
 includes `aven` for the terminal and updates itself. It needs macOS 13 or later.
 
-[Download for Apple silicon](https://github.com/raine/aven/releases/latest/download/Aven-Desktop-arm64.dmg).
-Intel Mac? [Download for Intel](https://github.com/raine/aven/releases/latest/download/Aven-Desktop-amd64.dmg).
+[Download for Apple silicon](https://github.com/raine/aven/releases/latest/download/Aven-arm64.dmg).
+Intel Mac? [Download for Intel](https://github.com/raine/aven/releases/latest/download/Aven-amd64.dmg).
 
 Or install it with Homebrew:
 

@@ -2,8 +2,8 @@
 // GitHub redirects latest/download to the newest one.
 const latest = 'https://github.com/raine/aven/releases/latest/download';
 
-export const macAppleSilicon = `${latest}/Aven-Desktop-arm64.dmg`;
-export const macIntel = `${latest}/Aven-Desktop-amd64.dmg`;
+export const macAppleSilicon = `${latest}/Aven-arm64.dmg`;
+export const macIntel = `${latest}/Aven-amd64.dmg`;
 
 // The installer resolves the latest release itself.
 const linuxInstaller = 'https://raw.githubusercontent.com/raine/aven/main/scripts/install-desktop';

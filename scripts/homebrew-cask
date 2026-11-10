@@ -25,8 +25,8 @@ checksum() {
   printf '%s\n' "$sum"
 }
 
-sha_arm=$(checksum Aven-Desktop-arm64)
-sha_intel=$(checksum Aven-Desktop-amd64)
+sha_arm=$(checksum Aven-arm64)
+sha_intel=$(checksum Aven-amd64)
 
 # Uninstalling leaves the background agent's LaunchAgent in place: launchd
 # stops it while Aven.app is missing and starts it again when an upgrade or
@@ -41,7 +41,7 @@ cask "aven" do
   sha256 arm:   "${sha_arm}",
          intel: "${sha_intel}"
 
-  url "https://github.com/raine/aven/releases/download/v#{version}/Aven-Desktop-#{arch}.dmg"
+  url "https://github.com/raine/aven/releases/download/v#{version}/Aven-#{arch}.dmg"
   name "Aven"
   desc "Local-first task manager"
   homepage "https://github.com/raine/aven"

@@ -115,13 +115,13 @@ the other channel's files (`ReleaseChannel` in `src/update/release.rs`).
 | --- | --- | --- |
 | Terminal | `aven-darwin-<arch>.tar.gz` | `aven update` from a bare binary, Nix |
 | Terminal | `aven-darwin-<arch>-app.tar.gz` | `aven update`, `scripts/install`, the formula |
-| Desktop | `Aven-Desktop-<arch>.dmg` | People downloading Desktop, the cask |
+| Desktop | `Aven-<arch>.dmg` | People downloading Desktop, the cask |
 | Desktop | `aven-desktop-darwin-<arch>-app.tar.gz` | The Desktop updater |
 
 Terminal builds omit the `desktop` feature. Each asset has a checksum file
 named after it with `.sha256` in place of its extension, for example
-`Aven-Desktop-arm64.sha256`. Disk image names carry no version, so
-`releases/latest/download/Aven-Desktop-arm64.dmg` always points at the newest
+`Aven-arm64.sha256`. Disk image names carry no version, so
+`releases/latest/download/Aven-arm64.dmg` always points at the newest
 release. Released updaters refuse terminal archives over 64 MiB, so the release
 checks that limit for them.
 
