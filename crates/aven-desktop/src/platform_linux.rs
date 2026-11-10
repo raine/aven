@@ -388,33 +388,68 @@ impl Activation {
     }
 }
 
-/// Brings `window` to the front with `activation`, or asks GPUI to, which on
-/// Wayland only marks the window as wanting attention.
+/// Brings `window` to the front with `activation`, or asks GPUI to. Without a
+/// token a Wayland compositor only marks the window as wanting attention, and
+/// no Wayland request lets a window take itself out of being minimized.
 pub fn activate(window: &gpui::Window, activation: &Activation) {
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
     let handles = HasWindowHandle::window_handle(window)
         .and_then(|handle| Ok((handle.as_raw(), window.display_handle()?.as_raw())));
-    let activated = match (handles, &activation.token, &activation.startup_id) {
-        (
-            Ok((RawWindowHandle::Wayland(surface), RawDisplayHandle::Wayland(display))),
-            Some(token),
-            _,
-        ) => Some(wayland::activate(display.display, surface.surface, token)),
-        (Ok((RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display))), _, Some(id)) => {
-            display
-                .connection
-                .map(|connection| x11::activate(connection, window.window.get(), id))
+    let activated = match handles {
+        Ok((RawWindowHandle::Wayland(surface), RawDisplayHandle::Wayland(display))) => {
+            // Launchers that set only the startup id on Wayland put the
+            // xdg-activation token there, as GTK reads it.
+            wayland_token(activation)
+                .map(|token| wayland::activate(display.display, surface.surface, token))
         }
+        Ok((RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display))) => activation
+            .startup_id
+            .as_deref()
+            .zip(display.connection)
+            .map(|(id, connection)| x11::activate(connection, window.window.get(), id)),
         _ => None,
     };
     match activated {
-        Some(Ok(())) => {}
+        Some(Ok(())) => tracing::info!("brought the window forward with its launch token"),
         Some(Err(error)) => {
             tracing::warn!(error = %format_args!("{error:#}"), "could not bring the window forward with its token");
             window.activate_window();
         }
-        None => window.activate_window(),
+        None => {
+            tracing::info!(
+                "no launch token to bring the window forward with; the window system may only mark it as wanting attention"
+            );
+            window.activate_window();
+        }
+    }
+}
+
+/// The xdg-activation token in `activation`, if any.
+fn wayland_token(activation: &Activation) -> Option<&str> {
+    activation
+        .token
+        .as_deref()
+        .or(activation.startup_id.as_deref())
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    #[test]
+    fn wayland_takes_the_startup_id_when_the_launcher_set_no_token() {
+        let both = Activation {
+            token: Some("token".into()),
+            startup_id: Some("startup".into()),
+        };
+        assert_eq!(wayland_token(&both), Some("token"));
+        let startup_only = Activation {
+            token: None,
+            startup_id: Some("startup".into()),
+        };
+        assert_eq!(wayland_token(&startup_only), Some("startup"));
+        assert_eq!(wayland_token(&Activation::default()), None);
     }
 }
 
@@ -704,7 +739,12 @@ pub mod instance {
         loop {
             match UnixStream::connect(socket).and_then(|mut stream| stream.write_all(&message)) {
                 Ok(()) => {
-                    tracing::info!("Aven is already open on this database; brought it forward");
+                    let activation = &forward.activation;
+                    tracing::info!(
+                        launch_token =
+                            activation.token.is_some() || activation.startup_id.is_some(),
+                        "Aven is already open on this database; brought it forward"
+                    );
                     return;
                 }
                 Err(error) if waited >= REACH_FOR => {
