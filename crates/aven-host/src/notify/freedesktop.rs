@@ -19,6 +19,10 @@ const SERVICE: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 /// The action a click on the notification's body invokes.
 const DEFAULT_ACTION: &str = "default";
+/// The desktop entry the desktop app installs, `fi.zendit.Aven.desktop`, and
+/// its icon's name. The service shows that icon and applies that entry's
+/// notification settings.
+const DESKTOP_ENTRY: &str = "fi.zendit.Aven";
 /// The most notifications remembered for clicks, for services that never
 /// say a notification closed.
 const REMEMBERED: usize = 256;
@@ -65,7 +69,7 @@ impl Freedesktop {
             Some(bus) => bus,
             empty => empty.insert(connect(self.on_click.clone())?),
         };
-        let hints: HashMap<&str, Value<'_>> = HashMap::new();
+        let hints = HashMap::from([("desktop-entry", Value::from(DESKTOP_ENTRY))]);
         let reply = bus.connection.call_method(
             Some(SERVICE),
             PATH,
@@ -74,7 +78,7 @@ impl Freedesktop {
             &(
                 self.app_name.as_str(),
                 0_u32,
-                "",
+                DESKTOP_ENTRY,
                 post.title.as_str(),
                 post.body.as_str(),
                 [DEFAULT_ACTION, "Open"].as_slice(),
