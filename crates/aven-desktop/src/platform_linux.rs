@@ -640,7 +640,7 @@ pub fn reopen_after_exit(_bundle: &Path) -> std::io::Result<()> {
 pub mod instance {
     use std::fs::{File, TryLockError};
     use std::io::{self, Read, Write};
-    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -673,6 +673,27 @@ pub mod instance {
         _lock: Option<File>,
         /// One message per later launch, which wants the window in front.
         pub raised: Option<UnboundedReceiver<Forward>>,
+        /// The socket this app listens on, which it removes when it quits.
+        socket: Option<Bound>,
+    }
+
+    /// A socket file, by its path and the device and inode it was bound as.
+    struct Bound {
+        path: PathBuf,
+        file: (u64, u64),
+    }
+
+    impl Drop for Claim {
+        /// Runs before the lock is released, so the socket removed is still
+        /// this app's; one bound again since is left alone.
+        fn drop(&mut self) {
+            if let Some(bound) = &self.socket
+                && std::fs::symlink_metadata(&bound.path)
+                    .is_ok_and(|meta| (meta.dev(), meta.ino()) == bound.file)
+            {
+                let _ = std::fs::remove_file(&bound.path);
+            }
+        }
     }
 
     /// Claims the database at `db` for this app. Returns `None` once the app
@@ -687,6 +708,7 @@ pub mod instance {
                 return Some(Claim {
                     _lock: None,
                     raised: None,
+                    socket: None,
                 });
             }
         };
@@ -702,17 +724,20 @@ pub mod instance {
                 return Some(Claim {
                     _lock: None,
                     raised: None,
+                    socket: None,
                 });
             }
         }
-        let raised = listen(&socket)
+        let (raised, socket) = listen(&socket)
             .inspect_err(|error| {
                 tracing::warn!(%error, "later launches cannot bring this window forward");
             })
-            .ok();
+            .ok()
+            .unzip();
         Some(Claim {
             _lock: Some(lock),
             raised,
+            socket,
         })
     }
 
@@ -760,7 +785,7 @@ pub mod instance {
     }
 
     /// Listens at `socket`, which the lock makes this app's to replace.
-    fn listen(socket: &Path) -> io::Result<UnboundedReceiver<Forward>> {
+    fn listen(socket: &Path) -> io::Result<(UnboundedReceiver<Forward>, Bound)> {
         match std::fs::symlink_metadata(socket) {
             Ok(meta) if meta.file_type().is_socket() => std::fs::remove_file(socket)?,
             Ok(_) => {
@@ -774,6 +799,11 @@ pub mod instance {
         }
         let listener = UnixListener::bind(socket)?;
         std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+        let meta = std::fs::symlink_metadata(socket)?;
+        let bound = Bound {
+            path: socket.to_path_buf(),
+            file: (meta.dev(), meta.ino()),
+        };
         let (sender, receiver) = unbounded_channel();
         std::thread::Builder::new()
             .name("aven-raise".into())
@@ -787,7 +817,7 @@ pub mod instance {
                     }
                 }
             })?;
-        Ok(receiver)
+        Ok((receiver, bound))
     }
 
     /// What a later launch handed over. One that says nothing readable
@@ -830,6 +860,10 @@ pub mod instance {
             );
 
             drop(first);
+            assert!(
+                !beside(&db, ".desktop.sock").exists(),
+                "the app removes its socket when it quits"
+            );
             assert!(claim(&db, &none).is_some(), "the claim ends with the app");
         }
 

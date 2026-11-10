@@ -537,6 +537,8 @@ uninstall_desktop() {
         log_info "Removed $target"
         removed=1
     fi
+    # The installer made this directory for the app; anything else in it stays.
+    rmdir "$(dirname "$target")" 2>/dev/null || true
     refresh_desktop_caches "$data"
 
     if [[ $removed == 0 ]]; then

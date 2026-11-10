@@ -141,6 +141,7 @@ state_before=$(cd "$root/state" && find . -type f | LC_ALL=C sort)
 "${session[@]}" bash "$script_dir/install-desktop" --uninstall
 [[ ! -e $root/data/aven/desktop && ! -L $root/home/.local/bin/aven && ! -e $entry ]] ||
   fail "uninstall left the app, the link or the launcher"
+[[ ! -e $root/data/aven ]] || fail "uninstall left the app's empty directory"
 [[ -z $(find "$root/data/icons" -name 'fi.zendit.Aven.*') ]] || fail "uninstall left icons"
 [[ $(cd "$root/state" && find . -type f | LC_ALL=C sort) == "$state_before" ]] || fail "uninstall changed the app's data"
 [[ -f $root/home/.config/aven/marker ]] || fail "uninstall removed settings"
