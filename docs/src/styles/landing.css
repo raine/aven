@@ -226,7 +226,8 @@ h2 { font-size: 2.6875rem; font-weight: 500; line-height: 1.14; letter-spacing: 
   .site-header { min-height: 5.1875rem; gap: 1.25rem; }
   .site-header nav { gap: 1.375rem; }
   .site-header nav a { font-size: 0.875rem; }
-  .site-header nav .features-link { display: none; }
+  .site-header nav :is(.features-link, .mobile-link) { display: none; }
+  .site-header nav .github-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .site-header .brand img { width: 6.875rem; }
   .hero { padding-top: 3.1875rem; }
   .hero::after { width: 100%; height: 30rem; right: 0; }
