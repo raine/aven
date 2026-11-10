@@ -98,6 +98,30 @@ const testimonials = [
                 </a>
               </div>
               <p class="hero-download-alt">For Apple silicon. <a href={macIntel}>Intel</a> · <a href="/download/#linux">Linux</a> · <a href="/download/">All downloads</a></p>
+              {/* Runs before paint so the button doesn't change after it shows. Without
+                  it, or on an unrecognized platform, the Mac download stays. */}
+              <script is:inline define:vars={{ appStoreUrl, playStoreUrl }}>
+                (() => {
+                  const ua = navigator.userAgent;
+                  const platform = /iPhone|iPod/.test(ua) ? 'ios'
+                    : /Android/.test(ua) ? 'android'
+                    : /Macintosh/.test(ua) ? 'mac'
+                    : /Windows|CrOS/.test(ua) ? 'other'
+                    : /Linux|X11/.test(ua) ? 'linux'
+                    : 'mac';
+                  const variants = {
+                    linux: ['Download for Linux', '/download/#linux', 'x86-64 and ARM64. <a href="/download/#mac">Mac</a> · <a href="/download/">All downloads</a>'],
+                    ios: ['Get the iPhone app', appStoreUrl, 'Also for <a href="/download/">Mac, Linux and Android</a>'],
+                    android: ['Get the Android app', playStoreUrl, 'Also for <a href="/download/">Mac, Linux and iPhone</a>'],
+                    other: ['Download', '/download/', 'For Mac and Linux, iPhone and Android.'],
+                  };
+                  const variant = variants[platform];
+                  if (!variant) return;
+                  const button = document.querySelector('.hero-download');
+                  const alt = document.querySelector('.hero-download-alt');
+                  [button.textContent, button.href, alt.innerHTML] = variant;
+                })();
+              </script>
             </div>
           </div>
           <div class="install-widget hero-install" id="install">
