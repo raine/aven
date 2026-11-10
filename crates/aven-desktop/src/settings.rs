@@ -159,6 +159,12 @@ fn group(rows: Vec<Div>, t: &Theme) -> Div {
         )
 }
 
+/// Device results arrive asynchronously and can contain any number of rows.
+/// Keep their viewport fixed even while loading or showing an error.
+fn device_viewport(id: &'static str, height: f32) -> Stateful<Div> {
+    div().id(id).h(px(height)).flex_none().overflow_y_scroll()
+}
+
 fn section(text: &'static str, t: &Theme) -> Div {
     small(Text::Secondary)
         .pt(px(20.))
@@ -1619,7 +1625,10 @@ impl Root {
         )
         .when(set_up, |tab| {
             tab.child(section("Devices", t))
-                .child(group(self.device_rows(cx, t), t))
+                .child(
+                    device_viewport("settings-devices-list", 168.)
+                        .child(group(self.device_rows(cx, t), t)),
+                )
                 .when(unfinished, |tab| {
                     tab.child(
                         small(Text::Secondary)
@@ -2801,7 +2810,7 @@ impl Root {
                                 .child("Add device"),
                         ),
                 )
-                .children(devices)
+                .child(device_viewport("sync-devices-list", 3. * 34.).children(devices))
                 .into_any_element(),
             Self::footer(t)
                 .justify_start()

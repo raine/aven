@@ -1224,9 +1224,10 @@ impl Session {
     }
 
     pub fn open_settings(&mut self, tab: SettingsTab) {
+        let entering_settings = self.settings.is_none();
         self.settings = Some(tab);
         self.send(Command::LoadSettings);
-        if tab == SettingsTab::Sync {
+        if entering_settings || tab == SettingsTab::Sync {
             self.load_devices();
         }
     }
@@ -1974,6 +1975,67 @@ mod tests {
 
     use super::*;
     use crate::sync_ops::Secret;
+
+    #[test]
+    fn settings_prefetches_devices_and_keeps_them_while_refreshing() {
+        let (requests, mut received) = mpsc::unbounded_channel();
+        let mut session = Session::new(Snapshot::default(), requests);
+        session.open_settings(SettingsTab::General);
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::LoadSettings
+        ));
+        assert!(
+            received.try_recv().is_err(),
+            "local-only settings must not fetch devices"
+        );
+        session.close_settings();
+        session.snapshot.sync.phase = SyncPhase::SetUp;
+        session.open_settings(SettingsTab::General);
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::LoadSettings
+        ));
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::Sync(SyncRequest::LoadDevices)
+        ));
+        let list = DeviceList {
+            devices: vec![crate::sync_ops::DeviceRow {
+                id: Default::default(),
+                label: "Laptop".to_string(),
+                current: true,
+            }],
+            removal_unfinished: false,
+        };
+        session.sync_event(SyncEvent::Devices(Ok(list.clone())));
+        session.open_settings(SettingsTab::Sync);
+        assert_eq!(session.devices, Some(Ok(list.clone())));
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::LoadSettings
+        ));
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::Sync(SyncRequest::LoadDevices)
+        ));
+        session.open_settings(SettingsTab::General);
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::LoadSettings
+        ));
+        assert!(
+            received.try_recv().is_err(),
+            "other tabs must not repeatedly fetch devices"
+        );
+        session.close_settings();
+        session.open_sync();
+        assert_eq!(session.devices, Some(Ok(list)));
+        assert!(matches!(
+            received.try_recv().unwrap().command,
+            Command::Sync(SyncRequest::LoadDevices)
+        ));
+    }
 
     #[test]
     fn sync_ages_include_minutes_and_count_only_elapsed_whole_units() {
