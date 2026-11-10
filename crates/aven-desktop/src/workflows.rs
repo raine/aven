@@ -274,6 +274,7 @@ impl Root {
         let content = move |top: f32, opacity: f32| {
             div()
                 .relative()
+                .w_full()
                 .h(px(ALL_CLEAR_HEIGHT))
                 .flex()
                 .flex_col()
@@ -291,6 +292,7 @@ impl Root {
             return content(0., 0.8).into_any_element();
         };
         div()
+            .w_full()
             .child(content(0., 1.).with_animation(
                 ("all-clear", run),
                 Animation::new(ALL_CLEAR_DURATION),
