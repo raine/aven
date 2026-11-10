@@ -46,6 +46,9 @@ pub struct Layout {
     /// The login shell's `PATH` in order, when known.
     pub path: Option<Vec<PathBuf>>,
     pub brew_prefixes: Vec<PathBuf>,
+    /// The installed daemon's plist, under the legacy label while only that
+    /// one exists. A switch retargets it in place; Desktop's next install of
+    /// the agent moves it to the current label.
     pub agent_plist: PathBuf,
     /// Records a switch in progress, so it resumes after an interruption.
     pub state_file: PathBuf,
@@ -72,7 +75,7 @@ impl Layout {
             running,
             path: None,
             brew_prefixes: vec!["/opt/homebrew".into(), "/usr/local".into()],
-            agent_plist: service::agent_plist_path(&home),
+            agent_plist: service::installed_agent_plist_path(&home),
             // Not under XDG_STATE_HOME: the app and a terminal must agree on
             // it whatever their environment.
             state_file: home.join(".local/state/aven/desktop-setup.json"),

@@ -143,7 +143,8 @@ mod tests {
     fn bare_callers_never_open_the_app() {
         for (caller, parent, service) in [
             ("cron", 812, None),
-            ("launchd job", LAUNCHD, Some("com.raine.aven.daemon")),
+            ("launchd job", LAUNCHD, Some("fi.zendit.Aven.daemon")),
+            ("legacy launchd job", LAUNCHD, Some("com.raine.aven.daemon")),
             ("launchd job without a name", LAUNCHD, None),
             ("ssh -T", 4410, None),
             ("a script run by the app", 4410, OPENED.service),

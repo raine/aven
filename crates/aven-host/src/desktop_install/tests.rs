@@ -222,7 +222,7 @@ fn agent_plist(program: &Path) -> String {
 <plist version=\"1.0\">
 <dict>
   <key>Label</key>
-  <string>com.raine.aven.daemon</string>
+  <string>fi.zendit.Aven.daemon</string>
   <key>ProgramArguments</key>
   <array>
     <string>{}</string>
@@ -271,7 +271,7 @@ fn assert_settings_kept(plist: &Path) {
         "/Volumes/Data/config"
     );
     assert_eq!(extract(plist, "ThrottleInterval"), "45");
-    assert_eq!(extract(plist, "Label"), "com.raine.aven.daemon");
+    assert_eq!(extract(plist, "Label"), "fi.zendit.Aven.daemon");
 }
 
 fn keep_alive(plist: &Path) -> serde_json::Value {

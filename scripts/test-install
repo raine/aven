@@ -209,7 +209,7 @@ run_install "$old" darwin-arm64 "$old_home" "$old_bin" >"$tmp/old-again.log" 2>&
 # A release without an app archive never replaces a bundled install: the bare
 # binary would replace bin/aven while a migrated daemon keeps running the
 # newer bundle.
-plist="$home/Library/LaunchAgents/com.raine.aven.daemon.plist"
+plist="$home/Library/LaunchAgents/fi.zendit.Aven.daemon.plist"
 mkdir -p "$(dirname "$plist")"
 printf '<plist><array><string>%s</string></array></plist>\n' "$executable" >"$plist"
 plist_before=$(cat "$plist")

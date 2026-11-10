@@ -24,8 +24,14 @@ use crate::config;
 #[cfg(any(target_os = "linux", test))]
 mod systemd;
 
+/// The agent's launchd label, under Aven.app's bundle identifier.
 #[cfg(target_os = "macos")]
-const LABEL: &str = "com.raine.aven.daemon";
+const LABEL: &str = "fi.zendit.Aven.daemon";
+/// The label agents had before they were named after Aven.app. Installing,
+/// repairing or starting the agent retires a job under this label, so only one
+/// daemon runs against the database.
+#[cfg(target_os = "macos")]
+const LEGACY_LABEL: &str = "com.raine.aven.daemon";
 #[cfg(target_os = "macos")]
 const DEFAULT_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 #[cfg(target_os = "macos")]
@@ -90,12 +96,22 @@ pub fn install(args: ServiceInstallArgs) -> Result<InstalledService> {
     install_with_runner(args, &SystemRunner, &SystemSleeper)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn uninstall() -> Result<()> {
+    uninstall_with_runner(&SystemRunner, &ServiceSpec::current()?)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn uninstall() -> Result<()> {
     uninstall_with_runner(&SystemRunner)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn restart() -> Result<()> {
+    restart_with_runner(&SystemRunner, &ServiceSpec::current()?)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn restart() -> Result<()> {
     restart_with_runner(&SystemRunner)
 }
@@ -125,12 +141,24 @@ pub enum BundleMigration {
 
 #[cfg(target_os = "macos")]
 pub fn prepare_bundle_migration() -> Result<BundleMigration> {
-    prepare_bundle_migration_with_runner(&SystemRunner)
+    let running_as = std::env::var_os("XPC_SERVICE_NAME");
+    let Some(running_as) = running_as.as_ref().and_then(|name| name.to_str()) else {
+        return Ok(BundleMigration::NotNeeded);
+    };
+    let spec = ServiceSpec::current()?;
+    let current_exe = std::env::current_exe().context("resolve current executable")?;
+    prepare_bundle_migration_with_runner(
+        &SystemRunner,
+        &SystemSleeper,
+        &spec,
+        running_as,
+        &stable_program_path(&current_exe),
+    )
 }
 
 #[cfg(target_os = "macos")]
 pub fn reload_service_definition() -> Result<()> {
-    reload_definition_with_runner(&SystemRunner, &SystemSleeper)
+    reload_definition_with_runner(&SystemRunner, &SystemSleeper, &ServiceSpec::current()?)
 }
 
 /// Whether launchd has the agent loaded, and whether it is disabled from
@@ -144,7 +172,7 @@ pub struct AgentState {
 
 #[cfg(target_os = "macos")]
 pub fn agent_state() -> Result<AgentState> {
-    let spec = ServiceSpec::current()?;
+    let spec = ServiceSpec::current()?.installed();
     Ok(AgentState {
         loaded: service_is_loaded(&SystemRunner, &spec)?,
         disabled: service_is_disabled(&SystemRunner, &spec)?,
@@ -155,14 +183,14 @@ pub fn agent_state() -> Result<AgentState> {
 /// and enablement as they are.
 #[cfg(target_os = "macos")]
 pub fn stop_agent() -> Result<()> {
-    let spec = ServiceSpec::current()?;
+    let spec = ServiceSpec::current()?.installed();
     stop_service(&SystemRunner, &SystemSleeper, &spec).map(drop)
 }
 
 /// Loads the agent from its plist as it stands.
 #[cfg(target_os = "macos")]
 pub fn start_agent() -> Result<()> {
-    let spec = ServiceSpec::current()?;
+    let spec = ServiceSpec::current()?.installed();
     bootstrap_service(&SystemRunner, &SystemSleeper, &spec, true)
 }
 
@@ -171,6 +199,28 @@ pub fn start_agent() -> Result<()> {
 pub fn agent_plist_path(home: &Path) -> PathBuf {
     home.join("Library/LaunchAgents")
         .join(format!("{LABEL}.plist"))
+}
+
+/// The plist of the installed agent: the one under the legacy label while
+/// only that one exists.
+#[cfg(target_os = "macos")]
+pub fn installed_agent_plist_path(home: &Path) -> PathBuf {
+    installed_plist_path(agent_plist_path(home))
+}
+
+#[cfg(target_os = "macos")]
+fn installed_plist_path(plist: PathBuf) -> PathBuf {
+    let legacy = legacy_plist_path(&plist);
+    if !plist.exists() && legacy.exists() {
+        legacy
+    } else {
+        plist
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_plist_path(plist: &Path) -> PathBuf {
+    plist.with_file_name(format!("{LEGACY_LABEL}.plist"))
 }
 
 /// Whether System Settings > General > Login Items & Extensions lets the
@@ -246,9 +296,9 @@ pub fn ensure_agent(db_path: PathBuf) -> Result<Ensured> {
     ensure_with_runner(&SystemRunner, &SystemSleeper, &spec)
 }
 
-/// Stops the agent and removes its plist when it runs `program`. Leaves
-/// launchd's enablement alone, so a later install starts cleanly. Returns
-/// whether it removed one.
+/// Stops the agent and removes its plist when it runs `program`, under either
+/// label. Leaves launchd's enablement alone, so a later install starts
+/// cleanly. Returns whether it removed one.
 #[cfg(target_os = "macos")]
 pub fn remove_agent(program: &Path) -> Result<bool> {
     let spec = ServiceSpec::current()?;
@@ -369,16 +419,18 @@ fn install_with_runner(
 }
 
 #[cfg(target_os = "macos")]
-fn uninstall_with_runner(runner: &impl LaunchctlRunner) -> Result<()> {
-    let spec = ServiceSpec::current()?;
-    if service_is_loaded(runner, &spec)? {
-        run_launchctl(runner, &["bootout", &spec.service_target])?;
+fn uninstall_with_runner(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<()> {
+    let legacy = spec.legacy();
+    for spec in [spec, &legacy] {
+        if service_is_loaded(runner, spec)? {
+            run_launchctl(runner, &["bootout", &spec.service_target])?;
+        }
     }
     let _ = runner.run(&["disable", &spec.service_target]);
-    if spec.plist_path.exists() {
-        std::fs::remove_file(&spec.plist_path)
-            .with_context(|| format!("remove {}", spec.plist_path.display()))?;
+    if remove_plist(&legacy.plist_path)? {
+        println!("uninstalled {}", legacy.plist_path.display());
     }
+    remove_plist(&spec.plist_path)?;
     println!("uninstalled {}", spec.plist_path.display());
     Ok(())
 }
@@ -392,8 +444,8 @@ fn uninstall_with_runner(_runner: &impl LaunchctlRunner) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn restart_with_runner(runner: &impl LaunchctlRunner) -> Result<()> {
-    let spec = ServiceSpec::current()?;
+fn restart_with_runner(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<()> {
+    let spec = spec.installed();
     run_launchctl(runner, &["kickstart", "-k", &spec.service_target])?;
     println!("restarted {}", spec.service_target);
     Ok(())
@@ -414,7 +466,7 @@ fn repair_with_runner(
     sleeper: &impl Sleeper,
 ) -> Result<()> {
     let spec = ServiceSpec::from_install_args(args.db_path, args.program)?;
-    if !spec.plist_path.exists() {
+    if !spec.installed().plist_path.exists() {
         if args.if_installed {
             println!("daemon repair skipped installed=no");
             return Ok(());
@@ -448,7 +500,7 @@ fn repair_with_runner(
 
 #[cfg(target_os = "macos")]
 fn status_with_runner(runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
-    let spec = ServiceSpec::current()?;
+    let spec = ServiceSpec::current()?.installed();
     let program = read_plist_program(&spec.plist_path)?;
     let current_executable = std::env::current_exe().context("resolve current executable")?;
     let program_matches_current = program
@@ -497,66 +549,94 @@ fn status_with_runner(_runner: &impl LaunchctlRunner) -> Result<ServiceStatus> {
     })
 }
 
-/// Moves an agent that runs Aven.app's executable through a symlink onto the
-/// bundle path. Only plists that match what aven renders are rewritten, so
-/// the database, environment and log settings carry over unchanged.
+/// Moves the agent that runs this daemon onto the current label, and onto
+/// the bundle path when it runs Aven.app's executable through a symlink. Only
+/// plists that match what aven renders are rewritten, so the database,
+/// environment and log settings carry over unchanged. `running_as` is
+/// launchd's name for this process's job.
 #[cfg(target_os = "macos")]
-fn prepare_bundle_migration_with_runner(runner: &impl LaunchctlRunner) -> Result<BundleMigration> {
-    // launchd sets this for its jobs; anything else is a manual `aven daemon`.
-    if std::env::var_os("XPC_SERVICE_NAME").is_none_or(|name| name != LABEL) {
+fn prepare_bundle_migration_with_runner(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    base: &ServiceSpec,
+    running_as: &str,
+    program: &Path,
+) -> Result<BundleMigration> {
+    // launchd names its jobs this way; anything else is a manual `aven daemon`.
+    let installed = if running_as == base.label {
+        // A rename interrupted before its reload leaves the legacy plist,
+        // which would start a second daemon at the next login.
+        if legacy_plist_path(&base.plist_path).exists() {
+            retire_legacy(runner, sleeper, base)?;
+        }
+        base.clone()
+    } else if running_as == LEGACY_LABEL {
+        base.legacy()
+    } else {
         return Ok(BundleMigration::NotNeeded);
-    }
-    let base = ServiceSpec::current()?;
-    let existing = match std::fs::read_to_string(&base.plist_path) {
+    };
+    let existing = match std::fs::read_to_string(&installed.plist_path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(BundleMigration::NotNeeded);
         }
         Err(error) => {
-            return Err(error).with_context(|| format!("read {}", base.plist_path.display()));
+            return Err(error).with_context(|| format!("read {}", installed.plist_path.display()));
         }
     };
-    let current_exe = std::env::current_exe().context("resolve current executable")?;
-    let program = stable_program_path(&current_exe);
-    let plist = match bundle_migration_plist(&base, &existing, &program) {
+    let plist = match bundle_migration_plist(base, &installed.label, &existing, program) {
         Ok(Some(plist)) => plist,
         Ok(None) => return Ok(BundleMigration::NotNeeded),
         Err(reason) => return Ok(BundleMigration::Skipped(reason)),
     };
-    if service_is_disabled(runner, &base)? {
+    if service_is_disabled(runner, &installed)? {
         return Ok(BundleMigration::Skipped("disabled"));
     }
-    write_plist(&base, &plist)?;
-    Ok(BundleMigration::Prepared { program })
+    write_plist(base, &plist)?;
+    Ok(BundleMigration::Prepared {
+        program: program.to_path_buf(),
+    })
 }
 
-/// Renders `existing` with `program` as the executable, or `None` when the
-/// agent already runs from a bundle or `program` is not inside one.
+/// Renders `existing`, the plist of the agent under `installed_label`, under
+/// `base`'s label, with `program` as the executable when the agent runs it
+/// through a symlink. `None` when the agent already has the label and
+/// either runs from a bundle or `program` is not inside one.
 #[cfg(target_os = "macos")]
 fn bundle_migration_plist(
     base: &ServiceSpec,
+    installed_label: &str,
     existing: &str,
     program: &Path,
 ) -> Result<Option<String>, &'static str> {
-    if enclosing_bundle(program).is_none() {
+    let renamed = installed_label != base.label;
+    let program_bundled = enclosing_bundle(program).is_some();
+    if !renamed && !program_bundled {
         return Ok(None);
     }
     let mut spec = base
         .with_plist_settings(existing)
         .ok_or("unrecognized-plist")?;
-    if enclosing_bundle(&spec.executable).is_some() {
+    let into_bundle = program_bundled && enclosing_bundle(&spec.executable).is_none();
+    if !renamed && !into_bundle {
         return Ok(None);
     }
+    let as_installed = ServiceSpec {
+        label: installed_label.to_string(),
+        ..spec.clone()
+    };
     if [KeepAlive::Always, KeepAlive::WhileProgramExists]
         .into_iter()
-        .all(|keep_alive| render_plist_with(&spec, keep_alive) != existing)
+        .all(|keep_alive| render_plist_with(&as_installed, keep_alive) != existing)
     {
         return Err("customized-plist");
     }
-    if !crate::paths::same_file(&spec.executable, program) {
-        return Err("different-program");
+    if into_bundle {
+        if !crate::paths::same_file(&spec.executable, program) {
+            return Err("different-program");
+        }
+        spec.executable = program.to_path_buf();
     }
-    spec.executable = program.to_path_buf();
     Ok(Some(render_plist(&spec)))
 }
 
@@ -581,9 +661,13 @@ fn service_is_disabled(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Res
 fn reload_definition_with_runner(
     runner: &impl LaunchctlRunner,
     sleeper: &impl Sleeper,
+    current: &ServiceSpec,
 ) -> Result<()> {
-    let spec = ServiceSpec::current()?;
+    let spec = current.installed();
     let performed_bootout = stop_service(runner, sleeper, &spec)?;
+    if spec.label == current.label {
+        retire_legacy(runner, sleeper, current)?;
+    }
     bootstrap_service(runner, sleeper, &spec, performed_bootout)?;
     println!("reloaded {}", spec.service_target);
     Ok(())
@@ -673,6 +757,25 @@ impl ServiceSpec {
         spec.config_dir = env.get("AVEN_CONFIG_DIR").map(PathBuf::from);
         spec.state_home = env.get("XDG_STATE_HOME").map(PathBuf::from);
         Some(spec)
+    }
+
+    /// This spec under the legacy label.
+    fn legacy(&self) -> Self {
+        let mut spec = self.clone();
+        spec.label = LEGACY_LABEL.to_string();
+        spec.plist_path = legacy_plist_path(&self.plist_path);
+        spec.service_target = format!("{}/{LEGACY_LABEL}", self.domain);
+        spec
+    }
+
+    /// The spec of the installed agent: under the legacy label while only
+    /// its plist exists.
+    fn installed(&self) -> Self {
+        if installed_plist_path(self.plist_path.clone()) == self.plist_path {
+            self.clone()
+        } else {
+            self.legacy()
+        }
     }
 
     fn plist_path_str(&self) -> Result<&str> {
@@ -827,21 +930,52 @@ fn reload_service(
     spec: &ServiceSpec,
     plist: &str,
 ) -> Result<()> {
-    if spec.plist_path.exists() {
+    let legacy = spec.legacy();
+    if spec.plist_path.exists() || legacy.plist_path.exists() {
         ensure_login_item_allowed(runner, spec)?;
     }
     let performed_bootout = stop_service(runner, sleeper, spec)?;
+    // The legacy job stops before the new plist exists and its plist goes
+    // after, so an interruption leaves one of them to load at login.
+    stop_service(runner, sleeper, &legacy)?;
     write_plist(spec, plist)?;
+    remove_plist(&legacy.plist_path)?;
     run_launchctl(runner, &["enable", &spec.service_target])?;
     bootstrap_service(runner, sleeper, spec, performed_bootout)
 }
 
+/// Stops the agent under the legacy label and removes its plist.
+#[cfg(target_os = "macos")]
+fn retire_legacy(
+    runner: &impl LaunchctlRunner,
+    sleeper: &impl Sleeper,
+    spec: &ServiceSpec,
+) -> Result<()> {
+    let legacy = spec.legacy();
+    stop_service(runner, sleeper, &legacy)?;
+    remove_plist(&legacy.plist_path)?;
+    Ok(())
+}
+
+/// Removes `path`, returning whether it existed.
+#[cfg(target_os = "macos")]
+fn remove_plist(path: &Path) -> Result<bool> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
 /// Fails with [`TurnedOffInLoginItems`] when the user turned Aven off in
-/// Login Items. Login Items remembers that for the label, also across a
-/// removed and rewritten plist.
+/// Login Items, for this agent or for the one under the legacy label that it
+/// replaces. Login Items remembers that for the label, also across a removed
+/// and rewritten plist.
 #[cfg(target_os = "macos")]
 fn ensure_login_item_allowed(runner: &impl LaunchctlRunner, spec: &ServiceSpec) -> Result<()> {
-    if runner.login_item(&spec.plist_path) == LoginItem::TurnedOff {
+    let legacy = legacy_plist_path(&spec.plist_path);
+    let turned_off = |plist: &Path| runner.login_item(plist) == LoginItem::TurnedOff;
+    if turned_off(&spec.plist_path) || (legacy.exists() && turned_off(&legacy)) {
         return Err(TurnedOffInLoginItems.into());
     }
     Ok(())
@@ -852,6 +986,7 @@ fn agent_status_with_runner(
     runner: &impl LaunchctlRunner,
     spec: &ServiceSpec,
 ) -> Result<AgentStatus> {
+    let spec = &spec.installed();
     let runtime = service_runtime(runner, spec)?;
     Ok(AgentStatus {
         installed: spec.plist_path.exists(),
@@ -868,11 +1003,13 @@ fn ensure_with_runner(
     sleeper: &impl Sleeper,
     spec: &ServiceSpec,
 ) -> Result<Ensured> {
-    let existing = match std::fs::read_to_string(&spec.plist_path) {
+    // An agent under the legacy label keeps its settings as it moves over.
+    let installed = spec.installed().plist_path;
+    let existing = match std::fs::read_to_string(&installed) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
-            return Err(error).with_context(|| format!("read {}", spec.plist_path.display()));
+            return Err(error).with_context(|| format!("read {}", installed.display()));
         }
     };
     let spec = existing
@@ -888,7 +1025,9 @@ fn ensure_with_runner(
         })
         .unwrap_or_else(|| spec.clone());
     let plist = render_plist(&spec);
-    let result = if existing.as_deref() == Some(plist.as_str()) {
+    let result = if existing.as_deref() == Some(plist.as_str())
+        && !legacy_plist_path(&spec.plist_path).exists()
+    {
         if service_is_loaded(runner, &spec)? {
             return Ok(Ensured::Unchanged);
         }
@@ -913,19 +1052,19 @@ fn remove_with_runner(
     spec: &ServiceSpec,
     program: &Path,
 ) -> Result<bool> {
-    let Some(installed) = read_plist_program(&spec.plist_path)? else {
-        return Ok(false);
-    };
-    if !crate::paths::same_path(&installed, program) {
-        return Ok(false);
-    }
-    stop_service(runner, sleeper, spec)?;
-    match std::fs::remove_file(&spec.plist_path) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            Err(error).with_context(|| format!("remove {}", spec.plist_path.display()))
+    let mut removed = false;
+    for spec in [spec.legacy(), spec.clone()] {
+        let Some(installed) = read_plist_program(&spec.plist_path)? else {
+            continue;
+        };
+        if !crate::paths::same_path(&installed, program) {
+            continue;
         }
-        _ => Ok(true),
+        stop_service(runner, sleeper, &spec)?;
+        remove_plist(&spec.plist_path)?;
+        removed = true;
     }
+    Ok(removed)
 }
 
 /// Boots out a loaded service and waits until launchd releases it. Returns
@@ -1256,7 +1395,7 @@ mod tests {
     #[test]
     fn renders_daemon_plist() {
         let spec = ServiceSpec {
-            label: "com.raine.aven.daemon".to_string(),
+            label: "fi.zendit.Aven.daemon".to_string(),
             executable: PathBuf::from("/bin/aven&test"),
             db_path: PathBuf::from("/tmp/db.sqlite"),
             config_dir: Some(PathBuf::from("/tmp/config")),
@@ -1265,12 +1404,12 @@ mod tests {
             log_dir: PathBuf::from("/tmp/logs"),
             stdout_path: PathBuf::from("/tmp/logs/out.log"),
             stderr_path: PathBuf::from("/tmp/logs/err.log"),
-            plist_path: PathBuf::from("/tmp/com.raine.aven.daemon.plist"),
+            plist_path: PathBuf::from("/tmp/fi.zendit.Aven.daemon.plist"),
             domain: "gui/501".to_string(),
-            service_target: "gui/501/com.raine.aven.daemon".to_string(),
+            service_target: "gui/501/fi.zendit.Aven.daemon".to_string(),
         };
         let plist = render_plist(&spec);
-        assert!(plist.contains("<string>com.raine.aven.daemon</string>"));
+        assert!(plist.contains("<string>fi.zendit.Aven.daemon</string>"));
         assert!(plist.contains("<string>/bin/aven&amp;test</string>"));
         assert!(plist.contains("<string>--db</string>"));
         assert!(plist.contains("<string>/tmp/db.sqlite</string>"));
@@ -1351,7 +1490,7 @@ mod tests {
 
     #[test]
     fn reload_bootstraps_an_absent_service_without_waiting() {
-        let runner = FakeRunner::new(vec![absent(), success(), success()]);
+        let runner = FakeRunner::new(vec![absent(), absent(), success(), success()]);
         let sleeper = RecordingSleeper::default();
         let spec = test_spec();
 
@@ -1360,8 +1499,9 @@ mod tests {
         assert_eq!(
             runner.commands(),
             vec![
-                vec!["print", "gui/501/com.raine.aven.daemon"],
-                vec!["enable", "gui/501/com.raine.aven.daemon"],
+                vec!["print", "gui/501/fi.zendit.Aven.daemon"],
+                vec!["print", LEGACY_TARGET],
+                vec!["enable", "gui/501/fi.zendit.Aven.daemon"],
                 vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
             ]
         );
@@ -1375,6 +1515,7 @@ mod tests {
             success(),
             success(),
             absent(),
+            absent(),
             success(),
             success(),
         ]);
@@ -1386,11 +1527,12 @@ mod tests {
         assert_eq!(
             runner.commands(),
             vec![
-                vec!["print", "gui/501/com.raine.aven.daemon"],
-                vec!["bootout", "gui/501/com.raine.aven.daemon"],
-                vec!["print", "gui/501/com.raine.aven.daemon"],
-                vec!["print", "gui/501/com.raine.aven.daemon"],
-                vec!["enable", "gui/501/com.raine.aven.daemon"],
+                vec!["print", "gui/501/fi.zendit.Aven.daemon"],
+                vec!["bootout", "gui/501/fi.zendit.Aven.daemon"],
+                vec!["print", "gui/501/fi.zendit.Aven.daemon"],
+                vec!["print", "gui/501/fi.zendit.Aven.daemon"],
+                vec!["print", LEGACY_TARGET],
+                vec!["enable", "gui/501/fi.zendit.Aven.daemon"],
                 vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
             ]
         );
@@ -1402,6 +1544,7 @@ mod tests {
         let runner = FakeRunner::new(vec![
             success(),
             success(),
+            absent(),
             absent(),
             success(),
             failure_with_status(5),
@@ -1426,7 +1569,7 @@ mod tests {
 
     #[test]
     fn fresh_bootstrap_status_five_fails_without_retrying() {
-        let runner = FakeRunner::new(vec![absent(), success(), failure_with_status(5)]);
+        let runner = FakeRunner::new(vec![absent(), absent(), success(), failure_with_status(5)]);
         let sleeper = RecordingSleeper::default();
         let spec = test_spec();
 
@@ -1466,7 +1609,7 @@ mod tests {
 
     #[test]
     fn reload_bounds_status_five_retries() {
-        let mut outputs = vec![success(), success(), absent(), success()];
+        let mut outputs = vec![success(), success(), absent(), absent(), success()];
         for _ in 0..=BOOTSTRAP_RETRY_DELAYS.len() {
             outputs.push(failure_with_status(5));
             outputs.push(absent());
@@ -1525,7 +1668,7 @@ mod tests {
         run_launchctl(&runner, &["kickstart", "-k", &spec.service_target]).unwrap();
         assert_eq!(
             runner.commands(),
-            vec![vec!["kickstart", "-k", "gui/501/com.raine.aven.daemon"]]
+            vec![vec!["kickstart", "-k", "gui/501/fi.zendit.Aven.daemon"]]
         );
     }
 
@@ -1618,7 +1761,7 @@ mod tests {
         let existing = render_plist(&installed);
 
         // The running process may see different settings; the plist wins.
-        let migrated = bundle_migration_plist(&base, &existing, &program)
+        let migrated = bundle_migration_plist(&base, &base.label, &existing, &program)
             .unwrap()
             .unwrap();
 
@@ -1626,13 +1769,34 @@ mod tests {
         expected.executable = program.clone();
         assert_eq!(migrated, render_plist(&expected));
         assert!(migrated.contains("AssociatedBundleIdentifiers"));
-        assert_eq!(bundle_migration_plist(&base, &migrated, &program), Ok(None));
+        assert_eq!(
+            bundle_migration_plist(&base, &base.label, &migrated, &program),
+            Ok(None)
+        );
+
+        // An agent under the legacy label moves to the label as well, also
+        // when it already runs from the bundle.
+        let as_legacy = |spec: &ServiceSpec| {
+            render_plist(&ServiceSpec {
+                label: LEGACY_LABEL.to_string(),
+                ..spec.clone()
+            })
+        };
+        assert_eq!(
+            bundle_migration_plist(&base, LEGACY_LABEL, &as_legacy(&installed), &program),
+            Ok(Some(migrated.clone()))
+        );
+        assert_eq!(
+            bundle_migration_plist(&base, LEGACY_LABEL, &as_legacy(&expected), &program),
+            Ok(Some(migrated.clone()))
+        );
+        assert!(migrated.contains("<string>fi.zendit.Aven.daemon</string>"));
 
         // Agents installed before KeepAlive followed the program move too.
         let legacy = render_plist_with(&installed, KeepAlive::Always);
         assert!(legacy.contains("<key>KeepAlive</key>\n  <true/>\n"));
         assert_eq!(
-            bundle_migration_plist(&base, &legacy, &program),
+            bundle_migration_plist(&base, &base.label, &legacy, &program),
             Ok(Some(migrated))
         );
     }
@@ -1646,7 +1810,12 @@ mod tests {
         let existing = render_plist(&installed);
 
         assert_eq!(
-            bundle_migration_plist(&base, &existing, Path::new("/opt/homebrew/bin/aven")),
+            bundle_migration_plist(
+                &base,
+                &base.label,
+                &existing,
+                Path::new("/opt/homebrew/bin/aven")
+            ),
             Ok(None)
         );
         let customized = existing.replacen(
@@ -1656,7 +1825,7 @@ mod tests {
         );
         assert_ne!(customized, existing);
         assert_eq!(
-            bundle_migration_plist(&base, &customized, &program),
+            bundle_migration_plist(&base, &base.label, &customized, &program),
             Err("customized-plist")
         );
         let extra_argument = existing.replace(
@@ -1664,12 +1833,12 @@ mod tests {
             "<string>daemon</string>\n    <string>--verbose</string>",
         );
         assert_eq!(
-            bundle_migration_plist(&base, &extra_argument, &program),
+            bundle_migration_plist(&base, &base.label, &extra_argument, &program),
             Err("unrecognized-plist")
         );
         let (_, other_program) = linked_bundle();
         assert_eq!(
-            bundle_migration_plist(&base, &existing, &other_program),
+            bundle_migration_plist(&base, &base.label, &existing, &other_program),
             Err("different-program")
         );
     }
@@ -1678,10 +1847,10 @@ mod tests {
     fn disabled_services_are_detected_in_both_launchctl_formats() {
         let spec = test_spec();
         for (listing, disabled) in [
-            ("\t\"com.raine.aven.daemon\" => disabled\n", true),
-            ("\t\"com.raine.aven.daemon\" => true\n", true),
-            ("\t\"com.raine.aven.daemon\" => enabled\n", false),
-            ("\t\"com.raine.aven.daemon.other\" => disabled\n", false),
+            ("\t\"fi.zendit.Aven.daemon\" => disabled\n", true),
+            ("\t\"fi.zendit.Aven.daemon\" => true\n", true),
+            ("\t\"fi.zendit.Aven.daemon\" => enabled\n", false),
+            ("\t\"fi.zendit.Aven.daemon.other\" => disabled\n", false),
             ("", false),
         ] {
             let runner = FakeRunner::new(vec![success_with_stdout(listing)]);
@@ -1697,7 +1866,7 @@ mod tests {
     #[test]
     fn ensure_installs_and_starts_a_missing_agent() {
         let spec = test_spec();
-        let runner = FakeRunner::new(vec![absent(), success(), success()]);
+        let runner = FakeRunner::new(vec![absent(), absent(), success(), success()]);
         let sleeper = RecordingSleeper::default();
         assert_eq!(
             ensure_with_runner(&runner, &sleeper, &spec).unwrap(),
@@ -1710,8 +1879,9 @@ mod tests {
         assert_eq!(
             runner.commands(),
             [
-                vec!["print", "gui/501/com.raine.aven.daemon"],
-                vec!["enable", "gui/501/com.raine.aven.daemon"],
+                vec!["print", "gui/501/fi.zendit.Aven.daemon"],
+                vec!["print", LEGACY_TARGET],
+                vec!["enable", "gui/501/fi.zendit.Aven.daemon"],
                 vec!["bootstrap", "gui/501", spec.plist_path.to_str().unwrap()],
             ]
         );
@@ -1735,7 +1905,7 @@ mod tests {
         );
         assert_eq!(
             runner.commands(),
-            [["print", "gui/501/com.raine.aven.daemon"]]
+            [["print", "gui/501/fi.zendit.Aven.daemon"]]
         );
     }
 
@@ -1751,7 +1921,7 @@ mod tests {
         );
         assert_eq!(
             runner.commands(),
-            [["print", "gui/501/com.raine.aven.daemon"]]
+            [["print", "gui/501/fi.zendit.Aven.daemon"]]
         );
 
         let stale = "<plist/>";
@@ -1792,12 +1962,168 @@ mod tests {
         assert_eq!(
             runner.commands(),
             [
-                ["print", "gui/501/com.raine.aven.daemon"],
-                ["bootout", "gui/501/com.raine.aven.daemon"],
-                ["print", "gui/501/com.raine.aven.daemon"],
+                ["print", "gui/501/fi.zendit.Aven.daemon"],
+                ["bootout", "gui/501/fi.zendit.Aven.daemon"],
+                ["print", "gui/501/fi.zendit.Aven.daemon"],
             ]
         );
         assert!(!remove_with_runner(&runner, &sleeper, &spec, &spec.executable).unwrap());
+    }
+
+    const LEGACY_TARGET: &str = "gui/501/com.raine.aven.daemon";
+    const TARGET: &str = "gui/501/fi.zendit.Aven.daemon";
+
+    /// A spec whose only installed agent is under the legacy label.
+    fn legacy_install() -> (ServiceSpec, ServiceSpec) {
+        let spec = test_spec();
+        let legacy = spec.legacy();
+        write_plist(&legacy, &render_plist(&legacy)).unwrap();
+        (spec, legacy)
+    }
+
+    #[test]
+    fn ensure_moves_a_legacy_agent_to_the_label_and_keeps_its_settings() {
+        let mut spec = test_spec();
+        spec.executable = PathBuf::from("/bin/sh");
+        let mut legacy = spec.legacy();
+        legacy.path_env = "/custom/bin:/usr/bin".to_string();
+        legacy.config_dir = Some(PathBuf::from("/config/aven"));
+        write_plist(&legacy, &render_plist_with(&legacy, KeepAlive::Always)).unwrap();
+        let runner = FakeRunner::new(vec![absent(), success(), success(), absent()]);
+        let sleeper = RecordingSleeper::default();
+
+        assert_eq!(
+            ensure_with_runner(&runner, &sleeper, &spec).unwrap(),
+            Ensured::Started
+        );
+
+        let expected = ServiceSpec {
+            path_env: legacy.path_env.clone(),
+            config_dir: legacy.config_dir.clone(),
+            ..spec.clone()
+        };
+        assert_eq!(
+            std::fs::read_to_string(&spec.plist_path).unwrap(),
+            render_plist(&expected)
+        );
+        assert!(!legacy.plist_path.exists());
+        assert_eq!(
+            runner.commands(),
+            [
+                vec!["print", TARGET],
+                vec!["print", LEGACY_TARGET],
+                vec!["bootout", LEGACY_TARGET],
+                vec!["print", LEGACY_TARGET],
+                vec!["enable", TARGET],
+                vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_legacy_agent_turned_off_in_login_items_stays_off() {
+        let (spec, legacy) = legacy_install();
+        let runner = FakeRunner::new(vec![]).turned_off_at(&legacy.plist_path);
+
+        assert_eq!(
+            ensure_with_runner(&runner, &RecordingSleeper::default(), &spec).unwrap(),
+            Ensured::TurnedOff
+        );
+
+        assert!(runner.commands().is_empty());
+        assert!(legacy.plist_path.exists());
+        assert!(!spec.plist_path.exists());
+    }
+
+    #[test]
+    fn status_and_restart_address_the_legacy_agent_until_it_moves() {
+        let (spec, legacy) = legacy_install();
+
+        let runner = FakeRunner::new(vec![success_with_stdout("state = running\n")]);
+        assert_eq!(
+            agent_status_with_runner(&runner, &spec).unwrap(),
+            AgentStatus {
+                installed: true,
+                program: Some(legacy.executable.clone()),
+                loaded: true,
+                running: true,
+                login_item: LoginItem::Allowed,
+            }
+        );
+        assert_eq!(runner.commands(), [["print", LEGACY_TARGET]]);
+
+        let runner = FakeRunner::new(vec![success()]);
+        restart_with_runner(&runner, &spec).unwrap();
+        assert_eq!(runner.commands(), [["kickstart", "-k", LEGACY_TARGET]]);
+        assert!(legacy.plist_path.exists());
+        assert!(!spec.plist_path.exists());
+    }
+
+    #[test]
+    fn uninstall_removes_the_agent_under_both_labels() {
+        let spec = test_spec();
+        write_plist(&spec, &render_plist(&spec)).unwrap();
+        let legacy = spec.legacy();
+        write_plist(&legacy, &render_plist(&legacy)).unwrap();
+        let runner = FakeRunner::new(vec![success(), success(), success(), success()]);
+
+        uninstall_with_runner(&runner, &spec).unwrap();
+
+        assert!(!spec.plist_path.exists());
+        assert!(!legacy.plist_path.exists());
+        assert_eq!(
+            runner.commands(),
+            [
+                vec!["print", TARGET],
+                vec!["bootout", TARGET],
+                vec!["print", LEGACY_TARGET],
+                vec!["bootout", LEGACY_TARGET],
+                vec!["disable", TARGET],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_legacy_daemon_moves_itself_to_the_label() {
+        let (spec, legacy) = legacy_install();
+        let sleeper = RecordingSleeper::default();
+
+        // The daemon writes the renamed plist; launchd still runs the legacy job.
+        let runner = FakeRunner::new(vec![success()]);
+        assert_eq!(
+            prepare_bundle_migration_with_runner(
+                &runner,
+                &sleeper,
+                &spec,
+                LEGACY_LABEL,
+                &legacy.executable,
+            )
+            .unwrap(),
+            BundleMigration::Prepared {
+                program: legacy.executable.clone(),
+            }
+        );
+        assert_eq!(runner.commands(), [["print-disabled", "gui/501"]]);
+        assert_eq!(
+            std::fs::read_to_string(&spec.plist_path).unwrap(),
+            render_plist(&spec)
+        );
+        assert!(legacy.plist_path.exists());
+
+        // The reload it starts swaps the legacy job for the renamed one.
+        let runner = FakeRunner::new(vec![absent(), success(), success(), absent(), success()]);
+        reload_definition_with_runner(&runner, &sleeper, &spec).unwrap();
+        assert!(!legacy.plist_path.exists());
+        assert_eq!(
+            runner.commands(),
+            [
+                vec!["print", TARGET],
+                vec!["print", LEGACY_TARGET],
+                vec!["bootout", LEGACY_TARGET],
+                vec!["print", LEGACY_TARGET],
+                vec!["bootstrap", "gui/501", spec.plist_path_str().unwrap()],
+            ]
+        );
     }
 
     fn test_spec() -> ServiceSpec {
@@ -1812,9 +2138,9 @@ mod tests {
             log_dir: dir.join("logs"),
             stdout_path: dir.join("logs/out.log"),
             stderr_path: dir.join("logs/err.log"),
-            plist_path: dir.join("LaunchAgents/com.raine.aven.daemon.plist"),
+            plist_path: dir.join(format!("LaunchAgents/{LABEL}.plist")),
             domain: "gui/501".to_string(),
-            service_target: "gui/501/com.raine.aven.daemon".to_string(),
+            service_target: format!("gui/501/{LABEL}"),
         }
     }
 
@@ -1822,6 +2148,7 @@ mod tests {
         outputs: Mutex<Vec<Output>>,
         commands: Mutex<Vec<Vec<String>>>,
         login_item: LoginItem,
+        turned_off_plist: Option<PathBuf>,
     }
 
     #[derive(Default)]
@@ -1848,11 +2175,18 @@ mod tests {
                 outputs: Mutex::new(outputs),
                 commands: Mutex::new(Vec::new()),
                 login_item: LoginItem::Allowed,
+                turned_off_plist: None,
             }
         }
 
         fn turned_off(mut self) -> Self {
             self.login_item = LoginItem::TurnedOff;
+            self
+        }
+
+        /// Login Items has only the agent at `plist` turned off.
+        fn turned_off_at(mut self, plist: &Path) -> Self {
+            self.turned_off_plist = Some(plist.to_path_buf());
             self
         }
 
@@ -1870,8 +2204,12 @@ mod tests {
             Ok(self.outputs.lock().unwrap().pop().unwrap_or_else(success))
         }
 
-        fn login_item(&self, _plist: &Path) -> LoginItem {
-            self.login_item
+        fn login_item(&self, plist: &Path) -> LoginItem {
+            if self.turned_off_plist.as_deref() == Some(plist) {
+                LoginItem::TurnedOff
+            } else {
+                self.login_item
+            }
         }
     }
 

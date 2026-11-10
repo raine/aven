@@ -55,15 +55,17 @@ cask "aven" do
   zap script: {
         executable: "/bin/sh",
         args:       ["-c", <<~SH],
-          plist="\$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
-          [ -f "\$plist" ] || exit 0
-          program=\$(/usr/bin/plutil -extract ProgramArguments.0 raw -o - "\$plist" 2>/dev/null) || exit 0
-          case \$program in
-            "#{appdir}/Aven.app/"*) ;;
-            *) exit 0 ;;
-          esac
-          /bin/launchctl bootout "gui/\$(/usr/bin/id -u)/com.raine.aven.daemon" 2>/dev/null
-          /bin/rm -f "\$plist"
+          for label in fi.zendit.Aven.daemon com.raine.aven.daemon; do
+            plist="\$HOME/Library/LaunchAgents/\$label.plist"
+            [ -f "\$plist" ] || continue
+            program=\$(/usr/bin/plutil -extract ProgramArguments.0 raw -o - "\$plist" 2>/dev/null) || continue
+            case \$program in
+              "#{appdir}/Aven.app/"*) ;;
+              *) continue ;;
+            esac
+            /bin/launchctl bootout "gui/\$(/usr/bin/id -u)/\$label" 2>/dev/null
+            /bin/rm -f "\$plist"
+          done
         SH
       },
       trash:  [

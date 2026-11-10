@@ -282,8 +282,8 @@ install-release:
 install-dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    daemon_plist="$HOME/Library/LaunchAgents/com.raine.aven.daemon.plist"
-    if [[ -f "$daemon_plist" ]]; then
+    agents="$HOME/Library/LaunchAgents"
+    if [[ -f "$agents/fi.zendit.Aven.daemon.plist" || -f "$agents/com.raine.aven.daemon.plist" ]]; then
         echo "Error: install-dev cannot replace the binary used by the installed daemon" >&2
         echo "Use 'just install', or 'just install-app' with Aven.app in /Applications, for a daemon-safe local installation, or uninstall the daemon first" >&2
         exit 1

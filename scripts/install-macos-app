@@ -73,9 +73,11 @@ lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 "$target/Contents/MacOS/aven" internal desktop-setup
 
 # A daemon that already ran from this path still runs the replaced executable.
-service="gui/$(id -u)/com.raine.aven.daemon"
-if launchctl print "$service" >/dev/null 2>&1; then
-  launchctl kickstart -k "$service"
-fi
+for label in fi.zendit.Aven.daemon com.raine.aven.daemon; do
+  service="gui/$(id -u)/$label"
+  if launchctl print "$service" >/dev/null 2>&1; then
+    launchctl kickstart -k "$service"
+  fi
+done
 
 echo "Installed $target ($version)"

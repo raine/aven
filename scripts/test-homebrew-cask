@@ -85,7 +85,7 @@ fi
 
 # The zap script unloads and removes the agent only when it runs Aven.app.
 # shellcheck disable=SC2016 # The script's own command substitution.
-grep -qF '/bin/launchctl bootout "gui/$(/usr/bin/id -u)/com.raine.aven.daemon"' "$tmp/zap.sh" ||
+grep -qF '/bin/launchctl bootout "gui/$(/usr/bin/id -u)/$label"' "$tmp/zap.sh" ||
   fail "zap script does not unload the agent"
 cat >"$tmp/launchctl" <<'SH'
 #!/bin/sh
@@ -96,6 +96,9 @@ sed "s|/bin/launchctl|$tmp/launchctl|" "$tmp/zap.sh" >"$tmp/zap-stubbed.sh"
 if grep -q '/bin/launchctl' "$tmp/zap-stubbed.sh"; then
   fail "zap script still calls launchctl"
 fi
+# The agent's label, and the one it had before it was named after Aven.app.
+label=fi.zendit.Aven.daemon
+legacy_label=com.raine.aven.daemon
 agent_plist() {
   cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -103,7 +106,7 @@ agent_plist() {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.raine.aven.daemon</string>
+  <string>$label</string>
   <key>ProgramArguments</key>
   <array>
     <string>$1</string>
@@ -113,11 +116,12 @@ agent_plist() {
 </plist>
 PLIST
 }
-# Runs the zap script with a new HOME whose agent plist holds $1, or no plist
-# when $1 is empty. Sets $plist and logs launchctl's arguments to $home.log.
+# Runs the zap script with a new HOME whose agent plist under $label holds $1,
+# or no plist when $1 is empty. Sets $plist and logs launchctl's arguments to
+# $home.log.
 zap_agent() {
   home=$(mktemp -d "$tmp/home.XXXXXX")
-  plist="$home/Library/LaunchAgents/com.raine.aven.daemon.plist"
+  plist="$home/Library/LaunchAgents/$label.plist"
   mkdir -p "$home/Library/LaunchAgents"
   : >"$home.log"
   if [[ -n $1 ]]; then
@@ -131,9 +135,13 @@ if [[ $(uname -s) == Darwin ]]; then
   zap_agent ''
   [[ ! -s $home.log ]] || fail "zap unloads a missing agent"
   zap_agent "$(agent_plist /Applications/Aven.app/Contents/MacOS/aven)"
-  [[ $(<"$home.log") == "bootout gui/$(id -u)/com.raine.aven.daemon" ]] ||
+  [[ $(<"$home.log") == "bootout gui/$(id -u)/$label" ]] ||
     fail "zap ran launchctl $(<"$home.log")"
   [[ ! -e $plist ]] || fail "zap keeps the Aven.app agent"
+  label=$legacy_label zap_agent "$(label=$legacy_label agent_plist /Applications/Aven.app/Contents/MacOS/aven)"
+  [[ $(<"$home.log") == "bootout gui/$(id -u)/$legacy_label" ]] ||
+    fail "zap ran launchctl $(<"$home.log") for the legacy agent"
+  [[ ! -e $plist ]] || fail "zap keeps the legacy Aven.app agent"
   for program in "$HOME/.local/bin/aven" /opt/homebrew/opt/aven/Aven.app/Contents/MacOS/aven \
     /Applications/Aven.app.old/Contents/MacOS/aven; do
     zap_agent "$(agent_plist "$program")"
