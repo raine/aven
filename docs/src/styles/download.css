@@ -1,44 +1,67 @@
-.download { max-width: 44rem; margin-inline: auto; padding: 5rem 0 6rem; }
-.download h1 { font-size: clamp(2.5rem, calc(1rem + 2.8vw), 3.25rem); letter-spacing: -0.125rem; }
-.download-lead { margin-top: 1rem; color: var(--muted); font-size: 1.125rem; line-height: 1.6; }
+.download { padding: 4.8125rem 0 6rem; }
+.download h1 { margin-top: 1.5rem; font-size: clamp(2.75rem, calc(1rem + 3.18889vw), 3.875rem); letter-spacing: -0.175rem; }
+.download-lead { max-width: 32.5rem; margin-top: 1.25rem; color: var(--muted); font-size: 1.125rem; line-height: 1.65; text-wrap: pretty; }
 .download code { color: #dac4f3; }
 
-.download-platform { margin-top: 2.5rem; padding: 1.75rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--panel); scroll-margin-top: 1.5rem; }
-.download-platform + .download-platform { margin-top: 1rem; }
-.download-platform-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1rem; }
-.download-platform h2 { margin: 0; font-size: 1.5rem; font-weight: 600; letter-spacing: -0.03125rem; }
-.download-platform-head p { color: var(--faint); font: 0.8125rem/1.6 var(--mono); }
-.download-platform > p:not([class]) { margin-top: 0.625rem; color: var(--muted); font-size: 1rem; line-height: 1.6; }
-.download-platform > p:not([class]) a { color: var(--violet); }
-.download-platform > p:not([class]) a:hover { color: var(--aven-violet-bright); }
+/* A ledger of rows: what it is and needs on the left, what to do on the right. */
+.download-ledger { margin-top: 3.5rem; border-bottom: 1px solid var(--line); }
+.download-tier-head { padding: 1.5rem 1.5rem 1.75rem; border-top: 1px solid var(--violet); background: linear-gradient(180deg, #171620, transparent); }
+.download-tier-head h2 { margin: 0; font-size: 2.125rem; line-height: 1.2; letter-spacing: -0.0625rem; }
+.download-tier-head p { margin-top: 0.625rem; color: var(--muted); font-size: 1rem; line-height: 1.6; }
+.download-row { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 2rem; padding: 1.75rem 1.5rem; border-top: 1px solid var(--line); scroll-margin-top: 1.5rem; }
+.download-spec :is(h2, h3) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem 0.625rem; margin: 0; font-size: 1.5rem; font-weight: 600; line-height: 1.3; letter-spacing: -0.03125rem; }
+.download-spec ul { margin: 0.5rem 0 0; padding: 0; list-style: none; color: var(--faint); font: 0.8125rem/1.7 var(--mono); }
+.download-actions { min-width: 0; }
 
-.download-mac { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem; margin-top: 1.5rem; }
-.download-button { display: inline-flex; padding: 0.8125rem 1.375rem; border: 1px solid #9d59ef; border-radius: 0.5rem; background: linear-gradient(100deg, #8728fa, #a162ef); color: #fff; font: 0.9375rem/1.5 var(--mono); }
+/* Tags the visitor's platform; PlatformDetect sets data-platform. */
+:root[data-platform='mac'] #mac h3::after,
+:root[data-platform='linux'] #linux h3::after,
+:root:is([data-platform='ios'], [data-platform='android']) #phone h2::after { content: 'this device'; padding: 0.125rem 0.5rem; border: 1px solid var(--aven-violet-line); border-radius: 6.1875rem; color: var(--aven-violet-tint); font: 0.6875rem/1.5 var(--mono); letter-spacing: .02em; }
+
+.download-mac { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem; }
+.download-button { display: inline-flex; justify-content: center; padding: 0.8125rem 1.375rem; border: 1px solid #9d59ef; border-radius: 0.5rem; background: linear-gradient(100deg, #8728fa, #a162ef); color: #fff; font: 0.9375rem/1.5 var(--mono); }
 .download-button:hover { border-color: #d5b5ff; }
+/* Off a Mac, the DMG isn't this visitor's download, so it steps back. */
+:root:is([data-platform='linux'], [data-platform='ios'], [data-platform='android']) .download-button { border-color: #35332f; background: #222321; color: var(--ink); }
+:root:is([data-platform='linux'], [data-platform='ios'], [data-platform='android']) .download-button:hover { border-color: #706960; }
 .download-intel { color: var(--faint); font: 0.8125rem/1.6 var(--mono); }
-.download-intel a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 0.1875rem; }
-.download-intel a:hover { color: var(--ink); text-decoration-color: var(--faint); }
+.download-intel a, .download-note a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 0.1875rem; }
+.download-intel a:hover, .download-note a:hover { color: var(--ink); text-decoration-color: var(--faint); }
 
-.download-label { margin: 1.5rem 0 0.5rem; color: var(--faint); font: 0.75rem/1.6 var(--mono); }
-.download-label + .download-command + .download-label { margin-top: 1rem; }
+.download-text { color: var(--muted); font-size: 1rem; line-height: 1.6; }
+.download-label { margin: 1.25rem 0 0.5rem; color: var(--faint); font: 0.75rem/1.6 var(--mono); }
+.download-text + .download-label { margin-top: 1rem; }
 .download-command { display: flex; align-items: center; gap: 0.75rem; padding: 0.625rem 0.625rem 0.625rem 1rem; border: 1px solid #4b3a66; border-radius: 0.5rem; background: #171620; font: 0.8125rem/1.6 var(--mono); }
-.download-command > span { align-self: flex-start; color: var(--violet); user-select: none; }
+.download-command > span { color: var(--violet); user-select: none; }
 .download-command code { flex: 1; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
 .download-command button { flex: none; padding: 0.3125rem 0.5625rem; border: 1px solid #31322f; border-radius: 0.25rem; background: #222321; color: #bfbcb4; font: 0.75rem/1.4 var(--mono); }
 .download-command button:hover { color: var(--ink); border-color: #585853; }
-.download-command-first { margin-top: 1.5rem; }
-.download-note { margin-top: 1.25rem; color: var(--faint); font-size: 0.875rem; line-height: 1.6; }
-.download-note a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 0.1875rem; }
-.download-note a:hover { color: var(--ink); }
+.download-note { margin-top: 1rem; color: var(--faint); font-size: 0.875rem; line-height: 1.6; }
 
-.download-stores { display: flex; flex-wrap: wrap; align-items: center; gap: 0.875rem; margin-top: 1.25rem; }
+.download-more { margin-top: 1rem; }
+.download-more summary { width: fit-content; color: var(--muted); font: 0.8125rem/1.6 var(--mono); cursor: pointer; }
+.download-more summary:hover { color: var(--ink); }
+.download-more .download-note { margin: 0.5rem 0 0.75rem; }
+
+.download-stores { display: flex; flex-wrap: wrap; align-items: center; gap: 0.875rem; }
+.download-phone-link { margin-top: 1.25rem; font: 0.875rem/1.7 var(--mono); }
+
+@media (max-width: 62.5em) {
+  .download-row { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .download-spec ul { display: flex; flex-wrap: wrap; gap: 0 1rem; margin-top: 0.25rem; }
+}
 
 @media (max-width: 47.5em) {
-  .download { padding: 3.5rem 0 4.5rem; }
+  .download { padding: 3.1875rem 0 4.5rem; }
   .download-lead { font-size: 1rem; }
-  .download-platform { padding: 1.375rem 1.25rem; }
+  .download-ledger { margin-top: 2.5rem; }
+  .download-row { padding-inline: 0; }
+  .download-tier-head { padding-inline: 1rem; }
+  .download-tier-head h2 { font-size: 1.75rem; }
+  .download-button { width: 100%; }
 }
 
 @media (max-width: 62.5em), (pointer: coarse) {
   .download-command button { min-width: 2.75rem; min-height: 2.5rem; }
+  .download-more summary { padding-block: 0.625rem; }
 }

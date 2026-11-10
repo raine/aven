@@ -1,0 +1,17 @@
+---
+// Sets <html data-platform> to mac, linux, ios, android or other (Windows,
+// ChromeOS) before first paint, so pages can lead with the visitor's download.
+// Unrecognized platforms leave it unset.
+---
+<script is:inline>
+  (() => {
+    const ua = navigator.userAgent;
+    const platform = /iPhone|iPod/.test(ua) ? 'ios'
+      : /Android/.test(ua) ? 'android'
+      : /Macintosh/.test(ua) ? 'mac'
+      : /Windows|CrOS/.test(ua) ? 'other'
+      : /Linux|X11/.test(ua) ? 'linux'
+      : undefined;
+    if (platform) document.documentElement.dataset.platform = platform;
+  })();
+</script>

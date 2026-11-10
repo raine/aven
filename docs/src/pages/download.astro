@@ -2,7 +2,9 @@
 import Brand from '../components/Brand.astro';
 import GitHubIcon from '../components/GitHubIcon.astro';
 import ExternalLinkIcon from '../components/ExternalLinkIcon.astro';
+import ArrowRightIcon from '../components/ArrowRightIcon.astro';
 import StoreBadges from '../components/StoreBadges.astro';
+import PlatformDetect from '../components/PlatformDetect.astro';
 import { linuxInstall, linuxUninstall, macAppleSilicon, macIntel } from '../downloads';
 import '../styles/landing.css';
 import '../styles/download.css';
@@ -29,6 +31,7 @@ const terminal = [
     <meta property="og:title" content="Download Aven | aven" />
     <meta property="og:description" content="Aven for Mac, Linux, the terminal, iPhone and Android." />
     <meta property="og:url" content="https://aventasks.dev/download/" />
+    <PlatformDetect />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -45,57 +48,88 @@ const terminal = [
       </header>
 
       <main id="main" class="download">
+        <p class="hero-eyebrow">Download</p>
         <h1>Download Aven</h1>
         <p class="download-lead">The same tasks on your computer, in your terminal and on your phone.</p>
 
-        <section class="download-platform" id="mac" aria-labelledby="mac-heading">
-          <div class="download-platform-head">
-            <h2 id="mac-heading">Mac</h2>
-            <p>macOS 13 or later</p>
-          </div>
-          <p>Aven Desktop, with the <code>aven</code> command for your terminal and agents included. Updates itself.</p>
-          <div class="download-mac">
-            <a class="download-button" href={macAppleSilicon}>Download for Apple silicon</a>
-            <p class="download-intel">Intel Mac? <a href={macIntel}>Download for Intel</a></p>
-          </div>
-          <p class="download-label">Or with Homebrew</p>
-          <div class="download-command"><span aria-hidden="true">$</span><code>brew install --cask raine/aven/aven</code><button type="button" data-copy>copy</button></div>
-          <p class="download-note">Open the disk image and drag Aven to Applications. Already use Aven in the terminal? Setup moves that install over and keeps your tasks and sync.</p>
-        </section>
+        <div class="download-ledger">
+          <section class="download-desktop" aria-labelledby="desktop-heading">
+            <div class="download-tier-head">
+              <h2 id="desktop-heading">Aven Desktop</h2>
+              <p>The app, with the <code>aven</code> command for your terminal and agents included.</p>
+            </div>
 
-        <section class="download-platform" id="linux" aria-labelledby="linux-heading">
-          <div class="download-platform-head">
-            <h2 id="linux-heading">Linux</h2>
-            <p>x86-64 and ARM64</p>
-          </div>
-          <p>Aven Desktop, installed for your user, with the <code>aven</code> command included. Needs glibc 2.35 or newer and Wayland or X11.</p>
-          <div class="download-command download-command-first"><span aria-hidden="true">$</span><code>{linuxInstall}</code><button type="button" data-copy>copy</button></div>
-          <p class="download-label">Uninstall, keeping your tasks and settings</p>
-          <div class="download-command"><span aria-hidden="true">$</span><code>{linuxUninstall}</code><button type="button" data-copy>copy</button></div>
-          <p class="download-note">Run the installer again to update. Just the terminal? Use a <a href="#terminal">terminal-only install</a>.</p>
-        </section>
+            <article class="download-row" id="mac" aria-labelledby="mac-heading">
+              <div class="download-spec">
+                <h3 id="mac-heading">Mac</h3>
+                <ul><li>macOS 13 or later</li><li>Updates itself</li></ul>
+              </div>
+              <div class="download-actions">
+                <div class="download-mac">
+                  <a class="download-button" href={macAppleSilicon}>Download for Apple silicon</a>
+                  <p class="download-intel">Intel Mac? <a href={macIntel}>Download for Intel</a></p>
+                </div>
+                <p class="download-label">Or with Homebrew</p>
+                <div class="download-command"><span aria-hidden="true">$</span><code>brew install --cask raine/aven/aven</code><button type="button" data-copy>copy</button></div>
+                <p class="download-note">Open the disk image and drag Aven to Applications. Already use Aven in the terminal? Setup moves that install over and keeps your tasks and sync.</p>
+              </div>
+            </article>
 
-        <section class="download-platform" id="terminal" aria-labelledby="terminal-heading">
-          <div class="download-platform-head">
-            <h2 id="terminal-heading">Terminal only</h2>
-            <p>macOS and Linux</p>
-          </div>
-          <p>The TUI and the <code>aven</code> CLI, without the Mac app.</p>
-          {terminal.map((option) => (
-            <>
-              <p class="download-label">{option.label}</p>
-              <div class="download-command"><span aria-hidden="true">$</span><code>{option.command}</code><button type="button" data-copy>copy</button></div>
-            </>
-          ))}
-        </section>
+            <article class="download-row" id="linux" aria-labelledby="linux-heading">
+              <div class="download-spec">
+                <h3 id="linux-heading">Linux</h3>
+                <ul><li>x86-64 and ARM64</li><li>glibc 2.35 or newer</li><li>Wayland or X11</li></ul>
+              </div>
+              <div class="download-actions">
+                <div class="download-command"><span aria-hidden="true">$</span><code>{linuxInstall}</code><button type="button" data-copy>copy</button></div>
+                <p class="download-note">Installs for your user. Run the installer again to update. Just the terminal? Use a <a href="#terminal">terminal-only install</a>.</p>
+                <details class="download-more">
+                  <summary>Uninstall</summary>
+                  <p class="download-note">Keeps your tasks, settings and sync credentials.</p>
+                  <div class="download-command"><span aria-hidden="true">$</span><code>{linuxUninstall}</code><button type="button" data-copy>copy</button></div>
+                </details>
+              </div>
+            </article>
+          </section>
 
-        <section class="download-platform" id="phone" aria-labelledby="phone-heading">
-          <div class="download-platform-head">
-            <h2 id="phone-heading">iPhone and Android</h2>
-          </div>
-          <p>Joins the sync you run from your computer. <a href="/mobile/">About the phone apps</a></p>
-          <StoreBadges class="download-stores" />
-        </section>
+          <section class="download-row" id="terminal" aria-labelledby="terminal-heading">
+            <div class="download-spec">
+              <h2 id="terminal-heading">Terminal only</h2>
+              <ul><li>macOS and Linux</li></ul>
+            </div>
+            <div class="download-actions">
+              <p class="download-text">The TUI and the <code>aven</code> CLI, without the desktop app.</p>
+              {terminal.map((option) => (
+                <>
+                  <p class="download-label">{option.label}</p>
+                  <div class="download-command"><span aria-hidden="true">$</span><code>{option.command}</code><button type="button" data-copy>copy</button></div>
+                </>
+              ))}
+            </div>
+          </section>
+
+          <section class="download-row" id="phone" aria-labelledby="phone-heading">
+            <div class="download-spec">
+              <h2 id="phone-heading">Phone</h2>
+              <ul><li>iPhone and Android</li></ul>
+            </div>
+            <div class="download-actions">
+              <StoreBadges class="download-stores" />
+              <a class="text-link download-phone-link" href="/mobile/">Joins the sync you run from your computer <ArrowRightIcon /></a>
+            </div>
+          </section>
+        </div>
+
+        <script is:inline>
+          // Leads with the visitor's platform; moving the nodes keeps focus order
+          // matching what's on screen.
+          (() => {
+            const platform = document.documentElement.dataset.platform;
+            const byId = (id) => document.getElementById(id);
+            if (platform === 'linux') byId('mac').before(byId('linux'));
+            if (platform === 'ios' || platform === 'android') document.querySelector('.download-desktop').before(byId('phone'));
+          })();
+        </script>
       </main>
 
       <footer class="site-footer">

@@ -12,6 +12,7 @@ import QuickCapture from '../components/QuickCapture.astro';
 import McpSection from '../components/mcp-section/McpSection.astro';
 import FeatureSpecimen from '../components/FeatureSpecimen.astro';
 import { macAppleSilicon, macIntel } from '../downloads';
+import PlatformDetect from '../components/PlatformDetect.astro';
 
 const heroViews = [
   { id: 'queue', caption: 'See what needs attention across your projects.', label: 'Queue', src: '/tui.webp', alt: 'Aven terminal UI showing a shared task queue, project sidebar, priorities, and selected task context.' },
@@ -67,6 +68,7 @@ const testimonials = [
     <meta name="twitter:title" content="aven | Your tasks, everywhere. Agent-ready." />
     <meta name="twitter:description" content="Local-first task management for power users and coding agents." />
     <meta name="twitter:image" content="https://aventasks.dev/aven-social.png" />
+    <PlatformDetect />
     <meta name="twitter:image:alt" content="Aven: Your tasks. Your terminal. A terminal task queue alongside the Aven logo." />
   </head>
   <body>
@@ -102,13 +104,7 @@ const testimonials = [
                   it, or on an unrecognized platform, the Mac download stays. */}
               <script is:inline define:vars={{ appStoreUrl, playStoreUrl }}>
                 (() => {
-                  const ua = navigator.userAgent;
-                  const platform = /iPhone|iPod/.test(ua) ? 'ios'
-                    : /Android/.test(ua) ? 'android'
-                    : /Macintosh/.test(ua) ? 'mac'
-                    : /Windows|CrOS/.test(ua) ? 'other'
-                    : /Linux|X11/.test(ua) ? 'linux'
-                    : 'mac';
+                  const platform = document.documentElement.dataset.platform;
                   const variants = {
                     linux: ['Download for Linux', '/download/#linux', 'x86-64 and ARM64. <a href="/download/#mac">Mac</a> · <a href="/download/">All downloads</a>'],
                     ios: ['Get the iPhone app', appStoreUrl, 'Also for <a href="/download/">Mac, Linux and Android</a>'],
