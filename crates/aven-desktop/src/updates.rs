@@ -1213,8 +1213,13 @@ mod tests {
             let url = format!("http://{}/private-url", listener.local_addr().unwrap());
             let server = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut request = [0; 4096];
-                stream.read(&mut request).unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0; 4096];
+                while !request.ends_with(b"\r\n\r\n") {
+                    let read = stream.read(&mut chunk).unwrap();
+                    assert!(read > 0, "request ended before its headers");
+                    request.extend_from_slice(&chunk[..read]);
+                }
                 write!(
                     stream,
                     "HTTP/1.1 {status} Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
