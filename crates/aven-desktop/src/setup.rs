@@ -977,7 +977,7 @@ impl Setup {
     ) -> impl IntoElement + use<> {
         let id = SharedString::from(format!("setup-{label}"));
         let button = if primary {
-            fill_btn(id, label, t).child(kbd("↵", t.on_fill))
+            fill_btn(id, label, t).child(kbd("↩", t.on_fill))
         } else {
             line_btn(id, label, t)
         };

@@ -260,7 +260,7 @@ pub fn receive(event: LaunchEvent, cx: &mut App) {
                 let waiting = launcher.phase == Phase::Sending(id);
                 if waiting {
                     let (ai, _) = launcher.ai(cx);
-                    let key = if ai { "\u{2325}\u{21b5}" } else { "\u{21b5}" };
+                    let key = if ai { "\u{2325}\u{21a9}" } else { "\u{21a9}" };
                     launcher.fail(format!("{reason} {key} adds it without AI."), cx);
                 }
                 waiting && !window.is_window_active()

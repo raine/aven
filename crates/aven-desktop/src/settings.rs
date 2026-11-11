@@ -839,7 +839,7 @@ impl Root {
                 ))
                 .child(tab_stop(
                     fill_btn("confirm-ok", *label, t).when(action.first_button() == 1, |button| {
-                        button.child(kbd("↵", t.on_fill))
+                        button.child(kbd("↩", t.on_fill))
                     }),
                     confirm,
                     t,
@@ -1435,7 +1435,7 @@ impl Root {
         let agent = self.session.settings_data.agent.is_some();
         let on = agent && self.prefs.launcher.ai;
         let note = if agent {
-            "Return has your agent write the task, and \u{2325}\u{21b5} adds it as typed."
+            "Return has your agent write the task, and \u{2325}\u{21a9} adds it as typed."
         } else {
             "Set up an agent below to have it write your tasks."
         };
