@@ -40,6 +40,8 @@ pub struct TaskRow {
     pub labels: Vec<String>,
     /// The due date, or the availability where the view orders by it.
     pub due: String,
+    /// When the task becomes available, as the detail pane reads it.
+    pub available: String,
     pub date_tone: DateTone,
     pub deleted: bool,
     pub is_epic: bool,
@@ -609,11 +611,9 @@ pub struct Detail {
     /// A task outside the list has no row there.
     pub row: TaskRow,
     pub description: String,
-    pub available: String,
     pub available_at: Option<String>,
     pub due_on: Option<String>,
     pub project: String,
-    pub project_name: String,
     pub notes: Vec<Note>,
     pub images: Vec<Image>,
     pub epic: Option<Link>,

@@ -1400,14 +1400,8 @@ impl Actor {
     async fn send_detail(&mut self, id: &TaskId) {
         match self.store.load_task_item(id).await {
             Ok(Some(item)) => {
-                let project = self
-                    .store
-                    .projects
-                    .iter()
-                    .find(|project| project.key == item.task.project_key);
-                let name = project.map_or_else(String::new, |project| project.name.clone());
                 let images = self.images(&item).await;
-                let mut detail = detail_with(&item, Local::now(), name, images);
+                let mut detail = detail_with(&item, Local::now(), images);
                 detail.children = self.children(&item).await;
                 // Conflicts on a recurring task can sit on its series.
                 detail.conflicts = self

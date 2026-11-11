@@ -91,18 +91,17 @@ impl Root {
             )
     }
 
-    fn render_props(
-        &self,
-        row: &TaskRow,
-        detail: Option<&Detail>,
-        cx: &mut Context<Self>,
-        t: &Theme,
-    ) -> Div {
+    fn render_props(&self, row: &TaskRow, cx: &mut Context<Self>, t: &Theme) -> Div {
         let anchors = self.anchors.clone();
         let value = || div().flex().items_center().gap(px(7.)).min_w_0();
         let plain = |text: String| value().child(div().truncate().child(text));
-        let available = detail.map_or(String::new(), |detail| detail.available.clone());
-        let project = detail.map_or(String::new(), |detail| detail.project_name.clone());
+        let project = self
+            .session
+            .snapshot
+            .projects
+            .iter()
+            .find(|project| project.key == row.project_key)
+            .map_or_else(String::new, |project| project.name.clone());
         div()
             .flex()
             .flex_wrap()
@@ -144,7 +143,7 @@ impl Root {
                         this.open_date_menu(DateField::Available, window, cx);
                     }))
                     .child(anchor_probe("available", &anchors))
-                    .child(plain(available)),
+                    .child(plain(row.available.clone())),
             )
             .child(
                 self.prop("due", "Due", t)
@@ -884,7 +883,7 @@ impl Root {
             .when(row.deleted, |body| body.child(self.deleted_banner(cx, &t)))
             .child(self.render_title(Text::Heading, window, cx, &t))
             .child(self.render_byline(&row, cx, &t))
-            .child(self.render_props(&row, detail.as_ref(), cx, &t))
+            .child(self.render_props(&row, cx, &t))
             .children(self.render_sections(&row, window, cx, &t));
         panel.child(top).child(body)
     }
@@ -904,7 +903,6 @@ impl Root {
         let Some(row) = self.session.target_row().cloned() else {
             return doc;
         };
-        let detail = self.session.detail.clone();
         doc.child(
             div()
                 .id("doc-body")
@@ -948,7 +946,7 @@ impl Root {
                             div()
                                 .flex_none()
                                 .w(px(DOC_SIDE_WIDTH))
-                                .child(self.render_props(&row, detail.as_ref(), cx, &t)),
+                                .child(self.render_props(&row, cx, &t)),
                         ),
                 ),
         )

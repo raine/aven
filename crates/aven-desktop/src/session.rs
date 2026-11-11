@@ -2187,6 +2187,7 @@ mod tests {
             progress: None,
             labels: Vec::new(),
             due: String::new(),
+            available: String::new(),
             date_tone: crate::adapter::DateTone::Plain,
             deleted: false,
             is_epic: false,

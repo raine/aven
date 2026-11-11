@@ -144,6 +144,20 @@ pub(super) fn is_deferred(item: &TaskListItem, now: DateTime<Local>) -> bool {
     at.is_some_and(|at| at > now)
 }
 
+fn available_text_for(item: &TaskListItem, now: DateTime<Local>) -> String {
+    item.task.available_at.as_deref().map_or_else(
+        || "Now".to_string(),
+        |at| {
+            let text = available_text(at, now.date_naive());
+            if is_deferred(item, now) {
+                format!("Hidden until {text}")
+            } else {
+                format!("Since {text}")
+            }
+        },
+    )
+}
+
 fn task_row(item: &TaskListItem, now: DateTime<Local>) -> TaskRow {
     let today = now.date_naive();
     let task = &item.task;
@@ -170,6 +184,7 @@ fn task_row(item: &TaskListItem, now: DateTime<Local>) -> TaskRow {
             .as_deref()
             .map(|due| due_text(due, today))
             .unwrap_or_default(),
+        available: available_text_for(item, now),
         date_tone: date_tone(item, today),
         deleted: task.deleted,
         is_epic: task.is_epic,
@@ -628,7 +643,7 @@ pub(super) fn byline(item: &TaskListItem, now: DateTime<Local>) -> Byline {
 }
 
 pub fn detail(item: &TaskListItem, now: DateTime<Local>) -> Detail {
-    detail_with(item, now, String::new(), Vec::new())
+    detail_with(item, now, Vec::new())
 }
 
 pub(super) fn status_of(text: &str) -> TaskStatus {
@@ -690,34 +705,15 @@ pub(super) fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String
     lines
 }
 
-pub(super) fn detail_with(
-    item: &TaskListItem,
-    now: DateTime<Local>,
-    project_name: String,
-    images: Vec<Image>,
-) -> Detail {
-    let today = now.date_naive();
-    let available = item.task.available_at.as_deref();
+pub(super) fn detail_with(item: &TaskListItem, now: DateTime<Local>, images: Vec<Image>) -> Detail {
     let live_related = item.related.iter().filter(|link| !link.deleted);
     Detail {
         task_id: item.task.id.clone(),
         row: task_row(item, now),
         description: item.task.description.clone(),
-        available: available.map_or_else(
-            || "Now".to_string(),
-            |at| {
-                let text = available_text(at, today);
-                if is_deferred(item, now) {
-                    format!("Hidden until {text}")
-                } else {
-                    format!("Since {text}")
-                }
-            },
-        ),
         available_at: item.task.available_at.clone(),
         due_on: item.task.due_on.clone(),
         project: item.task.project_key.clone(),
-        project_name,
         notes: item
             .notes
             .iter()
