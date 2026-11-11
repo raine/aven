@@ -838,7 +838,9 @@ impl Root {
                     },
                 ))
                 .child(tab_stop(
-                    fill_btn("confirm-ok", *label, t),
+                    fill_btn("confirm-ok", *label, t).when(action.first_button() == 1, |button| {
+                        button.child(kbd("↵", t.on_fill))
+                    }),
                     confirm,
                     t,
                     cx,
