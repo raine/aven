@@ -3,10 +3,11 @@ title: Changelog
 description: Release notes for aven.
 ---
 
-## Unreleased
+## v0.1.56 (2026-11-12)
 
 - New: **Aven Desktop for macOS and Linux**, your tasks in a desktop app that syncs with the TUI and phone apps, with a quick-capture shortcut that works from any app. Install it with `brew install --cask raine/aven/aven`, the Mac DMG, or the Linux install script. Desktop includes the `aven` CLI, and terminal-only installs remain available. See [Getting started](https://aventasks.dev/getting-started/).
 - Changed: `aven daemon` picks up `config.yaml` changes without a restart, and `aven daemon status --json` replaces `wake_address_valid` with `reminders_enabled`.
+- Changed: `aven mcp --sync` leaves sync and reminders to a running daemon or Aven Desktop instead of running them alongside it, and takes over when that process stops.
 - UX: The daily digest sends a separate notification for each workspace with due or overdue tasks.
 - UX: On macOS, enabling reminders from a terminal asks for notification permission.
 - Perf: Search and task lists stay fast in workspaces with thousands of tasks, where they could take seconds.
