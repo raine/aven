@@ -1,3 +1,4 @@
+use aven_core::change_log::op_type;
 use aven_core::choices::{TaskPriority, TaskSource, TaskStatus};
 use aven_core::query::{RecentActionItem, RecurrenceSeriesListItem, SortDirection, TaskListItem};
 use aven_core::queue::{QueueDateKind, QueueReason, TriageReason};
@@ -688,9 +689,11 @@ fn activity_text(action: &RecentActionItem, title: &str, today: NaiveDate) -> St
 
 /// What the task's history reads as, newest first, ending at its creation.
 pub(super) fn activity(item: &TaskListItem, now: DateTime<Local>) -> Vec<(String, String)> {
+    // The closing line stands for the creation and names its source.
     let mut lines: Vec<(String, String)> = item
         .activity
         .iter()
+        .filter(|action| action.op_type != op_type::CREATE_TASK)
         .map(|action| {
             (
                 capitalised(&activity_text(action, &item.task.title, now.date_naive())),

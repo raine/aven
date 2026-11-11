@@ -3572,6 +3572,20 @@ mod tests {
         assert_eq!(lines.last().unwrap().0, "Created");
     }
 
+    #[tokio::test]
+    async fn loaded_activity_names_the_creation_once() {
+        let (_directory, actor, _replies) = actor("Keep").await;
+        let id = actor.store.tasks[0].task.id.clone();
+        let item = actor.store.load_task_item(&id).await.unwrap().unwrap();
+        assert!(
+            item.activity
+                .iter()
+                .any(|action| action.op_type == aven_core::change_log::op_type::CREATE_TASK)
+        );
+        let lines = activity(&item, Local::now());
+        assert_eq!(lines, vec![("Created".to_string(), "just now".to_string())]);
+    }
+
     fn draft(title: &str) -> TaskDraft {
         TaskDraft {
             metadata: Vec::new(),

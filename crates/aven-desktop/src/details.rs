@@ -612,9 +612,9 @@ impl Root {
         )
     }
 
-    fn render_activity(&self, row: &TaskRow, t: &Theme) -> Div {
+    fn render_activity(&self, activity: &[(String, String)], t: &Theme) -> Div {
         let mut section = div().mt(px(20.)).child(section_head("Activity", t));
-        for (text, at) in &row.activity {
+        for (text, at) in activity {
             section = section.child(
                 div()
                     .flex()
@@ -698,8 +698,13 @@ impl Root {
             }
             sections.push(self.render_notes(&row.id, window, cx, t).into_any_element());
         }
-        if !row.activity.is_empty() {
-            sections.push(self.render_activity(row, t).into_any_element());
+        // List rows can carry summary-only activity; the loaded detail has the full history.
+        let activity = match &self.session.detail {
+            Some(detail) if detail.row.id == row.id => &detail.row.activity,
+            _ => &row.activity,
+        };
+        if !activity.is_empty() {
+            sections.push(self.render_activity(activity, t).into_any_element());
         }
         sections
     }
