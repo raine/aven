@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "aven-core"
-version = "0.1.39"
+version = "0.1.40"
 dependencies = [
  "anyhow",
  "aven-core",
