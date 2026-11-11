@@ -36,6 +36,8 @@ pub struct TaskRow {
     pub reason: Option<(String, bool)>,
     pub blocked: bool,
     pub recurring: bool,
+    /// The series a recurring task came from, with its ref.
+    pub series: Option<(RecurrenceSeriesId, String)>,
     pub progress: Option<String>,
     pub labels: Vec<String>,
     /// The due date, or the availability where the view orders by it.
@@ -624,8 +626,6 @@ pub struct Detail {
     /// Children in core's order. Epics have them, other tasks do not.
     pub children: Vec<Child>,
     pub conflicts: Vec<ConflictTarget>,
-    /// The series a recurring task came from, with its ref.
-    pub series: Option<(RecurrenceSeriesId, String)>,
 }
 
 /// An epic's child as the epic's section reads it.

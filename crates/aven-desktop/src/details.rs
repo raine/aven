@@ -186,24 +186,16 @@ impl Root {
                         row.labels.join(", ")
                     })),
             )
-            .when(row.recurring, |props| {
-                let series = self
-                    .session
-                    .detail
-                    .as_ref()
-                    .and_then(|detail| detail.series.clone());
+            .when_some(row.series.clone(), |props, (id, reference)| {
                 props.child(
-                    self.prop("recurrence", "Recurrence", t)
-                        .child(match series {
-                            Some((id, reference)) => bare_btn("open-series", "Open series", t)
-                                .text_color(t.body)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_series(id.clone(), window, cx);
-                                }))
-                                .child(format!("↻ {reference}"))
-                                .into_any_element(),
-                            None => plain("Repeats".to_string()).into_any_element(),
-                        }),
+                    self.prop("recurrence", "Recurrence", t).child(
+                        bare_btn("open-series", "Open series", t)
+                            .text_color(t.body)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_series(id.clone(), window, cx);
+                            }))
+                            .child(format!("↻ {reference}")),
+                    ),
                 )
             })
     }

@@ -2184,6 +2184,7 @@ mod tests {
             reason: None,
             blocked: false,
             recurring: false,
+            series: None,
             progress: None,
             labels: Vec::new(),
             due: String::new(),

@@ -173,6 +173,8 @@ fn task_row(item: &TaskListItem, now: DateTime<Local>) -> TaskRow {
         reason: reason_text(item, today),
         blocked: item.unresolved_blocker_count > 0,
         recurring: item.recurrence.is_some(),
+        series: (item.recurrence.as_ref())
+            .map(|series| (series.series_id.clone(), series.series_ref.clone())),
         progress: item
             .epic_rollup
             .as_ref()
@@ -750,8 +752,6 @@ pub(super) fn detail_with(item: &TaskListItem, now: DateTime<Local>, images: Vec
             .collect(),
         children: Vec::new(),
         conflicts: Vec::new(),
-        series: (item.recurrence.as_ref())
-            .map(|series| (series.series_id.clone(), series.series_ref.clone())),
     }
 }
 
