@@ -77,6 +77,12 @@ isolated=(
   AVEN_DEV_DB="$root/demo.sqlite"
   AVEN_SYNC_DISABLED=1
 )
+# A debug build would otherwise find the installed app in /Applications and
+# ask to be moved there before opening.
+if $debug; then
+  mkdir -p "$root/applications"
+  isolated+=(AVEN_DEV_APPLICATIONS="$root/applications")
+fi
 if ! $empty; then
   env "${isolated[@]}" "$app/Contents/MacOS/aven" internal demo-snapshot \
     --output "$root/demo.sqlite" >/dev/null
