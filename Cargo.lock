@@ -769,6 +769,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "raw-window-handle",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",

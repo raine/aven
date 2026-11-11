@@ -254,7 +254,7 @@ pub(crate) fn check(force: bool, cx: &mut App) {
             .spawn(async move { service.check(force) })
             .with_timeout(CHECK_TIMEOUT, &executor)
             .await
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("the check didn\u{2019}t finish in time")));
+            .unwrap_or_else(|_| Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into()));
         cx.update(|cx| {
             if !phase(cx).settled() {
                 return;
@@ -263,7 +263,7 @@ pub(crate) fn check(force: bool, cx: &mut App) {
                 && matches!(before, Phase::Available(_))
                 && let Err(error) = &checked
             {
-                let detail = format!("{error:#}");
+                let detail = check_failure_reason(error);
                 crate::app::with_root(cx, |root, _, cx| {
                     root.session.show_toast(
                         Toast::error("Couldn\u{2019}t check for updates").detail(detail),
@@ -282,6 +282,65 @@ fn may_check(phase: &Phase) -> bool {
     phase.settled() && *phase != Phase::Checking
 }
 
+/// A bounded user-facing reason; the complete chain belongs in the log.
+fn check_failure_reason(error: &anyhow::Error) -> String {
+    use std::io::ErrorKind;
+
+    // A connection timeout is also a connect error, so check timeouts first.
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|e| e.is_timeout())
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == ErrorKind::TimedOut)
+    }) {
+        return "the request timed out".into();
+    }
+    if error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|e| {
+            matches!(
+                e.kind(),
+                ErrorKind::NetworkUnreachable
+                    | ErrorKind::HostUnreachable
+                    | ErrorKind::NotConnected
+            )
+        })
+    }) {
+        return "no network connection".into();
+    }
+    // The release service reports GitHub's rate limit before error_for_status.
+    if error
+        .chain()
+        .any(|cause| cause.to_string() == "GitHub rate limit reached; try again later")
+    {
+        return "GitHub rate limit reached; try again later".into();
+    }
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<reqwest::Error>() {
+            if let Some(status) = error.status() {
+                return if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    "GitHub rate limit reached; try again later".into()
+                } else {
+                    format!("GitHub returned HTTP {}; try again later", status.as_u16())
+                };
+            }
+            if error.is_connect() {
+                return "could not connect to GitHub".into();
+            }
+            if error.is_decode() || error.is_body() {
+                return "GitHub sent an invalid response".into();
+            }
+        }
+        if cause.is::<serde_json::Error>()
+            || cause.to_string() == "GitHub release response is unexpectedly large"
+        {
+            return "GitHub sent an invalid response".into();
+        }
+    }
+    "update information is unavailable; try again later".into()
+}
+
 /// The phase a check ends in. A forced check always leaves `Checking`.
 fn after_check(checked: anyhow::Result<Option<Available>>, force: bool, before: Phase) -> Phase {
     match checked {
@@ -295,10 +354,10 @@ fn after_check(checked: anyhow::Result<Option<Available>>, force: bool, before: 
         }
         Err(error) if force && !matches!(before, Phase::Available(_)) => {
             tracing::warn!(error = %format_args!("{error:#}"), "update check failed");
-            Phase::CheckFailed(format!("{error:#}"))
+            Phase::CheckFailed(check_failure_reason(&error))
         }
         Err(error) => {
-            tracing::debug!(error = %format_args!("{error:#}"), "update check failed");
+            tracing::warn!(error = %format_args!("{error:#}"), "update check failed");
             before
         }
     }
@@ -1102,6 +1161,86 @@ fn paragraph(text: String, t: &Theme) -> AnyElement {
 mod tests {
     use super::*;
 
+    #[test]
+    fn check_failure_reasons_hide_internal_details() {
+        use std::io::{Error, ErrorKind};
+        for (kind, expected) in [
+            (ErrorKind::NetworkUnreachable, "no network connection"),
+            (ErrorKind::HostUnreachable, "no network connection"),
+            (ErrorKind::NotConnected, "no network connection"),
+            (ErrorKind::TimedOut, "the request timed out"),
+        ] {
+            let error = anyhow::Error::new(Error::new(kind, "private transport details"))
+                .context("check GitHub releases");
+            assert_eq!(check_failure_reason(&error), expected);
+        }
+        for (error, expected) in [
+            (
+                anyhow::anyhow!("GitHub rate limit reached; try again later"),
+                "GitHub rate limit reached; try again later",
+            ),
+            (
+                serde_json::from_str::<serde_json::Value>("not json")
+                    .unwrap_err()
+                    .into(),
+                "GitHub sent an invalid response",
+            ),
+            (
+                anyhow::anyhow!("GitHub release response is unexpectedly large"),
+                "GitHub sent an invalid response",
+            ),
+            (
+                anyhow::anyhow!("unexpected internal path /private/file"),
+                "update information is unavailable; try again later",
+            ),
+        ] {
+            assert_eq!(
+                check_failure_reason(&error.context("release check")),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn check_failure_reasons_classify_http_statuses() {
+        use std::io::{Read, Write};
+        for (status, expected) in [
+            (429, "GitHub rate limit reached; try again later"),
+            (403, "GitHub returned HTTP 403; try again later"),
+            (503, "GitHub returned HTTP 503; try again later"),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/private-url", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                stream.read(&mut request).unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            });
+            let error = reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(url)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap_err();
+            server.join().unwrap();
+            assert_eq!(
+                check_failure_reason(
+                    &anyhow::Error::new(error).context("fetch latest GitHub release")
+                ),
+                expected
+            );
+        }
+    }
+
     fn available() -> Available {
         Available {
             version: "9.9.9".into(),
@@ -1276,7 +1415,7 @@ mod tests {
         let failed = || Err(anyhow::anyhow!("offline"));
         assert_eq!(
             after_check(failed(), true, Phase::Current),
-            Phase::CheckFailed("offline".into())
+            Phase::CheckFailed("update information is unavailable; try again later".into())
         );
         assert_eq!(
             after_check(failed(), false, Phase::Available(available())),
