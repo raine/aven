@@ -13,6 +13,121 @@ use std::sync::{
 
 use super::membership::{Joined, join};
 
+#[tokio::test]
+async fn repeated_image_read_failures_hide_metadata_confirmation() {
+    Box::pin(async {
+        use aven_core::sync::client::{ClientHost, engine, keys};
+
+        struct Host(PathBuf);
+        impl ClientHost for Host {
+            fn ensure_sync_allowed(&self) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn protected_storage(&self) -> keys::StoreResult<Arc<dyn keys::ProtectedStorage>> {
+                Ok(Arc::new(keys::FileProtectedStorage::new(
+                    self.0.join("keys"),
+                )))
+            }
+            fn blob_dir(&self, _: &Database) -> anyhow::Result<PathBuf> {
+                Ok(self.0.clone())
+            }
+            fn attachment_lifecycle_policy(&self) -> aven_core::attachments::LifecyclePolicy {
+                Default::default()
+            }
+            fn device_label(&self) -> Option<String> {
+                None
+            }
+        }
+
+        let mut f = fixture().await;
+        let reference = add_image(&f).await;
+        let client = Client::new(&f.origin).unwrap();
+        drain(&client, &f.peer_store, &f.peer).await;
+        let fault = Arc::new(HttpFault {
+            lose: Some("Read"),
+            remaining: AtomicUsize::new(usize::MAX),
+            bodies: Default::default(),
+        });
+        restart_server(&mut f, fault.clone()).await;
+        let host = Host(f.root.path().to_path_buf());
+
+        for attempt in 1..=2 {
+            fault.bodies.lock().unwrap().clear();
+            let outcome = client
+                .transport
+                .driver
+                .run(|link| engine::run_to_completion(link, &f.seed, &host))
+                .await
+                .unwrap();
+            let operations = fault
+                .bodies
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            let reads = operations
+                .iter()
+                .filter(|name| name.as_str() == "Read")
+                .count();
+            eprintln!(
+                "attempt={attempt} outcome={} image_reads={reads} operations={operations:?}",
+                serde_json::to_string(&outcome).unwrap()
+            );
+            assert_eq!(outcome.rounds, 16);
+            assert_eq!(reads, 16);
+            assert_eq!(outcome.images, ImageTransfer::Failed);
+            assert!(!outcome.metadata_caught_up);
+            assert!(!outcome.more_work_ready());
+            assert_eq!(
+                f.seed
+                    .sync_persistence_status()
+                    .await
+                    .unwrap()
+                    .pending_changes,
+                0
+            );
+            let report = engine::status_report(&f.seed, &host).await.unwrap();
+            assert_eq!(report.image_downloads_pending, Some(true));
+            assert_eq!(report.local_changes_pending, Some(false));
+            let copied: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM task_attachments WHERE attachment_id=?")
+                    .bind(&reference)
+                    .fetch_one(&mut *aven_core::test_support::acquire(&f.seed).await.unwrap())
+                    .await
+                    .unwrap();
+            assert_eq!(copied, 1);
+            // A metadata-only pull confirms that image failure, not a remaining page,
+            // prevented this drain from reporting metadata caught up.
+            assert!(
+                client
+                    .pull_only_round(&f.seed_store, &f.seed)
+                    .await
+                    .unwrap()
+            );
+        }
+
+        fault.remaining.store(0, Ordering::SeqCst);
+        let recovered = client
+            .transport
+            .driver
+            .run(|link| engine::run_to_completion(link, &f.seed, &host))
+            .await
+            .unwrap();
+        eprintln!("recovered={}", serde_json::to_string(&recovered).unwrap());
+        assert!(recovered.metadata_caught_up);
+        assert_eq!(recovered.images, ImageTransfer::Complete);
+        assert_eq!(
+            engine::status_report(&f.seed, &host)
+                .await
+                .unwrap()
+                .image_downloads_pending,
+            Some(false)
+        );
+    })
+    .await;
+}
+
 async fn device(store: &ProtectedLocalKeyStore, db: &Database, origin: &str) -> [u8; 32] {
     store.active_inputs(db, origin).await.unwrap().device()
 }
