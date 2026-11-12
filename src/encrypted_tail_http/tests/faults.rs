@@ -14,9 +14,9 @@ use std::sync::{
 use super::membership::{Joined, join};
 
 #[tokio::test]
-async fn repeated_image_read_failures_hide_metadata_confirmation() {
+async fn repeated_image_read_failures_preserve_fresh_metadata_confirmation() {
     Box::pin(async {
-        use aven_core::sync::client::{ClientHost, engine, keys};
+        use aven_core::sync::client::{ClientHost, Session, Step, engine, keys};
 
         struct Host(PathBuf);
         impl ClientHost for Host {
@@ -53,12 +53,50 @@ async fn repeated_image_read_failures_hide_metadata_confirmation() {
 
         for attempt in 1..=2 {
             fault.bodies.lock().unwrap().clear();
-            let outcome = client
-                .transport
-                .driver
-                .run(|link| engine::run_to_completion(link, &f.seed, &host))
+            let mut session = Session::new(|link| engine::run_to_completion(link, &f.seed, &host));
+            let mut image_reads = 0;
+            let mut late_task = None;
+            let outcome = loop {
+                match session.next().await.unwrap() {
+                    Step::Request(request) => {
+                        let value: serde_json::Value =
+                            serde_json::from_slice(&request.body).unwrap();
+                        if operation_name(&value) == Some("Read") {
+                            image_reads += 1;
+                            if image_reads == 15 {
+                                // Publish after the last regularly scheduled pull, so
+                                // reusing that observation would miss a remote change.
+                                let workspace = f.peer.list_workspaces().await.unwrap().remove(0);
+                                late_task = Some(
+                                    f.peer
+                                        .create_task(&workspace, draft("late remote task"))
+                                        .await
+                                        .unwrap()
+                                        .task
+                                        .id,
+                                );
+                                drain(&client, &f.peer_store, &f.peer).await;
+                            }
+                        }
+                        client
+                            .transport
+                            .driver
+                            .answer(&mut session, request)
+                            .await
+                            .unwrap();
+                    }
+                    Step::Wait(delay) => tokio::time::sleep(delay).await,
+                    Step::Done(outcome) => break outcome,
+                }
+            };
+            drop(session);
+            let copied_late: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id=?")
+                .bind(late_task.unwrap())
+                .fetch_one(&mut *aven_core::test_support::acquire(&f.seed).await.unwrap())
                 .await
                 .unwrap();
+            assert_eq!(copied_late, 1);
+            assert!(outcome.received_changes > 0);
             let operations = fault
                 .bodies
                 .lock()
@@ -77,7 +115,7 @@ async fn repeated_image_read_failures_hide_metadata_confirmation() {
             assert_eq!(outcome.rounds, 16);
             assert_eq!(reads, 16);
             assert_eq!(outcome.images, ImageTransfer::Failed);
-            assert!(!outcome.metadata_caught_up);
+            assert!(outcome.metadata_caught_up);
             assert!(!outcome.more_work_ready());
             assert_eq!(
                 f.seed
@@ -97,8 +135,7 @@ async fn repeated_image_read_failures_hide_metadata_confirmation() {
                     .await
                     .unwrap();
             assert_eq!(copied, 1);
-            // A metadata-only pull confirms that image failure, not a remaining page,
-            // prevented this drain from reporting metadata caught up.
+            // Metadata confirmation does not claim that the pending image succeeded.
             assert!(
                 client
                     .pull_only_round(&f.seed_store, &f.seed)
@@ -106,6 +143,65 @@ async fn repeated_image_read_failures_hide_metadata_confirmation() {
                     .unwrap()
             );
         }
+
+        // A caller's round budget also ends with a pull rather than reusing
+        // an earlier observation from an image-only round.
+        let limited = client
+            .transport
+            .driver
+            .run(|link| async {
+                let tail = aven_core::sync::client::tail::Client::new(&f.origin, link)?;
+                engine::drain(&tail, &f.seed_store, &f.seed, &host, f.root.path(), 2).await
+            })
+            .await
+            .unwrap();
+        assert_eq!(limited.rounds, 2);
+        assert_eq!(limited.images, ImageTransfer::Failed);
+        assert!(limited.metadata_caught_up);
+
+        // A local edit after the final pull must still prevent confirmation.
+        let mut session = Session::new(|link| async {
+            let tail = aven_core::sync::client::tail::Client::new(&f.origin, link)?;
+            engine::drain(&tail, &f.seed_store, &f.seed, &host, f.root.path(), 2).await
+        });
+        let mut image_reads = 0;
+        let changed = loop {
+            match session.next().await.unwrap() {
+                Step::Request(request) => {
+                    let value: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                    if operation_name(&value) == Some("Read") {
+                        image_reads += 1;
+                        if image_reads == 2 {
+                            let workspace = f.seed.list_workspaces().await.unwrap().remove(0);
+                            f.seed
+                                .create_task(&workspace, draft("late local task"))
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    client
+                        .transport
+                        .driver
+                        .answer(&mut session, request)
+                        .await
+                        .unwrap();
+                }
+                Step::Wait(delay) => tokio::time::sleep(delay).await,
+                Step::Done(outcome) => break outcome,
+            }
+        };
+        drop(session);
+        assert_eq!(image_reads, 2);
+        assert!(!changed.metadata_caught_up);
+        assert_eq!(changed.images, ImageTransfer::Failed);
+        assert!(
+            f.seed
+                .sync_persistence_status()
+                .await
+                .unwrap()
+                .pending_changes
+                > 0
+        );
 
         fault.remaining.store(0, Ordering::SeqCst);
         let recovered = client

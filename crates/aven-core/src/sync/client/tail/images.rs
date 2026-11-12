@@ -77,6 +77,12 @@ struct PullFreshness {
     skipped_rounds: usize,
 }
 impl DrainSnapshot {
+    /// Requires a fresh metadata observation in the next round, even if image
+    /// work would otherwise reuse the previous complete pull.
+    pub(crate) fn require_metadata_pull(&mut self) {
+        self.pull = PullFreshness::default();
+    }
+
     /// The error reported for a drain that ended with publishing blocked.
     pub fn publishing_blocked_error(&mut self) -> anyhow::Error {
         match self.withdrawal.take() {

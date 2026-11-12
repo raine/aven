@@ -1180,6 +1180,11 @@ async fn drain_reporting(
     let lifecycle_policy = host.attachment_lifecycle_policy();
     let mut drain = Box::pin(client.start_drain(store, database)).await?;
     while rounds < round_limit {
+        // A drain that stops at either bound must report a fresh metadata
+        // observation, not the absence of a pull in an image-only round.
+        if rounds + 1 == round_limit || image_retries + 1 == IMAGE_RETRY_ROUNDS {
+            drain.require_metadata_pull();
+        }
         let round: Round = Box::pin(client.round_in_drain(
             store,
             database,
