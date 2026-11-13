@@ -35,6 +35,7 @@ zstd = "0.14.3"
 
 [package]
 name = "aven"
+publish = false
 version = "0.1.56"
 edition = "2024"
 rust-version = "1.96"

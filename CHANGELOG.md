@@ -3,6 +3,10 @@ title: Changelog
 description: Release notes for aven.
 ---
 
+## Unreleased
+
+- Breaking: The `aven` crate on crates.io is no longer updated. Install from release binaries, install scripts, Homebrew, Nix, or a Git release tag instead; see [Getting started](https://aventasks.dev/getting-started/).
+
 ## v0.1.56 (2026-11-12)
 
 - New: **Aven Desktop for macOS and Linux**, your tasks in a desktop app that syncs with the TUI and phone apps, with a quick-capture shortcut that works from any app. Install it with `brew install --cask raine/aven/aven`, the Mac DMG, or the Linux install script. Desktop includes the `aven` CLI, and terminal-only installs remain available. See [Getting started](https://aventasks.dev/getting-started/).

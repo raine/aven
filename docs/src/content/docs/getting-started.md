@@ -67,6 +67,21 @@ Or install the prebuilt release binary with Nix:
 nix profile install https://github.com/raine/aven/releases/latest/download/aven-nix.tar.gz
 ```
 
+You can also download [release binaries](https://github.com/raine/aven/releases/latest) directly.
+
+### Build from source
+
+The `aven` crate on crates.io is no longer updated. Use one of the installs above,
+or build the terminal app from a [release tag](https://github.com/raine/aven/releases).
+Replace `<tag>` with the tag you want to install:
+
+```sh
+cargo install --git https://github.com/raine/aven --tag <tag> --locked
+```
+
+To replace an existing Cargo installation, add `--force`. `aven update` prints
+this command with the latest release tag for Cargo installs.
+
 ## Terminal font
 
 Some TUI icons require a [Nerd Font](https://www.nerdfonts.com/). Install one and

@@ -330,9 +330,9 @@ docs:
     echo "Error: could not find an available docs port between ${preferred_port} and ${max_port}" >&2
     exit 1
 
-# Internal release helper
-_release bump:
-    @cargo-release {{bump}}
+# Binary releases go to GitHub; publish libraries separately (see RELEASING.md).
+_release bump *ARGS:
+    @cargo-release {{bump}} --skip-publish {{ARGS}}
 
 # Release a new patch version
 release *ARGS:
