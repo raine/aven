@@ -23,6 +23,7 @@ use super::keys::{
 use super::tail::{ImageTransfer, Round};
 use super::{DeviceInvitation, SetupInvitation, bootstrap, coordination, enrollment, tail};
 use crate::db::Database;
+use crate::diagnostics::DiagnosticPhase;
 use crate::sync::seed_claim::{ClaimAuthentication, membership::Invitation};
 
 mod devices;
@@ -1185,6 +1186,9 @@ async fn drain_reporting(
         if rounds + 1 == round_limit || image_retries + 1 == IMAGE_RETRY_ROUNDS {
             drain.require_metadata_pull();
         }
+        client
+            .diagnostics()
+            .phase(DiagnosticPhase::DrainRound, rounds as u64 + 1);
         let round: Round = Box::pin(client.round_in_drain(
             store,
             database,

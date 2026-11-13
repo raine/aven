@@ -58,8 +58,18 @@ pub struct Store {
 
 impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let database = Database::open(path.as_ref())
+        Self::open_observed(path, &crate::diagnostics::Diagnostics::default()).await
+    }
+
+    /// Like [`Store::open`], reporting open phases and any failure's
+    /// classified cause to `diagnostics`.
+    pub async fn open_observed(
+        path: impl AsRef<Path>,
+        diagnostics: &crate::diagnostics::Diagnostics,
+    ) -> Result<Self, Error> {
+        let database = Database::open_observed(path.as_ref(), diagnostics)
             .await
+            .inspect_err(|error| diagnostics.failed(error))
             .map_err(Error::database_open)?;
         Ok(Self {
             database,

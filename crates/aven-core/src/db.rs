@@ -87,10 +87,19 @@ impl Drop for WriterConnection {
 
 impl Database {
     pub async fn open(path: &Path) -> Result<Self> {
+        Self::open_observed(path, &crate::diagnostics::Diagnostics::default()).await
+    }
+
+    /// Like [`Database::open`], reporting the open and migration phases.
+    pub async fn open_observed(
+        path: &Path,
+        diagnostics: &crate::diagnostics::Diagnostics,
+    ) -> Result<Self> {
+        diagnostics.phase(crate::diagnostics::DiagnosticPhase::DatabaseOpen, 0);
         let connection_input = path.to_string_lossy();
         let options = SqliteConnectOptions::from_str(&connection_input)?;
         let storage = database_storage(&connection_input, &options);
-        let pool = open_db(path).await?;
+        let pool = open_db_observed(path, diagnostics).await?;
         let file_identity = match storage {
             DatabaseStorage::InMemory => None,
             DatabaseStorage::File => {
@@ -169,7 +178,15 @@ impl Database {
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
+    open_db_observed(path, &crate::diagnostics::Diagnostics::default()).await
+}
+
+async fn open_db_observed(
+    path: &Path,
+    diagnostics: &crate::diagnostics::Diagnostics,
+) -> Result<SqlitePool> {
     let connection_input = path.to_string_lossy();
     let mut options = SqliteConnectOptions::from_str(&connection_input)?;
     let storage = database_storage(&connection_input, &options);
@@ -208,6 +225,7 @@ pub(crate) async fn open_db(path: &Path) -> Result<SqlitePool> {
         .connect_with(options)
         .await
         .map_err(|error| anyhow::anyhow!("could not open {}: {error}", path.display()))?;
+    diagnostics.phase(crate::diagnostics::DiagnosticPhase::DatabaseMigration, 0);
     backup::backup_before_pending_migrations(path, existed_before_open, &pool).await?;
     MIGRATOR.run(&pool).await?;
     initialize_meta(&pool).await?;

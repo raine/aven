@@ -331,6 +331,10 @@ impl Client {
                 if progress.download.is_none() {
                     break;
                 }
+                self.diagnostics().phase(
+                    crate::diagnostics::DiagnosticPhase::ImageDownload,
+                    progress.image_transfers as u64,
+                );
                 match self
                     .download_image(
                         a,

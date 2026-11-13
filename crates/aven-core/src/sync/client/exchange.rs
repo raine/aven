@@ -160,9 +160,15 @@ struct LinkState {
 #[derive(Clone, Default)]
 pub struct Link {
     state: Arc<Mutex<LinkState>>,
+    diagnostics: crate::diagnostics::Diagnostics,
 }
 
 impl Link {
+    /// The observer of the session this link belongs to.
+    pub(crate) fn diagnostics(&self) -> &crate::diagnostics::Diagnostics {
+        &self.diagnostics
+    }
+
     fn state(&self) -> MutexGuard<'_, LinkState> {
         self.state
             .lock()
@@ -258,6 +264,7 @@ type Operation<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 pub struct Session<'a, T> {
     operation: Option<Operation<'a, T>>,
     link: Link,
+    steps: u64,
 }
 
 impl<'a, T> Session<'a, T> {
@@ -267,16 +274,34 @@ impl<'a, T> Session<'a, T> {
         F: FnOnce(Link) -> Fut,
         Fut: Future<Output = Result<T>> + Send + 'a,
     {
-        let link = Link::default();
+        Self::observed(crate::diagnostics::Diagnostics::default(), operation)
+    }
+
+    /// Like [`Session::new`], reporting this session's phases to
+    /// `diagnostics`. The observer stays scoped to this session.
+    pub fn observed<F, Fut>(diagnostics: crate::diagnostics::Diagnostics, operation: F) -> Self
+    where
+        F: FnOnce(Link) -> Fut,
+        Fut: Future<Output = Result<T>> + Send + 'a,
+    {
+        let link = Link {
+            diagnostics,
+            ..Link::default()
+        };
         Self {
             operation: Some(Box::pin(operation(link.clone()))),
             link,
+            steps: 0,
         }
     }
 
     /// Runs the operation until it needs the host or finishes. An error
     /// finishes the session.
     pub async fn next(&mut self) -> Result<Step<T>> {
+        self.steps = self.steps.saturating_add(1);
+        self.link
+            .diagnostics
+            .phase(crate::diagnostics::DiagnosticPhase::SessionStep, self.steps);
         {
             let mut state = self.link.state();
             match state.pending {
@@ -522,6 +547,41 @@ mod tests {
             link.wait(Duration::from_millis(5)).await;
         }
         Ok(statuses)
+    }
+
+    #[derive(Default)]
+    struct Steps(std::sync::Mutex<Vec<u64>>);
+
+    impl crate::diagnostics::DiagnosticObserver for Steps {
+        fn phase(&self, phase: crate::diagnostics::DiagnosticPhase, counter: u64) {
+            assert_eq!(phase, crate::diagnostics::DiagnosticPhase::SessionStep);
+            self.0.lock().unwrap().push(counter);
+        }
+    }
+
+    #[tokio::test]
+    async fn observed_sessions_report_their_own_steps_before_running() {
+        let (first, second) = (Arc::new(Steps::default()), Arc::new(Steps::default()));
+        let mut one = Session::observed(
+            crate::diagnostics::Diagnostics::new(first.clone()),
+            two_requests,
+        );
+        let mut two = Session::observed(
+            crate::diagnostics::Diagnostics::new(second.clone()),
+            two_requests,
+        );
+        let Step::Request(request) = one.next().await.unwrap() else {
+            panic!("expected a request");
+        };
+        assert!(matches!(two.next().await.unwrap(), Step::Request(_)));
+        one.register_transport_failure(request.context).unwrap();
+        assert!(matches!(one.next().await.unwrap(), Step::Wait(_)));
+        // A step that fails still reports that it was entered.
+        assert!(two.next().await.is_err());
+        assert_eq!(*first.0.lock().unwrap(), [1, 2]);
+        assert_eq!(*second.0.lock().unwrap(), [1, 2]);
+        let mut unobserved = Session::new(two_requests);
+        assert!(matches!(unobserved.next().await.unwrap(), Step::Request(_)));
     }
 
     #[tokio::test]

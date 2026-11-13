@@ -37,6 +37,10 @@ impl Client {
             locator: origin.into(),
         })
     }
+    /// The observer of the session this client exchanges through.
+    pub(crate) fn diagnostics(&self) -> &crate::diagnostics::Diagnostics {
+        self.link.diagnostics()
+    }
     fn enrollment(&self) -> Result<super::enrollment::Client> {
         super::enrollment::Client::new(&self.locator, self.link.clone())
     }
@@ -389,6 +393,12 @@ impl Client {
             return Ok((PushStep::BatchAppended(mappings.len()), preflight));
         }
         let is_image = upload.is_some();
+        if let Some(upload) = &upload {
+            self.diagnostics().phase(
+                crate::diagnostics::DiagnosticPhase::ImageUpload,
+                upload.records.len() as u64,
+            );
+        }
         let ticket = match upload {
             Some(upload) => match self.upload_prepared_image(inputs, upload).await {
                 Ok(ticket) => Some(ticket),
@@ -493,11 +503,19 @@ impl Client {
         else {
             anyhow::bail!("error encrypted-tail-reply")
         };
+        use crate::diagnostics::DiagnosticPhase;
+        let records = page.records.len() as u64;
+        self.diagnostics()
+            .phase(DiagnosticPhase::MetadataDecode, records);
         ensure!(
             page.after == after && watermark.is_none_or(|w| page.watermark == w),
             "error encrypted-tail-cursor"
         );
+        self.diagnostics()
+            .phase(DiagnosticPhase::MetadataApply, records);
         db.apply_encrypted_tail_page(a, &page).await?;
+        self.diagnostics()
+            .phase(DiagnosticPhase::TransactionCommit, records);
         Ok(!page.has_more)
     }
 }
